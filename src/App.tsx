@@ -330,7 +330,6 @@ const App: React.FC = () => {
             milestones={store.milestones}
             displayYear={displayYear}
             onTaskClick={handleOpenDrawer}
-            onTaskDoubleClick={handleOpenDrawerWithMeta}
             onTaskContextMenu={handleTaskContextMenu}
             onNoteDoubleClick={handleEditNote}
             onNoteContextMenu={handleNoteContextMenu}

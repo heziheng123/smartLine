@@ -12,14 +12,13 @@ const MonthRow: React.FC<{
   monthLayout: MonthLayout;
   year: number;
   onTaskClick?: (taskId: string) => void;
-  onTaskDoubleClick?: (taskId: string) => void;
   onTaskContextMenu?: (e: React.MouseEvent, taskId: string) => void;
   onNoteDoubleClick?: (noteId: string) => void;
   onNoteContextMenu?: (e: React.MouseEvent, noteId: string) => void;
   onMilestoneDoubleClick?: (milestoneId: string) => void;
   onMilestoneContextMenu?: (e: React.MouseEvent, milestoneId: string) => void;
   onGroupDoubleClick?: (groupId: string) => void;
-}> = ({ monthLayout, year, onTaskClick, onTaskDoubleClick, onTaskContextMenu, onNoteDoubleClick, onNoteContextMenu, onMilestoneDoubleClick, onMilestoneContextMenu, onGroupDoubleClick }) => {
+}> = ({ monthLayout, year, onTaskClick, onTaskContextMenu, onNoteDoubleClick, onNoteContextMenu, onMilestoneDoubleClick, onMilestoneContextMenu, onGroupDoubleClick }) => {
   const { month, daysInMonth, segments, noteSegments, milestones, groupRanges, totalRows: taskRows } = monthLayout;
 
   // 画布总行数：取任务行和分组范围行的最大值
@@ -200,7 +199,6 @@ const MonthRow: React.FC<{
               segment={seg}
               daysInMonth={daysInMonth}
               onClick={() => onTaskClick?.(seg.taskId)}
-              onDoubleClick={() => onTaskDoubleClick?.(seg.taskId)}
               onContextMenu={(e) => onTaskContextMenu?.(e, seg.taskId)}
             />
           ))}
