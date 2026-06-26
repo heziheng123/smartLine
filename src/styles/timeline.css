@@ -1335,22 +1335,29 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 0;
-  border-radius: 4px;
-  transition: color 0.15s;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+  user-select: none;
 }
 
 .tl-drawer-title:hover {
   color: #4a5ad0;
+  background: rgba(74, 90, 208, 0.06);
 }
 
 /* caret 箭头 */
 .tl-drawer-title-caret {
   display: inline-block;
-  font-size: 11px;
-  color: #9CA3AF;
-  transition: transform 0.2s ease;
+  font-size: 15px;
+  color: #6B7280;
+  transition: transform 0.15s, color 0.15s;
   transform: rotate(-90deg); /* 默认指向右 */
+  margin-left: 2px;
+}
+
+.tl-drawer-title:hover .tl-drawer-title-caret {
+  color: #4a5ad0;
 }
 
 .tl-drawer-title-caret--open {
