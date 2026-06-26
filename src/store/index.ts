@@ -122,6 +122,8 @@ interface TimelineStore extends TimelineData {
   updateTask: (task: Task) => void;
   deleteTask: (taskId: string) => void;
   toggleTaskComplete: (taskId: string) => void;
+  /** 仅更新任务的 Markdown 详情与时间戳 */
+  updateTaskMarkdown: (taskId: string, markdown: string) => void;
 
   addGroup: (group: TaskGroup) => void;
   updateGroup: (group: TaskGroup) => void;
@@ -213,6 +215,28 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               ...g,
               children: g.children.map((c) =>
                 c.id === taskId ? { ...c, completed: !c.completed } : c
+              ),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        updateTaskMarkdown: (taskId, markdown) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) =>
+              t.id === taskId
+                ? { ...t, markdown, markdownUpdatedAt: now }
+                : t
+            );
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) =>
+                c.id === taskId
+                  ? { ...c, markdown, markdownUpdatedAt: now }
+                  : c
               ),
             }));
             const newData = { ...state, tasks, groups };

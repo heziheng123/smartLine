@@ -13,6 +13,8 @@ export interface Task {
   completed?: boolean;    // 是否已完成（显示删除线样式）
   notePath?: string;      // 关联笔记路径（网页版为链接或备注）
   groupId?: string;       // 所属分组 ID
+  markdown?: string;          // 任务详情 Markdown 文本（抽屉编辑器内容）
+  markdownUpdatedAt?: string; // Markdown 上次保存时间（ISO 字符串）
 }
 
 /** 任务分组 */

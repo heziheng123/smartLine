@@ -22,6 +22,7 @@ interface TimelineViewProps {
   notes: Note[];
   milestones: Milestone[];
   displayYear: number;
+  onTaskClick?: (task: Task) => void;
   onTaskDoubleClick?: (task: Task) => void;
   onTaskContextMenu?: (e: React.MouseEvent, taskId: string) => void;
   onNoteDoubleClick?: (note: Note) => void;
@@ -39,6 +40,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   notes,
   milestones,
   displayYear,
+  onTaskClick,
   onTaskDoubleClick,
   onTaskContextMenu,
   onNoteDoubleClick,
@@ -87,6 +89,14 @@ const TimelineView: React.FC<TimelineViewProps> = ({
       groupRanges: groupRangesByMonth[idx] || [],
     }));
   }, [monthLayouts, noteSegmentsByMonth, milestonesByMonth, groupRangesByMonth]);
+
+  const handleSegmentClick = useCallback(
+    (taskId: string) => {
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) onTaskClick?.(task);
+    },
+    [tasks, onTaskClick],
+  );
 
   const handleSegmentDoubleClick = useCallback(
     (taskId: string) => {
@@ -140,6 +150,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
             key={ml.month}
             monthLayout={ml}
             year={displayYear}
+            onTaskClick={handleSegmentClick}
             onTaskDoubleClick={handleSegmentDoubleClick}
             onTaskContextMenu={onTaskContextMenu}
             onNoteDoubleClick={handleNoteDoubleClick}

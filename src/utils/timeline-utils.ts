@@ -5,7 +5,6 @@
 import dayjs from 'dayjs';
 import type {
   TaskWithLayout,
-  TaskSegment,
   MonthLayout,
   Note,
   NoteSegment,

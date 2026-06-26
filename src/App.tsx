@@ -14,6 +14,7 @@ import NoteDialog from '@/components/NoteDialog';
 import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
+import TaskDrawer from '@/components/TaskDrawer';
 
 import '@/styles/timeline.css';
 
@@ -39,6 +40,15 @@ const App: React.FC = () => {
     milestoneId?: string;
   } | null>(null);
 
+  // 任务详情抽屉状态：只存 id，task 对象从 store 派生（自动跟随远端更新 + 任务删除自动关闭）
+  const [drawerTaskId, setDrawerTaskId] = useState<string | null>(null);
+  const drawerTask = useMemo(
+    () => (drawerTaskId ? store.tasks.find((t) => t.id === drawerTaskId) ?? null : null),
+    [drawerTaskId, store.tasks],
+  );
+  // 元信息折叠区是否展开（双击入口时为 true）
+  const [drawerMetaExpanded, setDrawerMetaExpanded] = useState<boolean>(false);
+
   // 年份显示
   const [displayYear, setDisplayYear] = useState(() => {
     if (store.tasks.length > 0) {
@@ -50,15 +60,46 @@ const App: React.FC = () => {
 
   // ── 任务操作 ──────────────────────────────────────────────
 
+  // 抽屉：打开任务详情（单击入口，元信息折叠）
+  const handleOpenDrawer = useCallback((task: Task) => {
+    setDrawerTaskId(task.id);
+    setDrawerMetaExpanded(false);
+  }, []);
+
+  // 抽屉：打开任务详情并展开元信息（双击 / 右键"编辑"入口）
+  const handleOpenDrawerWithMeta = useCallback((task: Task) => {
+    setDrawerTaskId(task.id);
+    setDrawerMetaExpanded(true);
+  }, []);
+
+  // 抽屉：关闭
+  const handleCloseDrawer = useCallback(() => {
+    setDrawerTaskId(null);
+    setDrawerMetaExpanded(false);
+  }, []);
+
+  // 抽屉：保存 Markdown（drawerTask 已从 store 派生，无需手动同步）
+  const handleSaveTaskMarkdown = useCallback((taskId: string, markdown: string) => {
+    store.updateTaskMarkdown(taskId, markdown);
+  }, [store]);
+
+  // 抽屉：即时更新元信息（drawerTask 已从 store 派生，无需手动同步）
+  const handleUpdateTaskMeta = useCallback((taskId: string, patch: Partial<Task>) => {
+    const existing = store.tasks.find((t) => t.id === taskId);
+    if (!existing) return;
+    store.updateTask({ ...existing, ...patch });
+  }, [store]);
+
+  // 抽屉：删除任务
+  const handleDeleteTaskFromDrawer = useCallback((taskId: string) => {
+    store.deleteTask(taskId);
+    setDrawerTaskId(null);
+    setDrawerMetaExpanded(false);
+  }, [store]);
+
   const handleAddTask = useCallback(() => {
     setEditingTask(undefined);
     setDialogMode('add');
-    setDialogType('task');
-  }, []);
-
-  const handleEditTask = useCallback((task: Task) => {
-    setEditingTask(task);
-    setDialogMode('edit');
     setDialogType('task');
   }, []);
 
@@ -190,7 +231,8 @@ const App: React.FC = () => {
       const task = store.tasks.find((t) => t.id === contextMenu.taskId);
       if (!task) return [];
       return [
-        { label: '编辑', action: () => handleEditTask(task) },
+        { label: '📝 查看详情', action: () => handleOpenDrawer(task) },
+        { label: '✏️ 编辑', action: () => handleOpenDrawerWithMeta(task) },
         { label: task.completed ? '标记未完成' : '标记完成', action: () => store.toggleTaskComplete(task.id) },
         { label: '', action: () => {}, divider: true },
         { label: '删除', action: () => store.deleteTask(task.id), danger: true },
@@ -220,7 +262,7 @@ const App: React.FC = () => {
     }
 
     return [];
-  }, [contextMenu, store, handleEditTask, handleEditNote, handleEditMilestone]);
+  }, [contextMenu, store, handleEditNote, handleEditMilestone, handleOpenDrawer, handleOpenDrawerWithMeta]);
 
   // ── 导入/导出 ──────────────────────────────────────────────
 
@@ -277,20 +319,38 @@ const App: React.FC = () => {
         onOpenSync={handleOpenSync}
         taskCount={store.tasks.length}
       />
-      <TimelineView
-        tasks={store.tasks}
-        groups={store.groups}
-        notes={store.notes}
-        milestones={store.milestones}
-        displayYear={displayYear}
-        onTaskDoubleClick={handleEditTask}
-        onTaskContextMenu={handleTaskContextMenu}
-        onNoteDoubleClick={handleEditNote}
-        onNoteContextMenu={handleNoteContextMenu}
-        onMilestoneDoubleClick={handleEditMilestone}
-        onMilestoneContextMenu={handleMilestoneContextMenu}
-        onGroupDoubleClick={handleEditGroup}
-      />
+
+      {/* 左右分屏容器：左侧甘特图 + 右侧任务详情面板 */}
+      <div className="tl-app-split">
+        <div className="tl-app-main">
+          <TimelineView
+            tasks={store.tasks}
+            groups={store.groups}
+            notes={store.notes}
+            milestones={store.milestones}
+            displayYear={displayYear}
+            onTaskClick={handleOpenDrawer}
+            onTaskDoubleClick={handleOpenDrawerWithMeta}
+            onTaskContextMenu={handleTaskContextMenu}
+            onNoteDoubleClick={handleEditNote}
+            onNoteContextMenu={handleNoteContextMenu}
+            onMilestoneDoubleClick={handleEditMilestone}
+            onMilestoneContextMenu={handleMilestoneContextMenu}
+            onGroupDoubleClick={handleEditGroup}
+          />
+        </div>
+
+        {/* 任务详情面板（仅 open 时渲染，挤压左侧甘特图） */}
+        <TaskDrawer
+          task={drawerTask}
+          open={drawerTask !== null}
+          onClose={handleCloseDrawer}
+          onSave={handleSaveTaskMarkdown}
+          onUpdateTask={handleUpdateTaskMeta}
+          onDeleteTask={handleDeleteTaskFromDrawer}
+          initialMetaExpanded={drawerMetaExpanded}
+        />
+      </div>
 
       {/* 对话框 */}
       {dialogType === 'task' && (
@@ -339,8 +399,6 @@ const App: React.FC = () => {
           onClose={() => setContextMenu(null)}
         />
       )}
-
-      
     </div>
   );
 };
