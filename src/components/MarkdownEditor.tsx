@@ -170,11 +170,25 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     [value, onChange, onModeChange],
   );
 
-  // ── 编辑模式：textarea 失焦时自动保存并回预览 ───────────────
-  const handleTextareaBlur = useCallback(() => {
-    onSave();
-    onModeChange('preview');
-  }, [onSave, onModeChange]);
+  // ── 编辑模式：点击编辑器外部时保存并回预览 ─────────────────
+  // 不用 textarea.onBlur，因为点击工具栏按钮（preventDefault mousedown）仍可能
+  // 因 Tab 键等场景失焦。改用 document mousedown 判断点击位置是否在编辑器根节点内，
+  // 外部点击才触发保存退出。
+  useEffect(() => {
+    if (mode !== 'edit') return;
+    const handler = (e: MouseEvent) => {
+      const root = editorRootRef.current;
+      if (!root) return;
+      // 点击位置在编辑器内部 → 不退出（让工具栏按钮、textarea 正常工作）
+      if (root.contains(e.target as Node)) return;
+      // 点击编辑器外部 → 保存并切回预览
+      onSave();
+      onModeChange('preview');
+    };
+    // 用 mousedown 而非 click：更早响应，避免视觉闪烁
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [mode, onSave, onModeChange]);
 
   // ── 进入编辑模式时自动聚焦 textarea ───────────────────────
   useEffect(() => {
@@ -198,7 +212,6 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            onBlur={handleTextareaBlur}
             placeholder="在此输入 Markdown 内容…"
             spellCheck={false}
           />

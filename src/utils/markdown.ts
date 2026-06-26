@@ -56,7 +56,7 @@ const PURIFY_CONFIG: PurifyConfig = {
     'table', 'thead', 'tbody', 'tr', 'th', 'td',
     'input', 'span', 'div',
   ],
-  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'type', 'disabled', 'checked', 'data-line', 'data-done', 'data-date', 'class'],
+  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'type', 'checked', 'data-line', 'data-done', 'data-date', 'class'],
   ALLOW_DATA_ATTR: true,
 };
 

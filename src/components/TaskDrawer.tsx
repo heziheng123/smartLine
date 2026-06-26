@@ -26,7 +26,7 @@ interface TaskDrawerProps {
   onUpdateTask?: (taskId: string, patch: Partial<Task>) => void;
   /** 删除任务 */
   onDeleteTask?: (taskId: string) => void;
-  /** 初始是否展开元信息折叠区（双击入口时可设为 true） */
+  /** 初始是否展开元信息折叠区（右键"编辑"入口时可设为 true） */
   initialMetaExpanded?: boolean;
 }
 

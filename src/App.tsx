@@ -66,7 +66,7 @@ const App: React.FC = () => {
     setDrawerMetaExpanded(false);
   }, []);
 
-  // 抽屉：打开任务详情并展开元信息（双击 / 右键"编辑"入口）
+  // 抽屉：打开任务详情并展开元信息（右键"编辑"入口）
   const handleOpenDrawerWithMeta = useCallback((task: Task) => {
     setDrawerTaskId(task.id);
     setDrawerMetaExpanded(true);
