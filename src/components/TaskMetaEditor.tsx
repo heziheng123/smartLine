@@ -50,20 +50,35 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
   const [notePath, setNotePath] = useState(task.notePath ?? '');
   // 记录上次任务 id，仅在任务切换时重置本地状态（避免远端更新打断本地输入）
   const lastTaskIdRef = useRef<string | null>(null);
+  // 记录上次同步自远端的失焦保存字段值，用于判断本地是否处于"未编辑"状态
+  const lastRemoteRef = useRef({ name: '', notePath: '' });
 
   // 仅在切换到不同任务时重置本地状态（不因远端字段变化而重置，避免打断输入）
+  // 对 name/notePath 这类失焦保存字段：若本地值仍等于上次远端值（说明用户未编辑），
+  // 则接受远端更新，保证多端同步时输入框不显示过期内容。
   useEffect(() => {
-    if (lastTaskIdRef.current === task.id) return;
-    lastTaskIdRef.current = task.id;
-    setName(task.name);
-    setStart(task.start);
-    setEnd(task.end);
-    setColor(task.color ?? '');
-    setIsMain(!!task.isMain);
-    setCompleted(!!task.completed);
-    setNotePath(task.notePath ?? '');
+    if (lastTaskIdRef.current !== task.id) {
+      lastTaskIdRef.current = task.id;
+      setName(task.name);
+      setStart(task.start);
+      setEnd(task.end);
+      setColor(task.color ?? '');
+      setIsMain(!!task.isMain);
+      setCompleted(!!task.completed);
+      setNotePath(task.notePath ?? '');
+      lastRemoteRef.current = { name: task.name, notePath: task.notePath ?? '' };
+      return;
+    }
+    // 同一任务：远端字段更新时，仅同步本地未编辑的失焦字段
+    if (name === lastRemoteRef.current.name && task.name !== name) {
+      setName(task.name);
+    }
+    if (notePath === lastRemoteRef.current.notePath && (task.notePath ?? '') !== notePath) {
+      setNotePath(task.notePath ?? '');
+    }
+    lastRemoteRef.current = { name: task.name, notePath: task.notePath ?? '' };
     // 依赖列表列全 task 相关字段，但通过 ref 保证仅 task.id 变化时执行重置
-  }, [task.id, task.name, task.start, task.end, task.color, task.isMain, task.completed, task.notePath]);
+  }, [task.id, task.name, task.start, task.end, task.color, task.isMain, task.completed, task.notePath, name, notePath]);
 
   // ── 即时保存：字段失焦或变化时写入 store ───────────────────
   // 名称：失焦时保存（避免输入过程频繁触发）
@@ -77,19 +92,16 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
     }
   };
 
-  // 日期：变化即时保存
+  // 日期：变化即时保存。允许临时保存非法区间（start > end），
+  // 由下方红色提示兜底，避免用户想"先改 start 再改 end"时两头都改不动的死锁。
   const commitStart = (v: string) => {
     setStart(v);
-    if (v && (!end || v <= end)) {
-      onUpdate({ start: v });
-    }
+    if (v) onUpdate({ start: v });
   };
 
   const commitEnd = (v: string) => {
     setEnd(v);
-    if (v && v >= start) {
-      onUpdate({ end: v });
-    }
+    if (v) onUpdate({ end: v });
   };
 
   // 颜色：选中预设色即时保存；自定义输入失焦时保存

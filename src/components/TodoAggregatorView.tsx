@@ -216,9 +216,6 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
                           dayTodos.map((t, idx) => renderDraggableCard(t, idx))
                         )}
                         {provided.placeholder}
-                        <button type="button" className="tl-todo-week-ghost-btn">
-                          + 添加待办
-                        </button>
                       </div>
                     )}
                   </Droppable>
@@ -291,6 +288,12 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
     const gridDays = Array.from({ length: 42 }, (_, i) => gridStart.add(i, 'day'));
     const currentMonth = cursor.month();
 
+    // 点击日期数字 → 跳转到该日的日视图，查看当日完整待办
+    const handleDayClick = (day: dayjs.Dayjs) => {
+      setCursor(day);
+      setMode('day');
+    };
+
     return (
       <div className="tl-todo-month-view">
         <div className="tl-todo-month-header-row">
@@ -310,9 +313,13 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
             return (
               <div
                 key={dateStr}
-                className={`tl-todo-month-cell ${!inMonth ? 'tl-todo-month-cell--other' : ''}`}
+                className={`tl-todo-month-cell ${!inMonth ? 'tl-todo-month-cell--other' : ''} ${dayTodos.length > 0 ? 'tl-todo-month-cell--has-todos' : ''}`}
               >
-                <div className={`tl-todo-month-date ${isToday ? 'tl-todo-month-date--today' : ''}`}>
+                <div
+                  className={`tl-todo-month-date ${isToday ? 'tl-todo-month-date--today' : ''}`}
+                  onClick={() => handleDayClick(day)}
+                  title={dayTodos.length > 0 ? `点击查看 ${dateStr} 的 ${dayTodos.length} 条待办` : `跳转到 ${dateStr}`}
+                >
                   {day.date()}
                 </div>
                 {dayTodos.length > 0 && (
@@ -329,7 +336,13 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
                       </div>
                     ))}
                     {dayTodos.length > 3 && (
-                      <div className="tl-todo-month-more">+{dayTodos.length - 3}</div>
+                      <div
+                        className="tl-todo-month-more"
+                        onClick={() => handleDayClick(day)}
+                        title="点击查看全部"
+                      >
+                        +{dayTodos.length - 3}
+                      </div>
                     )}
                   </div>
                 )}

@@ -90,8 +90,10 @@ function loadData(): TimelineData {
       };
     }
     return getDefaultData();
-  } catch {
-    return { tasks: [], groups: [], notes: [], milestones: [] };
+  } catch (e) {
+    // 本地存储损坏：回退到默认示例数据，避免用户看到空白界面
+    console.warn('[smart-timeline] 本地数据解析失败，已回退到默认数据：', e);
+    return getDefaultData();
   }
 }
 
@@ -251,10 +253,11 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             for (const child of group.children) {
               const idx = newTasks.findIndex((t) => t.id === child.id);
               if (idx >= 0) {
+                // 已存在任务：仅打上 groupId 标记（保留 store 中完整的字段，避免被 child 快照覆盖）
                 newTasks[idx] = { ...newTasks[idx], groupId: group.id };
-              } else {
-                newTasks.push({ ...child, groupId: group.id });
               }
+              // 不存在的 child 直接跳过：分组仅关联已有任务，
+              // 避免 push 字段不完整的 task 对象进入 tasks 数组
             }
             const newData = { ...state, tasks: newTasks, groups: [...state.groups, group] };
             saveData(newData);
