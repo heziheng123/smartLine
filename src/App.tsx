@@ -17,7 +17,7 @@ import ContextMenu from '@/components/ContextMenu';
 import TaskDrawer from '@/components/TaskDrawer';
 import TodoAggregatorView from '@/components/TodoAggregatorView';
 import { useTodos } from '@/hooks/useTodos';
-import { changeTodoDate } from '@/utils/markdown';
+import { changeTodoDate, toggleTodoLine } from '@/utils/markdown';
 
 import '@/styles/timeline.css';
 
@@ -128,6 +128,24 @@ const App: React.FC = () => {
 
       const newMarkdown = changeTodoDate(task.markdown ?? '', line, newDate);
       // 使用 updateTaskMarkdown 而非 updateTask，避免覆盖远端已更新的其他字段
+      store.updateTaskMarkdown(parentTaskId, newMarkdown);
+    },
+    [store],
+  );
+
+  // 待办视图：勾选/取消勾选
+  const handleTodoToggle = useCallback(
+    (todoId: string) => {
+      const lastDash = todoId.lastIndexOf('-');
+      if (lastDash === -1) return;
+      const parentTaskId = todoId.slice(0, lastDash);
+      const line = parseInt(todoId.slice(lastDash + 1), 10);
+      if (isNaN(line)) return;
+
+      const task = store.tasks.find((t) => t.id === parentTaskId);
+      if (!task) return;
+
+      const newMarkdown = toggleTodoLine(task.markdown ?? '', line);
       store.updateTaskMarkdown(parentTaskId, newMarkdown);
     },
     [store],
@@ -381,6 +399,7 @@ const App: React.FC = () => {
               todos={allTodos}
               onTaskClick={handleTodoClick}
               onTodoDateChange={handleTodoDateChange}
+              onTodoToggle={handleTodoToggle}
             />
           )}
         </div>

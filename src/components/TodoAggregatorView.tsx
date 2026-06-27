@@ -15,6 +15,8 @@ interface TodoAggregatorViewProps {
   onTaskClick: (parentTaskId: string) => void;
   /** 拖拽改期回调：todoId → 将该待办的日期改为 newDate（undefined 表示移除日期） */
   onTodoDateChange?: (todoId: string, newDate: string | undefined) => void;
+  /** 勾选/取消勾选待办回调 */
+  onTodoToggle?: (todoId: string) => void;
 }
 
 const WEEKDAY_FULL = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -37,6 +39,7 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
   todos,
   onTaskClick,
   onTodoDateChange,
+  onTodoToggle,
 }) => {
   const [mode, setMode] = useState<TodoViewMode>('week');
   const [cursor, setCursor] = useState(() => dayjs());
@@ -146,7 +149,7 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
                     checked={todo.checked}
                     className="tl-todo-card-check"
                     onClick={(e) => e.stopPropagation()}
-                    readOnly
+                    onChange={() => onTodoToggle?.(todo.id)}
                   />
                   <span className="tl-todo-card-text">{todo.text}</span>
                 </div>
@@ -156,7 +159,7 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
         </Draggable>
       );
     },
-    [onTaskClick, todayStr],
+    [onTaskClick, onTodoToggle, todayStr],
   );
 
   const renderEmpty = (hint: string) => (
@@ -368,7 +371,7 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
                         checked={t.checked}
                         className="tl-todo-card-check"
                         onClick={(e) => e.stopPropagation()}
-                        readOnly
+                        onChange={() => onTodoToggle?.(t.id)}
                       />
                       <span className="tl-todo-card-text">{t.text}</span>
                     </div>
