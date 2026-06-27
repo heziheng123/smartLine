@@ -2,6 +2,9 @@
    Smart Timeline - 完整样式（莫兰迪色系 + 多实体支持）
    ============================================================ */
 
+/* 仅启用 Tailwind 工具类（不含 base reset，避免影响既有组件） */
+@tailwind utilities;
+
 /* ── App 布局 ────────────────────────────────────────────── */
 .tl-app {
   display: flex;
@@ -107,6 +110,773 @@
   color: #9CA3AF;
   font-weight: 500;
   margin-left: 4px;
+}
+
+/* ── 视图切换分段控件 ────────────────────────────────────── */
+.tl-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: #F3F4F6;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+
+.tl-segmented-btn {
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  white-space: nowrap;
+}
+
+.tl-segmented-btn:hover {
+  color: #374151;
+}
+
+.tl-segmented-btn--active {
+  background: #fff;
+  color: #5b6af0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* ============================================================
+   待办汇总视图样式（莫兰迪色系，与主应用风格统一）
+   ============================================================ */
+
+/* ── 容器 ────────────────────────────────────────────────── */
+.tl-todo-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: #F5F5F7;
+}
+
+/* ── 顶部工具栏 ──────────────────────────────────────────── */
+.tl-todo-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E5E7EB;
+  flex-shrink: 0;
+}
+
+.tl-todo-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tl-todo-toolbar-right {
+  display: flex;
+  align-items: center;
+}
+
+.tl-todo-nav-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  color: #9CA3AF;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  line-height: 1;
+  padding: 0;
+}
+
+.tl-todo-nav-btn:hover {
+  background: #F9FAFB;
+  color: #6B7280;
+  border-color: #D1D5DB;
+}
+
+.tl-todo-nav-btn--today {
+  width: auto;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.tl-todo-range {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-left: 8px;
+  letter-spacing: -0.2px;
+}
+
+/* ── 模式切换 ────────────────────────────────────────────── */
+.tl-todo-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: #F3F4F6;
+  border-radius: 8px;
+}
+
+.tl-todo-mode-btn {
+  padding: 5px 14px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  white-space: nowrap;
+}
+
+.tl-todo-mode-btn:hover {
+  color: #374151;
+}
+
+.tl-todo-mode-btn--active {
+  background: #fff;
+  color: #5b6af0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* ── 内容区 ──────────────────────────────────────────────── */
+.tl-todo-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 待办卡片（核心） ────────────────────────────────────── */
+.tl-todo-card {
+  display: flex;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+
+.tl-todo-card:hover {
+  border-color: #D1D5DB;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.tl-todo-card--wide {
+  padding-right: 12px;
+}
+
+.tl-todo-card--done {
+  opacity: 0.6;
+}
+
+/* 逾期卡片：红色边框 + 微红背景 */
+.tl-todo-card--overdue {
+  border-color: #FCA5A5;
+  background: #FEF2F2;
+}
+
+.tl-todo-card--overdue:hover {
+  border-color: #F87171;
+  box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.15), 0 2px 4px -2px rgba(239, 68, 68, 0.1);
+}
+
+/* 逾期标识 */
+.tl-todo-card-overdue-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #DC2626;
+  background: #FEE2E2;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+
+/* 今日卡片：左侧蓝色高亮条 */
+.tl-todo-card--today .tl-todo-card-accent {
+  background: #3B82F6 !important;
+  width: 4px;
+}
+
+.tl-todo-card--today:hover .tl-todo-card-accent {
+  width: 5px;
+}
+
+/* 拖拽中的卡片 */
+.tl-todo-card--dragging {
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  transform: rotate(3deg) scale(1.03);
+  z-index: 100;
+}
+
+.tl-todo-card-accent {
+  width: 3px;
+  flex-shrink: 0;
+  background: var(--task-color, #E5E7EB);
+  transition: width 0.15s ease;
+}
+
+.tl-todo-card:hover .tl-todo-card-accent {
+  width: 5px;
+}
+
+.tl-todo-card-body {
+  flex: 1;
+  padding: 12px;
+  min-width: 0;
+}
+
+.tl-todo-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.tl-todo-card-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--task-color, #D1D5DB);
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.tl-todo-card-parent {
+  font-size: 12px;
+  color: #9CA3AF;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-todo-card-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tl-todo-card-check {
+  width: 16px;
+  height: 16px;
+  accent-color: #5b6af0;
+  flex-shrink: 0;
+  margin-top: 1px;
+  cursor: pointer;
+}
+
+.tl-todo-card-text {
+  font-size: 14px;
+  color: #1f2937;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.tl-todo-card--done .tl-todo-card-text {
+  text-decoration: line-through;
+  color: #9CA3AF;
+}
+
+/* ── 空状态 ──────────────────────────────────────────────── */
+.tl-todo-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #9CA3AF;
+}
+
+.tl-todo-empty-icon {
+  font-size: 24px;
+  opacity: 0.3;
+  margin-bottom: 8px;
+}
+
+.tl-todo-empty-text {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ── 无数据全局状态 ──────────────────────────────────────── */
+.tl-todo-no-data {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 64px 24px;
+  background: #F5F5F7;
+}
+
+.tl-todo-no-data-icon {
+  font-size: 40px;
+  color: #D1D5DB;
+  opacity: 0.4;
+  margin-bottom: 12px;
+}
+
+.tl-todo-no-data-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #6B7280;
+  margin-bottom: 4px;
+}
+
+.tl-todo-no-data-hint {
+  font-size: 12px;
+  color: #9CA3AF;
+  text-align: center;
+}
+
+/* ── 周视图（看板模式） ──────────────────────────────────── */
+.tl-todo-week-wrapper {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tl-todo-week-view {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: #F5F5F7;
+}
+
+.tl-todo-week-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #F8FAFC;
+  border-right: 1px solid #E5E7EB;
+  overflow: hidden;
+  position: relative;
+}
+
+.tl-todo-week-col:last-child {
+  border-right: none;
+}
+
+.tl-todo-week-col--weekend {
+  background: #FFFBEB;
+}
+
+.tl-todo-week-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  flex-shrink: 0;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.tl-todo-week-header--today {
+  background: rgba(91, 106, 240, 0.06);
+}
+
+.tl-todo-week-weekday {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9CA3AF;
+  letter-spacing: 0.3px;
+}
+
+.tl-todo-week-header--weekend .tl-todo-week-weekday {
+  color: #D97706;
+}
+
+.tl-todo-week-date {
+  font-size: 15px;
+  font-weight: 700;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-todo-week-date--today {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  background: #5b6af0;
+  color: #fff;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.tl-todo-week-count {
+  font-size: 10px;
+  color: #9CA3AF;
+  background: #E5E7EB;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.tl-todo-week-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 8px 12px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: background-color 0.2s ease;
+}
+
+/* 拖拽进入时的列高亮 */
+.tl-todo-week-body--drag-over {
+  background: rgba(91, 106, 240, 0.06);
+}
+
+.tl-todo-week-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 60px;
+}
+
+.tl-todo-week-ghost-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 0;
+  border: 1px dashed #D1D5DB;
+  border-radius: 6px;
+  background: transparent;
+  color: #9CA3AF;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.tl-todo-week-col:hover .tl-todo-week-ghost-btn {
+  opacity: 1;
+}
+
+.tl-todo-week-ghost-btn:hover {
+  border-color: #9CA3AF;
+  color: #6B7280;
+}
+
+/* ── 待规划任务箱（Backlog 侧边栏） ─────────────────────── */
+.tl-todo-backlog {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  border-left: 1px solid #E5E7EB;
+  transition: width 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  width: 40px;
+  overflow: hidden;
+}
+
+.tl-todo-backlog--open {
+  width: 280px;
+}
+
+/* 折叠态：竖排标签 */
+.tl-todo-backlog-collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 14px 0 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.tl-todo-backlog-collapsed:hover {
+  background: #F9FAFB;
+}
+
+.tl-todo-backlog-collapsed-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  letter-spacing: 1px;
+  user-select: none;
+}
+
+.tl-todo-backlog-collapsed-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #5b6af0;
+  color: #fff;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tl-todo-backlog-collapsed-arrow {
+  margin-top: auto;
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #9CA3AF;
+  line-height: 1;
+}
+
+/* 展开态：头部 + 列表 */
+.tl-todo-backlog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #F3F4F6;
+  flex-shrink: 0;
+}
+
+.tl-todo-backlog-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tl-todo-backlog-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  letter-spacing: 0.2px;
+}
+
+.tl-todo-backlog-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #EEF2FF;
+  color: #4338CA;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tl-todo-backlog-toggle {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #9CA3AF;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tl-todo-backlog-toggle:hover {
+  background: #F3F4F6;
+  color: #6B7280;
+}
+
+.tl-todo-backlog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  transition: background-color 0.2s ease;
+}
+
+/* 拖拽进入待规划箱时高亮 */
+.tl-todo-backlog-body--drag-over {
+  background: rgba(91, 106, 240, 0.04);
+}
+
+.tl-todo-backlog-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 12px;
+  font-size: 12px;
+  color: #9CA3AF;
+  text-align: center;
+}
+
+/* ── 月视图（7x6 网格） ──────────────────────────────────── */
+.tl-todo-month-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
+
+.tl-todo-month-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  margin-bottom: 1px;
+}
+
+.tl-todo-month-weekday {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  padding: 8px 4px;
+  background: #FFFFFF;
+}
+
+.tl-todo-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-template-rows: repeat(6, 1fr);
+  gap: 1px;
+  background: #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 300px;
+}
+
+.tl-todo-month-cell {
+  background: #FFFFFF;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tl-todo-month-cell--other {
+  background: #F9FAFB;
+}
+
+.tl-todo-month-date {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-todo-month-date--today {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: #5b6af0;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 11px;
+}
+
+.tl-todo-month-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tl-todo-month-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.tl-todo-month-item:hover {
+  background: #F3F4F6;
+}
+
+.tl-todo-month-item--done {
+  opacity: 0.5;
+}
+
+.tl-todo-month-item--done .tl-todo-month-text {
+  text-decoration: line-through;
+  color: #9CA3AF;
+}
+
+.tl-todo-month-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--task-color, #D1D5DB);
+  flex-shrink: 0;
+}
+
+.tl-todo-month-text {
+  font-size: 10px;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-todo-month-more {
+  font-size: 9px;
+  color: #9CA3AF;
+  padding-left: 8px;
+}
+
+/* ── 日视图（居中列表） ──────────────────────────────────── */
+.tl-todo-day-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.tl-todo-day-list {
+  flex: 1;
+  max-width: 500px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .tl-toolbar-year {
@@ -331,7 +1101,7 @@
   transition: all 0.15s ease;
   overflow: hidden;
   white-space: nowrap;
-  border: 1px solid;
+  border: none;
   border-radius: 6px;
   font-weight: 600;
 }
@@ -434,8 +1204,6 @@
 
 .tl-group-label {
   position: absolute;
-  top: -9px;
-  left: 8px;
   font-size: 11px;
   font-weight: 700;
   color: #fff;
@@ -446,8 +1214,9 @@
   white-space: nowrap;
   pointer-events: auto;
   cursor: pointer;
-  z-index: 4;
+  z-index: 5;
   letter-spacing: 0.3px;
+  margin-left: 8px;
 }
 
 /* ── 便签 pin 类型（小圆点） ────────────────────────────── */
@@ -1931,4 +2700,297 @@
     padding: 6px 12px;
     font-size: 13px;
   }
+}
+
+/* ── 交互式 TodoList ──────────────────────────────────── */
+
+.tl-todo-list {
+  margin: 4px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tl-todo-list-empty {
+  padding: 10px 0 4px;
+  font-size: 12px;
+  color: #9CA3AF;
+  font-style: italic;
+}
+
+.tl-todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 5px;
+  transition: background 0.1s;
+  position: relative;
+}
+
+.tl-todo-item:hover {
+  background: #F9FAFB;
+}
+
+.tl-todo-item--done .tl-todo-item-text {
+  color: #9CA3AF;
+  text-decoration: line-through;
+}
+
+.tl-todo-item-check {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #5b6af0;
+}
+
+.tl-todo-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tl-todo-item-text {
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: text;
+  word-break: break-word;
+  padding: 1px 2px;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+
+.tl-todo-item-text:hover {
+  background: #F3F4F6;
+}
+
+.tl-todo-item-edit {
+  flex: 1;
+  min-width: 100px;
+  padding: 2px 6px;
+  border: 1px solid #5b6af0;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1f2937;
+  background: #fff;
+  outline: none;
+  font-family: inherit;
+  box-shadow: 0 0 0 2px rgba(91, 106, 240, 0.12);
+}
+
+.tl-todo-item-calendar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.tl-todo-item:hover .tl-todo-item-calendar {
+  opacity: 1;
+}
+
+.tl-todo-item-calendar:hover {
+  background: #EEF2FF;
+  color: #5b6af0;
+}
+
+/* 添加子任务行 */
+.tl-todo-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  margin-top: 2px;
+}
+
+.tl-todo-add-plus {
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #9CA3AF;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.tl-todo-add-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1f2937;
+  padding: 2px 0;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.tl-todo-add-input::placeholder {
+  color: #9CA3AF;
+}
+
+/* ── DatePicker ──────────────────────────────────────── */
+
+.tl-datepicker-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 499;
+  background: transparent;
+}
+
+.tl-datepicker {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  padding: 10px;
+  width: 220px;
+  user-select: none;
+}
+
+.tl-datepicker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.tl-datepicker-nav {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  font-size: 18px;
+  color: #6B7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tl-datepicker-nav:hover {
+  background: #F3F4F6;
+  color: #1f2937;
+}
+
+.tl-datepicker-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.tl-datepicker-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 2px;
+}
+
+.tl-datepicker-weekday {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9CA3AF;
+  padding: 3px 0;
+}
+
+.tl-datepicker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+
+.tl-datepicker-day {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #1f2937;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+  margin: 0 auto;
+}
+
+.tl-datepicker-day:hover {
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+.tl-datepicker-day--other {
+  color: #D1D5DB;
+}
+
+.tl-datepicker-day--today {
+  font-weight: 700;
+  color: #5b6af0;
+}
+
+.tl-datepicker-day--selected {
+  background: #5b6af0 !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.tl-datepicker-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #F3F4F6;
+}
+
+.tl-datepicker-clear,
+.tl-datepicker-today {
+  padding: 4px 10px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #6B7280;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.tl-datepicker-clear:hover {
+  background: #FEE2E2;
+  border-color: #FECACA;
+  color: #B91C1C;
+}
+
+.tl-datepicker-today {
+  background: #EEF2FF;
+  border-color: #C7D2FE;
+  color: #4338CA;
+}
+
+.tl-datepicker-today:hover {
+  background: #E0E7FF;
 }

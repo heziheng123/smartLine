@@ -108,12 +108,14 @@ const MonthRow: React.FC<{
             />
           )}
 
-          {/* 分组范围（虚线边框） */}
+          {/* 分组范围（虚线边框，置于任务条下方） */}
           {groupRanges.map((gr) => {
             const leftPct = ((gr.startDay - 1) / daysInMonth) * 100;
             const widthPct = ((gr.endDay - gr.startDay + 1) / daysInMonth) * 100;
-            const topPx = gr.rowStart * ROW_HEIGHT;
-            const heightPx = (gr.rowEnd - gr.rowStart + 1) * ROW_HEIGHT;
+            // 虚线框上下各内缩 3px，相邻分组框之间留出 6px 视觉间隔，避免边框重叠
+            const GAP = 3;
+            const topPx = gr.rowStart * ROW_HEIGHT + GAP;
+            const heightPx = (gr.rowEnd - gr.rowStart + 1) * ROW_HEIGHT - GAP * 2;
             const borderColor = getBorderColor(gr.color);
             return (
               <div
@@ -128,15 +130,7 @@ const MonthRow: React.FC<{
                   borderColor,
                 }}
                 title={gr.groupName}
-              >
-                <span
-                  className="tl-group-label"
-                  style={{ backgroundColor: gr.color, color: borderColor }}
-                  onDoubleClick={() => onGroupDoubleClick?.(gr.groupId)}
-                >
-                  {gr.groupName}
-                </span>
-              </div>
+              />
             );
           })}
 
@@ -202,6 +196,30 @@ const MonthRow: React.FC<{
               onContextMenu={(e) => onTaskContextMenu?.(e, seg.taskId)}
             />
           ))}
+
+          {/* 分组标签（独立渲染在任务条之上，避免被任务条遮挡） */}
+          {groupRanges.map((gr) => {
+            const leftPct = ((gr.startDay - 1) / daysInMonth) * 100;
+            const GAP = 3;
+            const topPx = gr.rowStart * ROW_HEIGHT + GAP;
+            const borderColor = getBorderColor(gr.color);
+            return (
+              <span
+                key={`grouplabel-${gr.groupId}`}
+                className="tl-group-label"
+                style={{
+                  left: `${leftPct}%`,
+                  top: topPx - 10,
+                  backgroundColor: gr.color,
+                  color: borderColor,
+                }}
+                onDoubleClick={() => onGroupDoubleClick?.(gr.groupId)}
+                title={gr.groupName}
+              >
+                {gr.groupName}
+              </span>
+            );
+          })}
         </div>
       </div>
     </div>

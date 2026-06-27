@@ -1,6 +1,6 @@
 // ============================================================
 // Smart Timeline - Markdown 编辑器（无缝阅读/编辑）
-// 无传统工具栏：预览态点击进入编辑，编辑失焦自动保存并回预览
+// 无传统工具栏：预览态点击进入编辑，待办清单区域使用 React 交互组件
 // ============================================================
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -8,13 +8,18 @@ import dayjs from 'dayjs';
 import {
   renderMarkdown,
   toggleTodoLine,
+  splitMarkdownAtTodoSection,
+  findTodoSection,
 } from '@/utils/markdown';
+import TodoList from './TodoList';
 
 export type EditorMode = 'edit' | 'preview' | 'split';
 
 interface MarkdownEditorProps {
   value: string;
   onChange: (next: string) => void;
+  /** TodoList 交互专用回调：更新内容并即时保存到 store */
+  onTodoChange?: (next: string) => void;
   /** 编辑模式：edit / preview / split（外部受控，用于持久化偏好） */
   mode: EditorMode;
   onModeChange: (mode: EditorMode) => void;
@@ -37,6 +42,7 @@ interface ToolbarBtn {
 const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   value,
   onChange,
+  onTodoChange,
   mode,
   onModeChange,
   onSave,
@@ -46,16 +52,10 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const editorRootRef = useRef<HTMLDivElement>(null);
-  // 防抖预览
-  const [previewHtml, setPreviewHtml] = useState<string>('');
 
-  // ── 预览渲染（防抖 150ms）──────────────────────────────────
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setPreviewHtml(renderMarkdown(value));
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [value]);
+  // ── 预览渲染（直接计算，TodoList 交互需要即时反馈）─────────
+  const split = useMemo(() => splitMarkdownAtTodoSection(value), [value]);
+  const hasTodoSection = useMemo(() => findTodoSection(value).headingLine !== -1, [value]);
 
   // ── 选区辅助：包裹/替换选中文本 ────────────────────────────
   const wrapSelection = useCallback(
@@ -148,26 +148,38 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     [onSave, onModeChange],
   );
 
-  // ── 预览区 checkbox 点击：写回 textarea ───────────────────
+  // ── 预览区点击处理 ────────────────────────────────────────
   const handlePreviewClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
+
+      if (target.closest('.tl-todo-list')) {
+        return;
+      }
+      if (target.closest('.tl-datepicker')) {
+        return;
+      }
+
       if (target.classList?.contains('tl-md-todo-check')) {
-        // 阻止 input 自身切换 checked 状态，避免视觉闪烁
-        // 实际状态由 toggleTodoLine 重写 textarea 后重新渲染控制
         e.preventDefault();
         const lineAttr = target.getAttribute('data-line');
         if (lineAttr == null) return;
         const line = parseInt(lineAttr, 10);
         if (Number.isNaN(line)) return;
         const next = toggleTodoLine(value, line);
-        onChange(next);
+        // 使用 onTodoChange 即时保存，避免 onChange+onSave 因 dirty 闭包过期而不保存
+        if (onTodoChange) {
+          onTodoChange(next);
+        } else {
+          onChange(next);
+          onSave();
+        }
         return;
       }
-      // 点击预览区非 checkbox 的任意位置 → 进入编辑模式
+
       onModeChange('edit');
     },
-    [value, onChange, onModeChange],
+    [value, onChange, onTodoChange, onModeChange, onSave],
   );
 
   // ── 编辑模式：点击编辑器外部时保存并回预览 ─────────────────
@@ -219,10 +231,32 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           <div
             ref={previewRef}
             className="tl-md-preview"
-            // 预览 HTML 已经过 DOMPurify 净化
-            dangerouslySetInnerHTML={{ __html: previewHtml }}
             onClick={handlePreviewClick}
-          />
+          >
+            {split.beforeHtml && (
+              <div dangerouslySetInnerHTML={{ __html: split.beforeHtml }} />
+            )}
+            {hasTodoSection && (
+              <>
+                <h2>待办清单</h2>
+                <TodoList
+                  todos={split.todos}
+                  value={value}
+                  onChange={onTodoChange ?? onChange}
+                />
+              </>
+            )}
+            {!hasTodoSection && (
+              <TodoList
+                todos={[]}
+                value={value}
+                onChange={onTodoChange ?? onChange}
+              />
+            )}
+            {split.afterHtml && (
+              <div dangerouslySetInnerHTML={{ __html: split.afterHtml }} />
+            )}
+          </div>
         )}
       </div>
 

@@ -23,7 +23,6 @@ const SegmentBar: React.FC<{
   const radiusR = isEnd ? 6 : 0;
 
   const textColor = isMain ? MAIN_TASK_TEXT : getBorderColor(color);
-  const borderColor = textColor;
   const arrowColor = isMain ? 'rgba(153, 27, 27, 0.5)' : `${textColor}80`;
 
   return (
@@ -37,7 +36,6 @@ const SegmentBar: React.FC<{
         background: color,
         borderRadius: `${radiusL}px ${radiusR}px ${radiusR}px ${radiusL}px`,
         color: textColor,
-        borderColor,
         cursor: 'pointer',
       }}
       title={`${taskName}\n${segment.month + 1}月${startDay}日 ~ ${endDay}日${isMain ? '\n[主线任务]' : ''}${completed ? '\n[已完成]' : ''}\n单击查看详情`}

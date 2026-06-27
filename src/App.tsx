@@ -15,10 +15,14 @@ import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
 import TaskDrawer from '@/components/TaskDrawer';
+import TodoAggregatorView from '@/components/TodoAggregatorView';
+import { useTodos } from '@/hooks/useTodos';
+import { changeTodoDate } from '@/utils/markdown';
 
 import '@/styles/timeline.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
+type AppView = 'timeline' | 'todo-view';
 
 const App: React.FC = () => {
   const store = useTimelineStore();
@@ -48,6 +52,12 @@ const App: React.FC = () => {
   );
   // 元信息折叠区是否展开（双击入口时为 true）
   const [drawerMetaExpanded, setDrawerMetaExpanded] = useState<boolean>(false);
+
+  // 视图切换：timeline（甘特图） / todo-view（待办汇总）
+  const [currentView, setCurrentView] = useState<AppView>('timeline');
+
+  // 从所有任务的 Markdown 中提取扁平化的待办列表
+  const allTodos = useTodos(store.tasks);
 
   // 年份显示
   const [displayYear, setDisplayYear] = useState(() => {
@@ -96,6 +106,32 @@ const App: React.FC = () => {
     setDrawerTaskId(null);
     setDrawerMetaExpanded(false);
   }, [store]);
+
+  // 待办视图：点击卡片定位到所属大任务（打开右侧详情面板）
+  const handleTodoClick = useCallback((parentTaskId: string) => {
+    const task = store.tasks.find((t) => t.id === parentTaskId);
+    if (task) handleOpenDrawer(task);
+  }, [store, handleOpenDrawer]);
+
+  // 待办视图：拖拽改期 / 从待规划箱排期
+  // todoId 格式为 `${parentTaskId}-${line}`
+  const handleTodoDateChange = useCallback(
+    (todoId: string, newDate: string | undefined) => {
+      const lastDash = todoId.lastIndexOf('-');
+      if (lastDash === -1) return;
+      const parentTaskId = todoId.slice(0, lastDash);
+      const line = parseInt(todoId.slice(lastDash + 1), 10);
+      if (isNaN(line)) return;
+
+      const task = store.tasks.find((t) => t.id === parentTaskId);
+      if (!task) return;
+
+      const newMarkdown = changeTodoDate(task.markdown ?? '', line, newDate);
+      // 使用 updateTaskMarkdown 而非 updateTask，避免覆盖远端已更新的其他字段
+      store.updateTaskMarkdown(parentTaskId, newMarkdown);
+    },
+    [store],
+  );
 
   const handleAddTask = useCallback(() => {
     setEditingTask(undefined);
@@ -318,25 +354,35 @@ const App: React.FC = () => {
         onExport={handleExport}
         onOpenSync={handleOpenSync}
         taskCount={store.tasks.length}
+        currentView={currentView}
+        onViewChange={setCurrentView}
       />
 
-      {/* 左右分屏容器：左侧甘特图 + 右侧任务详情面板 */}
+      {/* 左右分屏容器：左侧内容视图 + 右侧任务详情面板 */}
       <div className="tl-app-split">
         <div className="tl-app-main">
-          <TimelineView
-            tasks={store.tasks}
-            groups={store.groups}
-            notes={store.notes}
-            milestones={store.milestones}
-            displayYear={displayYear}
-            onTaskClick={handleOpenDrawer}
-            onTaskContextMenu={handleTaskContextMenu}
-            onNoteDoubleClick={handleEditNote}
-            onNoteContextMenu={handleNoteContextMenu}
-            onMilestoneDoubleClick={handleEditMilestone}
-            onMilestoneContextMenu={handleMilestoneContextMenu}
-            onGroupDoubleClick={handleEditGroup}
-          />
+          {currentView === 'timeline' ? (
+            <TimelineView
+              tasks={store.tasks}
+              groups={store.groups}
+              notes={store.notes}
+              milestones={store.milestones}
+              displayYear={displayYear}
+              onTaskClick={handleOpenDrawer}
+              onTaskContextMenu={handleTaskContextMenu}
+              onNoteDoubleClick={handleEditNote}
+              onNoteContextMenu={handleNoteContextMenu}
+              onMilestoneDoubleClick={handleEditMilestone}
+              onMilestoneContextMenu={handleMilestoneContextMenu}
+              onGroupDoubleClick={handleEditGroup}
+            />
+          ) : (
+            <TodoAggregatorView
+              todos={allTodos}
+              onTaskClick={handleTodoClick}
+              onTodoDateChange={handleTodoDateChange}
+            />
+          )}
         </div>
 
         {/* 任务详情面板（仅 open 时渲染，挤压左侧甘特图） */}

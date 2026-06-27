@@ -141,3 +141,24 @@ export interface ContextMenuItem {
   danger?: boolean;
   divider?: boolean;
 }
+
+/** 聚合后的待办项（从各任务的 Markdown 中提取，扁平化） */
+export interface AggregatedTodo {
+  /** 复合 ID：`${parentTaskId}-${line}`，保证全局唯一 */
+  id: string;
+  /** 待办内容文本 */
+  text: string;
+  /** 设定的日期 YYYY-MM-DD（未排期时为 undefined） */
+  date?: string;
+  /** 是否已完成 */
+  checked: boolean;
+  /** 所属大任务 ID */
+  parentTaskId: string;
+  /** 所属大任务标题（如"备战考研"） */
+  parentTaskTitle: string;
+  /** 所属大任务颜色（用于卡片左边缘高亮） */
+  parentTaskColor?: string;
+}
+
+/** 待办汇总视图的模式 */
+export type TodoViewMode = 'day' | 'week' | 'month';

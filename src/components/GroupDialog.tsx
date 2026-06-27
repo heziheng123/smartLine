@@ -176,7 +176,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                     />
                     <span
                       className="tl-dialog-task-dot"
-                      style={{ backgroundColor: task.isMain ? '#FEE2E2' : (task.color || '#E0F2FE'), border: '1px solid rgba(0,0,0,0.1)' }}
+                      style={{ backgroundColor: task.isMain ? '#FEE2E2' : (task.color || '#E0F2FE') }}
                     />
                     <span className="tl-dialog-task-name">{task.name}</span>
                     <span className="tl-dialog-task-date">{task.start} ~ {task.end}</span>

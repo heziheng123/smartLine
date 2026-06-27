@@ -11,6 +11,7 @@
     "check": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
     "@liveblocks/client": "^3.20.0",
     "@liveblocks/react": "^3.20.0",
     "@liveblocks/zustand": "^3.20.0",

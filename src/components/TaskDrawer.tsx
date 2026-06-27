@@ -134,6 +134,17 @@ const TaskDrawer: React.FC<TaskDrawerProps> = ({
     window.setTimeout(() => setSaveHint(''), 3000);
   }, [task, content, dirty, onSave]);
 
+  // ── TodoList 交互即时保存（勾选/改日期/加任务等） ────────
+  // 与手动编辑不同，这些操作是"一次性"的，应立即持久化到 store，
+  // 避免 dirty 状态导致关闭时弹确认框，同时让日/周/月视图能即时读到最新数据
+  const handleTodoChange = useCallback((next: string) => {
+    if (!task) return;
+    setContent(next);
+    onSave(task.id, next);
+    setSavedContent(next);
+    lastSyncedMarkdownRef.current = next;
+  }, [task, onSave]);
+
   // ── 关闭前检查 ──────────────────────────────────────────
   const handleClose = useCallback(() => {
     if (dirty && !confirm('有未保存的修改，确定关闭？')) return;
@@ -251,6 +262,7 @@ const TaskDrawer: React.FC<TaskDrawerProps> = ({
         <MarkdownEditor
           value={content}
           onChange={setContent}
+          onTodoChange={handleTodoChange}
           mode={mode}
           onModeChange={handleModeChange}
           onSave={handleSave}

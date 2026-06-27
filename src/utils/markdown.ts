@@ -203,6 +203,24 @@ export function appendTodo(markdown: string, text: string, date?: string): strin
 }
 
 /**
+ * 修改指定行号待办的日期。返回新的 Markdown。
+ * 如果 newDate 为 undefined，则移除日期标记（变成未排期）。
+ */
+export function changeTodoDate(markdown: string, line: number, newDate?: string): string {
+  if (!markdown) return markdown;
+  const lines = markdown.split(/\r?\n/);
+  if (line < 0 || line >= lines.length) return markdown;
+
+  const m = lines[line].match(TODO_REGEX);
+  if (!m) return markdown;
+
+  const [, prefix, doneMark, text, oldDate] = m;
+  const dateTag = newDate ? ` @${newDate}` : '';
+  lines[line] = `${prefix}[${doneMark}] ${text}${dateTag}`;
+  return lines.join('\n');
+}
+
+/**
  * 判断日期是否已过期（早于今天）。
  */
 export function isOverdue(dateStr?: string): boolean {
@@ -220,4 +238,164 @@ export function formatTimestamp(iso?: string): string {
   const d = dayjs(iso);
   if (!d.isValid()) return '';
   return d.format('YYYY-MM-DD HH:mm');
+}
+
+// ── 6. 待办文本编辑 ────────────────────────────────────────
+
+/**
+ * 修改指定行号待办的文本内容。返回新的 Markdown。
+ */
+export function updateTodoText(markdown: string, line: number, newText: string): string {
+  if (!markdown) return markdown;
+  const lines = markdown.split(/\r?\n/);
+  if (line < 0 || line >= lines.length) return markdown;
+
+  const m = lines[line].match(TODO_REGEX);
+  if (!m) return markdown;
+
+  const [, prefix, doneMark, , date] = m;
+  const trimmed = newText.trim();
+  if (!trimmed) return markdown;
+  const dateTag = date ? ` @${date}` : '';
+  lines[line] = `${prefix}[${doneMark}] ${trimmed}${dateTag}`;
+  return lines.join('\n');
+}
+
+/**
+ * 删除指定行号的待办。返回新的 Markdown。
+ */
+export function deleteTodoLine(markdown: string, line: number): string {
+  if (!markdown) return markdown;
+  const lines = markdown.split(/\r?\n/);
+  if (line < 0 || line >= lines.length) return markdown;
+
+  const m = lines[line].match(TODO_REGEX);
+  if (!m) return markdown;
+
+  lines.splice(line, 1);
+  return lines.join('\n');
+}
+
+// ── 7. 智能定位待办清单区域 ─────────────────────────────────
+
+/**
+ * 查找"## 待办清单"（或同义标题）的位置，返回该标题行号以及该 section 结束行号。
+ * 如果没找到，返回 { headingLine: -1, sectionEnd: -1 }。
+ */
+export interface TodoSectionRange {
+  headingLine: number;
+  sectionEnd: number;
+}
+
+const TODO_HEADING_REGEX = /^##\s+待办(清单|列表)?\s*$/;
+
+export function findTodoSection(markdown: string): TodoSectionRange {
+  if (!markdown) return { headingLine: -1, sectionEnd: -1 };
+  const lines = markdown.split(/\r?\n/);
+
+  let headingLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (TODO_HEADING_REGEX.test(lines[i].trim())) {
+      headingLine = i;
+      break;
+    }
+  }
+
+  if (headingLine === -1) return { headingLine: -1, sectionEnd: -1 };
+
+  let sectionEnd = lines.length;
+  for (let i = headingLine + 1; i < lines.length; i++) {
+    if (/^#{1,6}\s+/.test(lines[i].trim())) {
+      sectionEnd = i;
+      break;
+    }
+  }
+
+  return { headingLine, sectionEnd };
+}
+
+/**
+ * 在"待办清单"区域末尾智能追加一条待办。
+ * - 如果有待办清单 section：在该 section 内最后一条待办后面追加
+ * - 如果没有：在 markdown 末尾创建"## 待办清单"并追加
+ * 返回新的 Markdown。
+ */
+export function smartAppendTodo(markdown: string, text: string, date?: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return markdown;
+
+  const dateTag = date ? ` @${date}` : '';
+  const newTodoLine = `- [ ] ${trimmed}${dateTag}`;
+
+  const { headingLine, sectionEnd } = findTodoSection(markdown);
+
+  if (headingLine === -1) {
+    const heading = '## 待办清单\n\n';
+    if (!markdown) return `${heading}${newTodoLine}\n`;
+    const suffix = markdown.endsWith('\n') ? '' : '\n';
+    return `${markdown}${suffix}\n${heading}${newTodoLine}\n`;
+  }
+
+  const lines = markdown.split(/\r?\n/);
+  let insertAt = sectionEnd;
+  for (let i = sectionEnd - 1; i >= headingLine + 1; i--) {
+    if (TODO_REGEX.test(lines[i]) || lines[i].trim() !== '') {
+      insertAt = i + 1;
+      break;
+    }
+  }
+  if (insertAt === headingLine + 1) {
+    for (let i = headingLine + 1; i < sectionEnd; i++) {
+      if (TODO_REGEX.test(lines[i])) {
+        insertAt = i + 1;
+      }
+    }
+  }
+
+  const newLines = [
+    ...lines.slice(0, insertAt),
+    newTodoLine,
+    ...lines.slice(insertAt),
+  ];
+  return newLines.join('\n');
+}
+
+/**
+ * 将 markdown 拆分为三段：待办清单之前的 HTML（渲染后）、待办项数组、待办清单之后的 HTML（渲染后）。
+ * 用于在预览模式下用 React 组件替换待办清单区域。
+ */
+export interface MarkdownSplit {
+  beforeHtml: string;
+  todos: TodoItem[];
+  afterHtml: string;
+}
+
+export function splitMarkdownAtTodoSection(markdown: string): MarkdownSplit {
+  const allTodos = extractTodos(markdown);
+  const { headingLine, sectionEnd } = findTodoSection(markdown);
+
+  if (headingLine === -1) {
+    return {
+      beforeHtml: renderMarkdown(markdown),
+      todos: [],
+      afterHtml: '',
+    };
+  }
+
+  const lines = markdown.split(/\r?\n/);
+  const beforeLines = lines.slice(0, headingLine);
+  const afterLines = lines.slice(sectionEnd);
+
+  const beforeMd = beforeLines.join('\n');
+  const afterMd = afterLines.join('\n');
+
+  const sectionTodos = allTodos.filter(
+    (t) => t.line >= headingLine && t.line < sectionEnd
+  );
+
+  return {
+    beforeHtml: renderMarkdown(beforeMd),
+    todos: sectionTodos,
+    afterHtml: renderMarkdown(afterMd),
+  };
 }
