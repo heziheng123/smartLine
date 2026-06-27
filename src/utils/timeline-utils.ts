@@ -248,13 +248,23 @@ export function computeGroupRangesForYear(
 
     if (groupTasks.length === 0) continue;
 
-    const rowStart = Math.min(...groupTasks.map((t) => t.row));
-    const rowEnd = Math.max(...groupTasks.map((t) => t.row));
-
     const startMonth = gStart.year() === year ? gStart.month() : 0;
     const endMonth = gEnd.year() === year ? gEnd.month() : 11;
 
     for (let m = startMonth; m <= endMonth; m++) {
+      // 只取该月实际出现的分组任务，计算当月行范围（避免空行）
+      const monthTasks = groupTasks.filter((t) => {
+        const ts = dayjs(t.start);
+        const te = dayjs(t.end);
+        const monthStart = dayjs(new Date(year, m, 1));
+        const monthEnd = dayjs(new Date(year, m, getDaysInMonth(year, m)));
+        return !te.isBefore(monthStart) && !ts.isAfter(monthEnd);
+      });
+      if (monthTasks.length === 0) continue;
+
+      const rowStart = Math.min(...monthTasks.map((t) => t.row));
+      const rowEnd = Math.max(...monthTasks.map((t) => t.row));
+
       const segStart =
         m === startMonth && gStart.year() === year ? gStart.date() : 1;
       const segEnd =

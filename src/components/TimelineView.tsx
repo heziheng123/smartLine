@@ -80,12 +80,34 @@ const TimelineView: React.FC<TimelineViewProps> = ({
 
   // 合并所有数据到 monthLayouts
   const mergedMonthLayouts = useMemo(() => {
-    return monthLayouts.map((ml, idx) => ({
-      ...ml,
-      noteSegments: noteSegmentsByMonth[idx] || [],
-      milestones: milestonesByMonth[idx] || [],
-      groupRanges: groupRangesByMonth[idx] || [],
-    }));
+    return monthLayouts.map((ml, idx) => {
+      const groups = groupRangesByMonth[idx] || [];
+      const notes = noteSegmentsByMonth[idx] || [];
+      const mss = milestonesByMonth[idx] || [];
+
+      // 行号压缩：calculateLayout 是全年全局布局，不同分组/任务占独立行块，
+      // 但某月可能只出现部分行号，导致中间留空。这里把该月实际出现的任务行号
+      // 重映射到连续的 0,1,2...，消除空行；分组范围同步映射保持对齐。
+      const sortedRows = Array.from(new Set(ml.segments.map((s) => s.row))).sort((a, b) => a - b);
+      const rowMap = new Map<number, number>();
+      sortedRows.forEach((r, i) => rowMap.set(r, i));
+
+      const segments = ml.segments.map((s) => ({ ...s, row: rowMap.get(s.row) ?? s.row }));
+      const groupRanges = groups.map((g) => ({
+        ...g,
+        rowStart: rowMap.get(g.rowStart) ?? g.rowStart,
+        rowEnd: rowMap.get(g.rowEnd) ?? g.rowEnd,
+      }));
+
+      return {
+        ...ml,
+        segments,
+        noteSegments: notes,
+        milestones: mss,
+        groupRanges,
+        totalRows: sortedRows.length,
+      };
+    });
   }, [monthLayouts, noteSegmentsByMonth, milestonesByMonth, groupRangesByMonth]);
 
   const handleSegmentClick = useCallback(
