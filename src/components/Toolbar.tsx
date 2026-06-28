@@ -6,7 +6,7 @@ import React, { useRef } from 'react';
 import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 
-type AppView = 'timeline' | 'todo-view';
+type AppView = 'timeline' | 'todo-view' | 'ebb';
 
 interface ToolbarProps {
   displayYear: number;

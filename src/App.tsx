@@ -16,13 +16,16 @@ import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
 import TaskDrawer from '@/components/TaskDrawer';
 import TodoAggregatorView from '@/components/TodoAggregatorView';
+import Sidebar, { type AppModule } from '@/components/Sidebar';
+import EbbView from '@/ebb/components/EbbView';
 import { useTodos } from '@/hooks/useTodos';
 import { changeTodoDate, toggleTodoLine } from '@/utils/markdown';
 
 import '@/styles/timeline.css';
+import '@/styles/ebb.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
-type AppView = 'timeline' | 'todo-view';
+type AppView = 'timeline' | 'todo-view' | 'ebb';
 
 const App: React.FC = () => {
   const store = useTimelineStore();
@@ -53,8 +56,8 @@ const App: React.FC = () => {
   // 元信息折叠区是否展开（双击入口时为 true）
   const [drawerMetaExpanded, setDrawerMetaExpanded] = useState<boolean>(false);
 
-  // 视图切换：timeline（甘特图） / todo-view（待办汇总）
-  const [currentView, setCurrentView] = useState<AppView>('timeline');
+  // 视图切换：timeline（甘特图） / todo-view（待办汇总） / ebb（艾宾浩斯复习）
+  const [currentView, setCurrentView] = useState<AppModule>('timeline');
 
   // 从所有任务的 Markdown 中提取扁平化的待办列表
   const allTodos = useTodos(store.tasks);
@@ -360,61 +363,74 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <div className="tl-app">
-      <Toolbar
-        displayYear={displayYear}
-        onYearChange={setDisplayYear}
-        onAddTask={handleAddTask}
-        onAddGroup={handleAddGroup}
-        onAddNote={handleAddNote}
-        onAddMilestone={handleAddMilestone}
-        onImport={handleImport}
-        onExport={handleExport}
-        onOpenSync={handleOpenSync}
-        taskCount={store.tasks.length}
-        currentView={currentView}
-        onViewChange={setCurrentView}
-      />
-
-      {/* 左右分屏容器：左侧内容视图 + 右侧任务详情面板 */}
-      <div className="tl-app-split">
-        <div className="tl-app-main">
-          {currentView === 'timeline' ? (
-            <TimelineView
-              tasks={store.tasks}
-              groups={store.groups}
-              notes={store.notes}
-              milestones={store.milestones}
-              displayYear={displayYear}
-              onTaskClick={handleOpenDrawer}
-              onTaskContextMenu={handleTaskContextMenu}
-              onNoteDoubleClick={handleEditNote}
-              onNoteContextMenu={handleNoteContextMenu}
-              onMilestoneDoubleClick={handleEditMilestone}
-              onMilestoneContextMenu={handleMilestoneContextMenu}
-              onGroupDoubleClick={handleEditGroup}
-            />
-          ) : (
-            <TodoAggregatorView
-              todos={allTodos}
-              onTaskClick={handleTodoClick}
-              onTodoDateChange={handleTodoDateChange}
-              onTodoToggle={handleTodoToggle}
-            />
-          )}
-        </div>
-
-        {/* 任务详情面板（仅 open 时渲染，挤压左侧甘特图） */}
-        <TaskDrawer
-          task={drawerTask}
-          open={drawerTask !== null}
-          onClose={handleCloseDrawer}
-          onSave={handleSaveTaskMarkdown}
-          onUpdateTask={handleUpdateTaskMeta}
-          onDeleteTask={handleDeleteTaskFromDrawer}
-          initialMetaExpanded={drawerMetaExpanded}
+    <div className={`tl-app ${currentView === 'ebb' ? 'tl-app--ebb' : ''}`}>
+      <Sidebar current={currentView} onChange={setCurrentView} />
+      {currentView !== 'ebb' && (
+        <Toolbar
+          displayYear={displayYear}
+          onYearChange={setDisplayYear}
+          onAddTask={handleAddTask}
+          onAddGroup={handleAddGroup}
+          onAddNote={handleAddNote}
+          onAddMilestone={handleAddMilestone}
+          onImport={handleImport}
+          onExport={handleExport}
+          onOpenSync={handleOpenSync}
+          taskCount={store.tasks.length}
+          currentView={currentView}
+          onViewChange={(v) => setCurrentView(v)}
         />
-      </div>
+      )}
+
+      {currentView === 'ebb' ? (
+        <div className="tl-app-split tl-app-split--ebb">
+          <div className="tl-app-main">
+            <EbbView />
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* 左右分屏容器：左侧内容视图 + 右侧任务详情面板 */}
+          <div className="tl-app-split">
+            <div className="tl-app-main">
+              {currentView === 'timeline' ? (
+                <TimelineView
+                  tasks={store.tasks}
+                  groups={store.groups}
+                  notes={store.notes}
+                  milestones={store.milestones}
+                  displayYear={displayYear}
+                  onTaskClick={handleOpenDrawer}
+                  onTaskContextMenu={handleTaskContextMenu}
+                  onNoteDoubleClick={handleEditNote}
+                  onNoteContextMenu={handleNoteContextMenu}
+                  onMilestoneDoubleClick={handleEditMilestone}
+                  onMilestoneContextMenu={handleMilestoneContextMenu}
+                  onGroupDoubleClick={handleEditGroup}
+                />
+              ) : (
+                <TodoAggregatorView
+                  todos={allTodos}
+                  onTaskClick={handleTodoClick}
+                  onTodoDateChange={handleTodoDateChange}
+                  onTodoToggle={handleTodoToggle}
+                />
+              )}
+            </div>
+
+            {/* 任务详情面板（仅 open 时渲染，挤压左侧甘特图） */}
+            <TaskDrawer
+              task={drawerTask}
+              open={drawerTask !== null}
+              onClose={handleCloseDrawer}
+              onSave={handleSaveTaskMarkdown}
+              onUpdateTask={handleUpdateTaskMeta}
+              onDeleteTask={handleDeleteTaskFromDrawer}
+              initialMetaExpanded={drawerMetaExpanded}
+            />
+          </div>
+        </>
+      )}
 
       {/* 对话框 */}
       {dialogType === 'task' && (

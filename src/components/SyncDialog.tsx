@@ -1,75 +1,118 @@
 // ============================================================
-// Smart Timeline - 同步设置对话框（Liveblocks 版）
+// Smart Timeline - 同步设置对话框（双房间一键连接）
+// 一次性连接 Timeline + Ebb 两个独立房间，数据物理隔离
 // ============================================================
 
 import React, { useState, useEffect } from 'react';
 import { Cloud, Link, Unlink, Copy, Check } from 'lucide-react';
 import { useTimelineStore } from '@/store';
+import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 
 interface SyncDialogProps {
   onClose: () => void;
 }
 
 const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
+  // Timeline store
   const {
-    syncEnabled,
-    syncRoomCode,
-    syncStatus,
-    enableSync,
-    disableSync,
-    setSyncStatus,
+    syncEnabled: tlSyncEnabled,
+    syncRoomCode: tlSyncRoomCode,
+    syncStatus: tlSyncStatus,
+    enableSync: tlEnableSync,
+    disableSync: tlDisableSync,
+    setSyncStatus: tlSetSyncStatus,
   } = useTimelineStore();
 
-  // 正确获取 liveblocks 对象和其方法
-  const enterRoom = useTimelineStore((state) => state.liveblocks?.enterRoom);
-  const leaveRoom = useTimelineStore((state) => state.liveblocks?.leaveRoom);
-  const status = useTimelineStore((state) => state.liveblocks?.status);
+  const tlEnterRoom = useTimelineStore((state) => state.liveblocks?.enterRoom);
+  const tlLeaveRoom = useTimelineStore((state) => state.liveblocks?.leaveRoom);
+  const tlStatus = useTimelineStore((state) => state.liveblocks?.status);
 
-  const [roomCode, setRoomCode] = useState(syncRoomCode || '');
+  // Ebb store
+  const {
+    syncEnabled: ebbSyncEnabled,
+    syncStatus: ebbSyncStatus,
+    enableSync: ebbEnableSync,
+    disableSync: ebbDisableSync,
+    setSyncStatus: ebbSetSyncStatus,
+  } = useEbbStore();
+
+  const ebbEnterRoom = useEbbStore((state) => state.liveblocks?.enterRoom);
+  const ebbLeaveRoom = useEbbStore((state) => state.liveblocks?.leaveRoom);
+  const ebbStatus = useEbbStore((state) => state.liveblocks?.status);
+
+  const [roomCode, setRoomCode] = useState(tlSyncRoomCode || '');
   const [copied, setCopied] = useState(false);
+  const [linkEbb, setLinkEbb] = useState(true);
 
-  // 监听连接状态变化
+  // 监听 Timeline 连接状态变化
   useEffect(() => {
-    if (!status) return;
+    if (!tlStatus) return;
+    const mappedStatus =
+      tlStatus === 'connected' ? 'connected' :
+      tlStatus === 'connecting' || tlStatus === 'reconnecting' ? 'connecting' :
+      tlStatus === 'disconnected' || tlStatus === 'initial' ? 'disconnected' : 'error';
+    tlSetSyncStatus(mappedStatus);
+  }, [tlStatus, tlSetSyncStatus]);
 
-    const mappedStatus = 
-      status === 'connected' ? 'connected' :
-      status === 'connecting' || status === 'reconnecting' ? 'connecting' :
-      status === 'disconnected' || status === 'initial' ? 'disconnected' : 'error';
-    setSyncStatus(mappedStatus);
-  }, [status, setSyncStatus]);
+  // 监听 Ebb 连接状态变化
+  useEffect(() => {
+    if (!ebbStatus) return;
+    const mappedStatus =
+      ebbStatus === 'connected' ? 'connected' :
+      ebbStatus === 'connecting' || ebbStatus === 'reconnecting' ? 'connecting' :
+      ebbStatus === 'disconnected' || ebbStatus === 'initial' ? 'disconnected' : 'error';
+    ebbSetSyncStatus(mappedStatus);
+  }, [ebbStatus, ebbSetSyncStatus]);
+
+  // 综合状态
+  const anyEnabled = tlSyncEnabled || ebbSyncEnabled;
+
+  const overallStatus =
+    tlSyncStatus === 'error' || ebbSyncStatus === 'error'
+      ? 'error'
+      : tlSyncStatus === 'connected' && (!ebbSyncEnabled || ebbSyncStatus === 'connected')
+        ? 'connected'
+        : tlSyncStatus === 'connecting' || ebbSyncStatus === 'connecting'
+          ? 'connecting'
+          : 'disconnected';
 
   const statusInfo = {
-    label: syncStatus === 'connected' ? '已连接' : 
-           syncStatus === 'connecting' ? '连接中...' : '未连接',
-    color: syncStatus === 'connected' ? '#059669' : 
-           syncStatus === 'connecting' ? '#D97706' : '#9CA3AF',
+    label: overallStatus === 'connected' ? '已连接' :
+           overallStatus === 'connecting' ? '连接中...' : '未连接',
+    color: overallStatus === 'connected' ? '#059669' :
+           overallStatus === 'connecting' ? '#D97706' : '#9CA3AF',
   };
 
   const handleConnect = () => {
-    if (!roomCode.trim() || !enterRoom) {
-      console.error('无法连接：roomCode 或 enterRoom 未定义', { roomCode, enterRoom });
-      return;
+    const code = roomCode.trim();
+    if (!code) return;
+
+    // Timeline 房间
+    if (tlEnterRoom) {
+      tlEnableSync(code);
+      tlEnterRoom(code);
     }
-    
-    console.log('正在连接房间:', roomCode.trim());
-    enableSync(roomCode.trim());
-    enterRoom(roomCode.trim());
+
+    // Ebb 房间（前缀 ebb-）
+    if (linkEbb && ebbEnterRoom) {
+      ebbEnableSync(code);
+      ebbEnterRoom(`${EBB_ROOM_PREFIX}${code}`);
+    }
   };
 
   const handleDisconnect = () => {
-    if (!leaveRoom) {
-      console.error('无法断开：leaveRoom 未定义');
-      return;
+    if (tlLeaveRoom) {
+      tlLeaveRoom();
+      tlDisableSync();
     }
-    
-    console.log('正在断开房间');
-    leaveRoom();
-    disableSync();
+    if (ebbLeaveRoom && ebbSyncEnabled) {
+      ebbLeaveRoom();
+      ebbDisableSync();
+    }
   };
 
   const handleCopyRoomCode = () => {
-    navigator.clipboard.writeText(syncRoomCode).then(() => {
+    navigator.clipboard.writeText(tlSyncRoomCode).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -77,7 +120,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   return (
     <div className="tl-dialog-overlay" onClick={onClose}>
-      <div className="tl-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+      <div className="tl-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
         <h3 className="tl-dialog-title">
           <Cloud size={18} />
           云端同步
@@ -91,14 +134,14 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           <span style={{ color: statusInfo.color, fontWeight: 500 }}>
             {statusInfo.label}
           </span>
-          {syncEnabled && (
+          {anyEnabled && (
             <span className="tl-sync-room-tag">
-              房间: {syncRoomCode}
+              房间: {tlSyncRoomCode}
             </span>
           )}
         </div>
 
-        {!syncEnabled ? (
+        {!anyEnabled ? (
           <>
             <label className="tl-dialog-label">
               房间代码
@@ -112,6 +155,20 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               />
               <span className="tl-dialog-hint">
                 相同房间代码的设备将自动实时同步数据，无需服务器配置
+              </span>
+            </label>
+
+            <label className="tl-sync-checkbox-row">
+              <input
+                type="checkbox"
+                checked={linkEbb}
+                onChange={(e) => setLinkEbb(e.target.checked)}
+              />
+              <span>
+                同时连接复习模块（Ebb）房间
+                <span className="tl-sync-checkbox-hint">
+                  使用前缀 <code>{EBB_ROOM_PREFIX}</code> 隔离数据，与时间轴数据物理分离
+                </span>
               </span>
             </label>
 
@@ -135,7 +192,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               <div className="tl-sync-info-row">
                 <span className="tl-sync-info-label">房间</span>
                 <span className="tl-sync-info-value">
-                  {syncRoomCode}
+                  {tlSyncRoomCode}
                   <button
                     className="tl-sync-copy-btn"
                     onClick={handleCopyRoomCode}
@@ -143,6 +200,20 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                   >
                     {copied ? <Check size={12} /> : <Copy size={12} />}
                   </button>
+                </span>
+              </div>
+              <div className="tl-sync-info-row">
+                <span className="tl-sync-info-label">时间轴</span>
+                <span className="tl-sync-info-value" style={{ color: tlSyncStatus === 'connected' ? '#059669' : '#D97706' }}>
+                  {tlSyncStatus === 'connected' ? '已连接' : tlSyncStatus === 'connecting' ? '连接中' : '未连接'}
+                </span>
+              </div>
+              <div className="tl-sync-info-row">
+                <span className="tl-sync-info-label">复习（Ebb）</span>
+                <span className="tl-sync-info-value" style={{ color: ebbSyncEnabled ? (ebbSyncStatus === 'connected' ? '#059669' : '#D97706') : '#9CA3AF' }}>
+                  {ebbSyncEnabled
+                    ? (ebbSyncStatus === 'connected' ? '已连接' : ebbSyncStatus === 'connecting' ? '连接中' : '未连接')
+                    : '未启用'}
                 </span>
               </div>
               <div className="tl-sync-info-row">
@@ -155,7 +226,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
             <p className="tl-sync-tip">
               在其他设备上打开此网页，输入相同的房间代码即可开始实时同步。
-              所有修改会毫秒级推送到所有已连接的设备。
+              时间轴与复习模块使用独立房间，数据物理隔离。
             </p>
 
             <div className="tl-dialog-actions">

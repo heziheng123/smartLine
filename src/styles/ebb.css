@@ -1,0 +1,5081 @@
+/* ============================================================
+   Ebbinghaus 复习模块样式（莫兰迪色系 + 卡片左侧高亮条）
+   ============================================================ */
+
+/* ── 左侧侧边栏 ──────────────────────────────────────────── */
+.tl-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 48px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 50px 0 12px;
+  gap: 4px;
+  background: #FAFAFB;
+  border-right: 1px solid #ECECEF;
+}
+
+.tl-sidebar-item {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #9CA3AF;
+  transition: all 0.15s ease;
+}
+
+.tl-sidebar-item:hover {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+.tl-sidebar-item--active {
+  background: #EEF2FF;
+  color: #5b6af0;
+}
+
+.tl-sidebar-item-bar {
+  position: absolute;
+  left: -4px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.tl-sidebar-item--active .tl-sidebar-item-bar {
+  background: #5b6af0;
+}
+
+.tl-sidebar-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Ebb 视图布局 ────────────────────────────────────────── */
+.eb-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: #F5F5F7;
+  overflow: hidden;
+}
+
+.eb-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E5E7EB;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.eb-toolbar-left,
+.eb-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eb-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  position: relative;
+}
+
+.eb-toolbar-btn--primary {
+  background: #5b6af0;
+  color: #fff;
+}
+
+.eb-toolbar-btn--primary:hover {
+  filter: brightness(1.06);
+}
+
+.eb-toolbar-btn--ghost {
+  background: transparent;
+  color: #6B7280;
+}
+
+.eb-toolbar-btn--ghost:hover {
+  background: #F3F4F6;
+  color: #374151;
+}
+
+.eb-toolbar-btn--active {
+  background: #EEF2FF;
+  color: #5b6af0;
+}
+
+.eb-toolbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: #EF4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 8px;
+  margin-left: 2px;
+}
+
+.eb-toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.eb-toolbar-count {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-weight: 500;
+}
+
+/* 主体：左日历 + 右任务列表 + 可选右侧面板 */
+.eb-view-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+}
+
+.eb-view-calendar {
+  width: 280px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid #E5E7EB;
+  overflow: auto;
+}
+
+.eb-view-tasks {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.eb-view-panel {
+  width: 420px;
+  flex-shrink: 0;
+  border-left: 1px solid #E5E7EB;
+  background: #fff;
+  overflow: auto;
+}
+
+/* ── 迷你日历 ────────────────────────────────────────────── */
+.eb-mini-cal {
+  padding: 12px;
+}
+
+.eb-mini-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.eb-mini-cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.eb-mini-cal-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: #F3F4F6;
+  color: #4B5563;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.eb-mini-cal-nav-btn:hover {
+  background: #E5E7EB;
+}
+
+.eb-mini-cal-range {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1F2937;
+  min-width: 110px;
+  text-align: center;
+}
+
+.eb-mini-cal-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.eb-mini-cal-mode {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  color: #6B7280;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.eb-mini-cal-mode--active {
+  background: #EEF2FF;
+  color: #5b6af0;
+  border-color: #C7D2FE;
+}
+
+.eb-mini-cal-today-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  color: #6B7280;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.eb-mini-cal-weekday-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+
+.eb-mini-cal-weekday {
+  text-align: center;
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.eb-mini-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.eb-mini-cal-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: outline 0.1s ease;
+  font-size: 11px;
+  color: #4B5563;
+}
+
+.eb-mini-cal-cell:hover {
+  outline: 2px solid #C7D2FE;
+  outline-offset: -2px;
+}
+
+.eb-mini-cal-cell--other {
+  color: #D1D5DB;
+}
+
+.eb-mini-cal-cell--today {
+  font-weight: 700;
+  color: #5b6af0;
+}
+
+.eb-mini-cal-cell--today::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #5b6af0;
+}
+
+.eb-mini-cal-cell--selected {
+  outline: 2px solid #5b6af0;
+  outline-offset: -2px;
+}
+
+.eb-mini-cal-cell--weekend {
+  background-color: rgba(0, 0, 0, 0.015);
+}
+
+.eb-mini-cal-cell--drag-over {
+  outline: 2px dashed #5b6af0;
+  outline-offset: -2px;
+}
+
+.eb-mini-cal-date {
+  font-size: 11px;
+}
+
+.eb-mini-cal-badge {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
+  background: #5b6af0;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.eb-mini-cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #F3F4F6;
+}
+
+.eb-mini-cal-legend-label,
+.eb-mini-cal-legend-hint {
+  font-size: 10px;
+  color: #9CA3AF;
+}
+
+.eb-mini-cal-legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid #E5E7EB;
+}
+
+/* ── 任务列表 ────────────────────────────────────────────── */
+.eb-task-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px 16px;
+}
+
+.eb-task-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.eb-task-list-mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: #F3F4F6;
+  border-radius: 6px;
+}
+
+.eb-mode-btn {
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: #6B7280;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.eb-mode-btn--active {
+  background: #fff;
+  color: #1F2937;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.eb-task-list-search {
+  position: relative;
+  flex: 1;
+  min-width: 160px;
+}
+
+.eb-task-list-search-icon {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9CA3AF;
+}
+
+.eb-task-list-search-input {
+  width: 100%;
+  padding: 5px 10px 5px 28px;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+}
+
+.eb-task-list-search-input:focus {
+  border-color: #5b6af0;
+}
+
+.eb-task-list-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  color: #6B7280;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.eb-task-list-export:hover {
+  background: #F3F4F6;
+}
+
+.eb-task-list-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.eb-task-list-title-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.eb-task-list-count {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+.eb-day-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  background: #F9FAFB;
+  border-radius: 6px;
+}
+
+.eb-day-summary-bar {
+  flex: 1;
+  height: 6px;
+  background: #E5E7EB;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.eb-day-summary-bar-fill {
+  height: 100%;
+  background: #5b6af0;
+  transition: width 0.2s ease;
+}
+
+.eb-day-summary-text {
+  font-size: 11px;
+  color: #6B7280;
+  white-space: nowrap;
+}
+
+.eb-task-list-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.eb-task-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #9CA3AF;
+}
+
+.eb-task-list-empty-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+.eb-task-list-empty-text {
+  font-size: 12px;
+}
+
+/* ── 任务分组 ────────────────────────────────────────────── */
+.eb-task-group {
+  margin-bottom: 16px;
+}
+
+.eb-task-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.eb-task-group-caret {
+  font-size: 10px;
+  color: #9CA3AF;
+  transition: transform 0.15s ease;
+}
+
+.eb-task-group-caret--collapsed {
+  transform: rotate(-90deg);
+}
+
+.eb-task-group-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4B5563;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eb-task-group-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.eb-task-group-count {
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 500;
+}
+
+.eb-task-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 4px 16px;
+}
+
+/* ── 任务卡片 ────────────────────────────────────────────── */
+.eb-task-card {
+  position: relative;
+  display: flex;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: all 0.15s ease;
+  cursor: default;
+}
+
+.eb-task-card:hover {
+  border-color: #D1D5DB;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.eb-task-card--dragging-wrapper {
+  opacity: 0.85;
+}
+
+.eb-task-card-accent {
+  width: 3px;
+  flex-shrink: 0;
+  background: var(--task-color, #E5E7EB);
+}
+
+.eb-task-card-body {
+  flex: 1;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eb-task-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eb-task-card-round-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #6B7280;
+  background: #F3F4F6;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.eb-task-card-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+.eb-task-card-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.eb-task-card-check {
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: #5b6af0;
+}
+
+.eb-task-card-text {
+  font-size: 13px;
+  color: #1F2937;
+  cursor: pointer;
+  flex: 1;
+  line-height: 1.4;
+}
+
+.eb-task-card-text:hover {
+  color: #5b6af0;
+}
+
+.eb-task-card--done .eb-task-card-text {
+  text-decoration: line-through;
+  color: #9CA3AF;
+}
+
+.eb-task-card--overdue {
+  border-color: #FCA5A5;
+}
+
+.eb-task-card--today {
+  border-color: #C7D2FE;
+  box-shadow: 0 0 0 1px #C7D2FE;
+}
+
+.eb-task-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.eb-task-card-progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 60px;
+}
+
+.eb-task-card-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: #F3F4F6;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.eb-task-card-progress-fill {
+  height: 100%;
+  background: #5b6af0;
+  transition: width 0.2s ease;
+}
+
+.eb-task-card-progress-text {
+  font-size: 10px;
+  color: #9CA3AF;
+}
+
+.eb-task-card-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.eb-task-card-actions--visible {
+  opacity: 1;
+}
+
+.eb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.eb-icon-btn:hover {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+.eb-icon-btn--danger:hover {
+  background: #FEE2E2;
+  color: #EF4444;
+}
+
+.eb-icon-btn--confirm {
+  background: #FEE2E2;
+  color: #EF4444;
+}
+
+/* ── 日期标签 ────────────────────────────────────────────── */
+.eb-date-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  border: none;
+}
+
+.eb-date-pill--future { background: #F3F4F6; color: #6B7280; }
+.eb-date-pill--today { background: #EEF2FF; color: #5b6af0; }
+.eb-date-pill--tomorrow { background: #F0FDF4; color: #15803D; }
+.eb-date-pill--yesterday { background: #FEF3C7; color: #B45309; }
+.eb-date-pill--overdue { background: #FEE2E2; color: #DC2626; }
+.eb-date-pill--completed { background: #DCFCE7; color: #15803D; }
+
+/* ── 弹窗通用 ────────────────────────────────────────────── */
+.eb-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  padding: 20px;
+}
+
+.eb-modal {
+  background: #fff;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.2);
+}
+
+.eb-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.eb-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1F2937;
+  margin: 0;
+}
+
+.eb-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.eb-modal-close:hover {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+.eb-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.eb-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid #F3F4F6;
+}
+
+/* ── 表单字段 ────────────────────────────────────────────── */
+.eb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eb-field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.eb-field--flex1 {
+  flex: 1;
+}
+
+.eb-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.eb-field-label em {
+  color: #EF4444;
+  font-style: normal;
+  margin-left: 2px;
+}
+
+.eb-field-hint {
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 400;
+}
+
+.eb-field-hint--error {
+  color: #EF4444;
+}
+
+.eb-field-input {
+  padding: 7px 10px;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  background: #fff;
+  color: #1F2937;
+}
+
+.eb-field-input:focus {
+  border-color: #5b6af0;
+}
+
+.eb-field-input--error {
+  border-color: #EF4444;
+}
+
+.eb-field-input--sm {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.eb-field-input--tag {
+  width: 100px;
+}
+
+.eb-field-input--intervals {
+  flex: 1;
+  min-width: 120px;
+}
+
+.eb-field-input--search {
+  flex: 1;
+  min-width: 100px;
+}
+
+.eb-field-error {
+  padding: 6px 10px;
+  background: #FEE2E2;
+  color: #DC2626;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+/* ── 复杂度切换 ──────────────────────────────────────────── */
+.eb-complexity-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: #F3F4F6;
+  border-radius: 8px;
+}
+
+.eb-complexity-btn {
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  background: #fff;
+  color: #6B7280;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.eb-complexity-btn--active {
+  background: #EEF2FF;
+  color: #1F2937;
+  border-color: #C7D2FE;
+}
+
+.eb-complexity-switch--sm {
+  padding: 2px;
+  gap: 2px;
+}
+
+.eb-complexity-btn--sm {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/* ── 按钮 ────────────────────────────────────────────────── */
+.eb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.eb-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.eb-btn--primary {
+  background: #5b6af0;
+  color: #fff;
+}
+
+.eb-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.eb-btn--secondary {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+.eb-btn--secondary:hover:not(:disabled) {
+  background: #E5E7EB;
+}
+
+.eb-btn--ghost {
+  background: transparent;
+  color: #6B7280;
+}
+
+.eb-btn--ghost:hover:not(:disabled) {
+  background: #F3F4F6;
+  color: #374151;
+}
+
+.eb-btn--danger {
+  background: #FEE2E2;
+  color: #DC2626;
+}
+
+.eb-btn--danger:hover:not(:disabled) {
+  background: #FECACA;
+}
+
+.eb-btn--sm {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.eb-text-btn {
+  border: none;
+  background: transparent;
+  color: #5b6af0;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.eb-text-btn:hover {
+  background: #EEF2FF;
+}
+
+.eb-text-btn--danger {
+  color: #DC2626;
+}
+
+.eb-text-btn--danger:hover {
+  background: #FEE2E2;
+}
+
+/* ── 预览面板 ────────────────────────────────────────────── */
+.eb-preview {
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.eb-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #F9FAFB;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.eb-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.eb-preview-count {
+  font-size: 11px;
+  color: #5b6af0;
+  font-weight: 600;
+}
+
+.eb-preview-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.eb-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #F9FAFB;
+  font-size: 11px;
+}
+
+.eb-preview-row:last-child {
+  border-bottom: none;
+}
+
+.eb-preview-round {
+  font-weight: 600;
+  color: #5b6af0;
+  width: 50px;
+}
+
+.eb-preview-date {
+  color: #1F2937;
+  font-family: ui-monospace, monospace;
+}
+
+.eb-preview-weekday {
+  color: #9CA3AF;
+}
+
+/* ── 右侧面板 ────────────────────────────────────────────── */
+.eb-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.2);
+  z-index: 900;
+}
+
+.eb-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 480px;
+  background: #fff;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.1);
+  display: flex;
+  flex-direction: column;
+  z-index: 901;
+}
+
+.eb-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #F3F4F6;
+  flex-shrink: 0;
+}
+
+.eb-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1F2937;
+  margin: 0;
+}
+
+.eb-panel-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.eb-panel-close:hover {
+  background: #F3F4F6;
+}
+
+.eb-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.eb-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid #F3F4F6;
+  flex-shrink: 0;
+}
+
+/* ── 设置页 ──────────────────────────────────────────────── */
+.eb-settings-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.eb-settings-section:last-child {
+  border-bottom: none;
+}
+
+.eb-settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1F2937;
+  margin: 0 0 10px;
+}
+
+.eb-settings-empty {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-style: italic;
+}
+
+.eb-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.eb-slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #4B5563;
+  font-weight: 500;
+}
+
+.eb-slider-value {
+  font-weight: 600;
+  color: #5b6af0;
+}
+
+.eb-slider {
+  width: 100%;
+  accent-color: #5b6af0;
+}
+
+.eb-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.eb-switch-row input[type="checkbox"] {
+  accent-color: #5b6af0;
+}
+
+.eb-complexity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eb-complexity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #F9FAFB;
+  border-radius: 6px;
+}
+
+.eb-complexity-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.eb-complexity-row-label {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.eb-complexity-row-intervals {
+  font-size: 10px;
+  color: #6B7280;
+}
+
+.eb-complexity-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.eb-complexity-editor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.eb-tag-color-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eb-tag-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.eb-tag-color-name {
+  width: 80px;
+  font-size: 11px;
+  color: #4B5563;
+  font-weight: 500;
+}
+
+.eb-tag-color-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+}
+
+.eb-tag-color-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid #E5E7EB;
+  cursor: pointer;
+}
+
+.eb-tag-color-swatch--active {
+  outline: 2px solid #1F2937;
+  outline-offset: 1px;
+}
+
+/* ── 收件箱 ──────────────────────────────────────────────── */
+.eb-inbox-quick-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.eb-inbox-quick-add .eb-field-input {
+  flex: 1;
+}
+
+.eb-inbox-section {
+  margin-bottom: 18px;
+}
+
+.eb-inbox-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 8px;
+}
+
+.eb-inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eb-inbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  background: #F9FAFB;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+
+.eb-inbox-row--selected {
+  border-color: #C7D2FE;
+  background: #F5F7FF;
+}
+
+.eb-inbox-row-check {
+  margin-top: 3px;
+  accent-color: #5b6af0;
+}
+
+.eb-inbox-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.eb-inbox-row-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.eb-inbox-row-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.eb-inbox-row-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  background: #F3F4F6;
+  color: #4B5563;
+  border-radius: 4px;
+}
+
+.eb-inbox-row-config {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.eb-inbox-row-hint {
+  font-size: 10px;
+  color: #9CA3AF;
+  font-style: italic;
+}
+
+.eb-inbox-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.eb-inbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+  color: #9CA3AF;
+}
+
+.eb-inbox-empty-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+.eb-inbox-empty-text {
+  font-size: 12px;
+}
+
+.eb-inbox-batch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid #F3F4F6;
+  background: #F9FAFB;
+  flex-shrink: 0;
+}
+
+.eb-inbox-batch-count {
+  font-size: 11px;
+  color: #4B5563;
+  font-weight: 600;
+  flex: 1;
+}
+
+/* ── 面板（内联分屏模式，通用） ──────────────────────────── */
+.eb-inline-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.eb-inline-panel .eb-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #E5E7EB;
+  flex-shrink: 0;
+}
+
+.eb-inline-panel .eb-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.eb-inline-panel .eb-panel-footer {
+  border-top: 1px solid #E5E7EB;
+  flex-shrink: 0;
+}
+
+/* ── 仪表盘 ──────────────────────────────────────────────── */
+.eb-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.eb-stat-card {
+  position: relative;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  border-left: 3px solid var(--card-color, #E5E7EB);
+}
+
+.eb-stat-card--highlight {
+  border-color: #FCA5A5;
+}
+
+.eb-stat-card-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1F2937;
+  line-height: 1.2;
+}
+
+.eb-stat-card-label {
+  font-size: 10px;
+  color: #6B7280;
+  margin-top: 2px;
+}
+
+.eb-overall-progress {
+  margin-bottom: 14px;
+}
+
+.eb-overall-progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.eb-overall-progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.eb-overall-progress-value {
+  font-size: 11px;
+  color: #5b6af0;
+  font-weight: 600;
+}
+
+.eb-overall-progress-bar {
+  height: 8px;
+  background: #F3F4F6;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.eb-overall-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #818CF8, #5b6af0);
+  transition: width 0.3s ease;
+}
+
+.eb-dashboard-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.eb-dashboard-filter {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.eb-dashboard-filter .eb-field-input {
+  flex: 1;
+  min-width: 80px;
+}
+
+.eb-dashboard-section {
+  margin-bottom: 18px;
+}
+
+.eb-dashboard-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 8px;
+}
+
+.eb-tag-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.eb-tag-stat-card {
+  position: relative;
+  padding: 8px 10px;
+  background: #F9FAFB;
+  border-radius: 6px;
+  border-left: 3px solid var(--tag-color, #E5E7EB);
+}
+
+.eb-tag-stat-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1F2937;
+  margin-bottom: 4px;
+}
+
+.eb-tag-stat-nums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10px;
+  color: #6B7280;
+  margin-bottom: 4px;
+}
+
+.eb-tag-stat-done { color: #15803D; }
+.eb-tag-stat-overdue { color: #DC2626; }
+
+.eb-tag-stat-bar {
+  height: 4px;
+  background: #E5E7EB;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+
+.eb-tag-stat-bar-fill {
+  height: 100%;
+  background: #5b6af0;
+}
+
+.eb-tag-stat-ratio {
+  font-size: 10px;
+  color: #5b6af0;
+  font-weight: 600;
+}
+
+.eb-topic-matrix {
+  overflow-x: auto;
+}
+
+.eb-matrix-empty {
+  padding: 20px;
+  text-align: center;
+  color: #9CA3AF;
+  font-size: 12px;
+}
+
+.eb-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.eb-matrix-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 600;
+  color: #6B7280;
+  border-bottom: 1px solid #E5E7EB;
+  background: #F9FAFB;
+}
+
+.eb-matrix-table td {
+  padding: 8px;
+  border-bottom: 1px solid #F3F4F6;
+  color: #1F2937;
+}
+
+.eb-matrix-row--overdue td {
+  background: #FEF2F2;
+}
+
+.eb-matrix-row--done td {
+  color: #9CA3AF;
+}
+
+.eb-matrix-topic {
+  font-weight: 600;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-matrix-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  background: #F3F4F6;
+  color: #4B5563;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.eb-matrix-progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 80px;
+}
+
+.eb-matrix-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: #F3F4F6;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.eb-matrix-progress-fill {
+  height: 100%;
+  background: #5b6af0;
+}
+
+.eb-matrix-progress-text {
+  font-size: 10px;
+  color: #6B7280;
+  white-space: nowrap;
+}
+
+.eb-status-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  border: none;
+}
+
+.eb-status-pill--done { background: #DCFCE7; color: #15803D; }
+.eb-status-pill--overdue { background: #FEE2E2; color: #DC2626; }
+.eb-status-pill--progress { background: #FEF3C7; color: #B45309; }
+.eb-status-pill--pending { background: #F3F4F6; color: #6B7280; }
+
+/* ── 时间线浮层 ──────────────────────────────────────────── */
+.eb-timeline-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: #374151;
+  margin-bottom: 16px;
+}
+
+.eb-timeline-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.eb-timeline-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #F3F4F6;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.eb-timeline-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #818CF8, #5b6af0);
+  transition: width 0.3s ease;
+}
+
+.eb-timeline-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  overflow-x: auto;
+  padding: 16px 8px;
+}
+
+.eb-timeline-node-wrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.eb-timeline-connector {
+  width: 24px;
+  height: 2px;
+  flex-shrink: 0;
+}
+
+.eb-timeline-connector--done { background: #6B7280; }
+.eb-timeline-connector--overdue {
+  background: repeating-linear-gradient(90deg, #EF4444 0, #EF4444 4px, transparent 4px, transparent 8px);
+}
+.eb-timeline-connector--soon { background: #D1D5DB; }
+.eb-timeline-connector--transition { background: #E5E7EB; }
+
+.eb-timeline-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 2px solid var(--node-color, #E5E7EB);
+  background: #fff;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 70px;
+}
+
+.eb-timeline-node:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+}
+
+.eb-timeline-node--done {
+  background: var(--node-color);
+  border-color: var(--node-color);
+}
+
+.eb-timeline-node-round {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1F2937;
+}
+
+.eb-timeline-node--done .eb-timeline-node-round {
+  color: #fff;
+}
+
+.eb-timeline-node-date {
+  font-size: 10px;
+  color: #6B7280;
+  white-space: nowrap;
+}
+
+.eb-timeline-node-points {
+  font-size: 9px;
+  color: #9CA3AF;
+  font-weight: 600;
+}
+
+/* ── 日期选择器 ──────────────────────────────────────────── */
+.eb-datepicker-overlay {
+  z-index: 1100;
+}
+
+.eb-datepicker-overlay--centered {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.eb-datepicker {
+  width: 240px;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+  padding: 12px;
+  z-index: 1100;
+}
+
+.eb-datepicker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.eb-datepicker-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: #F3F4F6;
+  color: #4B5563;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.eb-datepicker-range {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.eb-datepicker-weekday-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+
+.eb-datepicker-weekday {
+  text-align: center;
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 600;
+  padding: 2px 0;
+}
+
+.eb-datepicker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.eb-datepicker-cell {
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: #4B5563;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.eb-datepicker-cell:hover {
+  background: #F3F4F6;
+}
+
+.eb-datepicker-cell--other {
+  color: #D1D5DB;
+}
+
+.eb-datepicker-cell--today {
+  font-weight: 700;
+  color: #5b6af0;
+}
+
+.eb-datepicker-cell--selected {
+  background: #5b6af0;
+  color: #fff;
+}
+
+.eb-datepicker-footer {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid #F3F4F6;
+  margin-top: 8px;
+}
+
+.eb-datepicker-clear,
+.eb-datepicker-today {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: #5b6af0;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.eb-datepicker-clear:hover,
+.eb-datepicker-today:hover {
+  background: #EEF2FF;
+}
+
+/* ── Toast ───────────────────────────────────────────────── */
+.eb-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  background: #1F2937;
+  color: #fff;
+  font-size: 12px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 1500;
+  animation: eb-toast-in 0.2s ease;
+}
+
+@keyframes eb-toast-in {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ── Ebb 模式下移除顶部 padding（Ebb 有自己的 toolbar） ────── */
+.tl-app--ebb {
+  padding-top: 0;
+}
+
+.tl-app--ebb .tl-app-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.tl-app--ebb .tl-app-main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================================
+   Phase 3 - 轮次管理面板
+   ============================================================ */
+
+/* 进度概览 */
+.eb-rounds-summary {
+  margin-bottom: 16px;
+}
+
+.eb-rounds-stats {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 8px;
+}
+
+.eb-rounds-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.eb-rounds-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.eb-rounds-stat-label {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+.eb-rounds-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eb-rounds-progress-bar {
+  flex: 1;
+  height: 8px;
+  background: #E5E7EB;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.eb-rounds-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #A8C4D9, #6BA66B);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.eb-rounds-progress-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6BA66B;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* 轮次列表 */
+.eb-rounds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eb-round-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.eb-round-row:hover {
+  border-color: #D1D5DB;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+.eb-round-row--done {
+  opacity: 0.6;
+  background: #F9FAFB;
+}
+
+.eb-round-row--overdue {
+  border-color: #E0B8B8;
+  background: #FFF5F5;
+}
+
+.eb-round-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.eb-round-number {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6B7280;
+  min-width: 24px;
+  text-align: center;
+}
+
+.eb-round-check {
+  width: 16px;
+  height: 16px;
+  accent-color: #6BA66B;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.eb-round-completed-date {
+  font-size: 10px;
+  color: #9CA3AF;
+}
+
+.eb-round-points {
+  font-size: 11px;
+  color: #9CA3AF;
+  min-width: 30px;
+  text-align: right;
+}
+
+.eb-round-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.eb-round-row:hover .eb-round-actions {
+  opacity: 1;
+}
+
+.eb-rounds-empty {
+  padding: 32px 0;
+  text-align: center;
+}
+
+.eb-rounds-empty-text {
+  color: #9CA3AF;
+  font-size: 13px;
+}
+
+/* ============================================================
+   逾期任务提醒弹窗
+   ============================================================ */
+
+.eb-overdue-summary {
+  font-size: 13px;
+  color: #6B7280;
+  margin: 0 0 12px;
+  line-height: 1.6;
+}
+
+.eb-overdue-summary strong {
+  color: #D4A0A0;
+}
+
+.eb-overdue-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eb-overdue-group {
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.eb-overdue-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #F3F4F6;
+  border-bottom: 1px solid #E5E7EB;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.eb-overdue-group-name {
+  flex: 1;
+}
+
+.eb-overdue-group-count {
+  font-size: 11px;
+  color: #D4A0A0;
+  font-weight: 500;
+}
+
+.eb-overdue-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.eb-overdue-row:hover {
+  background: #EEF2FF;
+}
+
+.eb-overdue-row--selected {
+  background: #F0F7FF;
+}
+
+.eb-overdue-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.eb-overdue-round {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  min-width: 24px;
+}
+
+.eb-overdue-date {
+  font-size: 12px;
+  color: #9CA3AF;
+}
+
+.eb-overdue-days {
+  margin-left: auto;
+  font-size: 11px;
+  color: #D4A0A0;
+  font-weight: 500;
+}
+
+.eb-overdue-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #6B7280;
+  cursor: pointer;
+}
+
+.eb-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid #E5E7EB;
+}
+
+.eb-modal-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ============================================================
+   Phase 3 - 大纲管理面板
+   ============================================================ */
+
+.eb-outline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.eb-outline-summary {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+/* ── 粘贴目录导入 ─────────────────────────────────────── */
+.eb-paste-import {
+  margin-bottom: 12px;
+  padding: 10px;
+  background: #F9FAFB;
+  border: 1px dashed #D1D5DB;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eb-paste-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Menlo', monospace;
+  line-height: 1.6;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  resize: vertical;
+  background: #fff;
+  color: #374151;
+  outline: none;
+}
+
+.eb-paste-textarea:focus {
+  border-color: #A8C4D9;
+  box-shadow: 0 0 0 2px rgba(168, 196, 217, 0.2);
+}
+
+.eb-paste-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eb-paste-hint {
+  flex: 1;
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+.eb-outline-tree {
+  min-height: 200px;
+}
+
+.eb-outline-empty {
+  padding: 40px 0;
+  text-align: center;
+}
+
+.eb-outline-empty-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+
+.eb-outline-empty-text {
+  color: #9CA3AF;
+  font-size: 13px;
+}
+
+/* 大纲节点行 */
+.eb-outline-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.eb-outline-node:hover {
+  background: #F3F4F6;
+}
+
+.eb-outline-node--selected {
+  background: #EEF2FF;
+}
+
+.eb-outline-node--editing {
+  background: #FFFBEB;
+}
+
+.eb-outline-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.eb-outline-caret--expanded {
+  transform: rotate(90deg);
+}
+
+.eb-outline-caret-placeholder {
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.eb-outline-icon {
+  display: flex;
+  align-items: center;
+  color: #9CA3AF;
+  flex-shrink: 0;
+}
+
+.eb-outline-name {
+  flex: 1;
+  font-size: 13px;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-outline-name:hover {
+  color: #1F2937;
+}
+
+.eb-outline-name-input {
+  flex: 1;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  outline: none;
+  background: #fff;
+}
+
+.eb-outline-name-input:focus {
+  border-color: #A8C4D9;
+  box-shadow: 0 0 0 2px rgba(168, 196, 217, 0.2);
+}
+
+.eb-outline-task-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #E5E7EB;
+  font-size: 10px;
+  font-weight: 600;
+  color: #6B7280;
+  flex-shrink: 0;
+}
+
+.eb-outline-node-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+}
+
+.eb-outline-node:hover .eb-outline-node-actions {
+  opacity: 1;
+}
+
+.eb-outline-children {
+  /* 子节点缩进通过 paddingLeft 在行内设置 */
+}
+
+.eb-outline-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 2px 0;
+  background: #F9FAFB;
+  border-radius: 6px;
+}
+
+/* 节点详情面板 */
+.eb-outline-detail {
+  margin-top: 16px;
+  padding: 12px;
+  background: #F9FAFB;
+  border-radius: 8px;
+  border: 1px solid #E5E7EB;
+}
+
+.eb-outline-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.eb-outline-detail-type {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #E5E7EB;
+  color: #6B7280;
+  font-weight: 500;
+}
+
+.eb-outline-detail-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.eb-outline-detail-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.eb-outline-detail-tag label {
+  font-size: 11px;
+  color: #9CA3AF;
+  white-space: nowrap;
+}
+
+.eb-outline-tag-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid #E5E7EB;
+  border-radius: 4px;
+  outline: none;
+  color: #374151;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+
+.eb-outline-tag-input:focus {
+  border-color: #A8C4D9;
+}
+
+.eb-outline-detail-tasks {
+  margin-top: 8px;
+}
+
+.eb-outline-detail-tasks-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  margin-bottom: 6px;
+}
+
+.eb-outline-detail-tasks-empty {
+  font-size: 12px;
+  color: #9CA3AF;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eb-outline-detail-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eb-outline-detail-task {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: #fff;
+  border-radius: 4px;
+  border: 1px solid #F3F4F6;
+}
+
+.eb-outline-task-name {
+  flex: 1;
+  font-size: 12px;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-outline-task-name--done {
+  text-decoration: line-through;
+  color: #9CA3AF;
+}
+
+.eb-outline-task-date {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+.eb-outline-detail-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* ============================================================
+   Ebb - 重构版布局样式（单页全宽 + 三视图Tab）
+   ============================================================ */
+
+/* ── 主容器 ──────────────────────────────────────────── */
+.eb-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: #F5F5F7;
+  overflow: hidden;
+}
+
+/* ── 顶部导航栏 ──────────────────────────────────────── */
+.eb-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E5E7EB;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.eb-nav-left,
+.eb-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eb-nav-brand {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1F2937;
+  margin-right: 8px;
+}
+
+.eb-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #4B5563;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+}
+
+.eb-nav-btn:hover {
+  background: #F3F4F6;
+}
+
+.eb-nav-btn--primary {
+  background: #6B7FD7;
+  color: #FFFFFF;
+  border-color: #6B7FD7;
+}
+
+.eb-nav-btn--primary:hover {
+  background: #5A6EC7;
+}
+
+.eb-nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #FFFFFF;
+  background: #EF4444;
+  border-radius: 8px;
+  margin-left: 2px;
+}
+
+/* ── 统计区 ──────────────────────────────────────────── */
+.eb-stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E5E7EB;
+  flex-shrink: 0;
+}
+
+.eb-stats-cards {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+}
+
+.eb-stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  min-width: 72px;
+  transition: all 0.15s;
+}
+
+.eb-stat-card--warn {
+  background: #FEF3C7;
+  border-color: #FCD34D;
+}
+
+.eb-stat-card--danger {
+  background: #FEE2E2;
+  border-color: #FCA5A5;
+}
+
+.eb-stat-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.eb-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1F2937;
+  line-height: 1.2;
+}
+
+.eb-stat-label {
+  font-size: 11px;
+  color: #6B7280;
+}
+
+.eb-stats-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+
+.eb-stats-progress-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #4B5563;
+}
+
+.eb-stats-progress-num {
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.eb-stats-progress-bar {
+  height: 8px;
+  background: #E5E7EB;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.eb-stats-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6B7FD7, #8B9FE7);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+.eb-stats-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.eb-stats-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: #F3F4F6;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  color: #4B5563;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.eb-stats-action:hover {
+  background: #E5E7EB;
+}
+
+.eb-stats-action--danger:hover {
+  background: #FEE2E2;
+  color: #DC2626;
+  border-color: #FCA5A5;
+}
+
+/* ── 撤销条 ──────────────────────────────────────────── */
+.eb-undo-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: #FEF3C7;
+  border-bottom: 1px solid #FCD34D;
+  font-size: 13px;
+  color: #92400E;
+  flex-shrink: 0;
+}
+
+.eb-undo-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #92400E;
+  background: #FDE68A;
+  border: 1px solid #FCD34D;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.eb-undo-btn:hover {
+  background: #FCD34D;
+}
+
+/* ── 视图Tab ─────────────────────────────────────────── */
+.eb-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 20px 0;
+  background: #FFFFFF;
+  border-bottom: 1px solid #E5E7EB;
+  flex-shrink: 0;
+}
+
+.eb-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #6B7280;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-bottom: -1px;
+}
+
+.eb-tab:hover {
+  background: #F3F4F6;
+  color: #1F2937;
+}
+
+.eb-tab--active {
+  background: #F5F5F7;
+  color: #6B7FD7;
+  border-color: #E5E7EB;
+  font-weight: 600;
+}
+
+/* ── 主内容区（左日历栏 + 右视图分屏） ──────────────── */
+.eb-main-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.eb-cal-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  border-right: 1px solid #E5E7EB;
+  overflow: hidden;
+}
+
+.eb-cal-sidebar-tasks {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  border-top: 1px solid #E5E7EB;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 日期头 ──────────────────────────────────────── */
+.eb-cal-sidebar-date-header {
+  padding: 10px 14px 8px;
+  flex-shrink: 0;
+}
+
+.eb-cal-sidebar-date-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.eb-cal-sidebar-date-num {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1F2937;
+  line-height: 1;
+}
+
+.eb-cal-sidebar-date-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.eb-cal-sidebar-date-month {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-weight: 500;
+}
+
+.eb-cal-sidebar-date-week {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7FD7;
+}
+
+/* ── 空状态 ──────────────────────────────────────── */
+.eb-cal-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  gap: 8px;
+}
+
+.eb-cal-empty-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.eb-cal-empty-text {
+  font-size: 12px;
+  color: #9CA3AF;
+  text-align: center;
+  margin: 0;
+}
+
+/* ── 当日内容容器 ────────────────────────────────── */
+.eb-cal-day-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 10px 12px;
+}
+
+/* ── 当日进度摘要 ────────────────────────────────── */
+.eb-cal-day-summary {
+  padding: 8px 10px 10px;
+  margin: 0 -10px 8px;
+  background: #FAFBFC;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.eb-cal-day-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.eb-cal-day-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.eb-cal-day-stat-num {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.eb-cal-day-stat-label {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+.eb-cal-day-progress {
+  height: 4px;
+  background: #E5E7EB;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.eb-cal-day-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* ── 任务卡片列表 ────────────────────────────────── */
+.eb-cal-task-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eb-cal-task-card {
+  display: flex;
+  background: #FFFFFF;
+  border: 1px solid #F3F4F6;
+  border-radius: 7px;
+  overflow: hidden;
+  transition: all 0.12s;
+}
+
+.eb-cal-task-card:hover {
+  border-color: #E5E7EB;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.eb-cal-task-card--done {
+  opacity: 0.55;
+}
+
+.eb-cal-task-card--done .eb-cal-task-card-name {
+  text-decoration: line-through;
+  color: #9CA3AF;
+}
+
+.eb-cal-task-card--overdue {
+  border-color: #FEE2E2;
+}
+
+.eb-cal-task-card-bar {
+  width: 3px;
+  flex-shrink: 0;
+  border-radius: 7px 0 0 7px;
+}
+
+.eb-cal-task-card-body {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eb-cal-task-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.eb-cal-task-check {
+  flex-shrink: 0;
+  margin-top: 2px;
+  width: 14px;
+  height: 14px;
+  accent-color: #6B7FD7;
+  cursor: pointer;
+}
+
+.eb-cal-task-card-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1F2937;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-all;
+}
+
+.eb-cal-task-card-name:hover {
+  color: #6B7FD7;
+}
+
+.eb-cal-task-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.eb-cal-task-round-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.eb-cal-task-date-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.eb-cal-task-date-badge--today {
+  background: #FEF3C7;
+  color: #B45309;
+}
+
+.eb-cal-task-date-badge--overdue {
+  background: #FEE2E2;
+  color: #DC2626;
+}
+
+.eb-cal-task-date-badge--done {
+  background: #D1FAE5;
+  color: #059669;
+}
+
+.eb-cal-task-date-badge--pending {
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+.eb-cal-task-card-tag {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  background: #F3F4F6;
+  color: #6B7280;
+  border-radius: 3px;
+  flex-shrink: 0;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-cal-task-card-points {
+  font-size: 9.5px;
+  color: #6B7FD7;
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.eb-cal-task-card-progress {
+  margin-top: 2px;
+}
+
+.eb-cal-task-card-progress-bar {
+  height: 2px;
+  background: #F3F4F6;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.eb-cal-task-card-progress-fill {
+  height: 100%;
+  border-radius: 1px;
+  transition: width 0.3s ease;
+}
+
+.eb-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px 20px;
+}
+
+/* ── 通用筛选栏 ──────────────────────────────────────── */
+.eb-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.eb-filter-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  flex: 1;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.eb-filter-search input {
+  border: none;
+  outline: none;
+  font-size: 13px;
+  background: transparent;
+  width: 100%;
+  color: #1F2937;
+}
+
+.eb-filter-select {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #4B5563;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+}
+
+.eb-filter-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #6B7FD7;
+  background: #EEF2FF;
+  border: 1px solid #C7D2FE;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.eb-filter-action:hover {
+  background: #E0E7FF;
+}
+
+.eb-filter-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: #4B5563;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ── 矩阵视图 ────────────────────────────────────────── */
+.eb-matrix {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.eb-tag-stats {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.eb-tag-stat {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 8px 12px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  cursor: pointer;
+  min-width: 160px;
+  transition: all 0.15s;
+}
+
+.eb-tag-stat:hover {
+  border-color: #C7D2FE;
+}
+
+.eb-tag-stat--active {
+  background: #EEF2FF;
+  border-color: #6B7FD7;
+}
+
+.eb-tag-stat-color {
+  grid-row: 1 / 3;
+  width: 4px;
+  height: 24px;
+  border-radius: 2px;
+}
+
+.eb-tag-stat-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.eb-tag-stat-ratio {
+  font-size: 12px;
+  color: #4B5563;
+}
+
+.eb-tag-stat-bar {
+  grid-column: 2 / 4;
+  height: 4px;
+  background: #E5E7EB;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.eb-tag-stat-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.eb-tag-stat-pending {
+  grid-column: 4;
+  font-size: 11px;
+  color: #6B7280;
+}
+
+.eb-topic-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+/* 主题行 */
+.eb-topic-row {
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-left: 3px solid var(--accent, #6B7FD7);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: box-shadow 0.15s;
+}
+
+.eb-topic-row:hover {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.eb-topic-row--expanded {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.eb-topic-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+/* 圆形进度环 */
+.eb-progress-ring {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.eb-progress-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.eb-progress-ring-bg {
+  fill: none;
+  stroke: #E5E7EB;
+  stroke-width: 3;
+}
+
+.eb-progress-ring-fg {
+  fill: none;
+  stroke: var(--ring-color, #6B7FD7);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s;
+}
+
+.eb-progress-ring-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ring-color, #6B7FD7);
+}
+
+.eb-topic-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.eb-topic-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eb-topic-row-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1F2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-topic-row-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.eb-topic-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #6B7280;
+}
+
+.eb-topic-row-status {
+  color: #6B7280;
+}
+
+.eb-topic-row-status--done {
+  color: #10B981;
+  font-weight: 500;
+}
+
+.eb-topic-row-status--overdue {
+  color: #EF4444;
+  font-weight: 600;
+}
+
+.eb-topic-row-status--today {
+  color: #F59E0B;
+  font-weight: 600;
+}
+
+.eb-topic-row-points {
+  color: #6B7FD7;
+  font-weight: 500;
+}
+
+.eb-topic-row-chevron {
+  color: #9CA3AF;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.eb-topic-row-chevron--open {
+  transform: rotate(90deg);
+}
+
+/* 展开的轮次列表 */
+.eb-topic-rounds {
+  padding: 4px 14px 10px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid #F3F4F6;
+}
+
+.eb-round-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #F9FAFB;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.eb-round-item--done {
+  opacity: 0.6;
+}
+
+.eb-round-item--overdue {
+  background: #FEF2F2;
+}
+
+.eb-round-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.eb-round-item-num {
+  font-weight: 600;
+  color: #4B5563;
+  min-width: 50px;
+}
+
+.eb-round-item-check {
+  cursor: pointer;
+}
+
+.eb-round-item-date {
+  font-size: 11px;
+}
+
+.eb-round-item-points {
+  color: #6B7FD7;
+  font-weight: 500;
+  margin-left: auto;
+}
+
+.eb-round-item-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.eb-round-item-actions .eb-icon-btn {
+  padding: 2px 4px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.eb-round-item-actions .eb-icon-btn:hover {
+  background: #E5E7EB;
+}
+
+/* ── 目录视图 ────────────────────────────────────────── */
+.eb-directory {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.eb-directory-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 4px;
+}
+
+.eb-tree-node {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── 书节点：作为大卡片容器 ── */
+.eb-tree-row--book {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* 书节点的根容器（level=0）：卡片样式 */
+.eb-directory-tree > .eb-tree-node {
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-left: 3px solid #F59E0B;
+  border-radius: 8px;
+  padding: 4px 0;
+  margin-bottom: 8px;
+}
+
+/* ── 通用行样式：去掉卡片感 ── */
+.eb-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 0.12s;
+  position: relative;
+}
+
+.eb-tree-row:hover {
+  background: #F3F4F6;
+}
+
+/* ── 竖线连接线 ── */
+/* 章容器：从书chevron中心向下画竖线 */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node::before {
+  content: '';
+  position: absolute;
+  left: 19px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #E5E7EB;
+  pointer-events: none;
+}
+
+/* 节容器：从章chevron中心向下画竖线 */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-node::before {
+  content: '';
+  position: absolute;
+  left: 39px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #E5E7EB;
+  pointer-events: none;
+}
+
+/* ── 章节点行 ── */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-row {
+  padding: 7px 12px 7px 32px;
+  font-weight: 600;
+  font-size: 13px;
+  margin: 2px 8px 0 8px;
+  border-radius: 6px;
+  position: relative;
+}
+
+/* 水平连接线：从竖线连到章chevron */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-row::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  width: 12px;
+  height: 1px;
+  background: #E5E7EB;
+}
+
+/* chevron位置在竖线右侧 */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-row .eb-tree-chevron {
+  color: var(--accent, #3B82F6);
+  position: relative;
+  z-index: 1;
+}
+
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-row:hover {
+  background: #EFF6FF;
+}
+
+/* ── 节节点行 ── */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-node > .eb-tree-row {
+  padding: 5px 12px 5px 52px;
+  font-weight: 400;
+  font-size: 12.5px;
+  color: #4B5563;
+  margin: 0 8px;
+  border-radius: 4px;
+  position: relative;
+}
+
+/* 水平连接线 + 节点圆点 */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-node > .eb-tree-row::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  width: 12px;
+  height: 1px;
+  background: #D1D5DB;
+}
+
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-node > .eb-tree-row::after {
+  content: '';
+  position: absolute;
+  left: -15px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #10B981);
+}
+
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-node > .eb-tree-row:hover {
+  background: #F0FDF4;
+}
+
+/* 节节点无chevron时，小圆点仍然存在 */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-node > .eb-tree-row .eb-tree-chevron-placeholder {
+  display: none;
+}
+
+/* 节无chevron时调整padding（没有chevron占位，让文字更靠左对齐到圆点右侧） */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-node > .eb-tree-row .eb-tree-chevron-placeholder + .eb-tree-icon {
+  margin-left: 0;
+}
+
+.eb-tree-row--highlight {
+  background: #EEF2FF !important;
+}
+
+.eb-tree-chevron {
+  color: #9CA3AF;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.eb-tree-chevron--open {
+  transform: rotate(90deg);
+}
+
+.eb-tree-chevron-placeholder {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.eb-tree-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.eb-tree-type-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.eb-tree-type-label--book {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.eb-tree-type-label--chapter {
+  background: #DBEAFE;
+  color: #1E40AF;
+}
+
+.eb-tree-type-label--section {
+  background: #D1FAE5;
+  color: #065F46;
+}
+
+.eb-tree-name {
+  font-size: 13px;
+  color: #1F2937;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-tree-status {
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.eb-tree-count {
+  font-size: 12px;
+  color: #4B5563;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.eb-tree-bar {
+  width: 80px;
+  height: 4px;
+  background: #E5E7EB;
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.eb-tree-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.eb-tree-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  background: #EEF2FF;
+  color: #4338CA;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.eb-tree-date {
+  font-size: 11px;
+  color: #6B7280;
+  flex-shrink: 0;
+}
+
+.eb-tree-tasks {
+  padding: 2px 8px 6px 52px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.eb-tree-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 8px;
+  flex-shrink: 0;
+}
+
+.eb-tree-action-menu {
+  position: relative;
+}
+
+.eb-tree-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #6B7280;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.eb-tree-action-btn:hover {
+  color: #4B5563;
+  background: #F3F4F6;
+  border-color: #E5E7EB;
+}
+
+.eb-tree-action-btn--primary {
+  color: #6B7FD7;
+  background: #EEF2FF;
+  border-color: #C7D2FE;
+}
+
+.eb-tree-action-btn--primary:hover {
+  background: #E0E7FF;
+  color: #4338CA;
+}
+
+.eb-tree-action-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 50;
+  min-width: 120px;
+  overflow: hidden;
+}
+
+.eb-tree-action-dropdown button {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #374151;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.eb-tree-action-dropdown button:hover {
+  background: #F3F4F6;
+}
+
+.eb-tree-tag-edit {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.eb-tree-tag-edit input {
+  width: 70px;
+  padding: 2px 6px;
+  font-size: 11px;
+  border: 1px solid #C7D2FE;
+  border-radius: 3px;
+  outline: none;
+}
+
+.eb-tree-tag-edit button {
+  padding: 2px 5px;
+  font-size: 10px;
+  color: #10B981;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.eb-tree-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: #6B7280;
+  background: transparent;
+  border-radius: 4px;
+}
+
+.eb-tree-task:hover {
+  background: #F3F4F6;
+}
+
+.eb-tree-task--done {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.eb-tree-task--overdue {
+  color: #DC2626;
+}
+
+.eb-tree-task-round {
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+  min-width: 36px;
+}
+
+.eb-tree-task-date {
+  font-weight: 500;
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.eb-tree-task-status {
+  flex: 1;
+  font-size: 11px;
+}
+
+.eb-tree-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.eb-tree-task:hover .eb-tree-task-actions {
+  opacity: 1;
+}
+
+.eb-tree-task-actions button {
+  padding: 2px 4px;
+  font-size: 11px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.eb-tree-task-actions button:hover {
+  background: #E5E7EB;
+}
+
+/* ── 管理目录弹窗 ────────────────────────────────────── */
+.eb-mng-modal {
+  max-width: 760px;
+  width: 90vw;
+  max-height: 80vh;
+}
+
+.eb-mng-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eb-mng-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #6B7FD7;
+  background: #EEF2FF;
+  border: 1px solid #C7D2FE;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.eb-mng-tool:hover {
+  background: #E0E7FF;
+}
+
+.eb-mng-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eb-mng-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.eb-mng-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #F9FAFB;
+  border-radius: 5px;
+}
+
+.eb-mng-icon {
+  font-size: 13px;
+}
+
+.eb-mng-type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.eb-mng-type--book {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.eb-mng-type--chapter {
+  background: #DBEAFE;
+  color: #1E40AF;
+}
+
+.eb-mng-type--section {
+  background: #D1FAE5;
+  color: #065F46;
+}
+
+.eb-mng-name {
+  font-size: 13px;
+  color: #1F2937;
+  flex: 1;
+}
+
+.eb-mng-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  background: #EEF2FF;
+  color: #4338CA;
+  border-radius: 4px;
+}
+
+.eb-mng-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.eb-mng-gen {
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid #E5E7EB;
+  border-radius: 4px;
+  background: #FFFFFF;
+  color: #4B5563;
+  cursor: pointer;
+}
+
+.eb-mng-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #4B5563;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.eb-mng-btn:hover {
+  background: #F3F4F6;
+}
+
+.eb-mng-btn--primary {
+  background: #6B7FD7;
+  color: #FFFFFF;
+  border-color: #6B7FD7;
+}
+
+.eb-mng-btn--primary:hover {
+  background: #5A6EC7;
+}
+
+.eb-mng-btn--danger:hover {
+  background: #FEE2E2;
+  color: #DC2626;
+  border-color: #FCA5A5;
+}
+
+.eb-mng-edit {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 13px;
+  border: 1px solid #6B7FD7;
+  border-radius: 4px;
+  outline: none;
+}
+
+.eb-mng-edit--tag {
+  max-width: 100px;
+}
+
+.eb-mng-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 32px;
+}
+
+.eb-mng-add--book {
+  padding: 10px 12px;
+  background: #FEF9C3;
+  border: 1px dashed #FCD34D;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.eb-mng-add-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400E;
+  flex-shrink: 0;
+}
+
+.eb-mng-edit--name {
+  flex: 1;
+  min-width: 120px;
+}
+
+.eb-mng-add input,
+.eb-mng-add select {
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid #E5E7EB;
+  border-radius: 4px;
+  outline: none;
+}
+
+.eb-mng-add input {
+  flex: 1;
+}
+
+.eb-mng-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.eb-mng-paste-name {
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid #E5E7EB;
+  border-radius: 4px;
+  outline: none;
+}
+
+.eb-mng-paste-text {
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid #E5E7EB;
+  border-radius: 4px;
+  outline: none;
+  resize: vertical;
+  font-family: 'Consolas', 'Monaco', monospace;
+  line-height: 1.5;
+}
+
+.eb-mng-paste-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── 看板视图 ────────────────────────────────────────── */
+.eb-board {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.eb-board-columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.eb-board-col {
+  display: flex;
+  flex-direction: column;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-top: 3px solid var(--col-color, #6B7FD7);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.eb-board-col--over {
+  background: #EEF2FF;
+}
+
+.eb-board-col-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #E5E7EB;
+  background: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.eb-board-col-icon {
+  font-size: 14px;
+}
+
+.eb-board-col-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.eb-board-col-count {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  background: #E5E7EB;
+  border-radius: 10px;
+}
+
+.eb-board-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eb-board-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: #FFFFFF;
+  border-radius: 6px;
+  border: 1px solid #F3F4F6;
+}
+
+.eb-board-lane-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+}
+
+.eb-board-lane-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.eb-board-lane-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4B5563;
+}
+
+.eb-board-lane-count {
+  font-size: 10px;
+  color: #9CA3AF;
+}
+
+.eb-board-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.eb-board-card:hover {
+  border-color: #C7D2FE;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.eb-board-card--dragging {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0.9;
+}
+
+.eb-board-card--done {
+  opacity: 0.65;
+}
+
+.eb-board-card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.eb-board-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.eb-board-card-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1F2937;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.eb-board-card-name:hover {
+  color: #6B7FD7;
+}
+
+.eb-board-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  flex-wrap: wrap;
+}
+
+.eb-board-card-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.eb-board-card-round {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.eb-board-card-date {
+  font-size: 11px;
+}
+
+.eb-board-card-points {
+  font-size: 11px;
+  color: #6B7FD7;
+  font-weight: 500;
+}
+
+.eb-board-card-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.eb-board-card-actions .eb-icon-btn {
+  padding: 3px 5px;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.eb-board-card-actions .eb-icon-btn:hover {
+  background: #E5E7EB;
+}
+
+.eb-board-empty {
+  text-align: center;
+  padding: 20px;
+  font-size: 12px;
+  color: #9CA3AF;
+}
+
+/* ── 日历弹窗 ────────────────────────────────────────── */
+.eb-calendar-modal {
+  max-width: 600px;
+  width: 90vw;
+}
+
+.eb-calendar-modal .eb-modal-body {
+  display: flex;
+  gap: 16px;
+}
+
+/* ── 增强版迷你日历 ────────────────────────────────────── */
+.eb-mini-cal {
+  flex-shrink: 0;
+  padding: 10px 12px 8px;
+  box-sizing: border-box;
+}
+
+.eb-mini-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px 8px;
+}
+
+.eb-mini-cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.eb-mini-cal-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: #6B7280;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.eb-mini-cal-nav-btn:hover {
+  background: #F3F4F6;
+  color: #6B7FD7;
+}
+
+.eb-mini-cal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1F2937;
+  padding: 0 6px;
+  min-width: 80px;
+  text-align: center;
+}
+
+.eb-mini-cal-today {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6B7FD7;
+  background: #EEF2FF;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.eb-mini-cal-today:hover {
+  background: #E0E7FF;
+}
+
+.eb-mini-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  width: 100%;
+}
+
+.eb-mini-cal-weekday-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 500;
+  padding: 4px 0 6px;
+}
+
+.eb-mini-cal-weekday--weekend {
+  color: #9CA3AF;
+}
+
+.eb-mini-cal-cell {
+  position: relative;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  font-size: 11.5px;
+  color: #374151;
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.12s;
+  padding: 2px 0;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.eb-mini-cal-cell:hover {
+  background: #F3F4F6;
+}
+
+.eb-mini-cal-cell--empty {
+  cursor: default;
+}
+
+.eb-mini-cal-cell--empty:hover {
+  background: transparent;
+}
+
+.eb-mini-cal-cell--weekend {
+  color: #6B7280;
+}
+
+/* 任务量分级色阶（L1-L5，绿→黄→橙→红） */
+.eb-mini-cal-cell--load-1 {
+  background: #ECFDF5;
+}
+.eb-mini-cal-cell--load-1:hover {
+  background: #D1FAE5;
+}
+.eb-mini-cal-cell--load-1 .eb-mini-cal-day {
+  color: #047857;
+}
+
+.eb-mini-cal-cell--load-2 {
+  background: #A7F3D0;
+}
+.eb-mini-cal-cell--load-2:hover {
+  background: #6EE7B7;
+}
+.eb-mini-cal-cell--load-2 .eb-mini-cal-day {
+  color: #065F46;
+}
+
+.eb-mini-cal-cell--load-3 {
+  background: #FDE68A;
+}
+.eb-mini-cal-cell--load-3:hover {
+  background: #FCD34D;
+}
+.eb-mini-cal-cell--load-3 .eb-mini-cal-day {
+  color: #92400E;
+}
+
+.eb-mini-cal-cell--load-4 {
+  background: #FDBA74;
+}
+.eb-mini-cal-cell--load-4:hover {
+  background: #FB923C;
+}
+.eb-mini-cal-cell--load-4 .eb-mini-cal-day {
+  color: #9A3412;
+}
+
+.eb-mini-cal-cell--load-5 {
+  background: #FCA5A5;
+}
+.eb-mini-cal-cell--load-5:hover {
+  background: #F87171;
+}
+.eb-mini-cal-cell--load-5 .eb-mini-cal-day {
+  color: #991B1B;
+  font-weight: 600;
+}
+
+/* 逾期警示：红边框叠加 */
+.eb-mini-cal-cell--overdue {
+  border-color: #EF4444;
+  box-shadow: inset 0 0 0 1px #EF4444;
+}
+
+/* 全完成态（覆盖分级色，表示已结清） */
+.eb-mini-cal-cell--alldone {
+  background: #D1FAE5 !important;
+  box-shadow: none !important;
+}
+
+.eb-mini-cal-cell--alldone .eb-mini-cal-day {
+  color: #059669;
+}
+
+/* 旧 --hastask 保留兼容（不再使用固定浅绿） */
+.eb-mini-cal-cell--hastask {
+  background: #ECFDF5;
+}
+
+.eb-mini-cal-cell--hastask:hover {
+  background: #D1FAE5;
+}
+
+.eb-mini-cal-cell--selected {
+  background: #6B7FD7 !important;
+  border-color: #6B7FD7;
+  color: #FFFFFF !important;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(107, 127, 215, 0.3);
+}
+
+.eb-mini-cal-cell--selected .eb-mini-cal-day {
+  color: #FFFFFF !important;
+}
+
+.eb-mini-cal-cell--today:not(.eb-mini-cal-cell--selected) {
+  border-color: #C7D2FE;
+  background: #EEF2FF;
+  font-weight: 600;
+  color: #4338CA;
+}
+
+.eb-mini-cal-day {
+  line-height: 1;
+}
+
+.eb-mini-cal-dots {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  justify-content: center;
+}
+
+.eb-mini-cal-dot-item {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.eb-mini-cal-cell--selected .eb-mini-cal-dot-item {
+  background: #FFFFFF !important;
+}
+
+/* ── 日历图例 ────────────────────────────────────────── */
+.eb-mini-cal-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 2px 2px;
+  margin-top: 4px;
+  border-top: 1px dashed #E5E7EB;
+}
+
+.eb-mini-cal-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #6B7280;
+  white-space: nowrap;
+}
+
+.eb-mini-cal-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid #D1D5DB;
+  flex-shrink: 0;
+}
+
+/* ── 设置面板：任务量阈值调整 ──────────────────────── */
+.eb-load-thresholds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.eb-load-threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.eb-load-threshold-row--hint {
+  color: #9CA3AF;
+  font-size: 11px;
+  padding-top: 4px;
+  border-top: 1px dashed #E5E7EB;
+  margin-top: 4px;
+}
+
+.eb-load-threshold-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid #D1D5DB;
+  flex-shrink: 0;
+}
+
+.eb-load-threshold-label {
+  flex: 1;
+  min-width: 80px;
+}
+
+.eb-load-threshold-hint {
+  color: #9CA3AF;
+  font-size: 11px;
+}
+
+.eb-load-threshold-input {
+  width: 56px;
+  padding: 2px 4px;
+  font-size: 12px;
+  text-align: center;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  color: #1F2937;
+  background: #FFFFFF;
+}
+
+.eb-load-threshold-input:focus {
+  outline: none;
+  border-color: #6B7FD7;
+  box-shadow: 0 0 0 2px rgba(107, 127, 215, 0.15);
+}
+
+.eb-load-threshold-unit {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+.eb-calendar-day-tasks {
+  flex: 1;
+  min-width: 0;
+}
+
+.eb-calendar-day-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1F2937;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.eb-calendar-empty {
+  color: #9CA3AF;
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.eb-calendar-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eb-calendar-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #F9FAFB;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.eb-calendar-task--done {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.eb-calendar-task-round {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.eb-calendar-task-name {
+  flex: 1;
+  color: #1F2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-calendar-task-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  background: #EEF2FF;
+  color: #4338CA;
+  border-radius: 3px;
+}
+
+.eb-calendar-task-points {
+  font-size: 11px;
+  color: #6B7FD7;
+  font-weight: 500;
+}
+
+/* ── 空状态 ──────────────────────────────────────────── */
+.eb-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: #6B7280;
+}
+
+.eb-empty p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.eb-empty-hint {
+  font-size: 12px !important;
+  color: #9CA3AF;
+}
+
+/* ── 生成任务弹窗 ──────────────────────────────────────────── */
+.eb-gen-modal .eb-modal-body {
+  gap: 16px;
+}
+
+.eb-gen-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eb-gen-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.eb-gen-input {
+  padding: 8px 10px;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.eb-gen-input:focus {
+  border-color: #5b6af0;
+}
+
+.eb-gen-path {
+  font-size: 12px;
+  color: #6B7280;
+  background: #F9FAFB;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+.eb-gen-complexity {
+  display: flex;
+  gap: 8px;
+}
+
+.eb-gen-complexity-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #4B5563;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.eb-gen-complexity-btn:hover {
+  border-color: #C7D2FE;
+  background: #F5F7FF;
+}
+
+.eb-gen-complexity-btn--active {
+  border-color: #5b6af0;
+  background: #EEF2FF;
+  color: #4338CA;
+  font-weight: 600;
+}
+
+.eb-gen-hint {
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-top: 2px;
+}
+
+.eb-gen-btn {
+  padding: 8px 16px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #4B5563;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.eb-gen-btn:hover {
+  background: #F9FAFB;
+}
+
+.eb-gen-btn--primary {
+  background: #5b6af0;
+  border-color: #5b6af0;
+  color: #fff;
+}
+
+.eb-gen-btn--primary:hover {
+  background: #4F5BD5;
+}
+
+.eb-gen-btn--preview {
+  margin-right: auto;
+}
+
+.eb-gen-preview-date {
+  color: #6B7FD7;
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+.eb-gen-preview {
+  background: #F9FAFB;
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.eb-gen-preview-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  margin-bottom: 6px;
+}
+
+.eb-gen-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eb-gen-preview-item {
+  font-size: 12px;
+  color: #4B5563;
+  padding: 3px 0;
+  border-bottom: 1px dashed #E5E7EB;
+}
+
+.eb-gen-preview-item:last-child {
+  border-bottom: none;
+}
+
+.eb-gen-preview-round {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  background: #EEF2FF;
+  color: #4338CA;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.eb-gen-stat {
+  font-size: 11px;
+  color: #6B7FD7;
+  font-weight: 500;
+}
+
+/* ── 目录树统计行 ──────────────────────────────────────────── */
+.eb-tree-row--with-stats {
+  border-radius: 0;
+}
+
+/* 书节点的统计行 */
+.eb-directory-tree > .eb-tree-node > .eb-tree-stat-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px 10px 38px;
+  background: #FAFBFC;
+  border-top: 1px solid #F3F4F6;
+  margin: 0;
+}
+
+/* 章节点的统计行 */
+.eb-directory-tree > .eb-tree-node > .eb-tree-node > .eb-tree-stat-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 4px 12px 8px 52px;
+  background: transparent;
+  margin: 0 8px;
+  border-radius: 0 0 6px 6px;
+}
+
+.eb-tree-stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.eb-tree-stat-item--total { background: #F3F4F6; color: #6B7280; }
+.eb-tree-stat-item--done { background: #ECFDF5; color: #059669; }
+.eb-tree-stat-item--reviewing { background: #FFFBEB; color: #B45309; }
+.eb-tree-stat-item--pending { background: #F3F4F6; color: #9CA3AF; }
+.eb-tree-stat-item--tasks { background: #EEF2FF; color: #4F46E5; }
+.eb-tree-stat-item--date { background: #F1F5F9; color: #475569; }

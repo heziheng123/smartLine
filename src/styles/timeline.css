@@ -5,6 +5,13 @@
 /* 仅启用 Tailwind 工具类（不含 base reset，避免影响既有组件） */
 @tailwind utilities;
 
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
 /* ── App 布局 ────────────────────────────────────────────── */
 .tl-app {
   display: flex;
@@ -12,6 +19,8 @@
   height: 100vh;
   width: 100%;
   padding-top: 50px;
+  padding-left: 48px;
+  box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
   font-size: 12px;
   color: #1f2937;
@@ -25,7 +34,7 @@
 .tl-toolbar {
   position: fixed;
   top: 0;
-  left: 0;
+  left: 48px;
   right: 0;
   z-index: 100;
   display: flex;
@@ -38,6 +47,7 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   gap: 12px;
   transition: box-shadow 0.2s ease;
+  box-sizing: border-box;
 }
 
 .tl-toolbar-left {
@@ -1777,6 +1787,47 @@
   background: #FFFBEB;
   border-radius: 6px;
   border: 1px solid #FEF3C7;
+}
+
+.tl-sync-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #374151;
+}
+
+.tl-sync-checkbox-row input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: #5b6af0;
+  cursor: pointer;
+}
+
+.tl-sync-checkbox-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tl-sync-checkbox-hint {
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 400;
+}
+
+.tl-sync-checkbox-hint code {
+  background: #EEF2FF;
+  color: #5b6af0;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
 }
 
 .tl-toolbar-btn--synced {
