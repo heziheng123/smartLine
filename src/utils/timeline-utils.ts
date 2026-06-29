@@ -24,12 +24,10 @@ export const BAR_HEIGHT = 24;
 /**
  * 时间轴标准主题色（5 套同色系）
  * 同色系绑定原则：外层"分组"与内部"任务"使用同一套主题。
- * - groupColor:      分组外框 & 分组标签背景色
- * - taskBorder:      内部任务边框颜色（用于任务条箭头/强调色/左右细边框）
- * - taskText:        内部任务文字颜色
- * - taskBg:          内部任务浅背景色（标准明度，任务条填充）
- * - taskBgVariants:  同色系明度变体（方案 A），同分组内相邻任务按序号交替使用，
- *                    避免相邻同色任务视觉粘连。变体顺序：[标准, 更浅, 中浅]。
+ * - groupColor:  分组外框 & 分组标签背景色
+ * - taskBorder:  内部任务边框颜色（用于任务条箭头/强调色/左右细边框）
+ * - taskText:    内部任务文字颜色
+ * - taskBg:      内部任务浅背景色（任务条填充）
  *
  * 特殊说明：索引 4（红色主题）为主线任务专用，isMain=true 的任务优先使用该主题。
  */
@@ -38,31 +36,15 @@ export interface TimelineTheme {
   taskBorder: string;
   taskText: string;
   taskBg: string;
-  taskBgVariants: string[];
 }
 
 export const TIMELINE_THEMES: TimelineTheme[] = [
-  {
-    groupColor: '#60A5FA', taskBorder: '#3B82F6', taskText: '#1D4ED8', taskBg: '#DBEAFE',
-    taskBgVariants: ['#DBEAFE', '#EFF6FF', '#BFDBFE'], // blue-100 / 50 / 200
-  },
-  {
-    groupColor: '#A78BFA', taskBorder: '#8B5CF6', taskText: '#5B21B6', taskBg: '#EDE9FE',
-    taskBgVariants: ['#EDE9FE', '#F5F3FF', '#DDD6FE'], // violet-100 / 50 / 200
-  },
-  {
-    groupColor: '#34D399', taskBorder: '#10B981', taskText: '#047857', taskBg: '#D1FAE5',
-    taskBgVariants: ['#D1FAE5', '#ECFDF5', '#A7F3D0'], // emerald-100 / 50 / 200
-  },
-  {
-    groupColor: '#FBBF24', taskBorder: '#F59E0B', taskText: '#B45309', taskBg: '#FEF3C7',
-    taskBgVariants: ['#FEF3C7', '#FFFBEB', '#FDE68A'], // amber-100 / 50 / 200
-  },
+  { groupColor: '#60A5FA', taskBorder: '#3B82F6', taskText: '#1D4ED8', taskBg: '#DBEAFE' },
+  { groupColor: '#A78BFA', taskBorder: '#8B5CF6', taskText: '#5B21B6', taskBg: '#EDE9FE' },
+  { groupColor: '#34D399', taskBorder: '#10B981', taskText: '#047857', taskBg: '#D1FAE5' },
+  { groupColor: '#FBBF24', taskBorder: '#F59E0B', taskText: '#B45309', taskBg: '#FEF3C7' },
   // 红色主题（索引 4）：主线任务专用，浅红背景 + 深红文字/边框
-  {
-    groupColor: '#F87171', taskBorder: '#EF4444', taskText: '#991B1B', taskBg: '#FEE2E2',
-    taskBgVariants: ['#FEE2E2', '#FEF2F2', '#FECACA'], // red-100 / 50 / 200
-  },
+  { groupColor: '#F87171', taskBorder: '#EF4444', taskText: '#991B1B', taskBg: '#FEE2E2' },
 ];
 
 /** 主线任务红色主题索引（TIMELINE_THEMES[4]） */
@@ -73,33 +55,18 @@ export const TASK_BG_PRESET = TIMELINE_THEMES.map((t) => t.taskBg);
 /** 分组色预设（取自各主题 groupColor，供分组色板使用） */
 export const GROUP_COLOR_PRESET = TIMELINE_THEMES.map((t) => t.groupColor);
 
-/** taskBg -> 主题 的反查缓存，避免每次线性扫描 4 主题 × 3 变体 */
+/** taskBg -> 主题 的反查缓存，O(1) 查表 */
 const TASK_BG_INDEX: Map<string, TimelineTheme> = (() => {
   const m = new Map<string, TimelineTheme>();
   for (const t of TIMELINE_THEMES) {
     m.set(t.taskBg.toLowerCase(), t);
-    for (const v of t.taskBgVariants) m.set(v.toLowerCase(), t);
   }
   return m;
 })();
 
-/** 根据 taskBg 反查所属主题（兼容标准色与变体色），O(1) 查表 */
+/** 根据 taskBg 反查所属主题，O(1) 查表 */
 export function findThemeByTaskBg(taskBg: string): TimelineTheme | undefined {
   return TASK_BG_INDEX.get((taskBg || '').toLowerCase());
-}
-
-/**
- * 根据任务在分组内的序号选取同色系明度变体（方案 A 核心）
- * - 序号轮询 3 个变体，确保相邻任务明度不同
- * - 无 groupId 的散任务回退到标准色
- */
-export function getTaskBgVariant(taskBg: string, indexInGroup: number): string {
-  const theme = findThemeByTaskBg(taskBg);
-  if (!theme) return taskBg;
-  const variants = theme.taskBgVariants;
-  if (!variants.length) return taskBg;
-  const idx = ((indexInGroup % variants.length) + variants.length) % variants.length;
-  return variants[idx];
 }
 
 /** 旧版莫兰迪色系，仅作历史数据回退用 */
@@ -225,23 +192,6 @@ export function sliceTasksForYear(
   const yearStart = dayjs(`${year}-01-01`);
   const yearEnd = dayjs(`${year}-12-31`);
 
-  // 方案 A：为同一分组内的任务分配序号，用于在同色系明度变体中交替选取，
-  // 避免相邻任务（如 12 号结束 / 13 号开始）颜色完全相同而难以区分。
-  // 无 groupId 的散任务序号固定为 0（使用标准色）。
-  // 按 start 时间排序后再分配序号，确保时间相邻的任务拿到不同变体。
-  const variantIdxByTaskId = new Map<string, number>();
-  const groupCounters = new Map<string, number>();
-  const tasksByStart = [...tasks]
-    .filter((t) => dayjs(t.start).isValid() && dayjs(t.end).isValid())
-    .sort((a, b) => dayjs(a.start).valueOf() - dayjs(b.start).valueOf());
-  for (const task of tasksByStart) {
-    if (task.groupId) {
-      const idx = groupCounters.get(task.groupId) ?? 0;
-      groupCounters.set(task.groupId, idx + 1);
-      variantIdxByTaskId.set(task.id, idx);
-    }
-  }
-
   for (const task of tasks) {
     const tStart = dayjs(task.start);
     const tEnd = dayjs(task.end);
@@ -264,18 +214,11 @@ export function sliceTasksForYear(
       // 颜色选择逻辑：
       // 1. 主线任务（isMain）：优先使用红色主题（浅红背景 #FEE2E2），除非用户显式设置了自定义颜色
       // 2. 普通任务：优先使用任务自带颜色，否则按 id 轮询标准主题浅背景（前 4 套）
-      const colorIdx = parseInt(task.id.slice(0, 1), 16) || 0;
+      const colorIdx = parseInt(task.id.slice(0, 16), 16) || 0;
       const safeIdx = colorIdx % (TIMELINE_THEMES.length - 1); // 普通任务只用前 4 套，排除红色主题
-      let baseBg: string;
-      if (task.isMain) {
-        // 主线任务优先使用红色主题，但尊重用户自定义颜色
-        baseBg = task.color ?? TIMELINE_THEMES[MAIN_TASK_THEME_IDX].taskBg;
-      } else {
-        baseBg = task.color ?? TIMELINE_THEMES[safeIdx].taskBg;
-      }
-      // 按分组内序号选取同色系明度变体（散任务 indexInGroup=0，回退标准色）
-      const variantIdx = task.groupId ? (variantIdxByTaskId.get(task.id) ?? 0) : 0;
-      const bgColor = getTaskBgVariant(baseBg, variantIdx);
+      const bgColor = task.isMain
+        ? task.color ?? TIMELINE_THEMES[MAIN_TASK_THEME_IDX].taskBg
+        : task.color ?? TIMELINE_THEMES[safeIdx].taskBg;
 
       months[m].segments.push({
         taskId: task.id,
