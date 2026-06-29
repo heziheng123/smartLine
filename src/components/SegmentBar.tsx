@@ -4,7 +4,7 @@
 
 import React from 'react';
 import type { TaskSegment } from '@/types';
-import { BAR_HEIGHT, ROW_HEIGHT, getBorderColor, MAIN_TASK_TEXT } from '@/utils/timeline-utils';
+import { BAR_HEIGHT, ROW_HEIGHT, getTaskTextColor, getTaskBorderColor } from '@/utils/timeline-utils';
 
 const SegmentBar: React.FC<{
   segment: TaskSegment;
@@ -22,8 +22,10 @@ const SegmentBar: React.FC<{
   const radiusL = isStart ? 6 : 0;
   const radiusR = isEnd ? 6 : 0;
 
-  const textColor = isMain ? MAIN_TASK_TEXT : getBorderColor(color);
-  const arrowColor = isMain ? 'rgba(153, 27, 27, 0.5)' : `${textColor}80`;
+  // 任务文字色与箭头/边框强调色均取自任务所属主题（同色系绑定）
+  const textColor = getTaskTextColor(color);
+  const taskBorderColor = getTaskBorderColor(color);
+  const arrowColor = `${taskBorderColor}80`;
 
   return (
     <div
@@ -37,6 +39,10 @@ const SegmentBar: React.FC<{
         borderRadius: `${radiusL}px ${radiusR}px ${radiusR}px ${radiusL}px`,
         color: textColor,
         cursor: 'pointer',
+        // 方案 B：左右 1px 同色系深色细边框，为相邻同色任务提供兜底视觉边界
+        // box-sizing 已为 border-box，不会撑大元素；圆角处边框自然贴合
+        borderLeft: `1px solid ${taskBorderColor}`,
+        borderRight: `1px solid ${taskBorderColor}`,
       }}
       title={`${taskName}\n${segment.month + 1}月${startDay}日 ~ ${endDay}日${isMain ? '\n[主线任务]' : ''}${completed ? '\n[已完成]' : ''}\n单击查看详情`}
       onClick={(e) => { e.stopPropagation(); onClick?.(); }}

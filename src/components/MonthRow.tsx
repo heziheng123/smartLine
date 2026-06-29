@@ -5,7 +5,7 @@
 import React, { useMemo } from 'react';
 import dayjs from 'dayjs';
 import type { MonthLayout } from '@/types';
-import { isWeekend, MONTH_NAMES, ROW_HEIGHT, getBorderColor } from '@/utils/timeline-utils';
+import { isWeekend, MONTH_NAMES, ROW_HEIGHT, getGroupBorderColor, getGroupLabelTextColor } from '@/utils/timeline-utils';
 import SegmentBar from './SegmentBar';
 
 const MonthRow: React.FC<{
@@ -21,11 +21,10 @@ const MonthRow: React.FC<{
 }> = ({ monthLayout, year, onTaskClick, onTaskContextMenu, onNoteDoubleClick, onNoteContextMenu, onMilestoneDoubleClick, onMilestoneContextMenu, onGroupDoubleClick }) => {
   const { month, daysInMonth, segments, noteSegments, milestones, groupRanges, totalRows: taskRows } = monthLayout;
 
-  // 画布总行数：取任务行和分组范围行的最大值
-  const totalRows = Math.max(
-    taskRows,
-    ...groupRanges.map((g) => g.rowEnd + 1),
-    0
+  // 画布总行数：取任务行和分组范围行的最大值（用 reduce 避免 spread 大数组栈溢出）
+  const totalRows = groupRanges.reduce(
+    (max, g) => Math.max(max, g.rowEnd + 1),
+    taskRows
   );
 
   const hasTasks = totalRows > 0;
@@ -116,7 +115,7 @@ const MonthRow: React.FC<{
             const GAP = 3;
             const topPx = gr.rowStart * ROW_HEIGHT + GAP;
             const heightPx = (gr.rowEnd - gr.rowStart + 1) * ROW_HEIGHT - GAP * 2;
-            const borderColor = getBorderColor(gr.color);
+            const borderColor = getGroupBorderColor(gr.color);
             return (
               <div
                 key={`group-${gr.groupId}`}
@@ -202,7 +201,7 @@ const MonthRow: React.FC<{
             const leftPct = ((gr.startDay - 1) / daysInMonth) * 100;
             const GAP = 3;
             const topPx = gr.rowStart * ROW_HEIGHT + GAP;
-            const borderColor = getBorderColor(gr.color);
+            const labelTextColor = getGroupLabelTextColor(gr.color);
             return (
               <span
                 key={`grouplabel-${gr.groupId}`}
@@ -211,7 +210,7 @@ const MonthRow: React.FC<{
                   left: `${leftPct}%`,
                   top: topPx - 10,
                   backgroundColor: gr.color,
-                  color: borderColor,
+                  color: labelTextColor,
                 }}
                 onDoubleClick={() => onGroupDoubleClick?.(gr.groupId)}
                 title={gr.groupName}

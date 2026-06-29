@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react';
 import type { Task, TaskGroup } from '@/types';
+import { GROUP_COLOR_PRESET, TIMELINE_THEMES } from '@/utils/timeline-utils';
 
 interface GroupDialogProps {
   group?: TaskGroup;
@@ -14,10 +15,8 @@ interface GroupDialogProps {
   onCancel: () => void;
 }
 
-const PRESET_COLORS = [
-  '#D1FAE5', '#EDE9FE', '#FEF3C7', '#FFE4E6',
-  '#E0F2FE', '#F3E8FF', '#FCE7F3', '#CFFAFE',
-];
+// 分组色板：4 套标准主题的分组色（外框 & 标签背景）
+const PRESET_COLORS = GROUP_COLOR_PRESET;
 
 const GroupDialog: React.FC<GroupDialogProps> = ({
   group,
@@ -176,7 +175,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                     />
                     <span
                       className="tl-dialog-task-dot"
-                      style={{ backgroundColor: task.isMain ? '#FEE2E2' : (task.color || '#E0F2FE') }}
+                      style={{ backgroundColor: task.color || TIMELINE_THEMES[0].taskBg }}
                     />
                     <span className="tl-dialog-task-name">{task.name}</span>
                     <span className="tl-dialog-task-date">{task.start} ~ {task.end}</span>

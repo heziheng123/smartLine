@@ -22,51 +22,163 @@ export const ROW_HEIGHT = 34;
 export const BAR_HEIGHT = 24;
 
 /**
- * 莫兰迪色系（高明度浅背景 + 同色系深文字）
- * 每组：[浅背景色, 深文字/边框色]
+ * 时间轴标准主题色（4 套同色系）
+ * 同色系绑定原则：外层"分组"与内部"任务"使用同一套主题。
+ * - groupColor:      分组外框 & 分组标签背景色
+ * - taskBorder:      内部任务边框颜色（用于任务条箭头/强调色/左右细边框）
+ * - taskText:        内部任务文字颜色
+ * - taskBg:          内部任务浅背景色（标准明度，任务条填充）
+ * - taskBgVariants:  同色系明度变体（方案 A），同分组内相邻任务按序号交替使用，
+ *                    避免相邻同色任务视觉粘连。变体顺序：[标准, 更浅, 中浅]。
  */
-const MORANDI_PALETTE: [string, string][] = [
-  ['#E0F2FE', '#0369A1'], // 天青
-  ['#D1FAE5', '#047857'], // 薄荷
-  ['#FFE4E6', '#BE123C'], // 蜜桃
-  ['#FEF3C7', '#B45309'], // 琥珀
-  ['#EDE9FE', '#6D28D9'], // 薰衣草
-  ['#FFEDD5', '#C2410C'], // 珊瑚
-  ['#CFFAFE', '#0E7490'], // 冰川
-  ['#FCE7F3', '#BE185D'], // 樱草
-  ['#ECFCCB', '#4D7C0F'], // 苔藓
-  ['#F3E8FF', '#7E22CE'], // 紫藤
+export interface TimelineTheme {
+  groupColor: string;
+  taskBorder: string;
+  taskText: string;
+  taskBg: string;
+  taskBgVariants: string[];
+}
+
+export const TIMELINE_THEMES: TimelineTheme[] = [
+  {
+    groupColor: '#60A5FA', taskBorder: '#3B82F6', taskText: '#1D4ED8', taskBg: '#DBEAFE',
+    taskBgVariants: ['#DBEAFE', '#EFF6FF', '#BFDBFE'], // blue-100 / 50 / 200
+  },
+  {
+    groupColor: '#A78BFA', taskBorder: '#8B5CF6', taskText: '#5B21B6', taskBg: '#EDE9FE',
+    taskBgVariants: ['#EDE9FE', '#F5F3FF', '#DDD6FE'], // violet-100 / 50 / 200
+  },
+  {
+    groupColor: '#34D399', taskBorder: '#10B981', taskText: '#047857', taskBg: '#D1FAE5',
+    taskBgVariants: ['#D1FAE5', '#ECFDF5', '#A7F3D0'], // emerald-100 / 50 / 200
+  },
+  {
+    groupColor: '#FBBF24', taskBorder: '#F59E0B', taskText: '#B45309', taskBg: '#FEF3C7',
+    taskBgVariants: ['#FEF3C7', '#FFFBEB', '#FDE68A'], // amber-100 / 50 / 200
+  },
 ];
 
-/** 根据背景色获取对应的边框/文字色 */
-export function getBorderColor(bgColor: string): string {
-  const idx = MORANDI_PALETTE.findIndex(([bg]) => bg === bgColor);
-  if (idx >= 0) return MORANDI_PALETTE[idx][1];
-  // fallback：计算深版本（确保至少 30% 亮度差）
-  let c = (bgColor || '').trim().replace('#', '');
-  if (/^[0-9a-fA-F]{3}$/.test(c)) {
-    c = c.split('').map(x => x + x).join('');
+/** 任务浅背景预设色（取自各主题 taskBg，供任务色板使用） */
+export const TASK_BG_PRESET = TIMELINE_THEMES.map((t) => t.taskBg);
+/** 分组色预设（取自各主题 groupColor，供分组色板使用） */
+export const GROUP_COLOR_PRESET = TIMELINE_THEMES.map((t) => t.groupColor);
+
+/** taskBg -> 主题 的反查缓存，避免每次线性扫描 4 主题 × 3 变体 */
+const TASK_BG_INDEX: Map<string, TimelineTheme> = (() => {
+  const m = new Map<string, TimelineTheme>();
+  for (const t of TIMELINE_THEMES) {
+    m.set(t.taskBg.toLowerCase(), t);
+    for (const v of t.taskBgVariants) m.set(v.toLowerCase(), t);
   }
-  if (!/^[0-9a-fA-F]{6}$/.test(c)) {
-    return '#9F1239';
+  return m;
+})();
+
+/** 根据 taskBg 反查所属主题（兼容标准色与变体色），O(1) 查表 */
+export function findThemeByTaskBg(taskBg: string): TimelineTheme | undefined {
+  return TASK_BG_INDEX.get((taskBg || '').toLowerCase());
+}
+
+/**
+ * 根据任务在分组内的序号选取同色系明度变体（方案 A 核心）
+ * - 序号轮询 3 个变体，确保相邻任务明度不同
+ * - 无 groupId 的散任务回退到标准色
+ */
+export function getTaskBgVariant(taskBg: string, indexInGroup: number): string {
+  const theme = findThemeByTaskBg(taskBg);
+  if (!theme) return taskBg;
+  const variants = theme.taskBgVariants;
+  if (!variants.length) return taskBg;
+  const idx = ((indexInGroup % variants.length) + variants.length) % variants.length;
+  return variants[idx];
+}
+
+/** 旧版莫兰迪色系，仅作历史数据回退用 */
+const LEGACY_MORANDI_PALETTE: [string, string][] = [
+  ['#E0F2FE', '#0369A1'],
+  ['#D1FAE5', '#047857'],
+  ['#FFE4E6', '#BE123C'],
+  ['#FEF3C7', '#B45309'],
+  ['#EDE9FE', '#6D28D9'],
+  ['#FFEDD5', '#C2410C'],
+  ['#CFFAFE', '#0E7490'],
+  ['#FCE7F3', '#BE185D'],
+  ['#ECFCCB', '#4D7C0F'],
+  ['#F3E8FF', '#7E22CE'],
+];
+
+function clampHex(c: string): string {
+  let v = (c || '').trim().replace('#', '');
+  if (/^[0-9a-fA-F]{3}$/.test(v)) {
+    v = v.split('').map((x) => x + x).join('');
   }
-  const r = parseInt(c.substring(0, 2), 16);
-  const g = parseInt(c.substring(2, 4), 16);
-  const b = parseInt(c.substring(4, 6), 16);
-  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-  // 按亮度对比度缩放：浅色用 0.35 倍，深色用 0.7 倍
-  const factor = brightness > 150 ? 0.35 : 0.7;
+  return /^[0-9a-fA-F]{6}$/.test(v) ? v : '';
+}
+
+function brightnessOf(hex: string): number {
+  const v = clampHex(hex);
+  if (!v) return 0;
+  const r = parseInt(v.substring(0, 2), 16);
+  const g = parseInt(v.substring(2, 4), 16);
+  const b = parseInt(v.substring(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
+function darkenHex(hex: string, factor: number): string {
+  const v = clampHex(hex);
+  if (!v) return '#9F1239';
+  const r = parseInt(v.substring(0, 2), 16);
+  const g = parseInt(v.substring(2, 4), 16);
+  const b = parseInt(v.substring(4, 6), 16);
   const dr = Math.round(r * factor);
   const dg = Math.round(g * factor);
   const db = Math.round(b * factor);
   return `#${dr.toString(16).padStart(2, '0')}${dg.toString(16).padStart(2, '0')}${db.toString(16).padStart(2, '0')}`;
 }
 
-/**
- * 主线任务配色：浅红背景 + 深红文字
- */
-export const MAIN_TASK_BG = '#FEE2E2';
-export const MAIN_TASK_TEXT = '#991B1B';
+/** 通用回退：根据背景色计算深色文字/边框色（兼容历史数据） */
+export function getBorderColor(bgColor: string): string {
+  if (!bgColor) return '#9F1239';
+  const legacy = LEGACY_MORANDI_PALETTE.find(([bg]) => bg === bgColor);
+  if (legacy) return legacy[1];
+  const factor = brightnessOf(bgColor) > 150 ? 0.35 : 0.7;
+  return darkenHex(bgColor, factor);
+}
+
+/** 内部任务文字颜色：同主题深文字（兼容变体色），否则回退 */
+export function getTaskTextColor(taskBg: string): string {
+  const theme = findThemeByTaskBg(taskBg);
+  return theme ? theme.taskText : getBorderColor(taskBg);
+}
+
+/** 内部任务边框颜色：同主题边框色（兼容变体色），否则回退 */
+export function getTaskBorderColor(taskBg: string): string {
+  const theme = findThemeByTaskBg(taskBg);
+  return theme ? theme.taskBorder : getBorderColor(taskBg);
+}
+
+/** 分组色 -> 主题 的反查缓存 */
+const GROUP_COLOR_INDEX: Map<string, TimelineTheme> = (() => {
+  const m = new Map<string, TimelineTheme>();
+  for (const t of TIMELINE_THEMES) m.set(t.groupColor.toLowerCase(), t);
+  return m;
+})();
+
+/** 分组外框颜色：规范规定外框 = 分组色本身 */
+export function getGroupBorderColor(groupColor: string): string {
+  if (!groupColor) return '#9F1239';
+  const theme = GROUP_COLOR_INDEX.get(groupColor.toLowerCase());
+  return theme ? theme.groupColor : getBorderColor(groupColor);
+}
+
+/** 分组标签文字颜色：在分组色背景上保证可读 */
+export function getGroupLabelTextColor(groupColor: string): string {
+  if (!groupColor) return '#FFFFFF';
+  if (brightnessOf(groupColor) > 170) {
+    const theme = GROUP_COLOR_INDEX.get(groupColor.toLowerCase());
+    return theme ? theme.taskText : getBorderColor(groupColor);
+  }
+  return '#FFFFFF';
+}
 
 // ── 月份工具 ──────────────────────────────────────────────
 
@@ -103,10 +215,28 @@ export function sliceTasksForYear(
   const yearStart = dayjs(`${year}-01-01`);
   const yearEnd = dayjs(`${year}-12-31`);
 
+  // 方案 A：为同一分组内的任务分配序号，用于在同色系明度变体中交替选取，
+  // 避免相邻任务（如 12 号结束 / 13 号开始）颜色完全相同而难以区分。
+  // 无 groupId 的散任务序号固定为 0（使用标准色）。
+  // 按 start 时间排序后再分配序号，确保时间相邻的任务拿到不同变体。
+  const variantIdxByTaskId = new Map<string, number>();
+  const groupCounters = new Map<string, number>();
+  const tasksByStart = [...tasks]
+    .filter((t) => dayjs(t.start).isValid() && dayjs(t.end).isValid())
+    .sort((a, b) => dayjs(a.start).valueOf() - dayjs(b.start).valueOf());
+  for (const task of tasksByStart) {
+    if (task.groupId) {
+      const idx = groupCounters.get(task.groupId) ?? 0;
+      groupCounters.set(task.groupId, idx + 1);
+      variantIdxByTaskId.set(task.id, idx);
+    }
+  }
+
   for (const task of tasks) {
     const tStart = dayjs(task.start);
     const tEnd = dayjs(task.end);
 
+    if (!tStart.isValid() || !tEnd.isValid()) continue;
     if (tEnd.isBefore(yearStart) || tStart.isAfter(yearEnd)) continue;
 
     const startMonth = tStart.year() === year ? tStart.month() : 0;
@@ -121,12 +251,14 @@ export function sliceTasksForYear(
       const isStart = m === startMonth && tStart.year() === year;
       const isEnd = m === endMonth && tEnd.year() === year;
 
-      // 主线任务使用浅红背景，否则使用莫兰迪色
+      // 主题色：优先使用任务自带颜色，否则按 id 轮询标准主题浅背景
+      // 注意：isMain 不再覆盖颜色，以遵守"同色系绑定"原则（主线任务跟随所属分组主题）
       const colorIdx = parseInt(task.id.slice(0, 1), 16) || 0;
-      const safeIdx = colorIdx % MORANDI_PALETTE.length;
-      const bgColor = task.isMain
-        ? MAIN_TASK_BG
-        : (task.color ?? MORANDI_PALETTE[safeIdx][0]);
+      const safeIdx = colorIdx % TIMELINE_THEMES.length;
+      const baseBg = task.color ?? TIMELINE_THEMES[safeIdx].taskBg;
+      // 按分组内序号选取同色系明度变体（散任务 indexInGroup=0，回退标准色）
+      const variantIdx = task.groupId ? (variantIdxByTaskId.get(task.id) ?? 0) : 0;
+      const bgColor = getTaskBgVariant(baseBg, variantIdx);
 
       months[m].segments.push({
         taskId: task.id,
@@ -240,6 +372,8 @@ export function computeGroupRangesForYear(
       gEnd = dayjs(Math.max(...childEnds));
     }
 
+    // 非法日期（空字符串/无效格式）直接跳过，避免渲染成横跨整年的错误分组框
+    if (!gStart.isValid() || !gEnd.isValid()) continue;
     if (gEnd.isBefore(yearStart) || gStart.isAfter(yearEnd)) continue;
 
     // 找到分组内任务在布局中的行范围
@@ -251,15 +385,24 @@ export function computeGroupRangesForYear(
     const startMonth = gStart.year() === year ? gStart.month() : 0;
     const endMonth = gEnd.year() === year ? gEnd.month() : 11;
 
+    // 预计算每个分组任务的 [startMs, endMs, row]，避免月份循环内重复创建 dayjs
+    const groupTaskMs: Array<{ startMs: number; endMs: number; row: number }> = [];
+    for (const t of groupTasks) {
+      const ts = dayjs(t.start);
+      const te = dayjs(t.end);
+      if (!ts.isValid() || !te.isValid()) continue;
+      groupTaskMs.push({ startMs: ts.valueOf(), endMs: te.valueOf(), row: t.row });
+    }
+    if (groupTaskMs.length === 0) continue;
+
     for (let m = startMonth; m <= endMonth; m++) {
+      const daysInMonth = getDaysInMonth(year, m);
+      const monthStartMs = new Date(year, m, 1).getTime();
+      const monthEndMs = new Date(year, m, daysInMonth, 23, 59, 59, 999).getTime();
       // 只取该月实际出现的分组任务，计算当月行范围（避免空行）
-      const monthTasks = groupTasks.filter((t) => {
-        const ts = dayjs(t.start);
-        const te = dayjs(t.end);
-        const monthStart = dayjs(new Date(year, m, 1));
-        const monthEnd = dayjs(new Date(year, m, getDaysInMonth(year, m)));
-        return !te.isBefore(monthStart) && !ts.isAfter(monthEnd);
-      });
+      const monthTasks = groupTaskMs.filter(
+        (t) => t.endMs >= monthStartMs && t.startMs <= monthEndMs
+      );
       if (monthTasks.length === 0) continue;
 
       const rowStart = Math.min(...monthTasks.map((t) => t.row));
@@ -268,12 +411,12 @@ export function computeGroupRangesForYear(
       const segStart =
         m === startMonth && gStart.year() === year ? gStart.date() : 1;
       const segEnd =
-        m === endMonth && gEnd.year() === year ? gEnd.date() : getDaysInMonth(year, m);
+        m === endMonth && gEnd.year() === year ? gEnd.date() : daysInMonth;
 
       result[m].push({
         groupId: group.id,
         groupName: group.name,
-        color: group.color || '#D1FAE5',
+        color: group.color || TIMELINE_THEMES[0].groupColor,
         startDay: segStart,
         endDay: segEnd,
         rowStart,

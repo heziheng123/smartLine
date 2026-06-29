@@ -5,6 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { Task } from '@/types';
+import { TASK_BG_PRESET } from '@/utils/timeline-utils';
 
 interface TaskMetaEditorProps {
   task: Task;
@@ -15,11 +16,8 @@ interface TaskMetaEditorProps {
 }
 
 // 预设色板（与 TaskDialog 保持一致）
-const PRESET_COLORS = [
-  '#E0F2FE', '#D1FAE5', '#FFE4E6', '#FEF3C7',
-  '#EDE9FE', '#FFEDD5', '#CFFAFE', '#FCE7F3',
-  '#ECFCCB', '#F3E8FF',
-];
+// 任务色板：4 套标准主题的浅背景色（与所属分组同色系绑定）
+const PRESET_COLORS = TASK_BG_PRESET;
 
 // 规范化颜色输入：支持 #RGB / #RRGGBB / 无 #
 function normalizeColor(input: string): string | undefined {

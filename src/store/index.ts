@@ -32,36 +32,53 @@ function getDefaultData(): TimelineData {
   const y = new Date().getFullYear();
   return {
     tasks: [
-      { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#E0F2FE' },
-      { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#FCE7F3' },
-      { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#D1FAE5', isMain: true },
-      { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#FEF3C7' },
-      { id: 'demo-task-5', name: '暑期运营', start: `${y}-07-10`, end: `${y}-08-25`, color: '#EDE9FE' },
-      { id: 'demo-task-6', name: '年度复盘', start: `${y}-11-01`, end: `${y}-12-20`, color: '#CFFAFE' },
+      // 蓝色系：产品规划 / 主线
+      { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#DBEAFE' },
+      { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#DBEAFE' },
+      // 紫色系：开发阶段 / 核心业务
+      { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#EDE9FE', isMain: true },
+      // 绿色系：测试发布 / 已完成
+      { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#D1FAE5' },
+      // 橙黄色系：运营 / 里程碑
+      { id: 'demo-task-5', name: '暑期运营', start: `${y}-07-10`, end: `${y}-08-25`, color: '#FEF3C7' },
+      { id: 'demo-task-6', name: '年度复盘', start: `${y}-11-01`, end: `${y}-12-20`, color: '#DBEAFE' },
     ],
     groups: [
       {
+        // 蓝色系：产品研发（分组外框 #60A5FA，内部任务 #DBEAFE）
         id: 'demo-group-1',
         name: '产品研发',
         start: `${y}-01-05`,
-        end: `${y}-07-20`,
-        color: '#D1FAE5',
+        end: `${y}-04-15`,
+        color: '#60A5FA',
         autoDate: true,
         children: [
-          { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#E0F2FE', groupId: 'demo-group-1' },
-          { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#FCE7F3', groupId: 'demo-group-1' },
+          { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#DBEAFE', groupId: 'demo-group-1' },
+          { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#DBEAFE', groupId: 'demo-group-1' },
         ],
       },
       {
+        // 紫色系：开发阶段（分组外框 #A78BFA，内部任务 #EDE9FE）
         id: 'demo-group-2',
         name: '开发阶段',
         start: `${y}-02-15`,
-        end: `${y}-08-25`,
-        color: '#EDE9FE',
+        end: `${y}-05-30`,
+        color: '#A78BFA',
         autoDate: true,
         children: [
-          { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#D1FAE5', isMain: true, groupId: 'demo-group-2' },
-          { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#FEF3C7', groupId: 'demo-group-2' },
+          { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#EDE9FE', isMain: true, groupId: 'demo-group-2' },
+        ],
+      },
+      {
+        // 绿色系：测试发布（分组外框 #34D399，内部任务 #D1FAE5）
+        id: 'demo-group-3',
+        name: '测试发布',
+        start: `${y}-06-01`,
+        end: `${y}-07-20`,
+        color: '#34D399',
+        autoDate: true,
+        children: [
+          { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#D1FAE5', groupId: 'demo-group-3' },
         ],
       },
     ],
