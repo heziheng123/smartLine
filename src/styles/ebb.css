@@ -4637,12 +4637,16 @@
 
 /* 全完成态（覆盖分级色，表示已结清） */
 .eb-mini-cal-cell--alldone {
-  background: #D1FAE5 !important;
+  background: #FFFFFF !important;
   box-shadow: none !important;
 }
 
 .eb-mini-cal-cell--alldone .eb-mini-cal-day {
-  color: #059669;
+  color: #9CA3AF;
+}
+
+.eb-mini-cal-cell--alldone .eb-mini-cal-dot-item {
+  opacity: 0.4;
 }
 
 /* 旧 --hastask 保留兼容（不再使用固定浅绿） */

@@ -725,10 +725,15 @@ const MiniCalendarInline: React.FC<{
           const hasOverdue = overdueCount > 0;
 
           const dotColors: string[] = [];
-          if (overdueCount > 0) dotColors.push('#EF4444');
-          if (pendingCount > 0) dotColors.push('#6B7FD7');
-          if (completedCount > 0 && dotColors.length < 4) dotColors.push('#10B981');
-          while (dotColors.length < Math.min(count, 4)) dotColors.push('#D1D5DB');
+          if (allDone) {
+            // 全完成：只显示淡绿色圆点
+            for (let di = 0; di < Math.min(count, 4); di++) dotColors.push('#A7F3D0');
+          } else {
+            if (overdueCount > 0) dotColors.push('#EF4444');
+            if (pendingCount > 0) dotColors.push('#6B7FD7');
+            if (completedCount > 0 && dotColors.length < 4) dotColors.push('#10B981');
+            while (dotColors.length < Math.min(count, 4)) dotColors.push('#D1D5DB');
+          }
 
           return (
             <button
@@ -765,6 +770,7 @@ const CalendarLegend: React.FC<{ settings: EbbSettings }> = ({ settings }) => {
     { color: '#FDE68A', label: `≤${th[2]}` },
     { color: '#FDBA74', label: `≤${th[3]}` },
     { color: '#FCA5A5', label: `>${th[3]}` },
+    { color: '#FFFFFF', border: '#D1D5DB', label: '已结清' },
   ];
   return (
     <div className="eb-mini-cal-legend">
