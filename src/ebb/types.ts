@@ -54,9 +54,10 @@ export interface StudyOutlineNode {
 /** 撤销记录 */
 export interface UndoEntry {
   id: string;
-  type: 'delete_topic' | 'delete_all';
+  type: 'delete_topic' | 'delete_all' | 'delete_node';
   description: string;
   deletedTasks: ReviewTask[];
+  deletedNodes?: StudyOutlineNode[];
   timestamp: number;
 }
 

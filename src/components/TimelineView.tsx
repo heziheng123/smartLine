@@ -93,11 +93,17 @@ const TimelineView: React.FC<TimelineViewProps> = ({
       sortedRows.forEach((r, i) => rowMap.set(r, i));
 
       const segments = ml.segments.map((s) => ({ ...s, row: rowMap.get(s.row) ?? s.row }));
-      const groupRanges = groups.map((g) => ({
-        ...g,
-        rowStart: rowMap.get(g.rowStart) ?? g.rowStart,
-        rowEnd: rowMap.get(g.rowEnd) ?? g.rowEnd,
-      }));
+      // 防御性处理：若分组的 rowStart/rowEnd 未在 rowMap 命中（理论上不会发生，
+      // 因为 computeGroupRangesForYear 已基于当月任务重算行范围），
+      // 则丢弃该分组，避免 fallback 到原始大行号导致分组框与任务行错位。
+      const groupRanges = groups
+        .map((g) => {
+          const rs = rowMap.get(g.rowStart);
+          const re = rowMap.get(g.rowEnd);
+          if (rs === undefined || re === undefined) return null;
+          return { ...g, rowStart: rs, rowEnd: re };
+        })
+        .filter((g): g is NonNullable<typeof g> => g !== null);
 
       return {
         ...ml,

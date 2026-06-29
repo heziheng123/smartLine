@@ -27,6 +27,7 @@ import { useEbbStore } from '../store';
 import { genId, suggestNextInterval, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
 import { getPointWeight, parseIntervals } from '../complexity';
 import { ROUND_COLORS } from '../constants';
+import { normalizeLegacyEbbData } from '../migration';
 import { getDateLabel } from '../scheduler';
 import type { ReviewTask, EbbSettings } from '../types';
 import AddContentModal from './AddContentModal';
@@ -221,7 +222,8 @@ const EbbView: React.FC = () => {
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
-        store.importEbbData(parsed);
+        const normalized = normalizeLegacyEbbData(parsed);
+        store.importEbbData(normalized);
         showToast('导入成功');
       } catch {
         showToast('导入失败：JSON 格式无效');

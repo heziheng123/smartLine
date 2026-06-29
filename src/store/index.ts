@@ -98,7 +98,13 @@ function loadData(): TimelineData {
 }
 
 function saveData(data: TimelineData) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    // 配额溢出或隐私模式下写入失败：不阻塞 store 更新（内存状态仍正确），
+    // 提示用户导出清理。避免一次 setItem 失败导致后续 UI 与存储不一致。
+    console.warn('[smart-timeline] 本地存储写入失败，数据可能无法持久化，请导出备份或清理旧数据：', e);
+  }
 }
 
 // ── Liveblocks 客户端初始化 ───────────────────────────────────
@@ -268,13 +274,23 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         updateGroup: (group) => {
           set((state) => {
             const groups = state.groups.map((g) => (g.id === group.id ? group : g));
-            const newTasks = [...state.tasks];
-            for (const child of group.children) {
-              const idx = newTasks.findIndex((t) => t.id === child.id);
-              if (idx >= 0) {
-                newTasks[idx] = { ...newTasks[idx], groupId: group.id };
+            // 先收集新分组的 child id 集合
+            const newChildIds = new Set(group.children.map((c) => c.id));
+            const newTasks = state.tasks.map((t) => {
+              if (t.groupId === group.id) {
+                // 该任务原本属于此分组：若仍在新的 children 中则保留并刷新标记，
+                // 否则清除 groupId（用户已从分组中移除该任务）
+                if (newChildIds.has(t.id)) {
+                  return { ...t, groupId: group.id };
+                }
+                return { ...t, groupId: undefined };
               }
-            }
+              // 非本分组的任务：若出现在新 children 中，则纳入本分组
+              if (newChildIds.has(t.id)) {
+                return { ...t, groupId: group.id };
+              }
+              return t;
+            });
             const newData = { ...state, tasks: newTasks, groups };
             saveData(newData);
             return newData;
@@ -346,11 +362,26 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         importData: (data) => {
+          // Schema 校验：过滤掉字段缺失/类型错误的条目，避免后续渲染崩溃
+          const isValidTask = (t: any): t is Task =>
+            !!t && typeof t.id === 'string' && typeof t.name === 'string'
+            && typeof t.start === 'string' && typeof t.end === 'string';
+          const isValidNote = (n: any): n is Note =>
+            !!n && typeof n.id === 'string' && typeof n.name === 'string'
+            && typeof n.date === 'string' && (n.type === 'pin' || n.type === 'range');
+          const isValidMilestone = (m: any): m is Milestone =>
+            !!m && typeof m.id === 'string' && typeof m.name === 'string'
+            && typeof m.date === 'string';
+          const isValidGroup = (g: any): g is TaskGroup =>
+            !!g && typeof g.id === 'string' && typeof g.name === 'string'
+            && typeof g.start === 'string' && typeof g.end === 'string'
+            && Array.isArray(g.children);
+
           const normalized: TimelineData = {
-            tasks: data.tasks ?? [],
-            groups: data.groups ?? [],
-            notes: data.notes ?? [],
-            milestones: data.milestones ?? [],
+            tasks: Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask) : [],
+            notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
+            milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
+            groups: Array.isArray(data?.groups) ? data.groups.filter(isValidGroup) : [],
           };
           saveData(normalized);
           set(normalized);

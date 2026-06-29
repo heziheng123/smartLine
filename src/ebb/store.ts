@@ -68,7 +68,13 @@ function loadEbbData(): EbbData {
 }
 
 function saveEbbData(data: EbbData) {
-  localStorage.setItem(EBB_STORAGE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(EBB_STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    // 配额溢出或隐私模式下写入失败：不阻塞 store 更新（内存状态仍正确），
+    // 提示用户导出清理。避免一次 setItem 失败导致后续 UI 与存储不一致。
+    console.warn('[smart-ebb] 本地存储写入失败，数据可能无法持久化，请导出备份或清理旧数据：', e);
+  }
 }
 
 // ── 标签颜色自动分配 ────────────────────────────────────────
@@ -569,17 +575,20 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 }
               }
             }
+            // 收集被删节点和任务（供撤销使用）
+            const deletedNodes = state.outlineNodes.filter((n) => toDelete.has(n.id));
+            const deletedTasks = state.reviewTasks.filter(
+              (t) => t.outlineNodeId && toDelete.has(t.outlineNodeId),
+            );
             const outlineNodes = state.outlineNodes
               .filter((n) => !toDelete.has(n.id))
               .map((n) => ({
                 ...n,
                 childrenIds: n.childrenIds.filter((cid) => !toDelete.has(cid)),
               }));
-            // 关联任务清除 outlineNodeId
-            const reviewTasks = state.reviewTasks.map((t) =>
-              t.outlineNodeId && toDelete.has(t.outlineNodeId)
-                ? { ...t, outlineNodeId: undefined }
-                : t,
+            // 级联删除：删除所有关联到被删节点的任务
+            const reviewTasks = state.reviewTasks.filter(
+              (t) => !t.outlineNodeId || !toDelete.has(t.outlineNodeId),
             );
             const newData: EbbData = {
               reviewTasks,
@@ -588,6 +597,22 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               ebbSettings: state.ebbSettings,
             };
             saveEbbData(newData);
+            // 推入撤销栈
+            if (deletedNodes.length > 0 || deletedTasks.length > 0) {
+              const rootNode = deletedNodes.find((n) => n.id === id);
+              const undoEntry: UndoEntry = {
+                id: genId('undo'),
+                type: 'delete_node',
+                description: `删除节点「${rootNode?.name ?? id}」及 ${deletedTasks.length} 个任务`,
+                deletedTasks,
+                deletedNodes,
+                timestamp: Date.now(),
+              };
+              return {
+                ...newData,
+                undoStack: [undoEntry, ...state.undoStack].slice(0, state.ebbSettings.maxUndoStack),
+              };
+            }
             return newData;
           });
         },
@@ -607,10 +632,17 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           set((s) => {
             // 恢复任务
             const reviewTasks = [...s.reviewTasks, ...entry.deletedTasks];
+            // 恢复节点（如果有）
+            let outlineNodes = s.outlineNodes;
+            if (entry.deletedNodes && entry.deletedNodes.length > 0) {
+              const existingIds = new Set(outlineNodes.map((n) => n.id));
+              const nodesToRestore = entry.deletedNodes.filter((n) => !existingIds.has(n.id));
+              outlineNodes = [...outlineNodes, ...nodesToRestore].sort((a, b) => a.orderIndex - b.orderIndex);
+            }
             const newData: EbbData = {
               reviewTasks,
               inboxItems: s.inboxItems,
-              outlineNodes: s.outlineNodes,
+              outlineNodes,
               ebbSettings: ensureTagColors(reviewTasks, s.ebbSettings),
             };
             saveEbbData(newData);
@@ -692,11 +724,22 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         // ── 导入导出 ──────────────────────────────────────
 
         importEbbData: (data) => {
+          // Schema 校验：过滤字段缺失/类型错误的条目，避免后续渲染崩溃
+          const isValidReviewTask = (t: any): t is ReviewTask =>
+            !!t && typeof t.id === 'string' && typeof t.topicName === 'string'
+            && typeof t.dueDate === 'string' && typeof t.isCompleted === 'boolean';
+          const isValidInboxItem = (i: any): i is InboxItem =>
+            !!i && typeof i.id === 'string' && typeof i.topicName === 'string'
+            && (i.status === 'draft' || i.status === 'staged');
+          const isValidOutlineNode = (n: any): n is StudyOutlineNode =>
+            !!n && typeof n.id === 'string' && typeof n.name === 'string'
+            && (n.type === 'book' || n.type === 'chapter' || n.type === 'section');
+
           const normalized: EbbData = {
-            reviewTasks: data.reviewTasks ?? [],
-            inboxItems: data.inboxItems ?? [],
-            outlineNodes: data.outlineNodes ?? [],
-            ebbSettings: { ...DEFAULT_EBB_SETTINGS, ...(data.ebbSettings ?? {}) },
+            reviewTasks: Array.isArray(data?.reviewTasks) ? data.reviewTasks.filter(isValidReviewTask) : [],
+            inboxItems: Array.isArray(data?.inboxItems) ? data.inboxItems.filter(isValidInboxItem) : [],
+            outlineNodes: Array.isArray(data?.outlineNodes) ? data.outlineNodes.filter(isValidOutlineNode) : [],
+            ebbSettings: { ...DEFAULT_EBB_SETTINGS, ...(data?.ebbSettings ?? {}) },
           };
           saveEbbData(normalized);
           set({ ...normalized, undoStack: [] });
