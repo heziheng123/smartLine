@@ -22,7 +22,7 @@ export const ROW_HEIGHT = 34;
 export const BAR_HEIGHT = 24;
 
 /**
- * 时间轴标准主题色（4 套同色系）
+ * 时间轴标准主题色（5 套同色系）
  * 同色系绑定原则：外层"分组"与内部"任务"使用同一套主题。
  * - groupColor:      分组外框 & 分组标签背景色
  * - taskBorder:      内部任务边框颜色（用于任务条箭头/强调色/左右细边框）
@@ -30,6 +30,8 @@ export const BAR_HEIGHT = 24;
  * - taskBg:          内部任务浅背景色（标准明度，任务条填充）
  * - taskBgVariants:  同色系明度变体（方案 A），同分组内相邻任务按序号交替使用，
  *                    避免相邻同色任务视觉粘连。变体顺序：[标准, 更浅, 中浅]。
+ *
+ * 特殊说明：索引 4（红色主题）为主线任务专用，isMain=true 的任务优先使用该主题。
  */
 export interface TimelineTheme {
   groupColor: string;
@@ -56,7 +58,15 @@ export const TIMELINE_THEMES: TimelineTheme[] = [
     groupColor: '#FBBF24', taskBorder: '#F59E0B', taskText: '#B45309', taskBg: '#FEF3C7',
     taskBgVariants: ['#FEF3C7', '#FFFBEB', '#FDE68A'], // amber-100 / 50 / 200
   },
+  // 红色主题（索引 4）：主线任务专用，浅红背景 + 深红文字/边框
+  {
+    groupColor: '#F87171', taskBorder: '#EF4444', taskText: '#991B1B', taskBg: '#FEE2E2',
+    taskBgVariants: ['#FEE2E2', '#FEF2F2', '#FECACA'], // red-100 / 50 / 200
+  },
 ];
+
+/** 主线任务红色主题索引（TIMELINE_THEMES[4]） */
+export const MAIN_TASK_THEME_IDX = 4;
 
 /** 任务浅背景预设色（取自各主题 taskBg，供任务色板使用） */
 export const TASK_BG_PRESET = TIMELINE_THEMES.map((t) => t.taskBg);
@@ -251,11 +261,18 @@ export function sliceTasksForYear(
       const isStart = m === startMonth && tStart.year() === year;
       const isEnd = m === endMonth && tEnd.year() === year;
 
-      // 主题色：优先使用任务自带颜色，否则按 id 轮询标准主题浅背景
-      // 注意：isMain 不再覆盖颜色，以遵守"同色系绑定"原则（主线任务跟随所属分组主题）
+      // 颜色选择逻辑：
+      // 1. 主线任务（isMain）：优先使用红色主题（浅红背景 #FEE2E2），除非用户显式设置了自定义颜色
+      // 2. 普通任务：优先使用任务自带颜色，否则按 id 轮询标准主题浅背景（前 4 套）
       const colorIdx = parseInt(task.id.slice(0, 1), 16) || 0;
-      const safeIdx = colorIdx % TIMELINE_THEMES.length;
-      const baseBg = task.color ?? TIMELINE_THEMES[safeIdx].taskBg;
+      const safeIdx = colorIdx % (TIMELINE_THEMES.length - 1); // 普通任务只用前 4 套，排除红色主题
+      let baseBg: string;
+      if (task.isMain) {
+        // 主线任务优先使用红色主题，但尊重用户自定义颜色
+        baseBg = task.color ?? TIMELINE_THEMES[MAIN_TASK_THEME_IDX].taskBg;
+      } else {
+        baseBg = task.color ?? TIMELINE_THEMES[safeIdx].taskBg;
+      }
       // 按分组内序号选取同色系明度变体（散任务 indexInGroup=0，回退标准色）
       const variantIdx = task.groupId ? (variantIdxByTaskId.get(task.id) ?? 0) : 0;
       const bgColor = getTaskBgVariant(baseBg, variantIdx);
