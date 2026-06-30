@@ -272,17 +272,21 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         addGroup: (group) => {
           set((state) => {
-            const newTasks = [...state.tasks];
-            for (const child of group.children) {
-              const idx = newTasks.findIndex((t) => t.id === child.id);
-              if (idx >= 0) {
-                // 已存在任务：仅打上 groupId 标记（保留 store 中完整的字段，避免被 child 快照覆盖）
-                newTasks[idx] = { ...newTasks[idx], groupId: group.id };
+            const newChildIds = new Set(group.children.map((c) => c.id));
+            // 更新 tasks：打上 groupId 标记
+            const newTasks = state.tasks.map((t) => {
+              if (newChildIds.has(t.id)) {
+                return { ...t, groupId: group.id };
               }
-              // 不存在的 child 直接跳过：分组仅关联已有任务，
-              // 避免 push 字段不完整的 task 对象进入 tasks 数组
-            }
-            const newData = { ...state, tasks: newTasks, groups: [...state.groups, group] };
+              return t;
+            });
+            // 从其他分组的 children 中移除已纳入本分组的任务（保证单一分组）
+            const newGroups = state.groups.map((g) => {
+              const conflicting = g.children.some((c) => newChildIds.has(c.id));
+              if (!conflicting) return g;
+              return { ...g, children: g.children.filter((c) => !newChildIds.has(c.id)) };
+            });
+            const newData = { ...state, tasks: newTasks, groups: [...newGroups, group] };
             saveData(newData);
             return newData;
           });
@@ -290,13 +294,19 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         updateGroup: (group) => {
           set((state) => {
-            const groups = state.groups.map((g) => (g.id === group.id ? group : g));
-            // 先收集新分组的 child id 集合
             const newChildIds = new Set(group.children.map((c) => c.id));
+            // 找出从其他分组移入本分组的任务 ID（之前 groupId 不是当前分组，但现在被选中）
+            const movedInIds = new Set<string>();
+            for (const childId of newChildIds) {
+              const task = state.tasks.find((t) => t.id === childId);
+              if (task && task.groupId && task.groupId !== group.id) {
+                movedInIds.add(childId);
+              }
+            }
+            // 更新 tasks：本分组移入/移出的任务同步 groupId
             const newTasks = state.tasks.map((t) => {
               if (t.groupId === group.id) {
-                // 该任务原本属于此分组：若仍在新的 children 中则保留并刷新标记，
-                // 否则清除 groupId（用户已从分组中移除该任务）
+                // 原本属于此分组：若仍在新的 children 中则保留，否则清除 groupId
                 if (newChildIds.has(t.id)) {
                   return { ...t, groupId: group.id };
                 }
@@ -307,6 +317,14 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 return { ...t, groupId: group.id };
               }
               return t;
+            });
+            // 从其他分组的 children 中移除已移入本分组的任务（保证单一分组）
+            const groups = state.groups.map((g) => {
+              if (g.id === group.id) return group; // 当前分组用新的替换
+              if (movedInIds.size === 0) return g;
+              const conflicting = g.children.some((c) => movedInIds.has(c.id));
+              if (!conflicting) return g;
+              return { ...g, children: g.children.filter((c) => !movedInIds.has(c.id)) };
             });
             const newData = { ...state, tasks: newTasks, groups };
             saveData(newData);

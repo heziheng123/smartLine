@@ -1637,6 +1637,18 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
 }
 
+.tl-dialog-task-group-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .tl-dialog-footer {
   display: flex;
   align-items: center;

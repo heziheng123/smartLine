@@ -445,6 +445,7 @@ const App: React.FC = () => {
         <GroupDialog
           group={dialogMode === 'edit' ? editingGroup : undefined}
           allTasks={store.tasks}
+          groups={store.groups}
           onSave={handleSaveGroup}
           onDelete={dialogMode === 'edit' ? handleDeleteGroup : undefined}
           onCancel={closeDialog}

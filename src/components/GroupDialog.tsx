@@ -10,6 +10,8 @@ interface GroupDialogProps {
   group?: TaskGroup;
   /** 所有可用任务列表（供选择子任务） */
   allTasks: Task[];
+  /** 所有分组列表（用于显示任务当前所属分组） */
+  groups: TaskGroup[];
   onSave: (group: TaskGroup) => void;
   onDelete?: (groupId: string) => void;
   onCancel: () => void;
@@ -21,6 +23,7 @@ const PRESET_COLORS = GROUP_COLOR_PRESET;
 const GroupDialog: React.FC<GroupDialogProps> = ({
   group,
   allTasks,
+  groups,
   onSave,
   onDelete,
   onCancel,
@@ -166,21 +169,35 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
               {allTasks.length === 0 ? (
                 <div className="tl-dialog-task-empty">暂无任务，请先创建任务</div>
               ) : (
-                allTasks.map((task) => (
-                  <label key={task.id} className="tl-dialog-task-item">
-                    <input
-                      type="checkbox"
-                      checked={selectedTaskIds.has(task.id)}
-                      onChange={() => toggleTask(task.id)}
-                    />
-                    <span
-                      className="tl-dialog-task-dot"
-                      style={{ backgroundColor: task.color || TIMELINE_THEMES[0].taskBg }}
-                    />
-                    <span className="tl-dialog-task-name">{task.name}</span>
-                    <span className="tl-dialog-task-date">{task.start} ~ {task.end}</span>
-                  </label>
-                ))
+                allTasks.map((task) => {
+                  // 查找任务当前所属的其他分组
+                  const currentGroup = task.groupId && task.groupId !== group?.id
+                    ? groups.find((g) => g.id === task.groupId)
+                    : null;
+                  return (
+                    <label key={task.id} className="tl-dialog-task-item">
+                      <input
+                        type="checkbox"
+                        checked={selectedTaskIds.has(task.id)}
+                        onChange={() => toggleTask(task.id)}
+                      />
+                      <span
+                        className="tl-dialog-task-dot"
+                        style={{ backgroundColor: task.color || TIMELINE_THEMES[0].taskBg }}
+                      />
+                      <span className="tl-dialog-task-name">{task.name}</span>
+                      {currentGroup && (
+                        <span
+                          className="tl-dialog-task-group-badge"
+                          style={{ backgroundColor: currentGroup.color ? `${currentGroup.color}20` : '#F3F4F6', color: currentGroup.color || '#6B7280' }}
+                        >
+                          {currentGroup.name}
+                        </span>
+                      )}
+                      <span className="tl-dialog-task-date">{task.start} ~ {task.end}</span>
+                    </label>
+                  );
+                })
               )}
             </div>
           </div>
