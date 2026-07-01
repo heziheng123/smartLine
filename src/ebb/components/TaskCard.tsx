@@ -6,7 +6,6 @@
 import React, { useMemo, useState } from 'react';
 import { Draggable } from '@hello-pangea/dnd';
 import { Trash2, Calendar, Plus, Settings2 } from 'lucide-react';
-import dayjs from 'dayjs';
 import type { ReviewTask, EbbSettings } from '../types';
 import { computeRounds, getDateLabel, isOverdue, isDueToday } from '../scheduler';
 import { getPointWeight } from '../complexity';

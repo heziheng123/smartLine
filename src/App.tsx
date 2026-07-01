@@ -18,14 +18,15 @@ import TaskDrawer from '@/components/TaskDrawer';
 import TodoAggregatorView from '@/components/TodoAggregatorView';
 import Sidebar, { type AppModule } from '@/components/Sidebar';
 import EbbView from '@/ebb/components/EbbView';
+import DailyScheduleView from '@/components/dailySchedule/DailyScheduleView';
 import { useTodos } from '@/hooks/useTodos';
 import { changeTodoDate, toggleTodoLine } from '@/utils/markdown';
 
 import '@/styles/timeline.css';
 import '@/styles/ebb.css';
+import '@/styles/daily-schedule.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
-type AppView = 'timeline' | 'todo-view' | 'ebb';
 
 const App: React.FC = () => {
   const store = useTimelineStore();
@@ -365,7 +366,7 @@ const App: React.FC = () => {
   return (
     <div className={`tl-app ${currentView === 'ebb' ? 'tl-app--ebb' : ''}`}>
       <Sidebar current={currentView} onChange={setCurrentView} />
-      {currentView !== 'ebb' && (
+      {currentView !== 'ebb' && currentView !== 'daily-schedule' && (
         <Toolbar
           displayYear={displayYear}
           onYearChange={setDisplayYear}
@@ -386,6 +387,12 @@ const App: React.FC = () => {
         <div className="tl-app-split tl-app-split--ebb">
           <div className="tl-app-main">
             <EbbView />
+          </div>
+        </div>
+      ) : currentView === 'daily-schedule' ? (
+        <div className="tl-app-split tl-app-split--ebb">
+          <div className="tl-app-main">
+            <DailyScheduleView />
           </div>
         </div>
       ) : (

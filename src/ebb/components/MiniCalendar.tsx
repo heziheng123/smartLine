@@ -9,7 +9,6 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Droppable } from '@hello-pangea/dnd';
 import type { ReviewTask, EbbSettings } from '../types';
 import {
-  computeDayLoads,
   getHeatmapLevel,
   computeRounds,
 } from '../scheduler';

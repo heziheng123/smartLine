@@ -8,12 +8,16 @@ import dayjs from 'dayjs';
 import {
   renderMarkdown,
   toggleTodoLine,
-  splitMarkdownAtTodoSection,
-  findTodoSection,
+  splitMarkdownByHeaders,
+  TODO_REGEX,
 } from '@/utils/markdown';
 import TodoList from './TodoList';
 
 export type EditorMode = 'edit' | 'preview' | 'split';
+
+interface CollapsedSectionsState {
+  [sectionTitle: string]: boolean;
+}
 
 interface MarkdownEditorProps {
   value: string;
@@ -54,8 +58,17 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const editorRootRef = useRef<HTMLDivElement>(null);
 
   // ── 预览渲染（直接计算，TodoList 交互需要即时反馈）─────────
-  const split = useMemo(() => splitMarkdownAtTodoSection(value), [value]);
-  const hasTodoSection = useMemo(() => findTodoSection(value).headingLine !== -1, [value]);
+  const sections = useMemo(() => splitMarkdownByHeaders(value), [value]);
+
+  // ── 折叠状态管理 ────────────────────────────────────────────
+  const [collapsedSections, setCollapsedSections] = useState<CollapsedSectionsState>({});
+
+  const handleToggleSection = useCallback((title: string) => {
+    setCollapsedSections((prev) => ({
+      ...prev,
+      [title]: !prev[title],
+    }));
+  }, []);
 
   // ── 选区辅助：包裹/替换选中文本 ────────────────────────────
   const wrapSelection = useCallback(
@@ -153,13 +166,27 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     (e: React.MouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
 
+      // 点击待办列表区域 → 不切换编辑模式
       if (target.closest('.tl-todo-list')) {
         return;
       }
+
+      // 点击日期选择器 → 不切换编辑模式
       if (target.closest('.tl-datepicker')) {
         return;
       }
 
+      // 点击分组标题 → 折叠/展开，不切换编辑模式
+      if (target.closest('.tl-section-header')) {
+        const header = target.closest('.tl-section-header') as HTMLElement;
+        const title = header.getAttribute('data-title');
+        if (title) {
+          handleToggleSection(title);
+        }
+        return;
+      }
+
+      // 点击待办checkbox → 切换完成状态
       if (target.classList?.contains('tl-md-todo-check')) {
         e.preventDefault();
         const lineAttr = target.getAttribute('data-line');
@@ -167,7 +194,6 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         const line = parseInt(lineAttr, 10);
         if (Number.isNaN(line)) return;
         const next = toggleTodoLine(value, line);
-        // 使用 onTodoChange 即时保存，避免 onChange+onSave 因 dirty 闭包过期而不保存
         if (onTodoChange) {
           onTodoChange(next);
         } else {
@@ -177,9 +203,10 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         return;
       }
 
+      // 其他区域点击 → 切换编辑模式
       onModeChange('edit');
     },
-    [value, onChange, onTodoChange, onModeChange, onSave],
+    [value, onChange, onTodoChange, onModeChange, onSave, handleToggleSection],
   );
 
   // ── 编辑模式：点击编辑器外部时保存并回预览 ─────────────────
@@ -233,29 +260,62 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             className="tl-md-preview"
             onClick={handlePreviewClick}
           >
-            {split.beforeHtml && (
-              <div dangerouslySetInnerHTML={{ __html: split.beforeHtml }} />
-            )}
-            {hasTodoSection && (
-              <>
-                <h2>待办清单</h2>
-                <TodoList
-                  todos={split.todos}
-                  value={value}
-                  onChange={onTodoChange ?? onChange}
-                />
-              </>
-            )}
-            {!hasTodoSection && (
+            {/* 按分组渲染 */}
+            {sections.length === 0 && (
               <TodoList
                 todos={[]}
                 value={value}
                 onChange={onTodoChange ?? onChange}
               />
             )}
-            {split.afterHtml && (
-              <div dangerouslySetInnerHTML={{ __html: split.afterHtml }} />
-            )}
+
+            {sections.map((section) => (
+              <div key={section.headerLine} className="tl-md-section">
+                {/* 分组标题（可折叠） */}
+                <div
+                  className="tl-section-header"
+                  data-title={section.title}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleSection(section.title);
+                  }}
+                >
+                  <span className="tl-section-title">{section.title}</span>
+                  <button className="tl-section-collapse">
+                    {collapsedSections[section.title] ? '▶' : '▼'}
+                  </button>
+                </div>
+
+                {/* 分组内容（可折叠） */}
+                {!collapsedSections[section.title] && (
+                  <div className="tl-section-body">
+                    {/* 非待办内容（如有） */}
+                    {(() => {
+                      const nonTodoContent = section.content
+                        .split('\n')
+                        .filter((line) => !line.match(TODO_REGEX))
+                        .join('\n')
+                        .trim();
+                      return nonTodoContent ? (
+                        <div
+                          dangerouslySetInnerHTML={{
+                            __html: renderMarkdown(nonTodoContent),
+                          }}
+                        />
+                      ) : null;
+                    })()}
+                    {/* 待办列表（如有） */}
+                    {section.todos.length > 0 && (
+                      <TodoList
+                        todos={section.todos}
+                        value={value}
+                        onChange={onTodoChange ?? onChange}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

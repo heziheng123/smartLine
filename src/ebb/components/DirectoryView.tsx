@@ -7,7 +7,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Search, ChevronRight, BookOpen, Plus, Trash2, Edit3,
-  FolderOpen, FileText, X, ClipboardPaste,
+  FileText, X, ClipboardPaste,
 } from 'lucide-react';
 import { useEbbStore } from '../store';
 import { genId, generateTasks, isOverdue, computeRounds } from '../scheduler';
@@ -23,7 +23,6 @@ interface DirectoryViewProps {
 }
 
 const DirectoryView: React.FC<DirectoryViewProps> = ({ tasks, nodes, settings, taskActions }) => {
-  const store = useEbbStore();
   const [query, setQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'completed'>('all');
   const [filterBookId, setFilterBookId] = useState<string>('');
@@ -195,14 +194,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const linkedTasks = getLinkedTasks(node.id);
   const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(store.reviewTasks), [store.reviewTasks]);
 
-  const sectionChildren = useMemo(() => children.filter(c => c.type === 'section'), [children]);
-  const chapterChildren = useMemo(() => children.filter(c => c.type === 'chapter'), [children]);
-
   const matchesQuery = !query || node.name.toLowerCase().includes(query.toLowerCase());
-  const matchesStatus =
-    filterStatus === 'all' ||
-    (filterStatus === 'completed' && stat.total > 0 && stat.completed === stat.total) ||
-    (filterStatus === 'pending' && stat.completed < stat.total);
 
   const hasQuery = query.length > 0;
   const showNode = matchesQuery || hasQuery;
@@ -216,7 +208,6 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const isSection = node.type === 'section';
   const isChapter = node.type === 'chapter';
   const isBook = node.type === 'book';
-  const canGenerate = isSection;
 
   const handleSaveTag = useCallback(() => {
     store.updateOutlineNode(node.id, { defaultTag: tagInput.trim() || undefined });
@@ -675,25 +666,6 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     store.deleteOutlineNode(id);
   }, [store]);
 
-  const handleGenerate = useCallback((nodeId: string, complexity: ComplexityLevel) => {
-    const node = nodeMap.get(nodeId);
-    if (!node) return;
-    const intervals = getIntervalsForComplexity(complexity, store.ebbSettings.complexityConfigs);
-    const result = generateTasks(
-      {
-        topicName: node.name,
-        tag: node.defaultTag,
-        complexity,
-        startDate: new Date().toISOString().slice(0, 10),
-        intervals,
-        outlineNodeId: nodeId,
-      },
-      store.reviewTasks,
-      store.ebbSettings,
-    );
-    if (result.tasks.length > 0) store.addReviewTasks(result.tasks);
-  }, [nodeMap, store]);
-
   // 粘贴目录解析
   const handlePasteImport = useCallback(() => {
     const text = pasteText.trim();
@@ -704,7 +676,7 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     const mdCount = lines.filter((l) => /^#+\s/.test(l.trim())).length;
     const isMarkdown = mdCount / lines.length > 0.5;
 
-    let indentLevels: number[] = [];
+    const indentLevels: number[] = [];
     if (isMarkdown) {
       for (const line of lines) {
         const match = line.match(/^(#+)/);

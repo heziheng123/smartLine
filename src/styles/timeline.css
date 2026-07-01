@@ -2832,6 +2832,264 @@ html, body, #root {
   gap: 6px;
 }
 
+/* ── P0升级样式：分组、Emoji、双日期、嵌套列表 ─────────────────── */
+
+/* Markdown分组区块（简洁版） */
+.tl-md-section {
+  margin-bottom: 16px;
+}
+
+.tl-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.tl-section-header:hover {
+  background: #F9FAFB;
+}
+
+.tl-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.tl-section-collapse {
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tl-section-header:hover .tl-section-collapse {
+  color: #6B7280;
+}
+
+.tl-section-body {
+  padding-left: 12px;
+}
+
+/* 分组区块 */
+.tl-todo-group {
+  margin-bottom: 16px;
+}
+
+.tl-todo-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #F9FAFB;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.tl-todo-group-header:hover {
+  background: #EEF2FF;
+}
+
+.tl-todo-group-title {
+  font-size: 14px;
+}
+
+.tl-todo-group-count {
+  font-size: 11px;
+  color: #5b6af0;
+  background: #EEF2FF;
+  padding: 2px 6px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+.tl-todo-group-collapse {
+  margin-left: auto;
+  color: #9CA3AF;
+  font-size: 12px;
+}
+
+.tl-todo-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Emoji醒目显示 */
+.tl-todo-emoji {
+  font-size: 18px;
+  margin-right: 4px;
+}
+
+/* Emoji颜色类（左侧边框） */
+.tl-todo-item--new {
+  border-left: 3px solid #3B82F6;
+}
+
+.tl-todo-item--review {
+  border-left: 3px solid #10B981;
+}
+
+.tl-todo-item--rest {
+  border-left: 3px solid #9CA3AF;
+}
+
+.tl-todo-item--study {
+  border-left: 3px solid #3B82F6;
+}
+
+.tl-todo-item--write {
+  border-left: 3px solid #8B5CF6;
+}
+
+.tl-todo-item--listen {
+  border-left: 3px solid #3B82F6;
+}
+
+.tl-todo-item--speak {
+  border-left: 3px solid #F59E0B;
+}
+
+/* 左侧颜色边框 */
+.tl-todo-item-accent {
+  width: 3px;
+  flex-shrink: 0;
+  background: #E5E7EB;
+}
+
+/* 主内容区 */
+.tl-todo-item-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1;
+}
+
+/* Checkbox */
+.tl-todo-check {
+  width: 16px;
+  height: 16px;
+  accent-color: #5b6af0;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+/* 待办文本 */
+.tl-todo-text {
+  font-size: 14px;
+  color: #1f2937;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+/* 双日期对比 */
+.tl-todo-date-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tl-todo-date-pill--plan {
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+.tl-todo-date-pill--done {
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #F0FDF4;
+  color: #15803D;
+}
+
+.tl-todo-delay {
+  font-size: 10px;
+  color: #F59E0B;
+}
+
+/* 嵌套内容（树状渲染） */
+.tl-todo-nested {
+  margin-top: 6px;
+  padding-left: 20px;
+}
+
+.tl-todo-nested-item {
+  display: flex;
+  align-items: flex-start;
+  font-size: 12px;
+  color: #6B7280;
+  margin-bottom: 2px;
+}
+
+.tl-todo-nested-line {
+  color: #D1D5DB;
+  margin-right: 4px;
+}
+
+.tl-todo-nested-text {
+  line-height: 1.3;
+}
+
+/* 缩进层级 */
+.tl-todo-indent--1 {
+  margin-left: 12px;
+}
+
+.tl-todo-indent--2 {
+  margin-left: 24px;
+}
+
+/* 日历按钮 */
+.tl-todo-calendar {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  cursor: pointer;
+  margin: 0 4px;
+  transition: color 0.1s;
+}
+
+.tl-todo-calendar:hover {
+  color: #5b6af0;
+}
+
+/* 删除按钮 */
+.tl-todo-delete {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  cursor: pointer;
+  margin: 0 4px;
+  transition: color 0.1s;
+  opacity: 0.6;
+}
+
+.tl-todo-delete:hover {
+  color: #DC2626;
+  opacity: 1;
+}
+
 .tl-todo-item-text {
   font-size: 13px;
   line-height: 1.5;

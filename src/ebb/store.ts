@@ -15,7 +15,6 @@ import type {
   UndoEntry,
   EbbSettings,
   EbbData,
-  ComplexityLevel,
 } from './types';
 import {
   EBB_STORAGE_KEY,
@@ -520,7 +519,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           set((state) => {
             const outlineNodes = [...state.outlineNodes, ...newNodes];
             // 更新所有父节点的 childrenIds
-            const parentIdSet = new Set(newNodes.filter((n) => n.parentId).map((n) => n.parentId!));
             const childMap = new Map<string, string[]>();
             for (const n of newNodes) {
               if (n.parentId) {
@@ -725,15 +723,28 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         importEbbData: (data) => {
           // Schema 校验：过滤字段缺失/类型错误的条目，避免后续渲染崩溃
-          const isValidReviewTask = (t: any): t is ReviewTask =>
-            !!t && typeof t.id === 'string' && typeof t.topicName === 'string'
-            && typeof t.dueDate === 'string' && typeof t.isCompleted === 'boolean';
-          const isValidInboxItem = (i: any): i is InboxItem =>
-            !!i && typeof i.id === 'string' && typeof i.topicName === 'string'
-            && (i.status === 'draft' || i.status === 'staged');
-          const isValidOutlineNode = (n: any): n is StudyOutlineNode =>
-            !!n && typeof n.id === 'string' && typeof n.name === 'string'
-            && (n.type === 'book' || n.type === 'chapter' || n.type === 'section');
+          const isValidReviewTask = (t: unknown): t is ReviewTask => {
+            if (!t || typeof t !== 'object') return false;
+            const r = t as Record<string, unknown>;
+            return typeof r.id === 'string'
+              && typeof r.topicName === 'string'
+              && typeof r.dueDate === 'string'
+              && typeof r.isCompleted === 'boolean';
+          };
+          const isValidInboxItem = (i: unknown): i is InboxItem => {
+            if (!i || typeof i !== 'object') return false;
+            const r = i as Record<string, unknown>;
+            return typeof r.id === 'string'
+              && typeof r.topicName === 'string'
+              && (r.status === 'draft' || r.status === 'staged');
+          };
+          const isValidOutlineNode = (n: unknown): n is StudyOutlineNode => {
+            if (!n || typeof n !== 'object') return false;
+            const r = n as Record<string, unknown>;
+            return typeof r.id === 'string'
+              && typeof r.name === 'string'
+              && (r.type === 'book' || r.type === 'chapter' || r.type === 'section');
+          };
 
           const normalized: EbbData = {
             reviewTasks: Array.isArray(data?.reviewTasks) ? data.reviewTasks.filter(isValidReviewTask) : [],

@@ -14,6 +14,10 @@ import { extractTodos } from '@/utils/markdown';
  * 每个 todo 包含：id / text / date / checked / parentTaskId / parentTaskTitle
  * 其中 id 为 `${parentTaskId}-${line}`（line 为待办在 Markdown 中的行号），
  * 保证全局唯一且可回溯到源任务。
+ *
+ * date 字段统一表示"计划日期"：
+ *   - 优先使用 planDate（⏳格式）
+ *   - fallback 到 date（旧@格式）
  */
 export function useTodos(tasks: Task[]): AggregatedTodo[] {
   return useMemo(() => {
@@ -28,7 +32,8 @@ export function useTodos(tasks: Task[]): AggregatedTodo[] {
         all.push({
           id: `${task.id}-${item.line}`,
           text: item.text,
-          date: item.date,
+          // 统一 date 表示计划日期：优先 planDate，fallback date
+          date: item.planDate || item.date,
           checked: item.done,
           parentTaskId: task.id,
           parentTaskTitle: task.name,

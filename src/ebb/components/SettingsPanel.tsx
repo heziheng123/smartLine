@@ -5,7 +5,7 @@
 
 import React, { useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useEbbStore } from '../store';
 import { TAG_COLOR_PALETTE, DEFAULT_COMPLEXITY_CONFIGS } from '../constants';
 import { parseIntervals, formatIntervals } from '../complexity';

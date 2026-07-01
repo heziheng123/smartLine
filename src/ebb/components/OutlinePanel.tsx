@@ -17,7 +17,6 @@ import { COMPLEXITY_LEVELS } from '../constants';
 import type {
   StudyOutlineNode,
   OutlineNodeType,
-  ReviewTask,
   ComplexityLevel,
 } from '../types';
 
@@ -49,7 +48,6 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({ onClose, inline = false }) 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [linkingMode, setLinkingMode] = useState(false);
 
   // 粘贴目录导入
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -225,7 +223,7 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({ onClose, inline = false }) 
     const mdCount = lines.filter((l) => /^#+\s/.test(l.trim())).length;
     const isMarkdown = mdCount / lines.length > 0.5;
 
-    let indentLevels: number[] = [];
+    const indentLevels: number[] = [];
 
     if (isMarkdown) {
       // Markdown 模式：用 # 数量作为层级

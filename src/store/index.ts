@@ -398,19 +398,38 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         importData: (data) => {
           // Schema 校验：过滤掉字段缺失/类型错误的条目，避免后续渲染崩溃
-          const isValidTask = (t: any): t is Task =>
-            !!t && typeof t.id === 'string' && typeof t.name === 'string'
-            && typeof t.start === 'string' && typeof t.end === 'string';
-          const isValidNote = (n: any): n is Note =>
-            !!n && typeof n.id === 'string' && typeof n.name === 'string'
-            && typeof n.date === 'string' && (n.type === 'pin' || n.type === 'range');
-          const isValidMilestone = (m: any): m is Milestone =>
-            !!m && typeof m.id === 'string' && typeof m.name === 'string'
-            && typeof m.date === 'string';
-          const isValidGroup = (g: any): g is TaskGroup =>
-            !!g && typeof g.id === 'string' && typeof g.name === 'string'
-            && typeof g.start === 'string' && typeof g.end === 'string'
-            && Array.isArray(g.children);
+          const isValidTask = (t: unknown): t is Task => {
+            if (!t || typeof t !== 'object') return false;
+            const r = t as Record<string, unknown>;
+            return typeof r.id === 'string'
+              && typeof r.name === 'string'
+              && typeof r.start === 'string'
+              && typeof r.end === 'string';
+          };
+          const isValidNote = (n: unknown): n is Note => {
+            if (!n || typeof n !== 'object') return false;
+            const r = n as Record<string, unknown>;
+            return typeof r.id === 'string'
+              && typeof r.name === 'string'
+              && typeof r.date === 'string'
+              && (r.type === 'pin' || r.type === 'range');
+          };
+          const isValidMilestone = (m: unknown): m is Milestone => {
+            if (!m || typeof m !== 'object') return false;
+            const r = m as Record<string, unknown>;
+            return typeof r.id === 'string'
+              && typeof r.name === 'string'
+              && typeof r.date === 'string';
+          };
+          const isValidGroup = (g: unknown): g is TaskGroup => {
+            if (!g || typeof g !== 'object') return false;
+            const r = g as Record<string, unknown>;
+            return typeof r.id === 'string'
+              && typeof r.name === 'string'
+              && typeof r.start === 'string'
+              && typeof r.end === 'string'
+              && Array.isArray(r.children);
+          };
 
           const normalized: TimelineData = {
             tasks: Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask) : [],

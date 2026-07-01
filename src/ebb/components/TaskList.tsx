@@ -27,7 +27,6 @@ interface TaskListProps {
   onAddRound: (task: ReviewTask) => void;
   onOpenRounds: (task: ReviewTask) => void;
   onOpenTimeline: (topicName: string) => void;
-  onDragEnd: (taskId: string, newDate: string) => void;
   onExportDay: (date: string) => void;
 }
 
@@ -43,7 +42,6 @@ const TaskList: React.FC<TaskListProps> = ({
   onAddRound,
   onOpenRounds,
   onOpenTimeline,
-  onDragEnd,
   onExportDay,
 }) => {
   const [mode, setMode] = useState<ListMode>('today');

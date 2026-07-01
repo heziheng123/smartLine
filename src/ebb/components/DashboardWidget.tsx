@@ -12,7 +12,6 @@ import { useEbbStore } from '../store';
 import {
   computeTopicStats,
   computeTagStats,
-  computeRounds,
   calcTodayPoints,
   calcWeekPoints,
   isOverdue,

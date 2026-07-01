@@ -5,14 +5,13 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, Trash2, Plus, RotateCcw, Check } from 'lucide-react';
+import { X, Calendar, Trash2, Plus } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useEbbStore } from '../store';
 import { computeRounds, getDateLabel, suggestNextInterval, isOverdue, genId } from '../scheduler';
 import { getPointWeight } from '../complexity';
 import { parseIntervals } from '../complexity';
 import { ROUND_COLORS } from '../constants';
-import type { ReviewTask, EbbSettings } from '../types';
 import EbbDatePicker from './EbbDatePicker';
 
 interface RoundsPanelProps {

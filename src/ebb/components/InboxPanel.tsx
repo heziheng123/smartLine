@@ -218,8 +218,6 @@ interface InboxRowProps {
 }
 
 const InboxRow: React.FC<InboxRowProps> = ({ item, selected, settings, onSelect, onDelete, onStage, onUpdate }) => {
-  const [editing, setEditing] = useState(item.status === 'staged');
-
   const handleComplexityChange = (level: ComplexityLevel) => {
     onUpdate?.({
       complexity: level,
