@@ -1,12 +1,13 @@
 // ============================================================
-// Smart Timeline - 同步设置对话框（双房间一键连接）
-// 一次性连接 Timeline + Ebb 两个独立房间，数据物理隔离
+// Smart Timeline - 同步设置对话框（三房间一键连接）
+// 一次性连接 Timeline + Ebb + DailySchedule 三个独立房间
 // ============================================================
 
 import React, { useState, useEffect } from 'react';
 import { Cloud, Link, Unlink, Copy, Check } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
+import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 
 interface SyncDialogProps {
   onClose: () => void;
@@ -40,9 +41,23 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const ebbLeaveRoom = useEbbStore((state) => state.liveblocks?.leaveRoom);
   const ebbStatus = useEbbStore((state) => state.liveblocks?.status);
 
+  // DailySchedule store
+  const {
+    syncEnabled: dailySyncEnabled,
+    syncStatus: dailySyncStatus,
+    enableSync: dailyEnableSync,
+    disableSync: dailyDisableSync,
+    setSyncStatus: dailySetSyncStatus,
+  } = useDailyScheduleStore();
+
+  const dailyEnterRoom = useDailyScheduleStore((state) => state.liveblocks?.enterRoom);
+  const dailyLeaveRoom = useDailyScheduleStore((state) => state.liveblocks?.leaveRoom);
+  const dailyStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
+
   const [roomCode, setRoomCode] = useState(tlSyncRoomCode || '');
   const [copied, setCopied] = useState(false);
   const [linkEbb, setLinkEbb] = useState(true);
+  const [linkDaily, setLinkDaily] = useState(true);
 
   // 监听 Timeline 连接状态变化
   useEffect(() => {
@@ -64,17 +79,29 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     ebbSetSyncStatus(mappedStatus);
   }, [ebbStatus, ebbSetSyncStatus]);
 
+  // 监听 DailySchedule 连接状态变化
+  useEffect(() => {
+    if (!dailyStatus) return;
+    const mappedStatus =
+      dailyStatus === 'connected' ? 'connected' :
+      dailyStatus === 'connecting' || dailyStatus === 'reconnecting' ? 'connecting' :
+      dailyStatus === 'disconnected' || dailyStatus === 'initial' ? 'disconnected' : 'error';
+    dailySetSyncStatus(mappedStatus);
+  }, [dailyStatus, dailySetSyncStatus]);
+
   // 综合状态
-  const anyEnabled = tlSyncEnabled || ebbSyncEnabled;
+  const anyEnabled = tlSyncEnabled || ebbSyncEnabled || dailySyncEnabled;
 
   const overallStatus =
-    tlSyncStatus === 'error' || ebbSyncStatus === 'error'
+    tlSyncStatus === 'error' || ebbSyncStatus === 'error' || dailySyncStatus === 'error'
       ? 'error'
-      : tlSyncStatus === 'connected' && (!ebbSyncEnabled || ebbSyncStatus === 'connected')
+      : tlSyncStatus === 'connected' 
+        && (!ebbSyncEnabled || ebbSyncStatus === 'connected')
+        && (!dailySyncEnabled || dailySyncStatus === 'connected')
         ? 'connected'
-        : tlSyncStatus === 'connecting' || ebbSyncStatus === 'connecting'
-          ? 'connecting'
-          : 'disconnected';
+      : tlSyncStatus === 'connecting' || ebbSyncStatus === 'connecting' || dailySyncStatus === 'connecting'
+        ? 'connecting'
+        : 'disconnected';
 
   const statusInfo = {
     label: overallStatus === 'connected' ? '已连接' :
@@ -98,6 +125,12 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       ebbEnableSync(code);
       ebbEnterRoom(`${EBB_ROOM_PREFIX}${code}`);
     }
+
+    // DailySchedule 房间（前缀 daily-）
+    if (linkDaily && dailyEnterRoom) {
+      dailyEnableSync(code);
+      dailyEnterRoom(`${DAILY_ROOM_PREFIX}${code}`);
+    }
   };
 
   const handleDisconnect = () => {
@@ -108,6 +141,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     if (ebbLeaveRoom && ebbSyncEnabled) {
       ebbLeaveRoom();
       ebbDisableSync();
+    }
+    if (dailyLeaveRoom && dailySyncEnabled) {
+      dailyLeaveRoom();
+      dailyDisableSync();
     }
   };
 
@@ -167,7 +204,21 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               <span>
                 同时连接复习模块（Ebb）房间
                 <span className="tl-sync-checkbox-hint">
-                  使用前缀 <code>{EBB_ROOM_PREFIX}</code> 隔离数据，与时间轴数据物理分离
+                  使用前缀 <code>{EBB_ROOM_PREFIX}</code> 隔离数据
+                </span>
+              </span>
+            </label>
+
+            <label className="tl-sync-checkbox-row">
+              <input
+                type="checkbox"
+                checked={linkDaily}
+                onChange={(e) => setLinkDaily(e.target.checked)}
+              />
+              <span>
+                同时连接每日安排（Daily）房间
+                <span className="tl-sync-checkbox-hint">
+                  使用前缀 <code>{DAILY_ROOM_PREFIX}</code> 隔离数据
                 </span>
               </span>
             </label>
@@ -217,6 +268,14 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 </span>
               </div>
               <div className="tl-sync-info-row">
+                <span className="tl-sync-info-label">每日安排</span>
+                <span className="tl-sync-info-value" style={{ color: dailySyncEnabled ? (dailySyncStatus === 'connected' ? '#059669' : '#D97706') : '#9CA3AF' }}>
+                  {dailySyncEnabled
+                    ? (dailySyncStatus === 'connected' ? '已连接' : dailySyncStatus === 'connecting' ? '连接中' : '未连接')
+                    : '未启用'}
+                </span>
+              </div>
+              <div className="tl-sync-info-row">
                 <span className="tl-sync-info-label">服务</span>
                 <span className="tl-sync-info-value" style={{ color: '#059669' }}>
                   Liveblocks 实时协作
@@ -226,7 +285,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
             <p className="tl-sync-tip">
               在其他设备上打开此网页，输入相同的房间代码即可开始实时同步。
-              时间轴与复习模块使用独立房间，数据物理隔离。
+              时间轴、复习模块、每日安排使用独立房间，数据物理隔离。
             </p>
 
             <div className="tl-dialog-actions">
