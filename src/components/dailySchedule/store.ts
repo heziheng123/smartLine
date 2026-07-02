@@ -253,15 +253,21 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
   )
 );
 
-/** 内部辅助：按时间段重新编号 order */
+/** 内部辅助：按时间段重新编号 order（不可变版本） */
 function reorderSlotItems(schedules: Record<string, DaySchedule>, date: string) {
   const day = schedules[date];
   if (!day) return;
   const slots: TimeSlot[] = ['morning', 'afternoon', 'evening'];
+
+  // 按时间段分组，创建新对象更新 order
+  const reorderedItems: ScheduledItem[] = [];
   for (const slot of slots) {
-    const slotItems = day.items.filter((i) => i.timeSlot === slot);
-    slotItems.forEach((item, idx) => {
-      item.order = idx;
-    });
+    const slotItems = day.items
+      .filter((i) => i.timeSlot === slot)
+      .map((item, idx) => ({ ...item, order: idx }));
+    reorderedItems.push(...slotItems);
   }
+
+  // 更新为新的 items 数组
+  schedules[date] = { ...day, items: reorderedItems };
 }

@@ -40,6 +40,40 @@ import { useTodos } from '@/hooks/useTodos';
 const DROPPABLE_POOL = 'ds-pool';
 const droppableIdForSlot = (slot: TimeSlot) => `ds-slot-${slot}`;
 
+// ── SourceId 解析工具 ────────────────────────────────────────
+
+interface ParsedSourceId {
+  source: 'project' | 'review';
+  reviewId?: string;
+  parentTaskId?: string;
+  line?: number;
+}
+
+/**
+ * 解析 sourceId 格式：
+ * - review: `review-{reviewId}`
+ * - project: `project-{parentTaskId}-{line}`（line 为 0-based）
+ */
+function parseSourceId(sourceId: string): ParsedSourceId | null {
+  if (sourceId.startsWith('review-')) {
+    return { source: 'review', reviewId: sourceId.slice(7) };
+  }
+
+  if (sourceId.startsWith('project-')) {
+    const fullId = sourceId.slice(8);
+    const lastDash = fullId.lastIndexOf('-');
+    if (lastDash === -1) return null;
+
+    const parentTaskId = fullId.slice(0, lastDash);
+    const line = parseInt(fullId.slice(lastDash + 1), 10);
+    if (isNaN(line)) return null;
+
+    return { source: 'project', parentTaskId, line };
+  }
+
+  return null;
+}
+
 // ── 主组件 ───────────────────────────────────────────────────
 
 const DailyScheduleView: React.FC = () => {
@@ -246,19 +280,14 @@ const DailyScheduleView: React.FC = () => {
         ebbStore.toggleReviewTask(reviewId);
       } else if (item.source === 'project') {
         // 同步到 Timeline Markdown
-        // sourceId 格式: project-${parentTaskId}-${line}
-        const todoFullId = item.sourceId.replace('project-', '');
-        const lastDash = todoFullId.lastIndexOf('-');
-        if (lastDash === -1) return;
-        const parentTaskId = todoFullId.slice(0, lastDash);
-        const line = parseInt(todoFullId.slice(lastDash + 1), 10);
-        if (isNaN(line)) return;
+        const parsed = parseSourceId(item.sourceId);
+        if (!parsed || parsed.source !== 'project') return;
 
-        const parentTask = timelineStore.tasks.find((t) => t.id === parentTaskId);
+        const parentTask = timelineStore.tasks.find((t) => t.id === parsed.parentTaskId);
         if (!parentTask) return;
 
-        const newMarkdown = toggleTodoLine(parentTask.markdown ?? '', line);
-        timelineStore.updateTaskMarkdown(parentTaskId, newMarkdown);
+        const newMarkdown = toggleTodoLine(parentTask.markdown ?? '', parsed.line);
+        timelineStore.updateTaskMarkdown(parsed.parentTaskId, newMarkdown);
       }
     },
     [scheduleStore, selectedDate, daySchedule.items, ebbStore, timelineStore],
@@ -284,6 +313,9 @@ const DailyScheduleView: React.FC = () => {
   );
 
   // ── 双向同步：监听源 store 变化，更新每日安排中的完成状态 ───
+  // TODO: 优化点 - 当前每次 store 变化都遍历所有 items
+  //       可用 useRef 缓存上一次状态，只对差异项更新
+  //       但正常使用场景（几十个任务）性能影响不大，暂保持当前实现
   useEffect(() => {
     // 同步复习任务完成状态（从 Ebb store → 每日安排）
     for (const item of daySchedule.items) {
@@ -304,23 +336,18 @@ const DailyScheduleView: React.FC = () => {
     // 同步项目任务完成状态（从 Timeline Markdown → 每日安排）
     for (const item of daySchedule.items) {
       if (item.source !== 'project') continue;
-      // sourceId 格式: project-${parentTaskId}-${line}
-      const todoFullId = item.sourceId.replace('project-', '');
-      const lastDash = todoFullId.lastIndexOf('-');
-      if (lastDash === -1) continue;
-      const parentTaskId = todoFullId.slice(0, lastDash);
-      const line = parseInt(todoFullId.slice(lastDash + 1), 10);
-      if (isNaN(line)) continue;
+      const parsed = parseSourceId(item.sourceId);
+      if (!parsed || parsed.source !== 'project') continue;
 
-      const parentTask = timelineStore.tasks.find((t) => t.id === parentTaskId);
+      const parentTask = timelineStore.tasks.find((t) => t.id === parsed.parentTaskId);
       if (!parentTask) continue;
 
       // 从 Markdown 中提取该行待办的完成状态
       // 注意：line 为 0-based 索引（与 extractTodos / toggleTodoLine 保持一致）
       const md = parentTask.markdown ?? '';
       const lines = md.split(/\r?\n/);
-      if (line < 0 || line >= lines.length) continue;
-      const todoLine = lines[line];
+      if (parsed.line < 0 || parsed.line >= lines.length) continue;
+      const todoLine = lines[parsed.line];
       const isLineChecked = todoLine.match(/^[-*]\s*\[x\]/i) !== null;
 
       // 状态不一致时更新
