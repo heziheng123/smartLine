@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { genId, suggestNextInterval, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
 import { getPointWeight, parseIntervals } from '../complexity';
 import { ROUND_COLORS } from '../constants';
@@ -43,7 +44,73 @@ import BoardView from './BoardView';
 type ViewTab = 'matrix' | 'directory' | 'board';
 
 const EbbView: React.FC = () => {
-  const store = useEbbStore();
+  // 选择性订阅：只关心 reviewTasks/inboxItems/outlineNodes/ebbSettings/undoStack
+  // + 各 CRUD 方法（方法引用稳定）。避免 syncStatus 等无关切片变化触发本组件重渲染。
+  const {
+    reviewTasks,
+    inboxItems,
+    outlineNodes,
+    ebbSettings,
+    undoStack,
+    toggleReviewTask,
+    deleteReviewTask,
+    updateReviewTask,
+    addReviewTasks,
+    exportEbbData,
+    importEbbData,
+    clearAllTasks,
+    popUndo,
+  } = useEbbStore(
+    useShallow((s) => ({
+      reviewTasks: s.reviewTasks,
+      inboxItems: s.inboxItems,
+      outlineNodes: s.outlineNodes,
+      ebbSettings: s.ebbSettings,
+      undoStack: s.undoStack,
+      toggleReviewTask: s.toggleReviewTask,
+      deleteReviewTask: s.deleteReviewTask,
+      updateReviewTask: s.updateReviewTask,
+      addReviewTasks: s.addReviewTasks,
+      exportEbbData: s.exportEbbData,
+      importEbbData: s.importEbbData,
+      clearAllTasks: s.clearAllTasks,
+      popUndo: s.popUndo,
+    })),
+  );
+
+  // 重构 store 视图供下游代码以 `store.X` 形式访问。
+  const store = useMemo(
+    () => ({
+      reviewTasks,
+      inboxItems,
+      outlineNodes,
+      ebbSettings,
+      undoStack,
+      toggleReviewTask,
+      deleteReviewTask,
+      updateReviewTask,
+      addReviewTasks,
+      exportEbbData,
+      importEbbData,
+      clearAllTasks,
+      popUndo,
+    }),
+    [
+      reviewTasks,
+      inboxItems,
+      outlineNodes,
+      ebbSettings,
+      undoStack,
+      toggleReviewTask,
+      deleteReviewTask,
+      updateReviewTask,
+      addReviewTasks,
+      exportEbbData,
+      importEbbData,
+      clearAllTasks,
+      popUndo,
+    ],
+  );
   const [activeTab, setActiveTab] = useState<ViewTab>('matrix');
   const [addOpen, setAddOpen] = useState(false);
   const [modal, setModal] = useState<'none' | 'settings' | 'inbox'>('none');
@@ -92,7 +159,8 @@ const EbbView: React.FC = () => {
   }, [store.reviewTasks, store.ebbSettings]);
 
   const hasUndo = store.undoStack.length > 0;
-  const lastUndo = store.undoStack[store.undoStack.length - 1];
+  // 注意：store 把最新撤销项放在 index 0（[entry, ...stack]），故读 [0]
+  const lastUndo = store.undoStack[0];
 
   // ── 任务操作回调 ──────────────────────────────────────────
   const handleToggle = useCallback(
@@ -140,11 +208,11 @@ const EbbView: React.FC = () => {
       );
       const sameTopic = store.reviewTasks
         .filter((t) => t.topicName === task.topicName)
-        .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+        .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
       const lastTask = sameTopic[sameTopic.length - 1];
-      const baseDate = lastTask ? dayjs(lastTask.dueDate) : dayjs();
+      const baseDate = lastTask && lastTask.dueDate ? dayjs(lastTask.dueDate) : dayjs();
       let newDate = baseDate.add(nextInterval, 'day').format('YYYY-MM-DD');
-      const topicDates = new Set(sameTopic.map((t) => t.dueDate));
+      const topicDates = new Set(sameTopic.map((t) => t.dueDate ?? ''));
       while (topicDates.has(newDate)) {
         newDate = dayjs(newDate).add(1, 'day').format('YYYY-MM-DD');
       }

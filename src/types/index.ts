@@ -2,6 +2,45 @@
 // Smart Timeline - 核心类型定义
 // ============================================================
 
+// ============================================================
+// 智能任务块（Smart Task Block）数据模型
+// ============================================================
+
+/** 块类型枚举 */
+export type BlockType = 'text' | 'smart-task';
+
+/** 纯文本块（普通段落） */
+export interface TextBlock {
+  type: 'text';
+  id: string;
+  content: string;
+}
+
+/** 智能任务块的 Header（结构化属性区，给系统看） */
+export interface SmartTaskHeader {
+  title: string;
+  tag: string;
+  tagColor: string;
+  date: string;           // 📅 计划执行日 YYYY-MM-DD
+  deadline?: string;      // 🎯 独立截止日 YYYY-MM-DD
+  duration: number;       // ⏳ 预估时长（分钟）
+  isCompleted: boolean;
+  completedDate?: string;
+  recurring?: string;     // 🔁 循环规则
+  complexity?: 'easy' | 'normal' | 'hard';
+}
+
+/** 智能任务块（核心：Header + Body 双层结构） */
+export interface SmartTaskBlock {
+  type: 'smart-task';
+  id: string;
+  header: SmartTaskHeader;
+  body: string;           // 富文本 HTML（contenteditable 编辑）
+}
+
+/** 块联合类型 */
+export type Block = TextBlock | SmartTaskBlock;
+
 /** 任务定义 */
 export interface Task {
   id: string;
@@ -13,8 +52,13 @@ export interface Task {
   completed?: boolean;    // 是否已完成（显示删除线样式）
   notePath?: string;      // 关联笔记路径（网页版为链接或备注）
   groupId?: string;       // 所属分组 ID
-  markdown?: string;          // 任务详情 Markdown 文本（抽屉编辑器内容）
-  markdownUpdatedAt?: string; // Markdown 上次保存时间（ISO 字符串）
+  /** @deprecated 使用 blocks 替代 */
+  markdown?: string;          // 旧字段，保留用于迁移
+  /** @deprecated */
+  markdownUpdatedAt?: string;
+  /** 智能任务块数组（新数据载体） */
+  blocks: Block[];
+  blocksUpdatedAt?: string;   // blocks 上次保存时间（ISO 字符串）
 }
 
 /** 任务分组 */
@@ -142,14 +186,22 @@ export interface ContextMenuItem {
   divider?: boolean;
 }
 
-/** 聚合后的待办项（从各任务的 Markdown 中提取，扁平化） */
+/** 聚合后的待办项（从各任务的 Markdown 中提取，扁平化；Obsidian Tasks 兼容协议） */
 export interface AggregatedTodo {
   /** 复合 ID：`${parentTaskId}-${line}`，保证全局唯一 */
   id: string;
   /** 待办内容文本 */
   text: string;
-  /** 设定的日期 YYYY-MM-DD（未排期时为 undefined） */
-  date?: string;
+  /** 📅 Due date 截止日 YYYY-MM-DD（决定何时出现在 Daily Schedule） */
+  due?: string;
+  /** ⏳ Scheduled date 计划日 YYYY-MM-DD */
+  scheduled?: string;
+  /** 🛫 Start date 开始日 YYYY-MM-DD */
+  start?: string;
+  /** ➕ Created date 创建日 YYYY-MM-DD */
+  created?: string;
+  /** ✅ Done date 完成日 YYYY-MM-DD */
+  doneDate?: string;
   /** 是否已完成 */
   checked: boolean;
   /** 所属大任务 ID */
@@ -158,6 +210,26 @@ export interface AggregatedTodo {
   parentTaskTitle: string;
   /** 所属大任务颜色（用于卡片左边缘高亮） */
   parentTaskColor?: string;
+  /** 所属大任务开始日（用于智能越界校验） */
+  parentTaskStart?: string;
+  /** 所属大任务截止日（用于智能越界校验） */
+  parentTaskEnd?: string;
+  /** 🔁 循环规则（如 'every day' / 'every week on Sunday' / 'every 2 weeks when done'） */
+  recurring?: string;
+  /** 优先级：highest/high/normal/low/lowest（对齐 Obsidian Tasks） */
+  priority?: 'highest' | 'high' | 'normal' | 'low' | 'lowest';
+
+  // ── Smart Task Block 扩展字段 ──
+  /** 所属 block ID（当来源为 SmartTaskBlock 时） */
+  _blockId?: string;
+  /** 标签名 */
+  _tag?: string;
+  /** 标签颜色 */
+  _tagColor?: string;
+  /** 预估时长（分钟） */
+  _duration?: number;
+  /** 复杂度 */
+  _complexity?: 'easy' | 'normal' | 'hard';
 }
 
 /** 待办汇总视图的模式 */

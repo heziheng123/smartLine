@@ -9,6 +9,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import type { AggregatedTodo, TodoViewMode } from '@/types';
+import { isOutOfTaskRange, formatRecurringLabel } from '@/utils/markdown';
 
 interface TodoAggregatorViewProps {
   todos: AggregatedTodo[];
@@ -45,13 +46,16 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
   const [cursor, setCursor] = useState(() => dayjs());
   const [backlogOpen, setBacklogOpen] = useState(false);
 
-  const datedTodos = useMemo(() => todos.filter((t) => t.date), [todos]);
-  const undatedTodos = useMemo(() => todos.filter((t) => !t.date), [todos]);
+  // 兼容 SmartTaskBlock：优先使用 due（deadline），回退到 scheduled（排期日）
+  const getTodoDate = (t: AggregatedTodo) => t.due ?? t.scheduled;
+
+  const datedTodos = useMemo(() => todos.filter((t) => getTodoDate(t)), [todos]);
+  const undatedTodos = useMemo(() => todos.filter((t) => !getTodoDate(t)), [todos]);
 
   const todosByDate = useMemo(() => {
     const map = new Map<string, AggregatedTodo[]>();
     for (const todo of datedTodos) {
-      const key = todo.date!;
+      const key = getTodoDate(todo)!;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(todo);
     }
@@ -111,8 +115,11 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
 
   const renderDraggableCard = useCallback(
     (todo: AggregatedTodo, index: number) => {
-      const overdue = !todo.checked && todo.date && isOverdue(todo.date);
-      const isTodayCard = todo.date === todayStr && !todo.checked;
+      const todoDate = getTodoDate(todo);
+      const overdue = !todo.checked && todoDate && isOverdue(todoDate);
+      const isTodayCard = todoDate === todayStr && !todo.checked;
+      // 智能越界：截止日超出父级 Task [start, end] 区间
+      const outOfRange = !todo.checked && isOutOfTaskRange(todoDate, todo.parentTaskStart, todo.parentTaskEnd);
 
       return (
         <Draggable key={todo.id} draggableId={todo.id} index={index}>
@@ -127,6 +134,7 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
                 todo.checked ? 'tl-todo-card--done' : '',
                 overdue ? 'tl-todo-card--overdue' : '',
                 isTodayCard ? 'tl-todo-card--today' : '',
+                outOfRange ? 'tl-todo-card--out-of-range' : '',
                 snapshot.isDragging ? 'tl-todo-card--dragging' : '',
               ]
                 .filter(Boolean)
@@ -142,6 +150,11 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
                   <span className="tl-todo-card-dot" />
                   <span className="tl-todo-card-parent">{todo.parentTaskTitle}</span>
                   {overdue && <span className="tl-todo-card-overdue-badge">逾期</span>}
+                  {outOfRange && (
+                    <span className="tl-todo-card-warn-badge" title={`该待办超出项目周期 [${todo.parentTaskStart ?? '∞'} ~ ${todo.parentTaskEnd ?? '∞'}]`}>
+                      ⚠️越界
+                    </span>
+                  )}
                 </div>
                 <div className="tl-todo-card-content">
                   <input
@@ -153,6 +166,29 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
                   />
                   <span className="tl-todo-card-text">{todo.text}</span>
                 </div>
+                {/* ⏳/🛫/➕ 日期 / 🔁 循环规则 标记行 */}
+                {(!!todo.scheduled || !!todo.start || !!todo.created || !!todo.recurring) && (
+                  <div className="tl-todo-card-tags">
+                    {todo.scheduled && (
+                      <span className="tl-todo-card-tag tl-todo-card-tag--scheduled">
+                        ⏳{dayjs(todo.scheduled).format('M月D日')}
+                      </span>
+                    )}
+                    {todo.start && (
+                      <span className="tl-todo-card-tag tl-todo-card-tag--start">
+                        🛫{dayjs(todo.start).format('M月D日')}
+                      </span>
+                    )}
+                    {todo.created && (
+                      <span className="tl-todo-card-tag tl-todo-card-tag--created">
+                        ➕{dayjs(todo.created).format('M月D日')}
+                      </span>
+                    )}
+                    {todo.recurring && (
+                      <span className="tl-todo-card-recurring">🔁{formatRecurringLabel(todo.recurring)}</span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -365,32 +401,72 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
         <div className="tl-todo-day-list">
           {dayTodos.length === 0
             ? renderEmpty('当日无待办')
-            : dayTodos.map((t) => (
-                <div
-                  key={t.id}
-                  onClick={() => onTaskClick(t.parentTaskId)}
-                  className={`tl-todo-card tl-todo-card--wide ${t.checked ? 'tl-todo-card--done' : ''}`}
-                  style={{ '--task-color': t.parentTaskColor || '#E5E7EB' } as React.CSSProperties}
-                >
-                  <div className="tl-todo-card-accent" />
-                  <div className="tl-todo-card-body">
-                    <div className="tl-todo-card-meta">
-                      <span className="tl-todo-card-dot" />
-                      <span className="tl-todo-card-parent">{t.parentTaskTitle}</span>
-                    </div>
-                    <div className="tl-todo-card-content">
-                      <input
-                        type="checkbox"
-                        checked={t.checked}
-                        className="tl-todo-card-check"
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={() => onTodoToggle?.(t.id)}
-                      />
-                      <span className="tl-todo-card-text">{t.text}</span>
+            : dayTodos.map((t) => {
+                const overdue = !t.checked && t.due && isOverdue(t.due);
+                const outOfRange = !t.checked && isOutOfTaskRange(t.due, t.parentTaskStart, t.parentTaskEnd);
+                return (
+                  <div
+                    key={t.id}
+                    onClick={() => onTaskClick(t.parentTaskId)}
+                    className={[
+                      'tl-todo-card',
+                      'tl-todo-card--wide',
+                      t.checked ? 'tl-todo-card--done' : '',
+                      overdue ? 'tl-todo-card--overdue' : '',
+                      outOfRange ? 'tl-todo-card--out-of-range' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    style={{ '--task-color': t.parentTaskColor || '#E5E7EB' } as React.CSSProperties}
+                  >
+                    <div className="tl-todo-card-accent" />
+                    <div className="tl-todo-card-body">
+                      <div className="tl-todo-card-meta">
+                        <span className="tl-todo-card-dot" />
+                        <span className="tl-todo-card-parent">{t.parentTaskTitle}</span>
+                        {overdue && <span className="tl-todo-card-overdue-badge">逾期</span>}
+                        {outOfRange && (
+                          <span className="tl-todo-card-warn-badge" title={`该待办超出项目周期 [${t.parentTaskStart ?? '∞'} ~ ${t.parentTaskEnd ?? '∞'}]`}>
+                            ⚠️越界
+                          </span>
+                        )}
+                      </div>
+                      <div className="tl-todo-card-content">
+                        <input
+                          type="checkbox"
+                          checked={t.checked}
+                          className="tl-todo-card-check"
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => onTodoToggle?.(t.id)}
+                        />
+                        <span className="tl-todo-card-text">{t.text}</span>
+                      </div>
+                      {(!!t.scheduled || !!t.start || !!t.created || !!t.recurring) && (
+                        <div className="tl-todo-card-tags">
+                          {t.scheduled && (
+                            <span className="tl-todo-card-tag tl-todo-card-tag--scheduled">
+                              ⏳{dayjs(t.scheduled).format('M月D日')}
+                            </span>
+                          )}
+                          {t.start && (
+                            <span className="tl-todo-card-tag tl-todo-card-tag--start">
+                              🛫{dayjs(t.start).format('M月D日')}
+                            </span>
+                          )}
+                          {t.created && (
+                            <span className="tl-todo-card-tag tl-todo-card-tag--created">
+                              ➕{dayjs(t.created).format('M月D日')}
+                            </span>
+                          )}
+                          {t.recurring && (
+                            <span className="tl-todo-card-recurring">🔁{formatRecurringLabel(t.recurring)}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
         </div>
       </div>
     );
@@ -402,7 +478,7 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
         <div className="tl-todo-no-data-icon">✧</div>
         <div className="tl-todo-no-data-title">暂无待办事项</div>
         <div className="tl-todo-no-data-hint">
-          在任务详情中添加带日期的待办（如 - [ ] 背单词 @2026-06-15）
+          在任务详情中添加带日期的待办（如 - [ ] 背单词 📅 2026-06-15）
         </div>
       </div>
     );
@@ -454,4 +530,4 @@ const TodoAggregatorView: React.FC<TodoAggregatorViewProps> = ({
   );
 };
 
-export default TodoAggregatorView;
+export default React.memo(TodoAggregatorView);

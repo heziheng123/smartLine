@@ -59,6 +59,7 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
       completed,
       notePath: notePath.trim() || undefined,
       groupId: task?.groupId,
+      blocks: task?.blocks ?? [],
     });
   };
 

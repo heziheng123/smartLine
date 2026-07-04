@@ -14,18 +14,10 @@ export function genId(prefix = 'eb'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** 简易字符串哈希（用于轮次缓存 key） */
-function simpleHash(str: string): string {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-  }
-  return (h >>> 0).toString(36);
-}
-
 /** 判断日期是否逾期（未完成且早于今天） */
 export function isOverdue(task: ReviewTask): boolean {
   if (task.isCompleted) return false;
+  if (!task.dueDate) return false; // 兜底：脏数据不应被误判为逾期
   return dayjs(task.dueDate).isBefore(dayjs().startOf('day'));
 }
 
@@ -43,18 +35,17 @@ let totalRoundsCache = new Map<string, number>(); // topicName -> totalRounds
 /**
  * 计算所有任务的轮次。
  * 同一 topicName 的任务按 dueDate 升序，第 i 个为第 i+1 轮。
- * 基于任务内容哈希缓存，避免重复计算。
+ * 基于任务内容原文缓存，避免重复计算（不再使用哈希，避免碰撞）。
  */
 export function computeRounds(tasks: ReviewTask[]): {
   roundMap: Map<string, number>;
   totalRoundsMap: Map<string, number>;
 } {
-  const key = simpleHash(
-    tasks
-      .map((t) => `${t.id}|${t.topicName}|${t.dueDate}`)
+  // 直接用原文字符串作 cache key，避免哈希碰撞导致返回错误轮次缓存
+  const key = tasks
+      .map((t) => `${t.id}|${t.topicName}|${t.dueDate ?? ''}`)
       .sort()
-      .join(';'),
-  );
+      .join(';');
 
   if (key === roundCacheKey) {
     return { roundMap: roundCache, totalRoundsMap: totalRoundsCache };
@@ -71,7 +62,10 @@ export function computeRounds(tasks: ReviewTask[]): {
   }
 
   for (const [topic, group] of byTopic) {
-    const sorted = [...group].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    // 兜底：dueDate 可能为 undefined（脏数据），用空串占位避免 localeCompare 崩溃
+    const sorted = [...group].sort((a, b) =>
+      (a.dueDate ?? '').localeCompare(b.dueDate ?? ''),
+    );
     sorted.forEach((t, i) => roundMap.set(t.id, i + 1));
     totalRoundsMap.set(topic, sorted.length);
   }

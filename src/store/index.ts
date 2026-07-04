@@ -6,7 +6,8 @@ import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { createClient } from '@liveblocks/client';
-import type { TimelineData, Task, TaskGroup, Note, Milestone } from '@/types';
+import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
+import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, insertBlock } from '@/utils/blocks';
 
 const STORAGE_KEY = 'smart-timeline-data';
 const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
@@ -33,15 +34,15 @@ function getDefaultData(): TimelineData {
   return {
     tasks: [
       // 蓝色系：产品规划 / 主线
-      { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#DBEAFE' },
-      { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#DBEAFE' },
+      { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#DBEAFE', blocks: [] },
+      { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#DBEAFE', blocks: [] },
       // 紫色系：开发阶段 / 核心业务
-      { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#EDE9FE', isMain: true },
+      { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#EDE9FE', isMain: true, blocks: [] },
       // 绿色系：测试发布 / 已完成
-      { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#D1FAE5' },
+      { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#D1FAE5', blocks: [] },
       // 橙黄色系：运营 / 里程碑
-      { id: 'demo-task-5', name: '暑期运营', start: `${y}-07-10`, end: `${y}-08-25`, color: '#FEF3C7' },
-      { id: 'demo-task-6', name: '年度复盘', start: `${y}-11-01`, end: `${y}-12-20`, color: '#DBEAFE' },
+      { id: 'demo-task-5', name: '暑期运营', start: `${y}-07-10`, end: `${y}-08-25`, color: '#FEF3C7', blocks: [] },
+      { id: 'demo-task-6', name: '年度复盘', start: `${y}-11-01`, end: `${y}-12-20`, color: '#DBEAFE', blocks: [] },
     ],
     groups: [
       {
@@ -53,8 +54,8 @@ function getDefaultData(): TimelineData {
         color: '#60A5FA',
         autoDate: true,
         children: [
-          { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#DBEAFE', groupId: 'demo-group-1' },
-          { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#DBEAFE', groupId: 'demo-group-1' },
+          { id: 'demo-task-1', name: '产品规划', start: `${y}-01-05`, end: `${y}-02-28`, color: '#DBEAFE', groupId: 'demo-group-1', blocks: [] },
+          { id: 'demo-task-2', name: '设计评审', start: `${y}-03-01`, end: `${y}-04-15`, color: '#DBEAFE', groupId: 'demo-group-1', blocks: [] },
         ],
       },
       {
@@ -66,7 +67,7 @@ function getDefaultData(): TimelineData {
         color: '#A78BFA',
         autoDate: true,
         children: [
-          { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#EDE9FE', isMain: true, groupId: 'demo-group-2' },
+          { id: 'demo-task-3', name: '研发冲刺', start: `${y}-02-15`, end: `${y}-05-30`, color: '#EDE9FE', isMain: true, groupId: 'demo-group-2', blocks: [] },
         ],
       },
       {
@@ -78,7 +79,7 @@ function getDefaultData(): TimelineData {
         color: '#34D399',
         autoDate: true,
         children: [
-          { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#D1FAE5', groupId: 'demo-group-3' },
+          { id: 'demo-task-4', name: '测试与发布', start: `${y}-06-01`, end: `${y}-07-20`, color: '#D1FAE5', groupId: 'demo-group-3', blocks: [] },
         ],
       },
     ],
@@ -99,8 +100,16 @@ function loadData(): TimelineData {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const tasks = (parsed.tasks ?? []).map((t: Task) => {
+        // 自动迁移：有 markdown 但无 blocks → 生成 blocks
+        if (t.markdown && (!t.blocks || t.blocks.length === 0)) {
+          return { ...t, blocks: migrateMarkdownToBlocks(t) };
+        }
+        // 确保 blocks 字段存在
+        return { ...t, blocks: t.blocks ?? [] };
+      });
       return {
-        tasks: parsed.tasks ?? [],
+        tasks,
         groups: parsed.groups ?? [],
         notes: parsed.notes ?? [],
         milestones: parsed.milestones ?? [],
@@ -149,6 +158,21 @@ interface TimelineStore extends TimelineData {
   toggleTaskComplete: (taskId: string) => void;
   /** 仅更新任务的 Markdown 详情与时间戳 */
   updateTaskMarkdown: (taskId: string, markdown: string) => void;
+
+  /** 更新任务的 blocks 数组（新数据载体） */
+  updateTaskBlocks: (taskId: string, blocks: Block[]) => void;
+
+  /** 更新指定 block 的 header 属性 */
+  updateBlockHeader: (taskId: string, blockId: string, headerPatch: Partial<SmartTaskHeader>) => void;
+
+  /** 删除指定 block */
+  removeBlock: (taskId: string, blockId: string) => void;
+
+  /** 向任务追加 block */
+  appendBlock: (taskId: string, block: Block) => void;
+
+  /** 在指定位置插入 block */
+  insertBlockAt: (taskId: string, index: number, block: Block) => void;
 
   addGroup: (group: TaskGroup) => void;
   updateGroup: (group: TaskGroup) => void;
@@ -263,6 +287,110 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   ? { ...c, markdown, markdownUpdatedAt: now }
                   : c
               ),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        updateTaskBlocks: (taskId, blocks) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) =>
+              t.id === taskId
+                ? { ...t, blocks, blocksUpdatedAt: now }
+                : t
+            );
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) =>
+                c.id === taskId
+                  ? { ...c, blocks, blocksUpdatedAt: now }
+                  : c
+              ),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        updateBlockHeader: (taskId, blockId, headerPatch) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              const newBlocks = updateBlockHeader(t.blocks, blockId, headerPatch);
+              return { ...t, blocks: newBlocks, blocksUpdatedAt: now };
+            });
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) => {
+                if (c.id !== taskId) return c;
+                const newBlocks = updateBlockHeader(c.blocks, blockId, headerPatch);
+                return { ...c, blocks: newBlocks, blocksUpdatedAt: now };
+              }),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        removeBlock: (taskId, blockId) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              return { ...t, blocks: deleteBlock(t.blocks, blockId), blocksUpdatedAt: now };
+            });
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) => {
+                if (c.id !== taskId) return c;
+                return { ...c, blocks: deleteBlock(c.blocks, blockId), blocksUpdatedAt: now };
+              }),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        appendBlock: (taskId, block) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              return { ...t, blocks: appendBlock(t.blocks, block), blocksUpdatedAt: now };
+            });
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) => {
+                if (c.id !== taskId) return c;
+                return { ...c, blocks: appendBlock(c.blocks, block), blocksUpdatedAt: now };
+              }),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        insertBlockAt: (taskId, index, block) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              return { ...t, blocks: insertBlock(t.blocks, index, block), blocksUpdatedAt: now };
+            });
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) => {
+                if (c.id !== taskId) return c;
+                return { ...c, blocks: insertBlock(c.blocks, index, block), blocksUpdatedAt: now };
+              }),
             }));
             const newData = { ...state, tasks, groups };
             saveData(newData);
@@ -463,3 +591,79 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
     }
   )
 );
+
+// ── 远端 Liveblocks 推送同步落盘 ──────────────────────────────
+// 各 setter 中已主动调用 saveData 落盘本地操作；但 Liveblocks 远端推送
+// 仅触发 zustand set()，不会经过本地 saveData，导致 localStorage 落后于
+// 实时状态。这里订阅 store 变化，数据切片引用变化时（含远端推送）防抖落盘。
+//
+// 同时承担 Bug#2 的 groups.children ↔ tasks 一致性修复：
+// tasks 与 groups 是两个独立 Liveblocks storage key，按 LWW 合并。
+// 当两个客户端同时改同组不同任务时，groups.children 中的某份任务副本可能
+// 停留在旧值，与 tasks 中最新值不一致。这里在 tasks 引用变化但 groups
+// 未变（典型的"仅远端推送 tasks"信号）时，主动把 groups.children 中
+// 与 canonical tasks 不一致的子任务刷新为最新值，写回 groups。
+{
+  let lastTasks: unknown = null;
+  let lastGroups: unknown = null;
+  let lastNotes: unknown = null;
+  let lastMilestones: unknown = null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  useTimelineStore.subscribe((state) => {
+    const tasksChanged = state.tasks !== lastTasks;
+    const groupsChanged = state.groups !== lastGroups;
+
+    // 仅数据切片引用变化时才落盘，syncStatus 等无关字段变化跳过
+    if (
+      !tasksChanged &&
+      !groupsChanged &&
+      state.notes === lastNotes &&
+      state.milestones === lastMilestones
+    ) {
+      return;
+    }
+    lastTasks = state.tasks;
+    lastGroups = state.groups;
+    lastNotes = state.notes;
+    lastMilestones = state.milestones;
+
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveData({
+        tasks: state.tasks,
+        groups: state.groups,
+        notes: state.notes,
+        milestones: state.milestones,
+      });
+    }, 500);
+
+    // ── Bug#2 一致性修复 ──
+    // 仅当 tasks 引用变化但 groups 引用未变（典型的"仅远端推送 tasks"信号）
+    // 时触发 reconciliation，避免每次都全量扫描。
+    if (tasksChanged && !groupsChanged && state.groups.length > 0 && state.tasks.length > 0) {
+      const taskMap = new Map(state.tasks.map((t) => [t.id, t]));
+      let needsReconcile = false;
+      const newGroups = state.groups.map((g) => {
+        let groupChanged = false;
+        const newChildren = g.children.map((c) => {
+          const canonical = taskMap.get(c.id);
+          if (canonical && canonical !== c) {
+            groupChanged = true;
+            return { ...canonical, groupId: g.id };
+          }
+          return c;
+        });
+        if (groupChanged) {
+          needsReconcile = true;
+          return { ...g, children: newChildren };
+        }
+        return g;
+      });
+      if (needsReconcile) {
+        // 写回一致后的 groups，下一次 subscribe 调用会发现 tasks/groups 均无变化 → 跳过，无循环风险
+        useTimelineStore.setState({ groups: newGroups });
+      }
+    }
+  });
+}

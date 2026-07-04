@@ -7,12 +7,24 @@ import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from '@/store';
-import type { DaySchedule, ScheduledItem, TimeSlot } from './types';
+import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
 
 const STORAGE_KEY = 'daily-schedule-data';
 const SYNC_SETTINGS_KEY = 'daily-schedule-liveblocks';
 
 export const DAILY_ROOM_PREFIX = 'daily-';
+
+/**
+ * 空白日历的共享引用。
+ * 替换 getDaySchedule 中 `?? { date, items: [], blocks: [] }` 每次新建对象的写法，
+ * 避免下游 useMemo 在 date 不存在时每次 render 都拿到全新引用而失效。
+ * 注意：消费者不应直接修改本对象的字段。
+ */
+export const EMPTY_DAY_SCHEDULE: DaySchedule = Object.freeze({
+  date: '',
+  items: [],
+  blocks: [],
+}) as DaySchedule;
 
 // ── 同步设置 ───────────────────────────────────────────────
 
@@ -38,7 +50,16 @@ function saveSyncSettings(settings: SyncSettings) {
 function loadSchedules(): Record<string, DaySchedule> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, DaySchedule>;
+      // 兼容旧数据：补充 blocks 字段
+      for (const key of Object.keys(parsed)) {
+        if (!parsed[key].blocks) {
+          parsed[key].blocks = [];
+        }
+      }
+      return parsed;
+    }
   } catch { /* ignore */ }
   return {};
 }
@@ -91,6 +112,23 @@ interface DailyScheduleStore {
 
   /** 清空某日安排 */
   clearDaySchedule: (date: string) => void;
+
+  // ── 时间块模式方法 ────────────────────────────────────────
+
+  /** 添加时间块 */
+  addTimeBlock: (date: string, block: Omit<TimeBlock, 'id'>) => void;
+
+  /** 更新时间块 */
+  updateTimeBlock: (date: string, blockId: string, patch: Partial<TimeBlock>) => void;
+
+  /** 删除时间块 */
+  removeTimeBlock: (date: string, blockId: string) => void;
+
+  /** 切换时间块完成状态 */
+  toggleTimeBlock: (date: string, blockId: string) => void;
+
+  /** 拉伸/移动时间块 */
+  resizeTimeBlock: (date: string, blockId: string, startTime: string, endTime: string) => void;
 }
 
 let _idCounter = 0;
@@ -127,13 +165,13 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
 
         getDaySchedule: (date: string) => {
           const state = get();
-          return state.schedules[date] ?? { date, items: [] };
+          return state.schedules[date] ?? EMPTY_DAY_SCHEDULE;
         },
 
         addScheduledItem: (date, item) => {
           set((state) => {
             const schedules = { ...state.schedules };
-            const day = schedules[date] ?? { date, items: [] };
+            const day = schedules[date] ?? { date, items: [], blocks: [] };
             const sameSlotItems = day.items.filter((i) => i.timeSlot === item.timeSlot);
             const newItem: ScheduledItem = {
               ...item,
@@ -237,7 +275,74 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
         clearDaySchedule: (date) => {
           set((state) => {
             const schedules = { ...state.schedules };
-            schedules[date] = { date, items: [] };
+            schedules[date] = { date, items: [], blocks: [] };
+            saveSchedules(schedules);
+            return { schedules };
+          });
+        },
+
+        // ── 时间块方法实现 ────────────────────────────────────
+
+        addTimeBlock: (date, block) => {
+          set((state) => {
+            const schedules = { ...state.schedules };
+            const day = schedules[date] ?? { date, items: [], blocks: [] };
+            const newBlock: TimeBlock = { ...block, id: genScheduleId() };
+            schedules[date] = { ...day, blocks: [...day.blocks, newBlock] };
+            saveSchedules(schedules);
+            return { schedules };
+          });
+        },
+
+        updateTimeBlock: (date, blockId, patch) => {
+          set((state) => {
+            const schedules = { ...state.schedules };
+            const day = schedules[date];
+            if (!day) return state;
+            const blocks = day.blocks.map((b) =>
+              b.id === blockId ? { ...b, ...patch } : b,
+            );
+            schedules[date] = { ...day, blocks };
+            saveSchedules(schedules);
+            return { schedules };
+          });
+        },
+
+        removeTimeBlock: (date, blockId) => {
+          set((state) => {
+            const schedules = { ...state.schedules };
+            const day = schedules[date];
+            if (!day) return state;
+            const blocks = day.blocks.filter((b) => b.id !== blockId);
+            schedules[date] = { ...day, blocks };
+            saveSchedules(schedules);
+            return { schedules };
+          });
+        },
+
+        toggleTimeBlock: (date, blockId) => {
+          set((state) => {
+            const schedules = { ...state.schedules };
+            const day = schedules[date];
+            if (!day) return state;
+            const blocks = day.blocks.map((b) =>
+              b.id === blockId ? { ...b, completed: !b.completed } : b,
+            );
+            schedules[date] = { ...day, blocks };
+            saveSchedules(schedules);
+            return { schedules };
+          });
+        },
+
+        resizeTimeBlock: (date, blockId, startTime, endTime) => {
+          set((state) => {
+            const schedules = { ...state.schedules };
+            const day = schedules[date];
+            if (!day) return state;
+            const blocks = day.blocks.map((b) =>
+              b.id === blockId ? { ...b, startTime, endTime } : b,
+            );
+            schedules[date] = { ...day, blocks };
             saveSchedules(schedules);
             return { schedules };
           });

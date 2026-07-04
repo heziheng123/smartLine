@@ -182,4 +182,4 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   );
 };
 
-export default TimelineView;
+export default React.memo(TimelineView);

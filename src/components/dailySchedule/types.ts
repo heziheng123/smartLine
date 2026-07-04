@@ -41,12 +41,39 @@ export interface ScheduledItem {
   detail?: string;
 }
 
+/** 时间块（精确到分钟的时间安排） */
+export interface TimeBlock {
+  /** 唯一ID */
+  id: string;
+  /** 来源任务ID */
+  sourceId: string;
+  /** 任务名称 */
+  name: string;
+  /** 来源类型 */
+  source: TaskSource | 'free';
+  /** 开始时间（HH:mm 格式，如 "14:00"） */
+  startTime: string;
+  /** 结束时间（HH:mm 格式，如 "15:30"） */
+  endTime: string;
+  /** 是否已完成 */
+  completed: boolean;
+  /** 标签颜色 */
+  color?: string;
+  /** 额外信息 */
+  detail?: string;
+}
+
+/** 视图模式 */
+export type ScheduleViewMode = 'slots' | 'blocks';
+
 /** 某日的安排数据 */
 export interface DaySchedule {
   /** 日期 YYYY-MM-DD */
   date: string;
-  /** 时间段内任务列表 */
+  /** 时段模式的任务列表 */
   items: ScheduledItem[];
+  /** 时间块模式的任务列表 */
+  blocks: TimeBlock[];
 }
 
 /** 默认时间段配置 */

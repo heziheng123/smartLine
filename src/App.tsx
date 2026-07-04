@@ -2,10 +2,11 @@
 // Smart Timeline - React App 根组件（独立网页版）
 // ============================================================
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import dayjs from 'dayjs';
 import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types';
 import { useTimelineStore } from '@/store';
+import { useShallow } from 'zustand/react/shallow';
 import TimelineView from '@/components/TimelineView';
 import Toolbar from '@/components/Toolbar';
 import TaskDialog from '@/components/TaskDialog';
@@ -14,22 +15,124 @@ import NoteDialog from '@/components/NoteDialog';
 import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
-import TaskDrawer from '@/components/TaskDrawer';
 import TodoAggregatorView from '@/components/TodoAggregatorView';
 import Sidebar, { type AppModule } from '@/components/Sidebar';
 import EbbView from '@/ebb/components/EbbView';
 import DailyScheduleView from '@/components/dailySchedule/DailyScheduleView';
+import ProjectDocumentView from '@/components/smartBlock/ProjectDocumentView';
+import WeekMatrixView from '@/components/smartBlock/WeekMatrixView';
 import { useTodos } from '@/hooks/useTodos';
-import { changeTodoDate, toggleTodoLine } from '@/utils/markdown';
+import { changeTodoDue, toggleTodoLine, migrateTodoSyntax } from '@/utils/markdown';
 
 import '@/styles/timeline.css';
 import '@/styles/ebb.css';
 import '@/styles/daily-schedule.css';
+import '@/styles/smart-block.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 
 const App: React.FC = () => {
-  const store = useTimelineStore();
+  // 选择性订阅：只关心 tasks/groups/notes/milestones 数据切片 + 各 CRUD 方法。
+  // CRUD 方法在 zustand 中是 store 创建时一次性定义的稳定引用，
+  // 故即便 syncStatus 等其它切片变化，本组件也不会重渲染。
+  const {
+    tasks,
+    groups,
+    notes,
+    milestones,
+    updateTask,
+    updateTaskMarkdown,
+    deleteTask,
+    toggleTaskComplete,
+    addTask,
+    updateGroup,
+    addGroup,
+    deleteGroup,
+    addNote,
+    updateNote,
+    deleteNote,
+    addMilestone,
+    updateMilestone,
+    deleteMilestone,
+    importData,
+    exportData,
+    updateBlockHeader,
+  } = useTimelineStore(
+    useShallow((s) => ({
+      tasks: s.tasks,
+      groups: s.groups,
+      notes: s.notes,
+      milestones: s.milestones,
+      updateTask: s.updateTask,
+      updateTaskMarkdown: s.updateTaskMarkdown,
+      deleteTask: s.deleteTask,
+      toggleTaskComplete: s.toggleTaskComplete,
+      addTask: s.addTask,
+      updateGroup: s.updateGroup,
+      addGroup: s.addGroup,
+      deleteGroup: s.deleteGroup,
+      addNote: s.addNote,
+      updateNote: s.updateNote,
+      deleteNote: s.deleteNote,
+      addMilestone: s.addMilestone,
+      updateMilestone: s.updateMilestone,
+      deleteMilestone: s.deleteMilestone,
+      importData: s.importData,
+      exportData: s.exportData,
+      updateBlockHeader: s.updateBlockHeader,
+    })),
+  );
+
+  // 重构 store 视图供下游代码以 `store.X` 形式访问。
+  // 由于 zustand 中方法引用是稳定的，本对象仅在数据切片变化时重建。
+  const store = useMemo(
+    () => ({
+      tasks,
+      groups,
+      notes,
+      milestones,
+      updateTask,
+      updateTaskMarkdown,
+      deleteTask,
+      toggleTaskComplete,
+      addTask,
+      updateGroup,
+      addGroup,
+      deleteGroup,
+      addNote,
+      updateNote,
+      deleteNote,
+      addMilestone,
+      updateMilestone,
+      deleteMilestone,
+      importData,
+      exportData,
+      updateBlockHeader,
+    }),
+    [
+      tasks,
+      groups,
+      notes,
+      milestones,
+      updateTask,
+      updateTaskMarkdown,
+      deleteTask,
+      toggleTaskComplete,
+      addTask,
+      updateGroup,
+      addGroup,
+      deleteGroup,
+      addNote,
+      updateNote,
+      deleteNote,
+      addMilestone,
+      updateMilestone,
+      deleteMilestone,
+      importData,
+      exportData,
+      updateBlockHeader,
+    ],
+  );
 
   // 对话框状态
   const [dialogType, setDialogType] = useState<DialogType>(null);
@@ -54,11 +157,29 @@ const App: React.FC = () => {
     () => (drawerTaskId ? store.tasks.find((t) => t.id === drawerTaskId) ?? null : null),
     [drawerTaskId, store.tasks],
   );
-  // 元信息折叠区是否展开（双击入口时为 true）
-  const [drawerMetaExpanded, setDrawerMetaExpanded] = useState<boolean>(false);
 
   // 视图切换：timeline（甘特图） / todo-view（待办汇总） / ebb（艾宾浩斯复习）
   const [currentView, setCurrentView] = useState<AppModule>('timeline');
+
+  // ── 启动时一次性迁移旧语法（⏳/@date/@every-X → 📅/🔁） ────
+  // 幂等：已是新语法的任务不会触发写入。仅扫描有 markdown 的任务。
+  useEffect(() => {
+    let migrated = false;
+    for (const task of store.tasks) {
+      const md = task.markdown ?? '';
+      if (!md.trim()) continue;
+      const next = migrateTodoSyntax(md);
+      if (next !== md) {
+        store.updateTaskMarkdown(task.id, next);
+        migrated = true;
+      }
+    }
+    // 仅用于调试观察，无副作用
+    if (migrated) {
+      console.info('[markdown] 旧语法已迁移至 v2 协议（📅/🎯/✅/🔁）');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 从所有任务的 Markdown 中提取扁平化的待办列表
   const allTodos = useTodos(store.tasks);
@@ -77,25 +198,17 @@ const App: React.FC = () => {
   // 抽屉：打开任务详情（单击入口，元信息折叠）
   const handleOpenDrawer = useCallback((task: Task) => {
     setDrawerTaskId(task.id);
-    setDrawerMetaExpanded(false);
   }, []);
 
   // 抽屉：打开任务详情并展开元信息（右键"编辑"入口）
   const handleOpenDrawerWithMeta = useCallback((task: Task) => {
     setDrawerTaskId(task.id);
-    setDrawerMetaExpanded(true);
   }, []);
 
   // 抽屉：关闭
   const handleCloseDrawer = useCallback(() => {
     setDrawerTaskId(null);
-    setDrawerMetaExpanded(false);
   }, []);
-
-  // 抽屉：保存 Markdown（drawerTask 已从 store 派生，无需手动同步）
-  const handleSaveTaskMarkdown = useCallback((taskId: string, markdown: string) => {
-    store.updateTaskMarkdown(taskId, markdown);
-  }, [store]);
 
   // 抽屉：即时更新元信息（drawerTask 已从 store 派生，无需手动同步）
   const handleUpdateTaskMeta = useCallback((taskId: string, patch: Partial<Task>) => {
@@ -108,7 +221,6 @@ const App: React.FC = () => {
   const handleDeleteTaskFromDrawer = useCallback((taskId: string) => {
     store.deleteTask(taskId);
     setDrawerTaskId(null);
-    setDrawerMetaExpanded(false);
   }, [store]);
 
   // 待办视图：点击卡片定位到所属大任务（打开右侧详情面板）
@@ -130,7 +242,7 @@ const App: React.FC = () => {
       const task = store.tasks.find((t) => t.id === parentTaskId);
       if (!task) return;
 
-      const newMarkdown = changeTodoDate(task.markdown ?? '', line, newDate);
+      const newMarkdown = changeTodoDue(task.markdown ?? '', line, newDate);
       // 使用 updateTaskMarkdown 而非 updateTask，避免覆盖远端已更新的其他字段
       store.updateTaskMarkdown(parentTaskId, newMarkdown);
     },
@@ -366,7 +478,7 @@ const App: React.FC = () => {
   return (
     <div className={`tl-app ${currentView === 'ebb' ? 'tl-app--ebb' : ''}`}>
       <Sidebar current={currentView} onChange={setCurrentView} />
-      {currentView !== 'ebb' && currentView !== 'daily-schedule' && (
+      {currentView !== 'ebb' && currentView !== 'daily-schedule' && currentView !== 'week-matrix' && (
         <Toolbar
           displayYear={displayYear}
           onYearChange={setDisplayYear}
@@ -393,6 +505,15 @@ const App: React.FC = () => {
         <div className="tl-app-split tl-app-split--ebb">
           <div className="tl-app-main">
             <DailyScheduleView />
+          </div>
+        </div>
+      ) : currentView === 'week-matrix' ? (
+        <div className="tl-app-split tl-app-split--ebb">
+          <div className="tl-app-main">
+            <WeekMatrixView
+              tasks={store.tasks}
+              onUpdateBlockHeader={store.updateBlockHeader}
+            />
           </div>
         </div>
       ) : (
@@ -425,16 +546,15 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* 任务详情面板（仅 open 时渲染，挤压左侧甘特图） */}
-            <TaskDrawer
-              task={drawerTask}
-              open={drawerTask !== null}
-              onClose={handleCloseDrawer}
-              onSave={handleSaveTaskMarkdown}
-              onUpdateTask={handleUpdateTaskMeta}
-              onDeleteTask={handleDeleteTaskFromDrawer}
-              initialMetaExpanded={drawerMetaExpanded}
-            />
+            {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
+            {drawerTask && (
+              <ProjectDocumentView
+                task={drawerTask}
+                onClose={handleCloseDrawer}
+                onUpdateTask={handleUpdateTaskMeta}
+                onDeleteTask={handleDeleteTaskFromDrawer}
+              />
+            )}
           </div>
         </>
       )}
