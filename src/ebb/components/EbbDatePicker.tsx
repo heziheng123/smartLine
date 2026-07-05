@@ -6,6 +6,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
+import { todayStr as todayStrSafe, makeLocalDayjs } from '@/utils/dateSafe';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface EbbDatePickerProps {
@@ -24,7 +25,7 @@ function getWeekStart(date: dayjs.Dayjs): dayjs.Dayjs {
 }
 
 const EbbDatePicker: React.FC<EbbDatePickerProps> = ({ anchorEl, value, onSelect, onClose }) => {
-  const [cursor, setCursor] = useState(() => dayjs(value || undefined));
+  const [cursor, setCursor] = useState(() => value ? makeLocalDayjs(value) : dayjs());
   const panelRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
@@ -79,7 +80,7 @@ const EbbDatePicker: React.FC<EbbDatePickerProps> = ({ anchorEl, value, onSelect
   }, [cursor]);
 
   const currentMonth = cursor.month();
-  const todayStr = dayjs().format('YYYY-MM-DD');
+  const todayStr = todayStrSafe();
 
   const handleClear = useCallback(() => {
     onSelect(undefined);
@@ -102,7 +103,7 @@ const EbbDatePicker: React.FC<EbbDatePickerProps> = ({ anchorEl, value, onSelect
           <button type="button" className="eb-datepicker-nav" onClick={() => setCursor((c) => c.subtract(1, 'month'))}>
             <ChevronLeft size={14} />
           </button>
-          <span className="eb-datepicker-range">{cursor.format('YYYY年M月')}</span>
+          <span className="eb-datepicker-range">{`${cursor.year()}年${cursor.month() + 1}月`}</span>
           <button type="button" className="eb-datepicker-nav" onClick={() => setCursor((c) => c.add(1, 'month'))}>
             <ChevronRight size={14} />
           </button>
@@ -114,7 +115,7 @@ const EbbDatePicker: React.FC<EbbDatePickerProps> = ({ anchorEl, value, onSelect
         </div>
         <div className="eb-datepicker-grid">
           {days.map((day) => {
-            const dateStr = day.format('YYYY-MM-DD');
+            const dateStr = `${day.year()}-${String(day.month() + 1).padStart(2, '0')}-${String(day.date()).padStart(2, '0')}`;
             const inMonth = day.month() === currentMonth;
             const isToday = dateStr === todayStr;
             const isSelected = dateStr === value;

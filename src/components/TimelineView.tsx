@@ -4,6 +4,7 @@
 
 import React, { useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
+import { makeLocalDayjs, isBeforeDay, isAfterDay } from '@/utils/dateSafe';
 import type { Task, TaskGroup, Note, Milestone } from '@/types';
 import { calculateLayout } from '@/utils/layout';
 import {
@@ -48,11 +49,11 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   onGroupDoubleClick,
 }) => {
   const layout = useMemo(() => {
-    const yearStart = dayjs(`${displayYear}-01-01`);
-    const yearEnd = dayjs(`${displayYear}-12-31`);
+    const yearStart = makeLocalDayjs(`${displayYear}-01-01`);
+    const yearEnd = makeLocalDayjs(`${displayYear}-12-31`);
     const yearTasks = tasks.filter((t) => {
-      const s = dayjs(t.start);
-      const e = dayjs(t.end);
+      const s = makeLocalDayjs(t.start);
+      const e = makeLocalDayjs(t.end);
       return !e.isBefore(yearStart) && !s.isAfter(yearEnd);
     });
     return calculateLayout({ tasks: yearTasks, groups: [], notes: [], milestones: [] });

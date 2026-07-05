@@ -7,6 +7,7 @@
 import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
+import { todayStr, formatDate, getDayOfWeek, isBeforeDay, makeLocalDayjs } from '@/utils/dateSafe';
 import {
   Check,
   Calendar,
@@ -68,7 +69,7 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   // 完成切换
   const handleToggle = useCallback(() => {
-    const now = dayjs().format('YYYY-MM-DD');
+    const now = todayStr();
     onUpdateHeader(block.id, {
       isCompleted: !header.isCompleted,
       completedDate: !header.isCompleted ? now : undefined,
@@ -113,11 +114,11 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   }, [block.id, onUpdateHeader]);
 
   const dateLabel = header.date
-    ? `${dayjs(header.date).format('M.D')} 周${WEEKDAY_SHORT[dayjs(header.date).day()]}`
+    ? `${formatDate(header.date, 'M.D')} 周${WEEKDAY_SHORT[getDayOfWeek(header.date)]}`
     : '未排期';
 
-  const isOverdue = header.date && !header.isCompleted && dayjs(header.date).isBefore(dayjs(), 'day');
-  const isToday = header.date === dayjs().format('YYYY-MM-DD');
+  const isOverdue = header.date && !header.isCompleted && isBeforeDay(header.date, todayStr());
+  const isToday = header.date === todayStr();
 
   // 左侧高亮条颜色
   const leftBarColor = header.isCompleted
@@ -330,9 +331,9 @@ const MiniCalendarInline: React.FC<{
   selectedDate: string;
   onDateSelect: (date: string) => void;
 }> = ({ selectedDate, onDateSelect }) => {
-  const [cursor, setCursor] = useState(() => dayjs(selectedDate || undefined));
+  const [cursor, setCursor] = useState(() => selectedDate ? makeLocalDayjs(selectedDate) : dayjs());
   const [view, setView] = useState<'days' | 'years'>('days');
-  const today = dayjs().format('YYYY-MM-DD');
+  const today = todayStr();
 
   const startOfMonth = cursor.startOf('month');
   const startDay = startOfMonth.day(); // 0=Sun
@@ -342,8 +343,8 @@ const MiniCalendarInline: React.FC<{
   for (let i = 0; i < startDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
-  const monthLabel = cursor.format('YYYY年M月');
-  const yearLabel = cursor.format('YYYY年');
+  const monthLabel = `${cursor.year()}年${cursor.month() + 1}月`;
+  const yearLabel = `${cursor.year()}年`;
 
   // 年份视图：当前年份 ± 5，共 12 个
   const yearCells = useMemo(() => {
@@ -354,7 +355,7 @@ const MiniCalendarInline: React.FC<{
     return years;
   }, [cursor]);
 
-  const isCurrentMonth = cursor.format('YYYY-MM') === dayjs().format('YYYY-MM');
+  const isCurrentMonth = `${cursor.year()}-${String(cursor.month() + 1).padStart(2, '0')}` === todayStr().slice(0, 7);
 
   return (
     <div className="stb-mini-cal">
@@ -393,7 +394,8 @@ const MiniCalendarInline: React.FC<{
           ))}
           {cells.map((d, i) => {
             if (d === null) return <span key={`e${i}`} />;
-            const dateStr = cursor.date(d).format('YYYY-MM-DD');
+            const c = cursor.date(d);
+            const dateStr = `${c.year()}-${String(c.month() + 1).padStart(2, '0')}-${String(c.date()).padStart(2, '0')}`;
             const isSelected = dateStr === selectedDate;
             const isToday = dateStr === today;
             return (

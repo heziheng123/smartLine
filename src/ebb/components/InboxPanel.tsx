@@ -6,7 +6,7 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Trash2, ArrowRight, Check } from 'lucide-react';
-import dayjs from 'dayjs';
+import { todayStr } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { genId } from '../scheduler';
@@ -86,7 +86,7 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
       status: 'staged',
       complexity: 'normal',
       intervals: getIntervalsForComplexity('normal', ebbSettings.complexityConfigs),
-      startDate: dayjs().format('YYYY-MM-DD'),
+      startDate: todayStr(),
     });
   }, [inboxItems, updateInboxItem, ebbSettings.complexityConfigs]);
 

@@ -7,6 +7,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
+import { todayStr, addDays, formatDate, getDayOfWeek, isToday as isTodaySafe, makeLocalDayjs } from '@/utils/dateSafe';
 import {
   Plus,
   Settings as SettingsIcon,
@@ -114,7 +115,7 @@ const EbbView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ViewTab>('matrix');
   const [addOpen, setAddOpen] = useState(false);
   const [modal, setModal] = useState<'none' | 'settings' | 'inbox'>('none');
-  const [selectedDate, setSelectedDate] = useState(dayjs().format('YYYY-MM-DD'));
+  const [selectedDate, setSelectedDate] = useState(todayStr());
   const [datePicker, setDatePicker] = useState<{ taskId: string; anchor: HTMLElement | null } | null>(null);
   const [roundsTopic, setRoundsTopic] = useState<string | null>(null);
   const [toast, setToast] = useState<string>('');
@@ -210,11 +211,11 @@ const EbbView: React.FC = () => {
         .filter((t) => t.topicName === task.topicName)
         .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
       const lastTask = sameTopic[sameTopic.length - 1];
-      const baseDate = lastTask && lastTask.dueDate ? dayjs(lastTask.dueDate) : dayjs();
-      let newDate = baseDate.add(nextInterval, 'day').format('YYYY-MM-DD');
+      const baseDateStr = lastTask && lastTask.dueDate ? lastTask.dueDate : todayStr();
+      let newDate = addDays(baseDateStr, nextInterval);
       const topicDates = new Set(sameTopic.map((t) => t.dueDate ?? ''));
       while (topicDates.has(newDate)) {
-        newDate = dayjs(newDate).add(1, 'day').format('YYYY-MM-DD');
+        newDate = addDays(newDate, 1);
       }
       store.addReviewTasks([{
         id: genId('rt'),
@@ -259,11 +260,11 @@ const EbbView: React.FC = () => {
           showToast('已标记完成');
         }
       } else if (colId === 'board-col-today') {
-        store.updateReviewTask(draggableId, { dueDate: dayjs().format('YYYY-MM-DD'), isCompleted: false });
+        store.updateReviewTask(draggableId, { dueDate: todayStr(), isCompleted: false });
         showToast('已改期到今天');
       } else if (colId === 'board-col-future') {
         store.updateReviewTask(draggableId, {
-          dueDate: dayjs().add(7, 'day').format('YYYY-MM-DD'),
+          dueDate: addDays(todayStr(), 7),
           isCompleted: false,
         });
         showToast('已改期到下周');
@@ -283,7 +284,7 @@ const EbbView: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `smart-ebb-${dayjs().format('YYYY-MM-DD')}.json`;
+    a.download = `smart-ebb-${todayStr()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }, [store]);
@@ -477,14 +478,14 @@ const EbbView: React.FC = () => {
             <div className="eb-cal-sidebar-tasks">
               <div className="eb-cal-sidebar-date-header">
                 <div className="eb-cal-sidebar-date-main">
-                  <span className="eb-cal-sidebar-date-num">{dayjs(selectedDate).date()}</span>
+                  <span className="eb-cal-sidebar-date-num">{Number(selectedDate.split('-')[2])}</span>
                   <div className="eb-cal-sidebar-date-info">
-                    <span className="eb-cal-sidebar-date-month">{dayjs(selectedDate).format('YYYY年MM月')}</span>
+                    <span className="eb-cal-sidebar-date-month">{formatDate(selectedDate, 'YYYY年MM月')}</span>
                     <span className="eb-cal-sidebar-date-week">
-                      {selectedDate === dayjs().format('YYYY-MM-DD') ? '今天' :
-                       selectedDate === dayjs().subtract(1, 'day').format('YYYY-MM-DD') ? '昨天' :
-                       selectedDate === dayjs().add(1, 'day').format('YYYY-MM-DD') ? '明天' :
-                       ['周日','周一','周二','周三','周四','周五','周六'][dayjs(selectedDate).day()]}
+                      {selectedDate === todayStr() ? '今天' :
+                       selectedDate === addDays(todayStr(), -1) ? '昨天' :
+                       selectedDate === addDays(todayStr(), 1) ? '明天' :
+                       ['周日','周一','周二','周三','周四','周五','周六'][getDayOfWeek(selectedDate)]}
                     </span>
                   </div>
                 </div>
@@ -608,7 +609,7 @@ const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate
   }, 0), [dayTasks, roundMap, settings.complexityConfigs]);
 
   const completedCount = dayTasks.filter(t => t.isCompleted).length;
-  const today = dayjs().format('YYYY-MM-DD');
+  const today = todayStr();
   const isToday = selectedDate === today;
   const isPast = selectedDate < today;
 
@@ -724,15 +725,15 @@ const MiniCalendarInline: React.FC<{
   selectedDate: string;
   onSelectDate: (d: string) => void;
 }> = ({ tasks, settings, selectedDate, onSelectDate }) => {
-  const [viewMonth, setViewMonth] = useState(dayjs(selectedDate));
-  const today = dayjs().format('YYYY-MM-DD');
+  const [viewMonth, setViewMonth] = useState(() => makeLocalDayjs(selectedDate));
+  const today = todayStr();
   const monthStart = viewMonth.startOf('month');
   const monthEnd = viewMonth.endOf('month');
   const startWeekday = monthStart.day();
   const days: (string | null)[] = [];
   for (let i = 0; i < startWeekday; i++) days.push(null);
   for (let d = monthStart; d.isBefore(monthEnd) || d.isSame(monthEnd); d = d.add(1, 'day')) {
-    days.push(d.format('YYYY-MM-DD'));
+    days.push(`${d.year()}-${String(d.month() + 1).padStart(2, '0')}-${String(d.date()).padStart(2, '0')}`);
   }
   while (days.length % 7 !== 0) days.push(null);
 
@@ -754,7 +755,7 @@ const MiniCalendarInline: React.FC<{
     onSelectDate(today);
   };
 
-  const isCurrentMonth = viewMonth.isSame(dayjs(), 'month');
+  const isCurrentMonth = viewMonth.isSame(dayjs(), 'month'); // dayjs() 取本地时间，无偏移
 
   return (
     <div className="eb-mini-cal">
@@ -763,7 +764,7 @@ const MiniCalendarInline: React.FC<{
           <button type="button" className="eb-mini-cal-nav-btn" onClick={() => setViewMonth(viewMonth.subtract(1, 'month'))}>
             <ChevronLeft size={14} />
           </button>
-          <span className="eb-mini-cal-title">{viewMonth.format('YYYY年MM月')}</span>
+          <span className="eb-mini-cal-title">{`${viewMonth.year()}年${String(viewMonth.month() + 1).padStart(2, '0')}月`}</span>
           <button type="button" className="eb-mini-cal-nav-btn" onClick={() => setViewMonth(viewMonth.add(1, 'month'))}>
             <ChevronRight size={14} />
           </button>
@@ -785,7 +786,7 @@ const MiniCalendarInline: React.FC<{
           const pendingCount = info?.pending ?? 0;
           const isSelected = d === selectedDate;
           const isToday = d === today;
-          const isWeekend = new Date(d).getDay() === 0 || new Date(d).getDay() === 6;
+          const isWeekend = getDayOfWeek(d) === 0 || getDayOfWeek(d) === 6;
           const allDone = count > 0 && completedCount === count;
 
           // 任务量分级（仅未全完成时着色）

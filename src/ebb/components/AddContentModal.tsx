@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import dayjs from 'dayjs';
+import { todayStr, formatDate, getDayOfWeek } from '@/utils/dateSafe';
 import { X, Eye, Check } from 'lucide-react';
 import type { ComplexityLevel } from '../types';
 import { useEbbStore } from '../store';
@@ -35,7 +35,7 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
   );
   const [topicName, setTopicName] = useState('');
   const [tag, setTag] = useState('');
-  const [startDate, setStartDate] = useState(dayjs().format('YYYY-MM-DD'));
+  const [startDate, setStartDate] = useState(todayStr());
   const [complexity, setComplexity] = useState<ComplexityLevel>('normal');
   const [intervalsText, setIntervalsText] = useState(formatIntervals(getIntervalsForComplexity('normal')));
   const [intervalsDirty, setIntervalsDirty] = useState(false);
@@ -220,12 +220,11 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
               </div>
               <div className="eb-preview-list">
                 {preview.tasks.map((t, i) => {
-                  const d = dayjs(t.dueDate);
                   return (
                     <div key={t.id} className="eb-preview-row">
                       <span className="eb-preview-round">第 {i + 1} 轮</span>
-                      <span className="eb-preview-date">{d.format('YYYY-MM-DD')}</span>
-                      <span className="eb-preview-weekday">{['周日','周一','周二','周三','周四','周五','周六'][d.day()]}</span>
+                      <span className="eb-preview-date">{t.dueDate}</span>
+                      <span className="eb-preview-weekday">{['周日','周一','周二','周三','周四','周五','周六'][getDayOfWeek(t.dueDate)]}</span>
                     </div>
                   );
                 })}

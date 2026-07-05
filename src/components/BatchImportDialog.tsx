@@ -4,7 +4,6 @@
 // ============================================================
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import dayjs from 'dayjs';
 import {
   Download,
   FileSpreadsheet,
@@ -29,6 +28,7 @@ import {
   type ParsedRow,
   type BatchScheduleConfig,
 } from '@/utils/excelImport';
+import { todayStr, isBeforeDay } from '@/utils/dateSafe';
 
 interface BatchImportDialogProps {
   /**
@@ -73,7 +73,7 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
 
   // 批量排期工具栏
   const [showScheduler, setShowScheduler] = useState(false);
-  const [schedStart, setSchedStart] = useState(dayjs().format('YYYY-MM-DD'));
+  const [schedStart, setSchedStart] = useState(todayStr());
   const [schedPerDay, setSchedPerDay] = useState(2);
   const [schedSkipWeekend, setSchedSkipWeekend] = useState(true);
   const [schedOnlyEmpty, setSchedOnlyEmpty] = useState(true);
@@ -189,8 +189,8 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
       const placeholderTask: Task = {
         id: '__placeholder__',
         name,
-        start: dayjs().format('YYYY-MM-DD'),
-        end: dayjs().format('YYYY-MM-DD'),
+        start: todayStr(),
+        end: todayStr(),
         blocks: [],
       };
       const { start, end } = computeTaskDateRange(placeholderTask, blocks);
@@ -203,10 +203,10 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
     if (blocks.length === 0) return;
 
     // 检测历史日期：早于今天的 block
-    const today = dayjs().format('YYYY-MM-DD');
+    const today = todayStr();
     const historicalDates: string[] = [];
     for (const b of blocks) {
-      if (b.header.date && dayjs(b.header.date).isBefore(today, 'day')) {
+      if (b.header.date && isBeforeDay(b.header.date, today)) {
         historicalDates.push(b.header.date);
       }
     }

@@ -20,7 +20,34 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
-import dayjs from 'dayjs';
+import {
+  todayStr,
+  addDays,
+  isBeforeDay,
+  isAfterDay,
+  isSameDay,
+  formatDate,
+  getDayOfWeek,
+  isToday,
+  splitDate,
+  diffDays,
+} from '@/utils/dateSafe';
+
+/** 计算日期所在周的周一（本地时间，避免 UTC/local 偏移） */
+function getMondayOfWeek(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day; // Monday of the week
+  date.setDate(date.getDate() + diff);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/** 本地化的星期名称（短） */
+const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
+function weekdayShort(dateStr: string): string {
+  return `周${WEEKDAY_SHORT[getDayOfWeek(dateStr)]}`;
+}
 import type { Task, SmartTaskBlock, SmartTaskHeader, TextBlock } from '@/types';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -128,7 +155,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   // ── 过滤后的 smart-task 块（供分组使用） ──
   const filteredSmartBlocks = useMemo(() => {
-    const today = dayjs().format('YYYY-MM-DD');
+    const today = todayStr();
     return sortedBlocks.filter((b) => {
       if (b.type !== 'smart-task') return true; // text 块不过滤
       const h = (b as SmartTaskBlock).header;
@@ -166,15 +193,14 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
       if (groupByWeek && dateStr !== '__none__') {
         // 按周分组：用该日期所在周的周一作为 key
-        const d = dayjs(dateStr);
-        const monday = d.startOf('week').add(1, 'day'); // dayjs 周一=1
-        const sunday = monday.add(6, 'day');
-        groupKey = monday.format('YYYY-MM-DD');
-        label = `第 ${monday.format('M.D')} ~ ${sunday.format('M.D')} 周`;
-        subLabel = `${monday.format('ddd')} ~ ${sunday.format('ddd')}`;
+        const mondayStr = getMondayOfWeek(dateStr);
+        const sundayStr = addDays(mondayStr, 6);
+        groupKey = mondayStr;
+        label = `第 ${formatDate(mondayStr, 'M.D')} ~ ${formatDate(sundayStr, 'M.D')} 周`;
+        subLabel = `${weekdayShort(mondayStr)} ~ ${weekdayShort(sundayStr)}`;
       } else {
         groupKey = dateStr;
-        label = dateStr === '__none__' ? '未排期' : dayjs(dateStr).format('M.D ddd');
+        label = dateStr === '__none__' ? '未排期' : `${formatDate(dateStr, 'M.D')} ${weekdayShort(dateStr)}`;
       }
 
       if (!groupMap.has(groupKey)) {
@@ -240,7 +266,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   // ── 添加新 Block ──
 
   const handleAddTaskBlock = useCallback(() => {
-    const today = dayjs().format('YYYY-MM-DD');
+    const today = todayStr();
     const newBlock: SmartTaskBlock = {
       type: 'smart-task',
       id: genBlockId(),
@@ -301,9 +327,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           if (groupByWeek) {
             const origDate = (newBlocks[blockIndex] as SmartTaskBlock).header.date;
             if (origDate) {
-              const origDayOfWeek = dayjs(origDate).day();
-              const targetMonday = dayjs(destGroupKey);
-              newDate = targetMonday.add(origDayOfWeek === 0 ? 6 : origDayOfWeek - 1, 'day').format('YYYY-MM-DD');
+              const origDayOfWeek = getDayOfWeek(origDate);
+              newDate = addDays(destGroupKey, origDayOfWeek === 0 ? 6 : origDayOfWeek - 1);
             }
           }
         }
@@ -326,7 +351,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           const d = sb.header.date || '__none__';
           let bGroupKey: string;
           if (groupByWeek && d !== '__none__') {
-            bGroupKey = dayjs(d).startOf('week').add(1, 'day').format('YYYY-MM-DD');
+            bGroupKey = getMondayOfWeek(d);
           } else {
             bGroupKey = d;
           }
@@ -547,7 +572,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
             <Calendar size={14} />
             <span>{currentTask.start} ~ {currentTask.end}</span>
             <span className="pdv-meta-chip">
-              <Clock size={12} /> {dayjs(currentTask.end).diff(dayjs(currentTask.start), 'day') + 1} 天
+              <Clock size={12} /> {diffDays(currentTask.end, currentTask.start) + 1} 天
             </span>
           </div>
           <TaskMetaEditor
@@ -627,9 +652,9 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
               const isCollapsed = collapsedDates.has(group.key);
               const duration = group.blocks.reduce((s, b) => s + b.header.duration, 0);
               const doneCount = group.blocks.filter(b => b.header.isCompleted).length;
-              const today = dayjs().format('YYYY-MM-DD');
+              const today = todayStr();
               const isToday = groupByWeek
-                ? dayjs(today).startOf('week').add(1, 'day').format('YYYY-MM-DD') === group.key
+                ? getMondayOfWeek(today) === group.key
                 : group.key === today;
               return (
                 <div key={group.key} className="pdv-date-group">

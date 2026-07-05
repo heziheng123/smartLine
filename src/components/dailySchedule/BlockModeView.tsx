@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import dayjs from 'dayjs';
+import { todayStr, isBeforeDay, isAfterDay } from '@/utils/dateSafe';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -153,7 +153,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   selectedDate,
   scheduledSourceIds,
 }) => {
-  const today = dayjs().format('YYYY-MM-DD');
+  const today = todayStr();
   const { tasks: tlTasks, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, updateBlockHeader: s.updateBlockHeader })),
   );
@@ -217,19 +217,13 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   const allTodos = useSmartTaskTodos(tlTasks);
 
   const todayProjectTasks = useMemo(() => {
-    const selDate = dayjs(selectedDate);
     return allTodos.filter((todo) => {
       if (todo.checked) return false;
-      // 优先检查 scheduled（SmartTaskBlock 的 header.date）和 due（header.deadline）
-      // 必须与 DailyScheduleView 的筛选逻辑完全一致，否则两模式任务数量不一致
       if (todo.scheduled && todo.scheduled === selectedDate) return true;
       if (todo.due && todo.due === selectedDate) return true;
-      // 无明确排期时，回退到父任务日期范围
       const parentTask = tlTasks.find((t) => t.id === todo.parentTaskId);
       if (parentTask && !todo.scheduled && !todo.due) {
-        const taskStart = dayjs(parentTask.start);
-        const taskEnd = dayjs(parentTask.end);
-        if (selDate.isBetween(taskStart, taskEnd, 'day', '[]')) return true;
+        if (!isBeforeDay(selectedDate, parentTask.start) && !isAfterDay(selectedDate, parentTask.end)) return true;
       }
       return false;
     });
@@ -363,7 +357,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         if (parsed.blockId) {
           const currentBlock = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
           const isCurrentlyDone = currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted;
-          const now = dayjs().format('YYYY-MM-DD');
+          const now = todayStr();
           // 先更新源 store 的 block header
           tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
             isCompleted: !isCurrentlyDone,

@@ -4,6 +4,7 @@
 
 import React, { useState, useCallback, useMemo } from 'react';
 import dayjs from 'dayjs';
+import { todayStr, splitDate } from '@/utils/dateSafe';
 import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -157,7 +158,7 @@ const App: React.FC = () => {
   // 年份显示
   const [displayYear, setDisplayYear] = useState(() => {
     if (store.tasks.length > 0) {
-      const years = store.tasks.map((t) => dayjs(t.start).year());
+      const years = store.tasks.map((t) => splitDate(t.start).year);
       return Math.min(...years);
     }
     return dayjs().year();
@@ -382,7 +383,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `smart-timeline-${dayjs().format('YYYY-MM-DD')}.json`;
+    a.download = `smart-timeline-${todayStr()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }, [store]);

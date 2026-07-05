@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import dayjs from 'dayjs';
+import { todayStr } from '@/utils/dateSafe';
 import type { TimeBlock } from './types';
 import TimeBlockCard from './TimeBlockCard';
 import {
@@ -47,12 +47,12 @@ const TimeGrid: React.FC<TimeGridProps> = ({
 
   // ── 当前时间线 ───────────────────────────────────────────
   const updateNowLine = useCallback(() => {
-    const now = dayjs();
-    if (now.format('YYYY-MM-DD') !== selectedDate) {
+    const now = new Date();
+    if (todayStr() !== selectedDate) {
       setNowY(null);
       return;
     }
-    const min = now.hour() * 60 + now.minute();
+    const min = now.getHours() * 60 + now.getMinutes();
     if (min < GRID_CONFIG.startHour * 60 || min > GRID_CONFIG.endHour * 60) {
       setNowY(null);
       return;

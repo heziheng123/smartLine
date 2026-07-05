@@ -6,7 +6,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, Trash2, Plus } from 'lucide-react';
-import dayjs from 'dayjs';
+import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { computeRounds, getDateLabel, suggestNextInterval, isOverdue, genId } from '../scheduler';
@@ -108,13 +108,13 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
       lastTask.complexity,
       parseIntervals(ebbSettings.customIntervals) ?? undefined,
     );
-    const baseDate = lastTask ? dayjs(lastTask.dueDate) : dayjs();
-    let newDate = baseDate.add(nextInterval, 'day').format('YYYY-MM-DD');
+    const baseDate = lastTask ? lastTask.dueDate : undefined;
+    let newDate = baseDate ? addDays(baseDate, nextInterval) : addDays(todayStr(), nextInterval);
 
     // 去重
     const topicDates = new Set(topicTasks.map((t) => t.dueDate));
     while (topicDates.has(newDate)) {
-      newDate = dayjs(newDate).add(1, 'day').format('YYYY-MM-DD');
+      newDate = addDays(newDate, 1);
     }
 
     addReviewTasks([
@@ -226,7 +226,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
                   {/* 完成日期 */}
                   {t.completedDate && (
                     <span className="eb-round-completed-date">
-                      {dayjs(t.completedDate).format('M/D')}
+                      {formatDate(t.completedDate, 'M.D')}
                     </span>
                   )}
 

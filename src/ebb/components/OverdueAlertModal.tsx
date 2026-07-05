@@ -10,6 +10,7 @@ import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '../scheduler';
 import { ROUND_COLORS } from '../constants';
+import { diffDays, todayStr } from '@/utils/dateSafe';
 import type { ReviewTask } from '../types';
 
 interface OverdueAlertModalProps {
@@ -120,9 +121,7 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
                 {tasks.map((t) => {
                   const round = roundMap.get(t.id) ?? 0;
                   const color = ROUND_COLORS[(round - 1) % ROUND_COLORS.length];
-                  const overdueDays = Math.floor(
-                    (new Date().getTime() - new Date(t.dueDate).getTime()) / (1000 * 60 * 60 * 24),
-                  );
+                  const overdueDays = Math.abs(diffDays(todayStr(), t.dueDate));
                   return (
                     <div
                       key={t.id}

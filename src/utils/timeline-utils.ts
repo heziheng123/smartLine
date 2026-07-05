@@ -3,6 +3,7 @@
 // ============================================================
 
 import dayjs from 'dayjs';
+import { makeLocalDayjs, splitDate } from '@/utils/dateSafe';
 import type {
   TaskWithLayout,
   MonthLayout,
@@ -189,12 +190,12 @@ export function sliceTasksForYear(
     totalRows: 0,
   }));
 
-  const yearStart = dayjs(`${year}-01-01`);
-  const yearEnd = dayjs(`${year}-12-31`);
+  const yearStart = makeLocalDayjs(`${year}-01-01`);
+  const yearEnd = makeLocalDayjs(`${year}-12-31`);
 
   for (const task of tasks) {
-    const tStart = dayjs(task.start);
-    const tEnd = dayjs(task.end);
+    const tStart = makeLocalDayjs(task.start);
+    const tEnd = makeLocalDayjs(task.end);
 
     if (!tStart.isValid() || !tEnd.isValid()) continue;
     if (tEnd.isBefore(yearStart) || tStart.isAfter(yearEnd)) continue;
@@ -249,15 +250,15 @@ export function sliceNotesForYear(
   notes: Note[],
   year: number
 ): NoteSegment[][] {
-  const yearStart = dayjs(`${year}-01-01`);
-  const yearEnd = dayjs(`${year}-12-31`);
+  const yearStart = makeLocalDayjs(`${year}-01-01`);
+  const yearEnd = makeLocalDayjs(`${year}-12-31`);
 
   // 12个月的便签片段数组
   const result: NoteSegment[][] = Array.from({ length: 12 }, () => []);
 
   for (const note of notes) {
-    const nStart = dayjs(note.date);
-    const nEnd = note.endDate ? dayjs(note.endDate) : nStart;
+    const nStart = makeLocalDayjs(note.date);
+    const nEnd = note.endDate ? makeLocalDayjs(note.endDate) : nStart;
 
     if (nEnd.isBefore(yearStart) || nStart.isAfter(yearEnd)) continue;
 
@@ -294,7 +295,7 @@ export function mapMilestonesForYear(
   const result: MilestoneInMonth[][] = Array.from({ length: 12 }, () => []);
 
   for (const ms of milestones) {
-    const d = dayjs(ms.date);
+    const d = makeLocalDayjs(ms.date);
     if (d.year() !== year) continue;
 
     result[d.month()].push({
@@ -315,19 +316,19 @@ export function computeGroupRangesForYear(
   tasks: TaskWithLayout[],
   year: number
 ): GroupRange[][] {
-  const yearStart = dayjs(`${year}-01-01`);
-  const yearEnd = dayjs(`${year}-12-31`);
+  const yearStart = makeLocalDayjs(`${year}-01-01`);
+  const yearEnd = makeLocalDayjs(`${year}-12-31`);
 
   const result: GroupRange[][] = Array.from({ length: 12 }, () => []);
 
   for (const group of groups) {
     // 计算分组日期范围
-    let gStart = dayjs(group.start);
-    let gEnd = dayjs(group.end);
+    let gStart = makeLocalDayjs(group.start);
+    let gEnd = makeLocalDayjs(group.end);
 
     if (group.autoDate && group.children.length > 0) {
-      const childStarts = group.children.map((c) => dayjs(c.start).valueOf());
-      const childEnds = group.children.map((c) => dayjs(c.end).valueOf());
+      const childStarts = group.children.map((c) => makeLocalDayjs(c.start).valueOf());
+      const childEnds = group.children.map((c) => makeLocalDayjs(c.end).valueOf());
       gStart = dayjs(Math.min(...childStarts));
       gEnd = dayjs(Math.max(...childEnds));
     }
@@ -348,8 +349,8 @@ export function computeGroupRangesForYear(
     // 预计算每个分组任务的 [startMs, endMs, row]，避免月份循环内重复创建 dayjs
     const groupTaskMs: Array<{ startMs: number; endMs: number; row: number }> = [];
     for (const t of groupTasks) {
-      const ts = dayjs(t.start);
-      const te = dayjs(t.end);
+      const ts = makeLocalDayjs(t.start);
+      const te = makeLocalDayjs(t.end);
       if (!ts.isValid() || !te.isValid()) continue;
       groupTaskMs.push({ startMs: ts.valueOf(), endMs: te.valueOf(), row: t.row });
     }

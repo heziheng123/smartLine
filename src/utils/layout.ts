@@ -2,11 +2,14 @@
 // Smart Timeline - 智能行合并布局算法（分组感知版）
 // ============================================================
 
-import dayjs from 'dayjs';
+import { splitDate } from '@/utils/dateSafe';
 import type { TimelineData, Task, TaskWithLayout, LayoutResult } from '@/types';
 
 /** 分组之间不留整行缓冲（避免浪费垂直空间），改由渲染层加视觉间隔 */
 const GROUP_BUFFER_ROWS = 0;
+
+/** 匹配有效的 YYYY-MM-DD 日期字符串 */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * 判断两个日期范围是否重叠（结束日期为包含当天）
@@ -37,16 +40,21 @@ function packTasks(
 
   // 过滤掉 start/end 无效的任务，避免 NaN 污染行号与排序
   const validTasks = taskList.filter(
-    (t) => dayjs(t.start).isValid() && dayjs(t.end).isValid(),
+    (t) => DATE_RE.test(t.start) && DATE_RE.test(t.end),
   );
   if (validTasks.length === 0) return 0;
 
   // 预计算时间戳，避免在 sort / tryPlace 内反复构造 dayjs 对象
-  const withTs = validTasks.map((t) => ({
-    task: t,
-    startTs: dayjs(t.start).valueOf(),
-    endTs: dayjs(t.end).valueOf(),
-  }));
+  // 使用本地午夜时间戳，避免 dayjs('YYYY-MM-DD') 产生的 UTC 午夜偏移
+  const withTs = validTasks.map((t) => {
+    const { year: sy, month: sm, day: sd } = splitDate(t.start);
+    const { year: ey, month: em, day: ed } = splitDate(t.end);
+    return {
+      task: t,
+      startTs: new Date(sy, sm - 1, sd).getTime(),
+      endTs: new Date(ey, em - 1, ed).getTime(),
+    };
+  });
 
   const mainTasks = withTs.filter((x) => x.task.isMain);
   const normalTasks = withTs.filter((x) => !x.task.isMain);
@@ -131,8 +139,11 @@ export function calculateLayout(data: TimelineData): LayoutResult {
   const groupEntries = Array.from(groupedTasks.entries())
     .map(([groupId, gTasks]) => {
       const validStarts = gTasks
-        .map((t) => dayjs(t.start).valueOf())
-        .filter((v) => !Number.isNaN(v));
+        .filter((t) => DATE_RE.test(t.start))
+        .map((t) => {
+          const { year, month, day } = splitDate(t.start);
+          return new Date(year, month - 1, day).getTime();
+        });
       return {
         groupId,
         tasks: gTasks,

@@ -5,7 +5,6 @@
 // ============================================================
 
 import React, { useState, useMemo, useCallback } from 'react';
-import dayjs from 'dayjs';
 import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader } from '@/types';
 import {
@@ -13,6 +12,15 @@ import {
   getTagColor,
 } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
+import {
+  todayStr,
+  addDays,
+  isBeforeDay,
+  isAfterDay,
+  formatDate,
+  getDayOfWeek,
+  splitDate,
+} from '@/utils/dateSafe';
 
 interface WeekMatrixViewProps {
   tasks: Task[];
@@ -21,32 +29,45 @@ interface WeekMatrixViewProps {
 
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-function getWeekStart(date: dayjs.Dayjs): dayjs.Dayjs {
-  const d = date.day();
-  const offset = d === 0 ? -6 : 1 - d;
-  return date.add(offset, 'day');
+/** 给定 YYYY-MM-DD，返回同一周的周一（YYYY-MM-DD） */
+function getWeekStartStr(dateStr: string): string {
+  const dow = getDayOfWeek(dateStr); // 0=周日, 1=周一, ..., 6=周六
+  const offset = dow === 0 ? -6 : 1 - dow;
+  return addDays(dateStr, offset);
+}
+
+/** 给定 YYYY-MM-DD 和月偏移量，返回目标月同日（超出则截断到月末） */
+function addMonths(dateStr: string, months: number): string {
+  const { year: y, month: m, day: d } = splitDate(dateStr);
+  const totalMonths = y * 12 + (m - 1) + months;
+  const newYear = Math.floor(totalMonths / 12);
+  const newMonth = (totalMonths % 12) + 1;
+  const maxDay = new Date(newYear, newMonth, 0).getDate();
+  const newDay = Math.min(d, maxDay);
+  return `${newYear}-${String(newMonth).padStart(2, '0')}-${String(newDay).padStart(2, '0')}`;
 }
 
 const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
   tasks,
   onUpdateBlockHeader,
 }) => {
-  const [cursor, setCursor] = useState(() => dayjs());
+  const [cursor, setCursor] = useState(() => todayStr());
   const [mode, setMode] = useState<'week' | 'month'>('week');
 
-  // 计算日期范围
+  // 计算日期范围（YYYY-MM-DD 字符串数组）
   const dateRange = useMemo(() => {
     if (mode === 'week') {
-      const start = getWeekStart(cursor);
-      return Array.from({ length: 7 }, (_, i) => start.add(i, 'day'));
+      const start = getWeekStartStr(cursor);
+      return Array.from({ length: 7 }, (_, i) => addDays(start, i));
     }
     // 月模式：显示当月所有天
-    const start = cursor.startOf('month');
-    const daysInMonth = cursor.daysInMonth();
-    return Array.from({ length: daysInMonth }, (_, i) => start.add(i, 'day'));
+    const { year: y, month: m } = splitDate(cursor);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const start = `${y}-${String(m).padStart(2, '0')}-01`;
+    return Array.from({ length: daysInMonth }, (_, i) => addDays(start, i));
   }, [cursor, mode]);
 
-  const today = dayjs().format('YYYY-MM-DD');
+  const todayString = todayStr();
 
   // 提取所有 SmartTaskBlock（附所属 taskId）
   const allBlocks = useMemo(() => {
@@ -82,8 +103,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
 
   // 检测落在当前显示范围外的 block（带有效日期）
   const offRangeInfo = useMemo(() => {
-    const rangeStart = dateRange[0];
-    const rangeEnd = dateRange[dateRange.length - 1];
+    const rangeStartStr = dateRange[0];
+    const rangeEndStr = dateRange[dateRange.length - 1];
     const beforeBlocks: { date: string; count: number }[] = [];
     const afterBlocks: { date: string; count: number }[] = [];
     const tally = new Map<string, number>();
@@ -97,9 +118,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
       }
     }
     for (const [d, count] of tally) {
-      const dj = dayjs(d);
-      if (dj.isBefore(rangeStart, 'day')) beforeBlocks.push({ date: d, count });
-      else if (dj.isAfter(rangeEnd, 'day')) afterBlocks.push({ date: d, count });
+      if (isBeforeDay(d, rangeStartStr)) beforeBlocks.push({ date: d, count });
+      else if (isAfterDay(d, rangeEndStr)) afterBlocks.push({ date: d, count });
     }
     const totalBefore = beforeBlocks.reduce((s, x) => s + x.count, 0);
     const totalAfter = afterBlocks.reduce((s, x) => s + x.count, 0);
@@ -120,7 +140,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
 
   const handleToggle = useCallback(
     (taskId: string, blockId: string, isCompleted: boolean) => {
-      const now = dayjs().format('YYYY-MM-DD');
+      const now = todayStr();
       onUpdateBlockHeader(taskId, blockId, {
         isCompleted: !isCompleted,
         completedDate: !isCompleted ? now : undefined,
@@ -130,25 +150,25 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
   );
 
   const jumpTo = useCallback((dateStr: string) => {
-    setCursor(dayjs(dateStr));
+    setCursor(dateStr);
   }, []);
 
   const rangeLabel = mode === 'week'
-    ? `${dateRange[0].format('M.D')} - ${dateRange[6].format('M.D')}`
-    : cursor.format('YYYY年M月');
+    ? `${formatDate(dateRange[0], 'M.D')} - ${formatDate(dateRange[6], 'M.D')}`
+    : (() => { const { year, month } = splitDate(cursor); return `${year}年${month}月`; })();
 
   return (
     <div className="wmv-container">
       {/* ── 顶部导航 ── */}
       <div className="wmv-nav">
-        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(c => mode === 'week' ? c.subtract(1, 'week') : c.subtract(1, 'month'))}>
+        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(c => mode === 'week' ? addDays(c, -7) : addMonths(c, -1))}>
           <ChevronLeft size={16} />
         </button>
         <span className="wmv-nav-label">{rangeLabel}</span>
-        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(c => mode === 'week' ? c.add(1, 'week') : c.add(1, 'month'))}>
+        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(c => mode === 'week' ? addDays(c, 7) : addMonths(c, 1))}>
           <ChevronRight size={16} />
         </button>
-        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(dayjs())}>
+        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(todayStr())}>
           今天
         </button>
         <div className="wmv-nav-right">
@@ -214,19 +234,19 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
         {/* 表头 */}
         <div className="wmv-row wmv-row--header">
           <div className="wmv-cell wmv-cell--tag" />
-          {dateRange.map((d) => {
-            const dateStr = d.format('YYYY-MM-DD');
-            const isToday = dateStr === today;
-            const isWeekend = d.day() === 0 || d.day() === 6;
+          {dateRange.map((dateStr) => {
+            const isToday = dateStr === todayString;
+            const dow = getDayOfWeek(dateStr);
+            const isWeekend = dow === 0 || dow === 6;
             return (
               <div
                 key={dateStr}
                 className={`wmv-cell wmv-cell--date ${isToday ? 'wmv-cell--today' : ''} ${isWeekend ? 'wmv-cell--weekend' : ''}`}
               >
                 <span className="wmv-date-weekday">
-                  {WEEKDAY_LABELS[d.day() === 0 ? 6 : d.day() - 1]}
+                  {WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}
                 </span>
-                <span className="wmv-date-num">{d.format('D')}</span>
+                <span className="wmv-date-num">{splitDate(dateStr).day}</span>
               </div>
             );
           })}
@@ -242,11 +262,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                   {tag}
                 </span>
               </div>
-              {dateRange.map((d) => {
-                const dateStr = d.format('YYYY-MM-DD');
+              {dateRange.map((dateStr) => {
                 const key = `${tag}::${dateStr}`;
                 const blocks = matrix.get(key) ?? [];
-                const isWeekend = d.day() === 0 || d.day() === 6;
+                const dow = getDayOfWeek(dateStr);
+                const isWeekend = dow === 0 || dow === 6;
 
                 return (
                   <div
@@ -255,7 +275,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                   >
                     {blocks.map((block) => {
                       const h = block.header;
-                      const isOverdue = !h.isCompleted && dayjs(h.date).isBefore(dayjs(), 'day');
+                      const isOverdue = !h.isCompleted && isBeforeDay(h.date, todayString);
                       return (
                         <div
                           key={block.id}

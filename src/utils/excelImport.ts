@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import type { SmartTaskBlock, Task } from '@/types';
 import { genBlockId, getTagColor } from './blocks';
+import { makeLocalDayjs, todayStr, getDayOfWeek, formatDateLocal } from './dateSafe';
 
 // ── 类型定义 ────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ export function downloadTemplate(): void {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '批量导入');
 
-  const dateStr = dayjs().format('YYYY-MM-DD');
+  const dateStr = todayStr();
   XLSX.writeFile(wb, `批量导入模板-${dateStr}.xlsx`);
 }
 
@@ -103,7 +104,7 @@ export function downloadTemplate(): void {
  */
 export async function parseImportFile(file: File): Promise<ParsedRow[]> {
   const data = await file.arrayBuffer();
-  const wb = XLSX.read(data, { type: 'array', cellDates: true });
+  const wb = XLSX.read(data, { type: 'array' });
 
   const firstSheetName = wb.SheetNames[0];
   if (!firstSheetName) return [];
@@ -132,8 +133,8 @@ export async function parseImportFile(file: File): Promise<ParsedRow[]> {
     const title = readCell(row, colMap.title);
     const tag = readCell(row, colMap.tag) || '';
     const durationRaw = readCell(row, colMap.duration);
-    const dateRaw = readCell(row, colMap.date);
-    const deadlineRaw = readCell(row, colMap.deadline);
+    const dateRaw = readDateCell(row, colMap.date);
+    const deadlineRaw = readDateCell(row, colMap.deadline);
     const complexityRaw = readCell(row, colMap.complexity);
     const remark = readCell(row, colMap.remark);
 
@@ -190,6 +191,33 @@ function readCell(row: unknown[], colIndex: number): string {
   if (colIndex < 0 || colIndex >= row.length) return '';
   const v = row[colIndex];
   if (v === null || v === undefined) return '';
+  return String(v);
+}
+
+/**
+ * 读取日期列的原始值，直接格式化为 YYYY-MM-DD。
+ * 绕过 String(Date) → dayjs(string) 链路，避免时区偏移。
+ * - Date 对象：SheetJS numdate() 按本地时间创建，取本地分量即可
+ * - 数字：Excel 序列号，用 XLSX.SSF.parse_date_code（纯数学，无时区）
+ * - 字符串：交给 normalizeDate 处理
+ */
+function readDateCell(row: unknown[], colIndex: number): string {
+  if (colIndex < 0 || colIndex >= row.length) return '';
+  const v = row[colIndex];
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return '';
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  if (typeof v === 'number') {
+    const date = XLSX.SSF.parse_date_code(v);
+    if (date && date.y) {
+      return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
+    }
+  }
   return String(v);
 }
 
@@ -252,7 +280,11 @@ export function normalizeDate(raw: string | Date | number): string {
   if (!raw) return '';
   if (raw instanceof Date) {
     if (isNaN(raw.getTime())) return '';
-    return dayjs(raw).format('YYYY-MM-DD');
+    // 直接取本地分量，避免 dayjs 时区偏移
+    const y = raw.getFullYear();
+    const m = String(raw.getMonth() + 1).padStart(2, '0');
+    const d = String(raw.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
   if (typeof raw === 'number') {
     // Excel 序列号（自 1900-01-01 起的天数）
@@ -266,26 +298,26 @@ export function normalizeDate(raw: string | Date | number): string {
   const s = String(raw).trim();
   if (!s) return '';
 
-  // 标准格式
+  // 标准格式：直接拼接，不经过 dayjs，避免 dayjs('YYYY-MM-DD') 的 UTC/local 时区偏移
   const m1 = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})$/);
   if (m1) {
     const [, y, mo, d] = m1;
-    const date = dayjs(`${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`);
-    return date.isValid() ? date.format('YYYY-MM-DD') : '';
+    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
 
-  // 仅月日：补当前年
+  // 仅月日：补当前年，直接拼接
   const m2 = s.match(/^(\d{1,2})[-./](\d{1,2})$/);
   if (m2) {
-    const year = dayjs().year();
+    const year = new Date().getFullYear();
     const [, mo, d] = m2;
-    const date = dayjs(`${year}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`);
-    return date.isValid() ? date.format('YYYY-MM-DD') : '';
+    return `${year}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
 
-  // 尝试 dayjs 兜底
-  const d = dayjs(s);
-  return d.isValid() ? d.format('YYYY-MM-DD') : '';
+  // 尝试 dayjs 兜底（仅用于非标准格式如 "Jul 6, 2026"）
+  const dd = dayjs(s);
+  if (!dd.isValid()) return '';
+  // 直接取本地分量，避免 format() 的时区风险
+  return `${dd.year()}-${String(dd.month() + 1).padStart(2, '0')}-${String(dd.date()).padStart(2, '0')}`;
 }
 
 // ── 批量排期（空降排期机制）────────────────────────────────
@@ -295,7 +327,7 @@ export function normalizeDate(raw: string | Date | number): string {
  * 在内存中完成，不修改 store。
  */
 export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfig): ParsedRow[] {
-  const start = dayjs(config.startDate);
+  const start = makeLocalDayjs(config.startDate);
   if (!start.isValid()) return rows;
 
   let cursor = start;
@@ -308,12 +340,12 @@ export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfi
     if (r._error && r._error !== '任务名称为空（已忽略）') return r;
     if (!r.title) return r;
 
-    // 跳过周末
+    // 跳过周末（cursor 基于 makeLocalDayjs，.day() 安全取本地分量）
     while (config.skipWeekend && (cursor.day() === 0 || cursor.day() === 6)) {
       cursor = cursor.add(1, 'day');
     }
 
-    const newDate = cursor.format('YYYY-MM-DD');
+    const newDate = `${cursor.year()}-${String(cursor.month() + 1).padStart(2, '0')}-${String(cursor.date()).padStart(2, '0')}`;
     const newRow: ParsedRow = { ...r, date: newDate, dateRaw: newDate };
 
     // 重新校验（截止日期早于排期的情况）
@@ -350,7 +382,7 @@ export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
         title: r.title,
         tag: r.tag,
         tagColor: getTagColor(r.tag),
-        date: r.date || dayjs().format('YYYY-MM-DD'),
+        date: r.date || formatDateLocal(new Date()),
         deadline: r.deadline || undefined,
         duration: r.duration,
         isCompleted: false,
@@ -382,7 +414,7 @@ export function computeTaskDateRange(task: Task, newBlocks: SmartTaskBlock[]): {
   }
   const valid = dates.filter(Boolean).sort();
   if (valid.length === 0) {
-    const today = dayjs().format('YYYY-MM-DD');
+    const today = formatDateLocal(new Date());
     return { start: today, end: today };
   }
   return { start: valid[0], end: valid[valid.length - 1] };

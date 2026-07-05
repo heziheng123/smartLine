@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import dayjs from 'dayjs';
+import { todayStr, addDays, formatDateLocal } from '@/utils/dateSafe';
 import type {
   ReviewTask,
   InboxItem,
@@ -204,11 +204,11 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         },
 
         rescheduleOverdue: (taskIds) => {
-          const todayStr = dayjs().format('YYYY-MM-DD');
+          const _today = todayStr();
           const idSet = new Set(taskIds);
           set((state) => {
             const reviewTasks = state.reviewTasks.map((t) =>
-              idSet.has(t.id) ? { ...t, dueDate: todayStr, smStatus: 'scheduled' as const } : t,
+              idSet.has(t.id) ? { ...t, dueDate: _today, smStatus: 'scheduled' as const } : t,
             );
             const newData: EbbData = {
               reviewTasks,
@@ -283,7 +283,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 ? {
                     ...t,
                     isCompleted: true,
-                    completedDate: dayjs().format('YYYY-MM-DD'),
+                    completedDate: todayStr(),
                     smStatus: 'confirmed' as const,
                   }
                 : t,
@@ -380,16 +380,15 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             if (!item.intervals || !item.startDate || item.intervals.length === 0) continue;
             // 临时构建生成输入，复用 scheduler
             const generated: ReviewTask[] = [];
-            const start = dayjs(item.startDate);
             const topicDates = new Set<string>();
             for (const t of state.reviewTasks) {
               if (t.topicName === item.topicName) topicDates.add(t.dueDate);
             }
             for (let i = 0; i < item.intervals.length; i++) {
               const interval = item.intervals[i];
-              let dueDate = start.add(interval, 'day').format('YYYY-MM-DD');
+              let dueDate = addDays(item.startDate, interval);
               while (topicDates.has(dueDate)) {
-                dueDate = dayjs(dueDate).add(1, 'day').format('YYYY-MM-DD');
+                dueDate = addDays(dueDate, 1);
               }
               topicDates.add(dueDate);
               generated.push({

@@ -6,6 +6,7 @@
 import dayjs from 'dayjs';
 import type { ReviewTask, ComplexityLevel, TagStat, TopicStat, EbbSettings } from './types';
 import { getPointWeight, getIntervalsForComplexity } from './complexity';
+import { todayStr, addDays, isBeforeDay, isAfterDay, diffDays, formatDate, getDayOfWeek } from '@/utils/dateSafe';
 
 // ── 工具函数 ────────────────────────────────────────────────
 
@@ -17,13 +18,13 @@ export function genId(prefix = 'eb'): string {
 /** 判断日期是否逾期（未完成且早于今天） */
 export function isOverdue(task: ReviewTask): boolean {
   if (task.isCompleted) return false;
-  if (!task.dueDate) return false; // 兜底：脏数据不应被误判为逾期
-  return dayjs(task.dueDate).isBefore(dayjs().startOf('day'));
+  if (!task.dueDate) return false;
+  return isBeforeDay(task.dueDate, todayStr());
 }
 
 /** 判断是否今日到期 */
 export function isDueToday(task: ReviewTask): boolean {
-  return task.dueDate === dayjs().format('YYYY-MM-DD');
+  return task.dueDate === todayStr();
 }
 
 // ── 轮次计算（带缓存） ──────────────────────────────────────
@@ -122,7 +123,6 @@ export function generateTasks(
 
   let conflicts = 0;
   const tasks: ReviewTask[] = [];
-  const start = dayjs(input.startDate);
 
   // 收集同主题已有日期集合
   const topicDates = new Set<string>();
@@ -132,11 +132,11 @@ export function generateTasks(
 
   for (let i = 0; i < input.intervals.length; i++) {
     const interval = input.intervals[i];
-    let dueDate = start.add(interval, 'day').format('YYYY-MM-DD');
+    let dueDate = addDays(input.startDate, interval);
 
     // 去重：同主题日期冲突时 +1 天
     while (topicDates.has(dueDate)) {
-      dueDate = dayjs(dueDate).add(1, 'day').format('YYYY-MM-DD');
+      dueDate = addDays(dueDate, 1);
       conflicts++;
     }
 
@@ -209,7 +209,7 @@ export function smartSpreadDate(
   let date = initialDate;
 
   for (let offset = 0; offset <= maxSpreadDays; offset++) {
-    const candidate = offset === 0 ? date : dayjs(date).add(offset, 'day').format('YYYY-MM-DD');
+    const candidate = offset === 0 ? date : addDays(date, offset);
     date = candidate;
 
     // 同主题日期冲突
@@ -219,8 +219,8 @@ export function smartSpreadDate(
     if (minTopicGapDays > 0) {
       const sameTopicTasks = existingTasks.filter((t) => t.topicName === topicName);
       const tooClose = sameTopicTasks.some((t) => {
-        const diff = Math.abs(dayjs(candidate).diff(dayjs(t.dueDate), 'day'));
-        return diff < minTopicGapDays && diff > 0;
+        const d = Math.abs(diffDays(candidate, t.dueDate));
+        return d < minTopicGapDays && d > 0;
       });
       if (tooClose) continue;
     }
@@ -369,7 +369,7 @@ export function computeTopicStats(
  * 计算今日积分
  */
 export function calcTodayPoints(tasks: ReviewTask[], settings?: EbbSettings): number {
-  const today = dayjs().format('YYYY-MM-DD');
+  const today = todayStr();
   const { roundMap } = computeRounds(tasks);
   let sum = 0;
   for (const t of tasks) {
@@ -389,13 +389,15 @@ export function calcTodayPoints(tasks: ReviewTask[], settings?: EbbSettings): nu
 export function calcWeekPoints(tasks: ReviewTask[], settings?: EbbSettings): number {
   const { roundMap } = computeRounds(tasks);
   const now = dayjs();
-  const weekStart = now.startOf('week').add(1, 'day'); // 周一
+  // 用本地分量拼接周一和周日的日期字符串，避免 dayjs('YYYY-MM-DD') 偏移
+  const weekStart = now.startOf('week').add(1, 'day');
   const weekEnd = weekStart.add(6, 'day');
+  const weekStartStr = `${weekStart.year()}-${String(weekStart.month() + 1).padStart(2, '0')}-${String(weekStart.date()).padStart(2, '0')}`;
+  const weekEndStr = `${weekEnd.year()}-${String(weekEnd.month() + 1).padStart(2, '0')}-${String(weekEnd.date()).padStart(2, '0')}`;
   let sum = 0;
   for (const t of tasks) {
     if (!t.isCompleted || !t.complexity) continue;
-    const d = dayjs(t.dueDate);
-    if (d.isBefore(weekStart, 'day') || d.isAfter(weekEnd, 'day')) continue;
+    if (isBeforeDay(t.dueDate, weekStartStr) || isAfterDay(t.dueDate, weekEndStr)) continue;
     const round = roundMap.get(t.id) ?? 0;
     sum += settings
       ? getPointWeight(round, t.complexity, settings.complexityConfigs)
@@ -413,20 +415,18 @@ export function getDateLabel(
   dateStr: string,
   isCompleted: boolean,
 ): { text: string; variant: 'future' | 'overdue' | 'today' | 'tomorrow' | 'yesterday' | 'completed' } {
-  const d = dayjs(dateStr);
-  const today = dayjs();
-  const todayStr = today.format('YYYY-MM-DD');
-  const tomorrowStr = today.add(1, 'day').format('YYYY-MM-DD');
-  const yesterdayStr = today.subtract(1, 'day').format('YYYY-MM-DD');
+  const today = todayStr();
+  const tomorrow = addDays(today, 1);
+  const yesterday = addDays(today, -1);
 
   if (isCompleted) {
-    return { text: d.format('M月D日'), variant: 'completed' };
+    return { text: formatDate(dateStr, 'M月D日'), variant: 'completed' };
   }
-  if (dateStr === todayStr) return { text: '今天', variant: 'today' };
-  if (dateStr === tomorrowStr) return { text: '明天', variant: 'tomorrow' };
-  if (dateStr === yesterdayStr) return { text: '昨天', variant: 'yesterday' };
-  if (d.isBefore(today, 'day')) return { text: d.format('M月D日'), variant: 'overdue' };
-  return { text: d.format('M月D日'), variant: 'future' };
+  if (dateStr === today) return { text: '今天', variant: 'today' };
+  if (dateStr === tomorrow) return { text: '明天', variant: 'tomorrow' };
+  if (dateStr === yesterday) return { text: '昨天', variant: 'yesterday' };
+  if (isBeforeDay(dateStr, today)) return { text: formatDate(dateStr, 'M月D日'), variant: 'overdue' };
+  return { text: formatDate(dateStr, 'M月D日'), variant: 'future' };
 }
 
 /**
