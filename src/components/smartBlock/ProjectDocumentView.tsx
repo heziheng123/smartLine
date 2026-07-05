@@ -23,6 +23,7 @@ import {
 import dayjs from 'dayjs';
 import type { Task, SmartTaskBlock, SmartTaskHeader, TextBlock } from '@/types';
 import { useTimelineStore } from '@/store';
+import { useShallow } from 'zustand/react/shallow';
 import {
   genBlockId,
   getTagColor,
@@ -34,7 +35,6 @@ import TextBlockCard from './TextBlockCard';
 import SlashCommandMenu from './SlashCommandMenu';
 import TaskMetaEditor from '@/components/TaskMetaEditor';
 import BatchImportDialog from '@/components/BatchImportDialog';
-import { computeTaskDateRange } from '@/utils/excelImport';
 
 interface ProjectDocumentViewProps {
   task: Task;
@@ -49,7 +49,27 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   onUpdateTask,
   onDeleteTask,
 }) => {
-  const store = useTimelineStore();
+  const {
+    tasks: storeTasks,
+    updateBlockHeader,
+    updateBlockBody,
+    removeBlock,
+    updateTextBlockContent,
+    appendBlock,
+    extendTaskBlocks,
+    updateTaskBlocks,
+  } = useTimelineStore(
+    useShallow((s) => ({
+      tasks: s.tasks,
+      updateBlockHeader: s.updateBlockHeader,
+      updateBlockBody: s.updateBlockBody,
+      removeBlock: s.removeBlock,
+      updateTextBlockContent: s.updateTextBlockContent,
+      appendBlock: s.appendBlock,
+      extendTaskBlocks: s.extendTaskBlocks,
+      updateTaskBlocks: s.updateTaskBlocks,
+    })),
+  );
   const [metaExpanded, setMetaExpanded] = useState(false);
   const [slashMenu, setSlashMenu] = useState<{ position: { top: number; left: number } } | null>(null);
   const [newTextValue, setNewTextValue] = useState('');
@@ -67,8 +87,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   // 实时从 store 读取最新 blocks（防止 stale data）
   const { id: taskId } = task;
   const currentTask = useMemo(
-    () => store.tasks.find(t => t.id === taskId) ?? task,
-    [store.tasks, taskId, task],
+    () => storeTasks.find(t => t.id === taskId) ?? task,
+    [storeTasks, taskId, task],
   );
   const blocks = useMemo(
     () => currentTask.blocks ?? [],
@@ -189,45 +209,32 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   const handleUpdateHeader = useCallback(
     (blockId: string, patch: Partial<SmartTaskHeader>) => {
-      store.updateBlockHeader(task.id, blockId, patch);
+      updateBlockHeader(task.id, blockId, patch);
     },
-    [store, task.id],
+    [updateBlockHeader, task.id],
   );
 
   const handleUpdateBody = useCallback(
     (blockId: string, body: string) => {
-      // 通过 store 最新 state 读取 blocks，避免闭包 stale
-      const currentBlocks = useTimelineStore.getState().tasks.find(t => t.id === task.id)?.blocks ?? [];
-      const newBlocks = currentBlocks.map(b => {
-        if (b.type === 'smart-task' && b.id === blockId) {
-          return { ...b, body };
-        }
-        return b;
-      });
-      store.updateTaskBlocks(task.id, newBlocks);
+      // 局部 patch：只更新指定 block 的 body，避免整体覆盖 blocks 数组
+      updateBlockBody(task.id, blockId, body);
     },
-    [store, task.id],
+    [updateBlockBody, task.id],
   );
 
   const handleDeleteBlock = useCallback(
     (blockId: string) => {
-      store.removeBlock(task.id, blockId);
+      removeBlock(task.id, blockId);
     },
-    [store, task.id],
+    [removeBlock, task.id],
   );
 
   const handleUpdateTextBlock = useCallback(
     (blockId: string, content: string) => {
-      const currentBlocks = useTimelineStore.getState().tasks.find(t => t.id === task.id)?.blocks ?? [];
-      const newBlocks = currentBlocks.map(b => {
-        if (b.type === 'text' && b.id === blockId) {
-          return { ...b, content };
-        }
-        return b;
-      });
-      store.updateTaskBlocks(task.id, newBlocks);
+      // 局部 patch：只更新指定 TextBlock 的 content
+      updateTextBlockContent(task.id, blockId, content);
     },
-    [store, task.id],
+    [updateTextBlockContent, task.id],
   );
 
   // ── 添加新 Block ──
@@ -247,8 +254,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       },
       body: '',
     };
-    store.appendBlock(task.id, newBlock);
-  }, [store, task.id]);
+    appendBlock(task.id, newBlock);
+  }, [appendBlock, task.id]);
 
   // ── 批量导入确认：把 Excel 解析出的 blocks 追加到当前项目 ──
 
@@ -258,18 +265,12 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       target: { taskId: string } | { newTaskName: string; start: string; end: string; tag: string },
     ) => {
       if ('taskId' in target && target.taskId === task.id) {
-        // 追加到当前项目，并扩展 start/end 覆盖新日期
-        const { start: newStart, end: newEnd } = computeTaskDateRange(currentTask, newBlocks);
-        store.updateTask({
-          ...currentTask,
-          blocks: [...(currentTask.blocks ?? []), ...newBlocks],
-          start: newStart,
-          end: newEnd,
-        });
+        // 仅追加 blocks，不修改 task 其他字段（避免覆盖远端并发更新）
+        extendTaskBlocks(task.id, newBlocks);
       }
       setShowBatchImport(false);
     },
-    [store, task.id, currentTask],
+    [extendTaskBlocks, task.id],
   );
 
   // ── 拖拽排序 & 跨日排期 ──
@@ -371,9 +372,9 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       const insertIdx = findInsertIndex(destGroupKey, destination.index);
       newBlocks.splice(insertIdx, 0, moved);
 
-      store.updateTaskBlocks(task.id, newBlocks);
+      updateTaskBlocks(task.id, newBlocks);
     },
-    [task.id, groupByWeek, store, activeTag, hideCompleted],
+    [task.id, groupByWeek, updateTaskBlocks, activeTag, hideCompleted],
   );
 
   const handleAddTextBlock = useCallback(() => {
@@ -382,14 +383,14 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       id: genBlockId(),
       content: '',
     };
-    store.appendBlock(task.id, newBlock);
+    appendBlock(task.id, newBlock);
     // 自动聚焦到新文本块
     setTimeout(() => {
       const cards = containerRef.current?.querySelectorAll('.tb-content');
       const last = cards?.[cards.length - 1] as HTMLElement | undefined;
       last?.focus();
     }, 100);
-  }, [store, task.id]);
+  }, [appendBlock, task.id]);
 
   // ── Slash 命令 ──
 
@@ -432,12 +433,12 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           id: genBlockId(),
           content: text,
         };
-        store.appendBlock(task.id, newBlock);
+        appendBlock(task.id, newBlock);
         setNewTextValue('');
         inputRef.current?.focus();
       }
     },
-    [newTextValue, store, task.id],
+    [newTextValue, appendBlock, task.id],
   );
 
   // ── ESC 关闭 ──

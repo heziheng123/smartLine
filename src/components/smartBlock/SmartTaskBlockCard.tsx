@@ -4,7 +4,7 @@
 // 支持：完成切换、标签选择、日期修改、Body 内联编辑
 // ============================================================
 
-import React, { useCallback, useRef, useState, useEffect } from 'react';
+import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
 import {
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { SmartTaskBlock, SmartTaskHeader } from '@/types';
 import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
+import { sanitizeHtml } from '@/utils/sanitize';
 
 interface SmartTaskBlockCardProps {
   block: SmartTaskBlock;
@@ -158,7 +159,7 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
         {bodyExpanded && (
           <div className="stb-body-compact">
             {hasBody ? (
-              <div dangerouslySetInnerHTML={{ __html: body }} />
+              <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }} />
             ) : (
               <span className="stb-body-empty">点击编辑详情...</span>
             )}
@@ -275,7 +276,7 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                 suppressContentEditableWarning
                 onBlur={handleBodyBlur}
                 onClick={handleBodyClick}
-                dangerouslySetInnerHTML={{ __html: body || '' }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }}
               />
               {!hasBody && !editingBody && (
                 <span className="stb-body-placeholder" onClick={handleBodyClick}>
@@ -330,6 +331,7 @@ const MiniCalendarInline: React.FC<{
   onDateSelect: (date: string) => void;
 }> = ({ selectedDate, onDateSelect }) => {
   const [cursor, setCursor] = useState(() => dayjs(selectedDate || undefined));
+  const [view, setView] = useState<'days' | 'years'>('days');
   const today = dayjs().format('YYYY-MM-DD');
 
   const startOfMonth = cursor.startOf('month');
@@ -341,35 +343,104 @@ const MiniCalendarInline: React.FC<{
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   const monthLabel = cursor.format('YYYY年M月');
+  const yearLabel = cursor.format('YYYY年');
+
+  // 年份视图：当前年份 ± 5，共 12 个
+  const yearCells = useMemo(() => {
+    const currentYear = cursor.year();
+    const startYear = currentYear - 5;
+    const years: number[] = [];
+    for (let y = startYear; y < startYear + 12; y++) years.push(y);
+    return years;
+  }, [cursor]);
+
+  const isCurrentMonth = cursor.format('YYYY-MM') === dayjs().format('YYYY-MM');
 
   return (
     <div className="stb-mini-cal">
       <div className="stb-mini-cal-header">
-        <button type="button" onClick={() => setCursor(c => c.subtract(1, 'month'))}>◀</button>
-        <span>{monthLabel}</span>
-        <button type="button" onClick={() => setCursor(c => c.add(1, 'month'))}>▶</button>
-      </div>
-      <div className="stb-mini-cal-grid">
-        {['日', '一', '二', '三', '四', '五', '六'].map(d => (
-          <span key={d} className="stb-mini-cal-dow">{d}</span>
-        ))}
-        {cells.map((d, i) => {
-          if (d === null) return <span key={`e${i}`} />;
-          const dateStr = cursor.date(d).format('YYYY-MM-DD');
-          const isSelected = dateStr === selectedDate;
-          const isToday = dateStr === today;
-          return (
+        {view === 'days' ? (
+          <>
+            <button type="button" onClick={() => setCursor(c => c.subtract(1, 'month'))}>◀</button>
             <button
-              key={dateStr}
               type="button"
-              className={`stb-mini-cal-day ${isSelected ? 'stb-mini-cal-day--selected' : ''} ${isToday ? 'stb-mini-cal-day--today' : ''}`}
-              onClick={() => onDateSelect(dateStr)}
+              className="stb-mini-cal-title"
+              onClick={() => setView('years')}
+              title="点击切换年份"
             >
-              {d}
+              {monthLabel}
             </button>
-          );
-        })}
+            <button type="button" onClick={() => setCursor(c => c.add(1, 'month'))}>▶</button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={() => setCursor(c => c.subtract(12, 'year'))}>◀</button>
+            <button
+              type="button"
+              className="stb-mini-cal-title"
+              onClick={() => setView('days')}
+            >
+              {yearLabel}
+            </button>
+            <button type="button" onClick={() => setCursor(c => c.add(12, 'year'))}>▶</button>
+          </>
+        )}
       </div>
+      {view === 'days' ? (
+        <div className="stb-mini-cal-grid">
+          {['日', '一', '二', '三', '四', '五', '六'].map(d => (
+            <span key={d} className="stb-mini-cal-dow">{d}</span>
+          ))}
+          {cells.map((d, i) => {
+            if (d === null) return <span key={`e${i}`} />;
+            const dateStr = cursor.date(d).format('YYYY-MM-DD');
+            const isSelected = dateStr === selectedDate;
+            const isToday = dateStr === today;
+            return (
+              <button
+                key={dateStr}
+                type="button"
+                className={`stb-mini-cal-day ${isSelected ? 'stb-mini-cal-day--selected' : ''} ${isToday ? 'stb-mini-cal-day--today' : ''}`}
+                onClick={() => onDateSelect(dateStr)}
+              >
+                {d}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="stb-mini-cal-years">
+          {yearCells.map(y => {
+            const isYearSelected = y === cursor.year();
+            const isYearCurrent = y === dayjs().year();
+            return (
+              <button
+                key={y}
+                type="button"
+                className={`stb-mini-cal-year ${isYearSelected ? 'stb-mini-cal-year--selected' : ''} ${isYearCurrent ? 'stb-mini-cal-year--current' : ''}`}
+                onClick={() => {
+                  setCursor(c => c.year(y));
+                  setView('days');
+                }}
+              >
+                {y}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {!isCurrentMonth && (
+        <button
+          type="button"
+          className="stb-mini-cal-today"
+          onClick={() => {
+            setCursor(dayjs());
+            setView('days');
+          }}
+        >
+          回到今天
+        </button>
+      )}
     </div>
   );
 };

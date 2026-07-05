@@ -5,8 +5,7 @@
 import React, { useRef } from 'react';
 import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff } from 'lucide-react';
 import { useTimelineStore } from '@/store';
-
-type AppView = 'timeline' | 'todo-view' | 'ebb';
+import { useShallow } from 'zustand/react/shallow';
 
 interface ToolbarProps {
   displayYear: number;
@@ -19,10 +18,6 @@ interface ToolbarProps {
   onExport: () => void;
   onOpenSync: () => void;
   taskCount: number;
-  /** 当前激活视图 */
-  currentView: AppView;
-  /** 切换视图 */
-  onViewChange: (view: AppView) => void;
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({
@@ -36,11 +31,11 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onExport,
   onOpenSync,
   taskCount,
-  currentView,
-  onViewChange,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { syncEnabled, syncStatus } = useTimelineStore();
+  const { syncEnabled, syncStatus } = useTimelineStore(
+    useShallow((s) => ({ syncEnabled: s.syncEnabled, syncStatus: s.syncStatus })),
+  );
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -72,27 +67,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
           <Plus size={14} />
           添加任务
         </button>
-        {/* 视图切换分段控件 */}
-        <div className="tl-segmented" role="tablist" aria-label="视图切换">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={currentView === 'timeline'}
-            className={`tl-segmented-btn ${currentView === 'timeline' ? 'tl-segmented-btn--active' : ''}`}
-            onClick={() => onViewChange('timeline')}
-          >
-            📊 项目规划
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={currentView === 'todo-view'}
-            className={`tl-segmented-btn ${currentView === 'todo-view' ? 'tl-segmented-btn--active' : ''}`}
-            onClick={() => onViewChange('todo-view')}
-          >
-            ✅ 待办执行
-          </button>
-        </div>
         <button
           className="tl-toolbar-btn tl-toolbar-btn--secondary"
           onClick={onAddGroup}

@@ -6,8 +6,6 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import dayjs from 'dayjs';
-import isBetween from 'dayjs/plugin/isBetween';
-dayjs.extend(isBetween);
 import {
   DragDropContext,
   Droppable,
@@ -23,9 +21,9 @@ import {
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
+import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '@/ebb/scheduler';
 import { useDailyScheduleStore } from './store';
-import { toggleTodoLine } from '@/utils/markdown';
 import BlockModeView from './BlockModeView';
 import {
   DEFAULT_TIME_SLOT_CONFIGS,
@@ -35,74 +33,13 @@ import {
   type TimeSlotConfig,
   type ScheduleViewMode,
 } from './types';
-import { useTodos } from '@/hooks/useTodos';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
+import { parseSourceId } from './conversion';
 
 // ── Droppable IDs ────────────────────────────────────────────
 
 const DROPPABLE_POOL = 'ds-pool';
 const droppableIdForSlot = (slot: TimeSlot) => `ds-slot-${slot}`;
-
-// ── SourceId 解析工具 ────────────────────────────────────────
-
-interface ParsedSourceId {
-  source: 'project' | 'review';
-  reviewId?: string;
-  parentTaskId?: string;
-  line?: number;
-  /** 来源为 SmartTaskBlock 时，存储 blockId */
-  blockId?: string;
-}
-
-/**
- * 解析 sourceId 格式：
- * - review: `review-{reviewId}`
- * - project (markdown): `project-md:{parentTaskId}-{line}`
- * - project (block): `project-blk:{parentTaskId}-{blockId}`
- * - project (legacy): `project-{parentTaskId}-{line}`（向后兼容）
- */
-function parseSourceId(sourceId: string): ParsedSourceId | null {
-  if (sourceId.startsWith('review-')) {
-    return { source: 'review', reviewId: sourceId.slice(7) };
-  }
-
-  if (sourceId.startsWith('project-')) {
-    const fullId = sourceId.slice(8);
-
-    // 新格式：blk:{taskId}-{blockId}
-    if (fullId.startsWith('blk:')) {
-      const rest = fullId.slice(4);
-      const firstDash = rest.indexOf('-');
-      if (firstDash === -1) return null;
-      return {
-        source: 'project',
-        parentTaskId: rest.slice(0, firstDash),
-        blockId: rest.slice(firstDash + 1),
-      };
-    }
-
-    // 新格式：md:{taskId}-{line}
-    if (fullId.startsWith('md:')) {
-      const rest = fullId.slice(3);
-      const lastDash = rest.lastIndexOf('-');
-      if (lastDash === -1) return null;
-      const parentTaskId = rest.slice(0, lastDash);
-      const line = parseInt(rest.slice(lastDash + 1), 10);
-      if (isNaN(line)) return null;
-      return { source: 'project', parentTaskId, line };
-    }
-
-    // 旧格式兼容：{taskId}-{line}
-    const lastDash = fullId.lastIndexOf('-');
-    if (lastDash === -1) return null;
-    const parentTaskId = fullId.slice(0, lastDash);
-    const line = parseInt(fullId.slice(lastDash + 1), 10);
-    if (isNaN(line)) return null;
-    return { source: 'project', parentTaskId, line };
-  }
-
-  return null;
-}
 
 // ── 主组件 ───────────────────────────────────────────────────
 
@@ -111,11 +48,43 @@ const DailyScheduleView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(today);
   const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
 
-  const timelineStore = useTimelineStore();
-  const ebbStore = useEbbStore();
-  const scheduleStore = useDailyScheduleStore();
+  const { tasks: tlTasks, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
+    useShallow((s) => ({ tasks: s.tasks, updateBlockHeader: s.updateBlockHeader })),
+  );
+  const {
+    reviewTasks: ebbReviewTasks,
+    ebbSettings: ebbSettingsData,
+    toggleReviewTask: ebbToggleReviewTask,
+  } = useEbbStore(
+    useShallow((s) => ({
+      reviewTasks: s.reviewTasks,
+      ebbSettings: s.ebbSettings,
+      toggleReviewTask: s.toggleReviewTask,
+    })),
+  );
+  const {
+    getDaySchedule,
+    addScheduledItem,
+    reorderScheduledItems,
+    moveScheduledItem,
+    removeScheduledItem,
+    toggleScheduledItem,
+    updateScheduledItem,
+    updateTimeBlock,
+  } = useDailyScheduleStore(
+    useShallow((s) => ({
+      getDaySchedule: s.getDaySchedule,
+      addScheduledItem: s.addScheduledItem,
+      reorderScheduledItems: s.reorderScheduledItems,
+      moveScheduledItem: s.moveScheduledItem,
+      removeScheduledItem: s.removeScheduledItem,
+      toggleScheduledItem: s.toggleScheduledItem,
+      updateScheduledItem: s.updateScheduledItem,
+      updateTimeBlock: s.updateTimeBlock,
+    })),
+  );
 
-  const daySchedule = scheduleStore.getDaySchedule(selectedDate);
+  const daySchedule = getDaySchedule(selectedDate);
 
   // 时间段配置（可自定义）
   const [slotConfigs, setSlotConfigs] = useState<TimeSlotConfig[]>(DEFAULT_TIME_SLOT_CONFIGS);
@@ -125,20 +94,9 @@ const DailyScheduleView: React.FC = () => {
   const [filterSource, setFilterSource] = useState<'all' | TaskSource>('all');
 
   // ── 获取指定日期的项目任务 ─────────────────────────────
-  const allTodos = useTodos(timelineStore.tasks);
-  const allSmartTaskTodos = useSmartTaskTodos(timelineStore.tasks);
-  // 合并：blocks 待办优先，markdown 待办兜底（去重）
-  const mergedTodos = useMemo(() => {
-    // 如果任何任务有 blocks，优先用 blocks 的待办
-    const tasksWithBlocks = new Set(
-      timelineStore.tasks
-        .filter(t => t.blocks && t.blocks.length > 0 && t.blocks.some(b => b.type === 'smart-task'))
-        .map(t => t.id),
-    );
-    const blockTodos = allSmartTaskTodos.filter(t => tasksWithBlocks.has(t.parentTaskId));
-    const mdTodos = allTodos.filter(t => !tasksWithBlocks.has(t.parentTaskId));
-    return [...blockTodos, ...mdTodos];
-  }, [allTodos, allSmartTaskTodos, timelineStore.tasks]);
+  const allSmartTaskTodos = useSmartTaskTodos(tlTasks);
+  // 数据来源已统一为 SmartTaskBlock，不再走 markdown 待办
+  const mergedTodos = allSmartTaskTodos;
 
   const todayProjectTasks = useMemo(() => {
     const selDate = dayjs(selectedDate);
@@ -148,7 +106,7 @@ const DailyScheduleView: React.FC = () => {
       if (todo.scheduled && todo.scheduled === selectedDate) return true;
       if (todo.due && todo.due === selectedDate) return true;
       // 无明确排期时，回退到父任务日期范围
-      const parentTask = timelineStore.tasks.find((t) => t.id === todo.parentTaskId);
+      const parentTask = tlTasks.find((t) => t.id === todo.parentTaskId);
       if (parentTask && !todo.scheduled && !todo.due) {
         const taskStart = dayjs(parentTask.start);
         const taskEnd = dayjs(parentTask.end);
@@ -156,15 +114,15 @@ const DailyScheduleView: React.FC = () => {
       }
       return false;
     });
-  }, [mergedTodos, timelineStore.tasks, selectedDate]);
+  }, [mergedTodos, tlTasks, selectedDate]);
 
   // ── 获取今日复习任务 ─────────────────────────────────────
   const todayReviewTasks = useMemo(() => {
-    return ebbStore.reviewTasks.filter((t) => {
+    return ebbReviewTasks.filter((t) => {
       if (t.isCompleted) return false;
       return t.dueDate === selectedDate || (isOverdue(t) && selectedDate === today);
     });
-  }, [ebbStore.reviewTasks, selectedDate, today]);
+  }, [ebbReviewTasks, selectedDate, today]);
 
   // ── 已安排的 sourceId 集合（items + blocks 合并） ────────
   const scheduledSourceIds = useMemo(() => {
@@ -203,7 +161,7 @@ const DailyScheduleView: React.FC = () => {
       });
     }
 
-    const { roundMap, totalRoundsMap } = computeRounds(ebbStore.reviewTasks);
+    const { roundMap, totalRoundsMap } = computeRounds(ebbReviewTasks);
     for (const task of todayReviewTasks) {
       if (scheduledSourceIds.has(`review-${task.id}`)) continue;
       const round = roundMap.get(task.id) ?? 1;
@@ -212,7 +170,7 @@ const DailyScheduleView: React.FC = () => {
         id: `pool-review-${task.id}`,
         name: task.topicName,
         source: 'review',
-        color: ebbStore.ebbSettings.tagColors[task.tag ?? ''] ?? '#8B9DC3',
+        color: ebbSettingsData.tagColors[task.tag ?? ''] ?? '#8B9DC3',
         detail: `第${round}/${total}轮`,
         sourceId: `review-${task.id}`,
       });
@@ -224,7 +182,7 @@ const DailyScheduleView: React.FC = () => {
     }
 
     return filtered;
-  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, filterSource, ebbStore]);
+  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, filterSource, ebbReviewTasks, ebbSettingsData]);
 
   // ── 获取时间段内的已安排任务 ─────────────────────────────
   const getSlotItems = useCallback(
@@ -255,7 +213,7 @@ const DailyScheduleView: React.FC = () => {
         const poolItem = poolItems.find((i) => i.id === draggableId);
         if (!poolItem) return;
 
-        scheduleStore.addScheduledItem(selectedDate, {
+        addScheduledItem(selectedDate, {
           sourceId: poolItem.sourceId,
           name: poolItem.name,
           source: poolItem.source,
@@ -281,9 +239,9 @@ const DailyScheduleView: React.FC = () => {
           const newOrder = srcItems.map((i) => i.id);
           const [removed] = newOrder.splice(source.index, 1);
           newOrder.splice(destIndex, 0, removed);
-          scheduleStore.reorderScheduledItems(selectedDate, srcSlot, newOrder);
+          reorderScheduledItems(selectedDate, srcSlot, newOrder);
         } else {
-          scheduleStore.moveScheduledItem(selectedDate, draggedItem.id, destSlot, destIndex);
+          moveScheduledItem(selectedDate, draggedItem.id, destSlot, destIndex);
         }
         return;
       }
@@ -297,52 +255,54 @@ const DailyScheduleView: React.FC = () => {
         const srcItems = getSlotItems(srcSlot);
         const draggedItem = srcItems[source.index];
         if (!draggedItem) return;
-        scheduleStore.removeScheduledItem(selectedDate, draggedItem.id);
+        removeScheduledItem(selectedDate, draggedItem.id);
       }
     },
-    [poolItems, selectedDate, scheduleStore, getSlotItems],
+    [poolItems, selectedDate, addScheduledItem, reorderScheduledItems, moveScheduledItem, removeScheduledItem, getSlotItems],
   );
 
   // ── 完成/删除 操作（时段模式） ──────────────────────────
+  // 先校验并写入源 store（ebb/timeline），成功后再同步 schedule，
+  // 避免"先写 schedule 后校验失败"导致的 UI 闪烁与短暂不一致。
   const handleToggleItem = useCallback(
     (itemId: string) => {
-      scheduleStore.toggleScheduledItem(selectedDate, itemId);
       const item = daySchedule.items.find((i) => i.id === itemId);
       if (!item) return;
 
       if (item.source === 'review') {
         const reviewId = item.sourceId.replace('review-', '');
-        ebbStore.toggleReviewTask(reviewId);
+        // 先校验+更新 ebb；失败则不更新 schedule，避免回滚闪烁
+        const err = ebbToggleReviewTask(reviewId);
+        if (err) return;
+        toggleScheduledItem(selectedDate, itemId);
       } else if (item.source === 'project') {
         const parsed = parseSourceId(item.sourceId);
         if (!parsed || parsed.source !== 'project') return;
-        const parentTask = timelineStore.tasks.find((t) => t.id === parsed.parentTaskId);
+        const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
         if (!parentTask) return;
 
         if (parsed.blockId) {
-          // blocks 来源：更新 SmartTaskBlock 的 isCompleted
           const now = dayjs().format('YYYY-MM-DD');
           const currentBlock = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
           const isCurrentlyDone = currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted;
-          timelineStore.updateBlockHeader(parsed.parentTaskId, parsed.blockId!, {
+          // 先更新源 store 的 block header
+          tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
             isCompleted: !isCurrentlyDone,
             completedDate: !isCurrentlyDone ? now : undefined,
           });
-        } else if (parsed.line !== undefined) {
-          // markdown 来源：切换待办行
-          const newMarkdown = toggleTodoLine(parentTask.markdown ?? '', parsed.line);
-          timelineStore.updateTaskMarkdown(parsed.parentTaskId, newMarkdown);
+          // 再同步 schedule
+          toggleScheduledItem(selectedDate, itemId);
         }
       }
     },
-    [scheduleStore, selectedDate, daySchedule.items, ebbStore, timelineStore],
+    [toggleScheduledItem, selectedDate, daySchedule.items, ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader],
   );
 
   const handleRemoveItem = useCallback(
     (itemId: string) => {
-      scheduleStore.removeScheduledItem(selectedDate, itemId);
+      removeScheduledItem(selectedDate, itemId);
     },
-    [scheduleStore, selectedDate],
+    [removeScheduledItem, selectedDate],
   );
 
   // ── 时间段统计 ──────────────────────────────────────────
@@ -362,15 +322,15 @@ const DailyScheduleView: React.FC = () => {
     for (const item of daySchedule.items) {
       if (item.source !== 'review') continue;
       const reviewId = item.sourceId.replace('review-', '');
-      const reviewTask = ebbStore.reviewTasks.find((t) => t.id === reviewId);
+      const reviewTask = ebbReviewTasks.find((t) => t.id === reviewId);
       if (!reviewTask) continue;
       if (item.completed !== reviewTask.isCompleted) {
-        scheduleStore.updateScheduledItem(selectedDate, item.id, {
+        updateScheduledItem(selectedDate, item.id, {
           completed: reviewTask.isCompleted,
         });
       }
     }
-  }, [ebbStore.reviewTasks, daySchedule.items, selectedDate, scheduleStore]);
+  }, [ebbReviewTasks, daySchedule.items, selectedDate, updateScheduledItem]);
 
   useEffect(() => {
     for (const item of daySchedule.items) {
@@ -378,33 +338,21 @@ const DailyScheduleView: React.FC = () => {
       const parsed = parseSourceId(item.sourceId);
       if (!parsed || parsed.source !== 'project') continue;
 
-      const parentTask = timelineStore.tasks.find((t) => t.id === parsed.parentTaskId);
+      const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
       if (!parentTask) continue;
+      if (!parsed.blockId) continue;
 
-      let isActuallyCompleted: boolean;
-
-      if (parsed.blockId) {
-        // blocks 来源：从 SmartTaskBlock 获取完成状态
-        const block = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
-        isActuallyCompleted = block?.type === 'smart-task' ? block.header.isCompleted : false;
-      } else if (parsed.line !== undefined) {
-        // markdown 来源：从待办行获取完成状态
-        const md = parentTask.markdown ?? '';
-        const lines = md.split(/\r?\n/);
-        if (parsed.line < 0 || parsed.line >= lines.length) continue;
-        const todoLine = lines[parsed.line];
-        isActuallyCompleted = todoLine.match(/^[-*]\s*\[x\]/i) !== null;
-      } else {
-        continue;
-      }
+      // blocks 来源：从 SmartTaskBlock 获取完成状态
+      const block = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
+      const isActuallyCompleted = block?.type === 'smart-task' ? block.header.isCompleted : false;
 
       if (item.completed !== isActuallyCompleted) {
-        scheduleStore.updateScheduledItem(selectedDate, item.id, {
+        updateScheduledItem(selectedDate, item.id, {
           completed: isActuallyCompleted,
         });
       }
     }
-  }, [timelineStore.tasks, daySchedule.items, selectedDate, scheduleStore]);
+  }, [tlTasks, daySchedule.items, selectedDate, updateScheduledItem]);
 
   // ── 时间块模式双向同步 ──────────────────────────────────
   useEffect(() => {
@@ -412,41 +360,30 @@ const DailyScheduleView: React.FC = () => {
     for (const tb of timeBlocks) {
       if (tb.source === 'review') {
         const reviewId = tb.sourceId.replace('review-', '');
-        const reviewTask = ebbStore.reviewTasks.find((t) => t.id === reviewId);
+        const reviewTask = ebbReviewTasks.find((t) => t.id === reviewId);
         if (!reviewTask) continue;
         if (tb.completed !== reviewTask.isCompleted) {
-          scheduleStore.updateTimeBlock(selectedDate, tb.id, {
+          updateTimeBlock(selectedDate, tb.id, {
             completed: reviewTask.isCompleted,
           });
         }
       } else if (tb.source === 'project') {
         const parsed = parseSourceId(tb.sourceId);
-        if (!parsed || parsed.source !== 'project') continue;
-        const parentTask = timelineStore.tasks.find((t) => t.id === parsed.parentTaskId);
+        if (!parsed || parsed.source !== 'project' || !parsed.blockId) continue;
+        const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
         if (!parentTask) continue;
 
-        let isActuallyCompleted: boolean;
-        if (parsed.blockId) {
-          const block = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
-          isActuallyCompleted = block?.type === 'smart-task' ? block.header.isCompleted : false;
-        } else if (parsed.line !== undefined) {
-          const md = parentTask.markdown ?? '';
-          const lines = md.split(/\r?\n/);
-          if (parsed.line < 0 || parsed.line >= lines.length) continue;
-          const todoLine = lines[parsed.line];
-          isActuallyCompleted = todoLine.match(/^[-*]\s*\[x\]/i) !== null;
-        } else {
-          continue;
-        }
+        const block = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
+        const isActuallyCompleted = block?.type === 'smart-task' ? block.header.isCompleted : false;
 
         if (tb.completed !== isActuallyCompleted) {
-          scheduleStore.updateTimeBlock(selectedDate, tb.id, {
+          updateTimeBlock(selectedDate, tb.id, {
             completed: isActuallyCompleted,
           });
         }
       }
     }
-  }, [ebbStore.reviewTasks, timelineStore.tasks, daySchedule.blocks, selectedDate, scheduleStore]);
+  }, [ebbReviewTasks, tlTasks, daySchedule.blocks, selectedDate, updateTimeBlock]);
 
   return (
     <div className="ds-page">

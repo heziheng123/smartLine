@@ -2,7 +2,7 @@
 // Smart Timeline - React App 根组件（独立网页版）
 // ============================================================
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import dayjs from 'dayjs';
 import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types';
 import { useTimelineStore } from '@/store';
@@ -15,14 +15,11 @@ import NoteDialog from '@/components/NoteDialog';
 import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
-import TodoAggregatorView from '@/components/TodoAggregatorView';
 import Sidebar, { type AppModule } from '@/components/Sidebar';
 import EbbView from '@/ebb/components/EbbView';
 import DailyScheduleView from '@/components/dailySchedule/DailyScheduleView';
 import ProjectDocumentView from '@/components/smartBlock/ProjectDocumentView';
 import WeekMatrixView from '@/components/smartBlock/WeekMatrixView';
-import { useTodos } from '@/hooks/useTodos';
-import { changeTodoDue, toggleTodoLine, migrateTodoSyntax } from '@/utils/markdown';
 
 import '@/styles/timeline.css';
 import '@/styles/ebb.css';
@@ -41,7 +38,6 @@ const App: React.FC = () => {
     notes,
     milestones,
     updateTask,
-    updateTaskMarkdown,
     deleteTask,
     toggleTaskComplete,
     addTask,
@@ -64,7 +60,6 @@ const App: React.FC = () => {
       notes: s.notes,
       milestones: s.milestones,
       updateTask: s.updateTask,
-      updateTaskMarkdown: s.updateTaskMarkdown,
       deleteTask: s.deleteTask,
       toggleTaskComplete: s.toggleTaskComplete,
       addTask: s.addTask,
@@ -92,7 +87,6 @@ const App: React.FC = () => {
       notes,
       milestones,
       updateTask,
-      updateTaskMarkdown,
       deleteTask,
       toggleTaskComplete,
       addTask,
@@ -115,7 +109,6 @@ const App: React.FC = () => {
       notes,
       milestones,
       updateTask,
-      updateTaskMarkdown,
       deleteTask,
       toggleTaskComplete,
       addTask,
@@ -158,31 +151,8 @@ const App: React.FC = () => {
     [drawerTaskId, store.tasks],
   );
 
-  // 视图切换：timeline（甘特图） / todo-view（待办汇总） / ebb（艾宾浩斯复习）
+  // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
   const [currentView, setCurrentView] = useState<AppModule>('timeline');
-
-  // ── 启动时一次性迁移旧语法（⏳/@date/@every-X → 📅/🔁） ────
-  // 幂等：已是新语法的任务不会触发写入。仅扫描有 markdown 的任务。
-  useEffect(() => {
-    let migrated = false;
-    for (const task of store.tasks) {
-      const md = task.markdown ?? '';
-      if (!md.trim()) continue;
-      const next = migrateTodoSyntax(md);
-      if (next !== md) {
-        store.updateTaskMarkdown(task.id, next);
-        migrated = true;
-      }
-    }
-    // 仅用于调试观察，无副作用
-    if (migrated) {
-      console.info('[markdown] 旧语法已迁移至 v2 协议（📅/🎯/✅/🔁）');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 从所有任务的 Markdown 中提取扁平化的待办列表
-  const allTodos = useTodos(store.tasks);
 
   // 年份显示
   const [displayYear, setDisplayYear] = useState(() => {
@@ -222,50 +192,6 @@ const App: React.FC = () => {
     store.deleteTask(taskId);
     setDrawerTaskId(null);
   }, [store]);
-
-  // 待办视图：点击卡片定位到所属大任务（打开右侧详情面板）
-  const handleTodoClick = useCallback((parentTaskId: string) => {
-    const task = store.tasks.find((t) => t.id === parentTaskId);
-    if (task) handleOpenDrawer(task);
-  }, [store, handleOpenDrawer]);
-
-  // 待办视图：拖拽改期 / 从待规划箱排期
-  // todoId 格式为 `${parentTaskId}-${line}`
-  const handleTodoDateChange = useCallback(
-    (todoId: string, newDate: string | undefined) => {
-      const lastDash = todoId.lastIndexOf('-');
-      if (lastDash === -1) return;
-      const parentTaskId = todoId.slice(0, lastDash);
-      const line = parseInt(todoId.slice(lastDash + 1), 10);
-      if (isNaN(line)) return;
-
-      const task = store.tasks.find((t) => t.id === parentTaskId);
-      if (!task) return;
-
-      const newMarkdown = changeTodoDue(task.markdown ?? '', line, newDate);
-      // 使用 updateTaskMarkdown 而非 updateTask，避免覆盖远端已更新的其他字段
-      store.updateTaskMarkdown(parentTaskId, newMarkdown);
-    },
-    [store],
-  );
-
-  // 待办视图：勾选/取消勾选
-  const handleTodoToggle = useCallback(
-    (todoId: string) => {
-      const lastDash = todoId.lastIndexOf('-');
-      if (lastDash === -1) return;
-      const parentTaskId = todoId.slice(0, lastDash);
-      const line = parseInt(todoId.slice(lastDash + 1), 10);
-      if (isNaN(line)) return;
-
-      const task = store.tasks.find((t) => t.id === parentTaskId);
-      if (!task) return;
-
-      const newMarkdown = toggleTodoLine(task.markdown ?? '', line);
-      store.updateTaskMarkdown(parentTaskId, newMarkdown);
-    },
-    [store],
-  );
 
   const handleAddTask = useCallback(() => {
     setEditingTask(undefined);
@@ -476,7 +402,7 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <div className={`tl-app ${currentView === 'ebb' ? 'tl-app--ebb' : ''}`}>
+    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix') ? 'tl-app--ebb' : ''}`}>
       <Sidebar current={currentView} onChange={setCurrentView} />
       {currentView !== 'ebb' && currentView !== 'daily-schedule' && currentView !== 'week-matrix' && (
         <Toolbar
@@ -490,8 +416,6 @@ const App: React.FC = () => {
           onExport={handleExport}
           onOpenSync={handleOpenSync}
           taskCount={store.tasks.length}
-          currentView={currentView}
-          onViewChange={(v) => setCurrentView(v)}
         />
       )}
 
@@ -521,29 +445,20 @@ const App: React.FC = () => {
           {/* 左右分屏容器：左侧内容视图 + 右侧任务详情面板 */}
           <div className="tl-app-split">
             <div className="tl-app-main">
-              {currentView === 'timeline' ? (
-                <TimelineView
-                  tasks={store.tasks}
-                  groups={store.groups}
-                  notes={store.notes}
-                  milestones={store.milestones}
-                  displayYear={displayYear}
-                  onTaskClick={handleOpenDrawer}
-                  onTaskContextMenu={handleTaskContextMenu}
-                  onNoteDoubleClick={handleEditNote}
-                  onNoteContextMenu={handleNoteContextMenu}
-                  onMilestoneDoubleClick={handleEditMilestone}
-                  onMilestoneContextMenu={handleMilestoneContextMenu}
-                  onGroupDoubleClick={handleEditGroup}
-                />
-              ) : (
-                <TodoAggregatorView
-                  todos={allTodos}
-                  onTaskClick={handleTodoClick}
-                  onTodoDateChange={handleTodoDateChange}
-                  onTodoToggle={handleTodoToggle}
-                />
-              )}
+              <TimelineView
+                tasks={store.tasks}
+                groups={store.groups}
+                notes={store.notes}
+                milestones={store.milestones}
+                displayYear={displayYear}
+                onTaskClick={handleOpenDrawer}
+                onTaskContextMenu={handleTaskContextMenu}
+                onNoteDoubleClick={handleEditNote}
+                onNoteContextMenu={handleNoteContextMenu}
+                onMilestoneDoubleClick={handleEditMilestone}
+                onMilestoneContextMenu={handleMilestoneContextMenu}
+                onGroupDoubleClick={handleEditGroup}
+              />
             </div>
 
             {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}

@@ -8,6 +8,7 @@ import { Cloud, Link, Unlink, Copy, Check } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
+import { useShallow } from 'zustand/react/shallow';
 
 interface SyncDialogProps {
   onClose: () => void;
@@ -22,7 +23,16 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     enableSync: tlEnableSync,
     disableSync: tlDisableSync,
     setSyncStatus: tlSetSyncStatus,
-  } = useTimelineStore();
+  } = useTimelineStore(
+    useShallow((s) => ({
+      syncEnabled: s.syncEnabled,
+      syncRoomCode: s.syncRoomCode,
+      syncStatus: s.syncStatus,
+      enableSync: s.enableSync,
+      disableSync: s.disableSync,
+      setSyncStatus: s.setSyncStatus,
+    })),
+  );
 
   const tlEnterRoom = useTimelineStore((state) => state.liveblocks?.enterRoom);
   const tlLeaveRoom = useTimelineStore((state) => state.liveblocks?.leaveRoom);
@@ -35,7 +45,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     enableSync: ebbEnableSync,
     disableSync: ebbDisableSync,
     setSyncStatus: ebbSetSyncStatus,
-  } = useEbbStore();
+  } = useEbbStore(
+    useShallow((s) => ({
+      syncEnabled: s.syncEnabled,
+      syncStatus: s.syncStatus,
+      enableSync: s.enableSync,
+      disableSync: s.disableSync,
+      setSyncStatus: s.setSyncStatus,
+    })),
+  );
 
   const ebbEnterRoom = useEbbStore((state) => state.liveblocks?.enterRoom);
   const ebbLeaveRoom = useEbbStore((state) => state.liveblocks?.leaveRoom);
@@ -48,7 +66,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     enableSync: dailyEnableSync,
     disableSync: dailyDisableSync,
     setSyncStatus: dailySetSyncStatus,
-  } = useDailyScheduleStore();
+  } = useDailyScheduleStore(
+    useShallow((s) => ({
+      syncEnabled: s.syncEnabled,
+      syncStatus: s.syncStatus,
+      enableSync: s.enableSync,
+      disableSync: s.disableSync,
+      setSyncStatus: s.setSyncStatus,
+    })),
+  );
 
   const dailyEnterRoom = useDailyScheduleStore((state) => state.liveblocks?.enterRoom);
   const dailyLeaveRoom = useDailyScheduleStore((state) => state.liveblocks?.leaveRoom);

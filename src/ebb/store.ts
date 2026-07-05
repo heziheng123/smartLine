@@ -109,9 +109,7 @@ interface EbbStore extends EbbData {
   // 复习任务
   addReviewTasks: (tasks: ReviewTask[]) => void;
   updateReviewTask: (id: string, patch: Partial<ReviewTask>) => void;
-  updateReviewTasks: (ids: string[], patch: Partial<ReviewTask>) => void;
   deleteReviewTask: (id: string) => void;
-  deleteTopicTasks: (topicName: string) => void;
   toggleReviewTask: (id: string) => string | null; // 返回错误消息，null 表示成功
   clearAllTasks: () => void;
   rescheduleOverdue: (taskIds: string[]) => void;
@@ -120,7 +118,6 @@ interface EbbStore extends EbbData {
   addInboxItem: (item: InboxItem) => void;
   updateInboxItem: (id: string, patch: Partial<InboxItem>) => void;
   deleteInboxItem: (id: string) => void;
-  stageInboxItems: (ids: string[]) => void;
   generateTasksFromInbox: (ids: string[]) => ReviewTask[];
 
   // 大纲
@@ -130,15 +127,11 @@ interface EbbStore extends EbbData {
   deleteOutlineNode: (id: string) => void;
 
   // 撤销
-  pushUndo: (entry: UndoEntry) => void;
   popUndo: () => UndoEntry | null;
-  clearUndo: () => void;
 
   // 设置
   updateSettings: (patch: Partial<EbbSettings>) => void;
   setTagColor: (tag: string, color: string) => void;
-  toggleCollapsedGroup: (groupId: string) => void;
-  setCalViewMode: (mode: 'month' | 'week') => void;
 
   // 导入导出
   importEbbData: (data: EbbData) => void;
@@ -210,23 +203,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           });
         },
 
-        updateReviewTasks: (ids, patch) => {
-          const idSet = new Set(ids);
-          set((state) => {
-            const reviewTasks = state.reviewTasks.map((t) =>
-              idSet.has(t.id) ? { ...t, ...patch } : t,
-            );
-            const newData: EbbData = {
-              reviewTasks,
-              inboxItems: state.inboxItems,
-              outlineNodes: state.outlineNodes,
-              ebbSettings: state.ebbSettings,
-            };
-            saveEbbData(newData);
-            return newData;
-          });
-        },
-
         rescheduleOverdue: (taskIds) => {
           const todayStr = dayjs().format('YYYY-MM-DD');
           const idSet = new Set(taskIds);
@@ -256,33 +232,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                     type: 'delete_topic' as const,
                     description: `删除「${deleted.topicName}」的第 ${getTaskRoundSafe(id, state.reviewTasks)} 轮`,
                     deletedTasks: [deleted],
-                    timestamp: Date.now(),
-                  },
-                  ...state.undoStack,
-                ].slice(0, state.ebbSettings.maxUndoStack)
-              : state.undoStack;
-            const newData: EbbData = {
-              reviewTasks,
-              inboxItems: state.inboxItems,
-              outlineNodes: state.outlineNodes,
-              ebbSettings: state.ebbSettings,
-            };
-            saveEbbData(newData);
-            return { ...newData, undoStack };
-          });
-        },
-
-        deleteTopicTasks: (topicName) => {
-          set((state) => {
-            const deleted = state.reviewTasks.filter((t) => t.topicName === topicName);
-            const reviewTasks = state.reviewTasks.filter((t) => t.topicName !== topicName);
-            const undoStack = deleted.length > 0
-              ? [
-                  {
-                    id: genId('undo'),
-                    type: 'delete_topic' as const,
-                    description: `删除主题「${topicName}」（${deleted.length} 个任务）`,
-                    deletedTasks: deleted,
                     timestamp: Date.now(),
                   },
                   ...state.undoStack,
@@ -410,23 +359,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         deleteInboxItem: (id) => {
           set((state) => {
             const inboxItems = state.inboxItems.filter((i) => i.id !== id);
-            const newData: EbbData = {
-              reviewTasks: state.reviewTasks,
-              inboxItems,
-              outlineNodes: state.outlineNodes,
-              ebbSettings: state.ebbSettings,
-            };
-            saveEbbData(newData);
-            return newData;
-          });
-        },
-
-        stageInboxItems: (ids) => {
-          set((state) => {
-            const idSet = new Set(ids);
-            const inboxItems = state.inboxItems.map((i) =>
-              idSet.has(i.id) ? { ...i, status: 'staged' as const } : i,
-            );
             const newData: EbbData = {
               reviewTasks: state.reviewTasks,
               inboxItems,
@@ -617,12 +549,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         // ── 撤销 ──────────────────────────────────────────
 
-        pushUndo: (entry) => {
-          set((state) => ({
-            undoStack: [entry, ...state.undoStack].slice(0, state.ebbSettings.maxUndoStack),
-          }));
-        },
-
         popUndo: () => {
           const state = get();
           if (state.undoStack.length === 0) return null;
@@ -635,7 +561,28 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             if (entry.deletedNodes && entry.deletedNodes.length > 0) {
               const existingIds = new Set(outlineNodes.map((n) => n.id));
               const nodesToRestore = entry.deletedNodes.filter((n) => !existingIds.has(n.id));
-              outlineNodes = [...outlineNodes, ...nodesToRestore].sort((a, b) => a.orderIndex - b.orderIndex);
+              // 收集需要重建父节点 childrenIds 的节点：parentId 存在且自身被恢复
+              const restoreByParent = new Map<string, string[]>();
+              for (const n of nodesToRestore) {
+                if (n.parentId) {
+                  const list = restoreByParent.get(n.parentId) ?? [];
+                  list.push(n.id);
+                  restoreByParent.set(n.parentId, list);
+                }
+              }
+              outlineNodes = [...outlineNodes, ...nodesToRestore]
+                .map((n) => {
+                  // 若该节点是父节点，把恢复的子节点 id 加回 childrenIds（去重）
+                  const restoreChildren = restoreByParent.get(n.id);
+                  if (!restoreChildren) return n;
+                  const existing = new Set(n.childrenIds);
+                  const merged = [...n.childrenIds];
+                  for (const cid of restoreChildren) {
+                    if (!existing.has(cid)) merged.push(cid);
+                  }
+                  return { ...n, childrenIds: merged };
+                })
+                .sort((a, b) => a.orderIndex - b.orderIndex);
             }
             const newData: EbbData = {
               reviewTasks,
@@ -651,8 +598,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           });
           return entry;
         },
-
-        clearUndo: () => set({ undoStack: [] }),
 
         // ── 设置 ──────────────────────────────────────────
 
@@ -676,38 +621,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               ...state.ebbSettings,
               tagColors: { ...state.ebbSettings.tagColors, [tag]: color },
             };
-            const newData: EbbData = {
-              reviewTasks: state.reviewTasks,
-              inboxItems: state.inboxItems,
-              outlineNodes: state.outlineNodes,
-              ebbSettings,
-            };
-            saveEbbData(newData);
-            return { ebbSettings };
-          });
-        },
-
-        toggleCollapsedGroup: (groupId) => {
-          set((state) => {
-            const collapsed = state.ebbSettings.collapsedGroups.includes(groupId);
-            const collapsedGroups = collapsed
-              ? state.ebbSettings.collapsedGroups.filter((g) => g !== groupId)
-              : [...state.ebbSettings.collapsedGroups, groupId];
-            const ebbSettings = { ...state.ebbSettings, collapsedGroups };
-            const newData: EbbData = {
-              reviewTasks: state.reviewTasks,
-              inboxItems: state.inboxItems,
-              outlineNodes: state.outlineNodes,
-              ebbSettings,
-            };
-            saveEbbData(newData);
-            return { ebbSettings };
-          });
-        },
-
-        setCalViewMode: (mode) => {
-          set((state) => {
-            const ebbSettings = { ...state.ebbSettings, calViewMode: mode };
             const newData: EbbData = {
               reviewTasks: state.reviewTasks,
               inboxItems: state.inboxItems,
@@ -752,8 +665,22 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             outlineNodes: Array.isArray(data?.outlineNodes) ? data.outlineNodes.filter(isValidOutlineNode) : [],
             ebbSettings: { ...DEFAULT_EBB_SETTINGS, ...(data?.ebbSettings ?? {}) },
           };
-          saveEbbData(normalized);
-          set({ ...normalized, undoStack: [] });
+
+          // 按 id 合并：保留本地未在导入数据中的条目，避免多端并发场景下
+          // 整体覆盖冲掉他端刚刚更新的字段。同 id 时以导入数据为准。
+          const current = get();
+          const mergeById = <T extends { id: string }>(existing: T[], imported: T[]): T[] => {
+            const importedIds = new Set(imported.map((x) => x.id));
+            return [...existing.filter((x) => !importedIds.has(x.id)), ...imported];
+          };
+          const merged: EbbData = {
+            reviewTasks: mergeById(current.reviewTasks, normalized.reviewTasks),
+            inboxItems: mergeById(current.inboxItems, normalized.inboxItems),
+            outlineNodes: mergeById(current.outlineNodes, normalized.outlineNodes),
+            ebbSettings: normalized.ebbSettings,
+          };
+          saveEbbData(merged);
+          set({ ...merged, undoStack: [] });
         },
 
         exportEbbData: () => {
@@ -782,7 +709,7 @@ function getTaskRoundSafe(taskId: string, tasks: ReviewTask[]): number {
   if (!task) return 0;
   const sameTopic = tasks
     .filter((t) => t.topicName === task.topicName)
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
   return sameTopic.findIndex((t) => t.id === taskId) + 1;
 }
 

@@ -52,10 +52,6 @@ export interface Task {
   completed?: boolean;    // 是否已完成（显示删除线样式）
   notePath?: string;      // 关联笔记路径（网页版为链接或备注）
   groupId?: string;       // 所属分组 ID
-  /** @deprecated 使用 blocks 替代 */
-  markdown?: string;          // 旧字段，保留用于迁移
-  /** @deprecated */
-  markdownUpdatedAt?: string;
   /** 智能任务块数组（新数据载体） */
   blocks: Block[];
   blocksUpdatedAt?: string;   // blocks 上次保存时间（ISO 字符串）
@@ -231,6 +227,3 @@ export interface AggregatedTodo {
   /** 复杂度 */
   _complexity?: 'easy' | 'normal' | 'hard';
 }
-
-/** 待办汇总视图的模式 */
-export type TodoViewMode = 'day' | 'week' | 'month';

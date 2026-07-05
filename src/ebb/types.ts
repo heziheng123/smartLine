@@ -104,14 +104,6 @@ export interface ReviewTaskWithRound extends ReviewTask {
   points: number;
 }
 
-/** 日历日负载 */
-export interface DayLoad {
-  date: string;
-  taskCount: number;
-  points: number;
-  completedCount: number;
-}
-
 /** 标签统计 */
 export interface TagStat {
   tag: string;

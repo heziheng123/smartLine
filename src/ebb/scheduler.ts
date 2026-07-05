@@ -4,7 +4,7 @@
 // ============================================================
 
 import dayjs from 'dayjs';
-import type { ReviewTask, ComplexityLevel, DayLoad, TagStat, TopicStat, EbbSettings } from './types';
+import type { ReviewTask, ComplexityLevel, TagStat, TopicStat, EbbSettings } from './types';
 import { getPointWeight, getIntervalsForComplexity } from './complexity';
 
 // ── 工具函数 ────────────────────────────────────────────────
@@ -272,61 +272,6 @@ export function checkCanComplete(
   return null;
 }
 
-// ── 日负载计算 ──────────────────────────────────────────────
-
-/**
- * 计算指定日期范围内的日负载
- */
-export function computeDayLoads(
-  tasks: ReviewTask[],
-  startDate: string,
-  endDate: string,
-  settings?: EbbSettings,
-): DayLoad[] {
-  const loads: DayLoad[] = [];
-  const map = new Map<string, ReviewTask[]>();
-  for (const t of tasks) {
-    if (!map.has(t.dueDate)) map.set(t.dueDate, []);
-    map.get(t.dueDate)!.push(t);
-  }
-
-  let cursor = dayjs(startDate);
-  const end = dayjs(endDate);
-  while (cursor.isBefore(end) || cursor.isSame(end, 'day')) {
-    const dateStr = cursor.format('YYYY-MM-DD');
-    const dayTasks = map.get(dateStr) ?? [];
-    let points = 0;
-    if (settings) {
-      points = dayTasks.reduce((sum, t) => {
-        const round = getTaskRound(t.id, tasks);
-        return sum + (t.complexity ? getPointWeight(round, t.complexity, settings.complexityConfigs) : 0);
-      }, 0);
-    }
-    loads.push({
-      date: dateStr,
-      taskCount: dayTasks.length,
-      points,
-      completedCount: dayTasks.filter((t) => t.isCompleted).length,
-    });
-    cursor = cursor.add(1, 'day');
-  }
-  return loads;
-}
-
-/**
- * 根据积分数获取热力图色阶索引
- */
-export function getHeatmapLevel(points: number, maxPoints: number): number {
-  if (points <= 0) return 0;
-  if (maxPoints <= 0) return 1;
-  const ratio = points / maxPoints;
-  if (ratio < 0.2) return 1;
-  if (ratio < 0.4) return 2;
-  if (ratio < 0.6) return 3;
-  if (ratio < 0.8) return 4;
-  return 5;
-}
-
 // ── 统计计算 ────────────────────────────────────────────────
 
 /**
@@ -385,7 +330,7 @@ export function computeTopicStats(
     const pendingRounds = totalRounds - completedRounds;
     const futurePending = group
       .filter((t) => !t.isCompleted && !isOverdue(t))
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
     const nextDueDate = futurePending[0]?.dueDate;
 
     let earnedPoints = 0;
@@ -457,25 +402,6 @@ export function calcWeekPoints(tasks: ReviewTask[], settings?: EbbSettings): num
       : getPointWeight(round, t.complexity);
   }
   return sum;
-}
-
-// ── 逾期处理 ────────────────────────────────────────────────
-
-/**
- * 自动处理逾期任务（标记或顺延）。
- * 当前策略：返回需要顺延的任务列表（dueDate 改为今天）
- */
-export function processOverdueTasks(
-  tasks: ReviewTask[],
-  thresholdDays: number,
-): ReviewTask[] {
-  const today = dayjs().startOf('day');
-  const threshold = today.subtract(thresholdDays, 'day');
-  const todayStr = today.format('YYYY-MM-DD');
-
-  return tasks
-    .filter((t) => !t.isCompleted && dayjs(t.dueDate).isBefore(threshold))
-    .map((t) => ({ ...t, dueDate: todayStr, smStatus: 'scheduled' as const }));
 }
 
 // ── 日期标签智能显示 ────────────────────────────────────────

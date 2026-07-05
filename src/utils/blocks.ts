@@ -3,7 +3,7 @@
 // Block 数据的 CRUD / 迁移 / 查询
 // ============================================================
 
-import type { Block, TextBlock, SmartTaskBlock, SmartTaskHeader, Task } from '@/types';
+import type { Block, SmartTaskBlock, SmartTaskHeader, Task } from '@/types';
 import { extractTodos, type TodoItem } from './markdown';
 
 // ── ID 生成 ────────────────────────────────────────────────
@@ -49,7 +49,8 @@ export function getTagColor(tag: string, existingMap?: Record<string, string>): 
  *   - 若 markdown 为空，返回单个 TextBlock 占位
  */
 export function migrateMarkdownToBlocks(task: Task, tagColorMap?: Record<string, string>): Block[] {
-  const md = task.markdown?.trim();
+  // 一次性迁移：从历史 markdown 字段（已从类型移除）解析
+  const md = (task as Task & { markdown?: string }).markdown?.trim();
   if (!md) {
     return [{ type: 'text', id: genBlockId(), content: '' }];
   }
@@ -105,8 +106,8 @@ export function migrateMarkdownToBlocks(task: Task, tagColorMap?: Record<string,
           title: cleanTitle || todo.text,
           tag,
           tagColor: getTagColor(tag, tagColorMap),
-          date: todo.due || todo.scheduled || task.start,
-          deadline: todo.due && todo.scheduled ? todo.due : undefined,
+          date: todo.scheduled || todo.due || task.start,
+          deadline: todo.due,
           duration: 30,
           isCompleted: todo.done,
           completedDate: todo.doneDate,
@@ -161,15 +162,6 @@ export function getSmartTaskBlocks(blocks: Block[]): SmartTaskBlock[] {
   return blocks.filter((b): b is SmartTaskBlock => b.type === 'smart-task');
 }
 
-/** 获取所有标签（去重） */
-export function getAllTags(blocks: Block[]): string[] {
-  const tags = new Set<string>();
-  for (const b of blocks) {
-    if (b.type === 'smart-task') tags.add(b.header.tag);
-  }
-  return Array.from(tags);
-}
-
 /** 统计完成进度 */
 export function computeBlockProgress(blocks: Block[]): { total: number; done: number; ratio: number } {
   const tasks = getSmartTaskBlocks(blocks);
@@ -180,35 +172,14 @@ export function computeBlockProgress(blocks: Block[]): { total: number; done: nu
 
 // ── Block CRUD 操作 ────────────────────────────────────────
 
-/** 在指定索引位置插入 block */
-export function insertBlock(blocks: Block[], index: number, block: Block): Block[] {
-  const next = [...blocks];
-  next.splice(index, 0, block);
-  return next;
-}
-
 /** 追加 block 到末尾 */
-export function appendBlock(blocks: Block[], block: Block): Block[] {
-  return [...blocks, block];
-}
-
-/** 更新指定 block */
-export function updateBlock(blocks: Block[], blockId: string, patch: Partial<TextBlock> | Partial<SmartTaskBlock>): Block[] {
-  return blocks.map(b => {
-    if (b.id !== blockId) return b;
-    if (b.type === 'text' && patch.type === 'text') {
-      return { ...b, ...patch } as TextBlock;
-    }
-    if (b.type === 'smart-task' && patch.type === 'smart-task') {
-      return { ...b, ...patch } as SmartTaskBlock;
-    }
-    return b;
-  });
+export function appendBlock(blocks: Block[] | undefined, block: Block): Block[] {
+  return [...(blocks ?? []), block];
 }
 
 /** 更新 SmartTaskBlock 的 header */
-export function updateBlockHeader(blocks: Block[], blockId: string, headerPatch: Partial<SmartTaskHeader>): Block[] {
-  return blocks.map(b => {
+export function updateBlockHeader(blocks: Block[] | undefined, blockId: string, headerPatch: Partial<SmartTaskHeader>): Block[] {
+  return (blocks ?? []).map(b => {
     if (b.type !== 'smart-task' || b.id !== blockId) return b;
     return {
       ...b,
@@ -218,6 +189,6 @@ export function updateBlockHeader(blocks: Block[], blockId: string, headerPatch:
 }
 
 /** 删除指定 block */
-export function deleteBlock(blocks: Block[], blockId: string): Block[] {
-  return blocks.filter(b => b.id !== blockId);
+export function deleteBlock(blocks: Block[] | undefined, blockId: string): Block[] {
+  return (blocks ?? []).filter(b => b.id !== blockId);
 }

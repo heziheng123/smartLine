@@ -3,13 +3,14 @@
 // 书籍/章节/知识点三级树形结构 + 进度统计 + 大纲管理
 // ============================================================
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Search, ChevronRight, BookOpen, Plus, Trash2, Edit3,
   FileText, X, ClipboardPaste,
 } from 'lucide-react';
 import { useEbbStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { genId, generateTasks, isOverdue, computeRounds } from '../scheduler';
 import { getIntervalsForComplexity } from '../complexity';
 import type { ReviewTask, EbbSettings, StudyOutlineNode, OutlineNodeType, ComplexityLevel } from '../types';
@@ -28,6 +29,14 @@ const DirectoryView: React.FC<DirectoryViewProps> = ({ tasks, nodes, settings, t
   const [filterBookId, setFilterBookId] = useState<string>('');
   const [manageOpen, setManageOpen] = useState(false);
   const [generateNode, setGenerateNode] = useState<StudyOutlineNode | null>(null);
+
+  // 父层订阅 store（仅取 TreeNode 需要的稳定方法引用，避免每个 TreeNode 单独订阅整个 store）
+  const { updateOutlineNode } = useEbbStore(
+    useShallow((s) => ({ updateOutlineNode: s.updateOutlineNode })),
+  );
+
+  // 上提 computeRounds 到父层（原 TreeNode 每节点调用一次 → O(n²)）
+  const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
 
   const nodeMap = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
@@ -79,7 +88,7 @@ const DirectoryView: React.FC<DirectoryViewProps> = ({ tasks, nodes, settings, t
       const pending = total - completed;
       const future = linked
         .filter((t) => !t.isCompleted && !isOverdue(t))
-        .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+        .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
       return { total, completed, pending, overdue, nextDate: future[0]?.dueDate };
     },
     [tasks, getChildren],
@@ -144,6 +153,9 @@ const DirectoryView: React.FC<DirectoryViewProps> = ({ tasks, nodes, settings, t
               getNodePath={getNodePath}
               taskActions={taskActions}
               onOpenGenerate={setGenerateNode}
+              roundMap={roundMap}
+              totalRoundsMap={totalRoundsMap}
+              updateOutlineNode={updateOutlineNode}
             />
           ))
         )}
@@ -179,20 +191,22 @@ interface TreeNodeProps {
   getNodePath: (nodeId: string) => string;
   taskActions: TaskActions;
   onOpenGenerate: (node: StudyOutlineNode) => void;
+  roundMap: Map<string, number>;
+  totalRoundsMap: Map<string, number>;
+  updateOutlineNode: (id: string, patch: Partial<StudyOutlineNode>) => void;
 }
 
-const TreeNode: React.FC<TreeNodeProps> = ({
+const TreeNode: React.FC<TreeNodeProps> = memo(({
   node, level, settings, query, filterStatus,
   getChildren, getLinkedTasks, getNodeStat, getNodePath, taskActions, onOpenGenerate,
+  roundMap, totalRoundsMap, updateOutlineNode,
 }) => {
-  const store = useEbbStore();
   const [expanded, setExpanded] = useState(level === 0);
   const [editingTag, setEditingTag] = useState(false);
   const [tagInput, setTagInput] = useState(node.defaultTag || '');
   const children = getChildren(node.id);
   const stat = getNodeStat(node.id);
   const linkedTasks = getLinkedTasks(node.id);
-  const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(store.reviewTasks), [store.reviewTasks]);
 
   const matchesQuery = !query || node.name.toLowerCase().includes(query.toLowerCase());
 
@@ -210,9 +224,9 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const isBook = node.type === 'book';
 
   const handleSaveTag = useCallback(() => {
-    store.updateOutlineNode(node.id, { defaultTag: tagInput.trim() || undefined });
+    updateOutlineNode(node.id, { defaultTag: tagInput.trim() || undefined });
     setEditingTag(false);
-  }, [node.id, tagInput, store]);
+  }, [node.id, tagInput, updateOutlineNode]);
 
   const countSections = useCallback((n: StudyOutlineNode): number => {
     const kids = getChildren(n.id);
@@ -347,13 +361,16 @@ const TreeNode: React.FC<TreeNodeProps> = ({
           getNodePath={getNodePath}
           taskActions={taskActions}
           onOpenGenerate={onOpenGenerate}
+          roundMap={roundMap}
+          totalRoundsMap={totalRoundsMap}
+          updateOutlineNode={updateOutlineNode}
         />
       ))}
 
       {/* 展开知识点关联的任务详情 */}
       {expanded && isSection && linkedTasks.length > 0 && (
         <div className="eb-tree-tasks">
-          {linkedTasks.sort((a, b) => a.dueDate.localeCompare(b.dueDate)).map((t) => {
+          {linkedTasks.sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')).map((t) => {
             const round = roundMap.get(t.id) ?? 0;
             const total = totalRoundsMap.get(t.topicName) ?? 0;
             return (
@@ -394,7 +411,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
       )}
     </div>
   );
-};
+});
 
 // ── 生成任务弹窗 ────────────────────────────────────────────
 interface GenerateTaskModalProps {
@@ -405,7 +422,13 @@ interface GenerateTaskModalProps {
 }
 
 const GenerateTaskModal: React.FC<GenerateTaskModalProps> = ({ node, nodePath, settings, onClose }) => {
-  const store = useEbbStore();
+  const { reviewTasks, ebbSettings, addReviewTasks } = useEbbStore(
+    useShallow((s) => ({
+      reviewTasks: s.reviewTasks,
+      ebbSettings: s.ebbSettings,
+      addReviewTasks: s.addReviewTasks,
+    })),
+  );
   const [name, setName] = useState(node.name);
   const [tag, setTag] = useState(node.defaultTag || '');
   const [complexity, setComplexity] = useState<ComplexityLevel>('normal');
@@ -440,25 +463,25 @@ const GenerateTaskModal: React.FC<GenerateTaskModalProps> = ({ node, nodePath, s
           intervals: parsedIntervals,
           outlineNodeId: node.id,
         },
-        store.reviewTasks,
-        store.ebbSettings,
+        reviewTasks,
+        ebbSettings,
       );
       return result.tasks;
     } catch {
       return [];
     }
-  }, [name, tag, complexity, startDate, parsedIntervals, node.id, store.reviewTasks, store.ebbSettings]);
+  }, [name, tag, complexity, startDate, parsedIntervals, node.id, reviewTasks, ebbSettings]);
 
   const handleConfirm = useCallback(() => {
     if (!name.trim() || parsedIntervals.length === 0 || previewTasks.length === 0) return;
     try {
-      store.addReviewTasks(previewTasks);
+      addReviewTasks(previewTasks);
       onClose();
     } catch (e) {
       console.error('[ebb] 生成任务失败：', e);
       alert('生成任务失败，请检查输入参数');
     }
-  }, [name, parsedIntervals, previewTasks, store, onClose]);
+  }, [name, parsedIntervals, previewTasks, addReviewTasks, onClose]);
 
   return createPortal(
     <div className="eb-modal-overlay" onClick={onClose}>
@@ -560,8 +583,23 @@ const GenerateTaskModal: React.FC<GenerateTaskModalProps> = ({ node, nodePath, s
 
 // ── 管理目录弹窗 ────────────────────────────────────────────
 const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const store = useEbbStore();
-  const nodes = store.outlineNodes;
+  const {
+    outlineNodes: nodes,
+    ebbSettings,
+    addOutlineNode,
+    addOutlineNodes,
+    updateOutlineNode,
+    deleteOutlineNode,
+  } = useEbbStore(
+    useShallow((s) => ({
+      outlineNodes: s.outlineNodes,
+      ebbSettings: s.ebbSettings,
+      addOutlineNode: s.addOutlineNode,
+      addOutlineNodes: s.addOutlineNodes,
+      updateOutlineNode: s.updateOutlineNode,
+      deleteOutlineNode: s.deleteOutlineNode,
+    })),
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editTag, setEditTag] = useState('');
@@ -626,11 +664,11 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       defaultTag: inheritedTag,
       childrenIds: [],
     };
-    store.addOutlineNode(newNode);
+    addOutlineNode(newNode);
     setAddName('');
     setAddTag('');
     setAddParentId(null);
-  }, [addName, addType, addTag, addParentId, getChildren, store, findBookDefaultTag]);
+  }, [addName, addType, addTag, addParentId, getChildren, addOutlineNode, findBookDefaultTag]);
 
   const handleAddBook = useCallback(() => {
     if (!newBookName.trim()) return;
@@ -643,11 +681,11 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       defaultTag: newBookTag.trim() || undefined,
       childrenIds: [],
     };
-    store.addOutlineNode(newNode);
+    addOutlineNode(newNode);
     setNewBookName('');
     setNewBookTag('');
     setAddBookOpen(false);
-  }, [rootNodes.length, store, newBookName, newBookTag]);
+  }, [rootNodes.length, addOutlineNode, newBookName, newBookTag]);
 
   const handleStartEdit = useCallback((node: StudyOutlineNode) => {
     setEditingId(node.id);
@@ -657,14 +695,14 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   const handleSaveEdit = useCallback(() => {
     if (!editingId || !editName.trim()) return;
-    store.updateOutlineNode(editingId, { name: editName.trim(), defaultTag: editTag.trim() || undefined });
+    updateOutlineNode(editingId, { name: editName.trim(), defaultTag: editTag.trim() || undefined });
     setEditingId(null);
-  }, [editingId, editName, editTag, store]);
+  }, [editingId, editName, editTag, updateOutlineNode]);
 
   const handleDelete = useCallback((id: string) => {
     if (!confirm('确认删除该节点及其所有子节点？')) return;
-    store.deleteOutlineNode(id);
-  }, [store]);
+    deleteOutlineNode(id);
+  }, [deleteOutlineNode]);
 
   // 粘贴目录解析
   const handlePasteImport = useCallback(() => {
@@ -749,13 +787,13 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     }
 
     if (newNodes.length > 1) {
-      store.addOutlineNodes(newNodes);
+      addOutlineNodes(newNodes);
     }
     setPasteOpen(false);
     setPasteText('');
     setPasteBookName('');
     setPasteBookTag('');
-  }, [pasteText, pasteBookName, pasteBookTag, store]);
+  }, [pasteText, pasteBookName, pasteBookTag, addOutlineNodes]);
 
   // 递归渲染管理树
   const renderManageNode = (node: StudyOutlineNode, level: number): React.ReactNode => {
@@ -894,7 +932,7 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         <GenerateTaskModal
           node={generateNode}
           nodePath={getNodePath(generateNode.id)}
-          settings={store.ebbSettings}
+          settings={ebbSettings}
           onClose={() => setGenerateNode(null)}
         />
       )}

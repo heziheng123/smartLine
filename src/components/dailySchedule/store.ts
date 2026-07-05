@@ -51,14 +51,20 @@ function loadSchedules(): Record<string, DaySchedule> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Record<string, DaySchedule>;
-      // 兼容旧数据：补充 blocks 字段
-      for (const key of Object.keys(parsed)) {
-        if (!parsed[key].blocks) {
-          parsed[key].blocks = [];
-        }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object') return {};
+      const result: Record<string, DaySchedule> = {};
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        // 跳过非法条目（远端 LWW 合并冲突 / JSON 损坏时可能出现 null 或非对象）
+        if (!value || typeof value !== 'object') continue;
+        const v = value as Partial<DaySchedule>;
+        result[key] = {
+          date: typeof v.date === 'string' ? v.date : key,
+          items: Array.isArray(v.items) ? v.items : [],
+          blocks: Array.isArray(v.blocks) ? v.blocks : [],
+        };
       }
-      return parsed;
+      return result;
     }
   } catch { /* ignore */ }
   return {};
@@ -109,9 +115,6 @@ interface DailyScheduleStore {
 
   /** 更新安排项 */
   updateScheduledItem: (date: string, itemId: string, patch: Partial<ScheduledItem>) => void;
-
-  /** 清空某日安排 */
-  clearDaySchedule: (date: string) => void;
 
   // ── 时间块模式方法 ────────────────────────────────────────
 
@@ -272,15 +275,6 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
           });
         },
 
-        clearDaySchedule: (date) => {
-          set((state) => {
-            const schedules = { ...state.schedules };
-            schedules[date] = { date, items: [], blocks: [] };
-            saveSchedules(schedules);
-            return { schedules };
-          });
-        },
-
         // ── 时间块方法实现 ────────────────────────────────────
 
         addTimeBlock: (date, block) => {
@@ -288,7 +282,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             const schedules = { ...state.schedules };
             const day = schedules[date] ?? { date, items: [], blocks: [] };
             const newBlock: TimeBlock = { ...block, id: genScheduleId() };
-            schedules[date] = { ...day, blocks: [...day.blocks, newBlock] };
+            schedules[date] = { ...day, blocks: [...(day.blocks ?? []), newBlock] };
             saveSchedules(schedules);
             return { schedules };
           });
@@ -299,7 +293,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             const schedules = { ...state.schedules };
             const day = schedules[date];
             if (!day) return state;
-            const blocks = day.blocks.map((b) =>
+            const blocks = (day.blocks ?? []).map((b) =>
               b.id === blockId ? { ...b, ...patch } : b,
             );
             schedules[date] = { ...day, blocks };
@@ -313,7 +307,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             const schedules = { ...state.schedules };
             const day = schedules[date];
             if (!day) return state;
-            const blocks = day.blocks.filter((b) => b.id !== blockId);
+            const blocks = (day.blocks ?? []).filter((b) => b.id !== blockId);
             schedules[date] = { ...day, blocks };
             saveSchedules(schedules);
             return { schedules };
@@ -325,7 +319,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             const schedules = { ...state.schedules };
             const day = schedules[date];
             if (!day) return state;
-            const blocks = day.blocks.map((b) =>
+            const blocks = (day.blocks ?? []).map((b) =>
               b.id === blockId ? { ...b, completed: !b.completed } : b,
             );
             schedules[date] = { ...day, blocks };
@@ -339,7 +333,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             const schedules = { ...state.schedules };
             const day = schedules[date];
             if (!day) return state;
-            const blocks = day.blocks.map((b) =>
+            const blocks = (day.blocks ?? []).map((b) =>
               b.id === blockId ? { ...b, startTime, endTime } : b,
             );
             schedules[date] = { ...day, blocks };

@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { X, Calendar, Trash2, Plus } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useEbbStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { computeRounds, getDateLabel, suggestNextInterval, isOverdue, genId } from '../scheduler';
 import { getPointWeight } from '../complexity';
 import { parseIntervals } from '../complexity';
@@ -20,22 +21,38 @@ interface RoundsPanelProps {
 }
 
 const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
-  const store = useEbbStore();
+  const {
+    reviewTasks,
+    ebbSettings,
+    updateReviewTask,
+    deleteReviewTask,
+    addReviewTasks,
+    toggleReviewTask,
+  } = useEbbStore(
+    useShallow((s) => ({
+      reviewTasks: s.reviewTasks,
+      ebbSettings: s.ebbSettings,
+      updateReviewTask: s.updateReviewTask,
+      deleteReviewTask: s.deleteReviewTask,
+      addReviewTasks: s.addReviewTasks,
+      toggleReviewTask: s.toggleReviewTask,
+    })),
+  );
   const [datePickerTaskId, setDatePickerTaskId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // 该主题所有任务，按 dueDate 升序
   const topicTasks = useMemo(
     () =>
-      store.reviewTasks
+      reviewTasks
         .filter((t) => t.topicName === topicName)
-        .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [store.reviewTasks, topicName],
+        .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')),
+    [reviewTasks, topicName],
   );
 
   const { roundMap, totalRoundsMap } = useMemo(
-    () => computeRounds(store.reviewTasks),
-    [store.reviewTasks],
+    () => computeRounds(reviewTasks),
+    [reviewTasks],
   );
 
   const totalRounds = totalRoundsMap.get(topicName) ?? topicTasks.length;
@@ -49,13 +66,13 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
     for (const t of topicTasks) {
       const round = roundMap.get(t.id) ?? 0;
       if (t.complexity) {
-        const w = getPointWeight(round, t.complexity, store.ebbSettings.complexityConfigs);
+        const w = getPointWeight(round, t.complexity, ebbSettings.complexityConfigs);
         total += w;
         if (t.isCompleted) earned += w;
       }
     }
     return { earned, total };
-  }, [topicTasks, roundMap, store.ebbSettings.complexityConfigs]);
+  }, [topicTasks, roundMap, ebbSettings.complexityConfigs]);
 
   // 改期
   const handleReschedule = useCallback((taskId: string) => {
@@ -65,20 +82,20 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
   const handleDateSelect = useCallback(
     (newDate: string | undefined) => {
       if (datePickerTaskId && newDate) {
-        store.updateReviewTask(datePickerTaskId, { dueDate: newDate });
+        updateReviewTask(datePickerTaskId, { dueDate: newDate });
       }
       setDatePickerTaskId(null);
     },
-    [datePickerTaskId, store],
+    [datePickerTaskId, updateReviewTask],
   );
 
   // 删除单轮
   const handleDeleteRound = useCallback(
     (id: string) => {
-      store.deleteReviewTask(id);
+      deleteReviewTask(id);
       setConfirmDeleteId(null);
     },
-    [store],
+    [deleteReviewTask],
   );
 
   // 追加一轮
@@ -89,7 +106,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
     const nextInterval = suggestNextInterval(
       completedRounds,
       lastTask.complexity,
-      parseIntervals(store.ebbSettings.customIntervals) ?? undefined,
+      parseIntervals(ebbSettings.customIntervals) ?? undefined,
     );
     const baseDate = lastTask ? dayjs(lastTask.dueDate) : dayjs();
     let newDate = baseDate.add(nextInterval, 'day').format('YYYY-MM-DD');
@@ -100,7 +117,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
       newDate = dayjs(newDate).add(1, 'day').format('YYYY-MM-DD');
     }
 
-    store.addReviewTasks([
+    addReviewTasks([
       {
         id: genId('rt'),
         topicName,
@@ -111,21 +128,21 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
         smStatus: 'scheduled',
       },
     ]);
-  }, [topicTasks, topicName, store]);
+  }, [topicTasks, topicName, ebbSettings.customIntervals, addReviewTasks]);
 
   // 勾选
   const handleToggle = useCallback(
     (id: string) => {
-      store.toggleReviewTask(id);
+      toggleReviewTask(id);
     },
-    [store],
+    [toggleReviewTask],
   );
 
   // 当前改期任务的 dueDate
   const datePickerValue = useMemo(() => {
     if (!datePickerTaskId) return undefined;
-    return store.reviewTasks.find((t) => t.id === datePickerTaskId)?.dueDate;
-  }, [datePickerTaskId, store.reviewTasks]);
+    return reviewTasks.find((t) => t.id === datePickerTaskId)?.dueDate;
+  }, [datePickerTaskId, reviewTasks]);
 
   return createPortal(
     <div className="eb-panel-overlay" onClick={onClose}>
@@ -168,7 +185,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
               const color = ROUND_COLORS[(round - 1) % ROUND_COLORS.length];
               const dateLabel = getDateLabel(t.dueDate, t.isCompleted);
               const points = t.complexity
-                ? getPointWeight(round, t.complexity, store.ebbSettings.complexityConfigs)
+                ? getPointWeight(round, t.complexity, ebbSettings.complexityConfigs)
                 : 0;
               const overdue = isOverdue(t);
               const isConfirming = confirmDeleteId === t.id;

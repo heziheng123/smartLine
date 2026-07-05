@@ -7,7 +7,7 @@ import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { createClient } from '@liveblocks/client';
 import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
-import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, insertBlock } from '@/utils/blocks';
+import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock } from '@/utils/blocks';
 
 const STORAGE_KEY = 'smart-timeline-data';
 const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
@@ -100,17 +100,27 @@ function loadData(): TimelineData {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      const tasks = (parsed.tasks ?? []).map((t: Task) => {
-        // 自动迁移：有 markdown 但无 blocks → 生成 blocks
-        if (t.markdown && (!t.blocks || t.blocks.length === 0)) {
-          return { ...t, blocks: migrateMarkdownToBlocks(t) };
+      const normalizeTask = (t: Task): Task => {
+        const task = { ...t } as Task & { markdown?: string };
+        // 一次性迁移：残留 markdown 字段 → 生成 blocks 后清空
+        if (task.markdown && (!task.blocks || task.blocks.length === 0)) {
+          const blocks = migrateMarkdownToBlocks(t);
+          delete task.markdown;
+          return { ...task, blocks };
         }
-        // 确保 blocks 字段存在
-        return { ...t, blocks: t.blocks ?? [] };
-      });
+        // 确保 blocks 字段存在；同时清掉历史残留的 markdown 字段
+        delete task.markdown;
+        return { ...task, blocks: task.blocks ?? [] };
+      };
+      const tasks = (parsed.tasks ?? []).map(normalizeTask);
+      // 同步规范化 groups.children，确保每个 child 都有 blocks 字段（防止 deleteBlock 等操作踩到 undefined）
+      const groups = (parsed.groups ?? []).map((g: { children?: Task[] }) => ({
+        ...g,
+        children: Array.isArray(g.children) ? g.children.map(normalizeTask) : [],
+      }));
       return {
         tasks,
-        groups: parsed.groups ?? [],
+        groups,
         notes: parsed.notes ?? [],
         milestones: parsed.milestones ?? [],
       };
@@ -156,14 +166,17 @@ interface TimelineStore extends TimelineData {
   updateTask: (task: Task) => void;
   deleteTask: (taskId: string) => void;
   toggleTaskComplete: (taskId: string) => void;
-  /** 仅更新任务的 Markdown 详情与时间戳 */
-  updateTaskMarkdown: (taskId: string, markdown: string) => void;
-
   /** 更新任务的 blocks 数组（新数据载体） */
   updateTaskBlocks: (taskId: string, blocks: Block[]) => void;
 
   /** 更新指定 block 的 header 属性 */
   updateBlockHeader: (taskId: string, blockId: string, headerPatch: Partial<SmartTaskHeader>) => void;
+
+  /** 更新指定 SmartTaskBlock 的 body（局部 patch，避免整体覆盖 blocks） */
+  updateBlockBody: (taskId: string, blockId: string, body: string) => void;
+
+  /** 更新指定 TextBlock 的 content（局部 patch，避免整体覆盖 blocks） */
+  updateTextBlockContent: (taskId: string, blockId: string, content: string) => void;
 
   /** 删除指定 block */
   removeBlock: (taskId: string, blockId: string) => void;
@@ -171,8 +184,8 @@ interface TimelineStore extends TimelineData {
   /** 向任务追加 block */
   appendBlock: (taskId: string, block: Block) => void;
 
-  /** 在指定位置插入 block */
-  insertBlockAt: (taskId: string, index: number, block: Block) => void;
+  /** 批量追加 blocks（循环 appendBlock，避免整体覆盖 task） */
+  extendTaskBlocks: (taskId: string, newBlocks: Block[]) => void;
 
   addGroup: (group: TaskGroup) => void;
   updateGroup: (group: TaskGroup) => void;
@@ -188,8 +201,6 @@ interface TimelineStore extends TimelineData {
 
   importData: (data: TimelineData) => void;
   exportData: () => string;
-
-  getFlatTasks: () => Task[];
 }
 
 // ── 创建 Store ─────────────────────────────────────────────────
@@ -272,28 +283,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           });
         },
 
-        updateTaskMarkdown: (taskId, markdown) => {
-          const now = new Date().toISOString();
-          set((state) => {
-            const tasks = state.tasks.map((t) =>
-              t.id === taskId
-                ? { ...t, markdown, markdownUpdatedAt: now }
-                : t
-            );
-            const groups = state.groups.map((g) => ({
-              ...g,
-              children: g.children.map((c) =>
-                c.id === taskId
-                  ? { ...c, markdown, markdownUpdatedAt: now }
-                  : c
-              ),
-            }));
-            const newData = { ...state, tasks, groups };
-            saveData(newData);
-            return newData;
-          });
-        },
-
         updateTaskBlocks: (taskId, blocks) => {
           const now = new Date().toISOString();
           set((state) => {
@@ -329,6 +318,58 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               children: g.children.map((c) => {
                 if (c.id !== taskId) return c;
                 const newBlocks = updateBlockHeader(c.blocks, blockId, headerPatch);
+                return { ...c, blocks: newBlocks, blocksUpdatedAt: now };
+              }),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        updateBlockBody: (taskId, blockId, body) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              const newBlocks = (t.blocks ?? []).map((b) =>
+                b.type === 'smart-task' && b.id === blockId ? { ...b, body } : b,
+              );
+              return { ...t, blocks: newBlocks, blocksUpdatedAt: now };
+            });
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) => {
+                if (c.id !== taskId) return c;
+                const newBlocks = (c.blocks ?? []).map((b) =>
+                  b.type === 'smart-task' && b.id === blockId ? { ...b, body } : b,
+                );
+                return { ...c, blocks: newBlocks, blocksUpdatedAt: now };
+              }),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        updateTextBlockContent: (taskId, blockId, content) => {
+          const now = new Date().toISOString();
+          set((state) => {
+            const tasks = state.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              const newBlocks = (t.blocks ?? []).map((b) =>
+                b.type === 'text' && b.id === blockId ? { ...b, content } : b,
+              );
+              return { ...t, blocks: newBlocks, blocksUpdatedAt: now };
+            });
+            const groups = state.groups.map((g) => ({
+              ...g,
+              children: g.children.map((c) => {
+                if (c.id !== taskId) return c;
+                const newBlocks = (c.blocks ?? []).map((b) =>
+                  b.type === 'text' && b.id === blockId ? { ...b, content } : b,
+                );
                 return { ...c, blocks: newBlocks, blocksUpdatedAt: now };
               }),
             }));
@@ -378,18 +419,19 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           });
         },
 
-        insertBlockAt: (taskId, index, block) => {
+        extendTaskBlocks: (taskId, newBlocks) => {
+          if (newBlocks.length === 0) return;
           const now = new Date().toISOString();
           set((state) => {
             const tasks = state.tasks.map((t) => {
               if (t.id !== taskId) return t;
-              return { ...t, blocks: insertBlock(t.blocks, index, block), blocksUpdatedAt: now };
+              return { ...t, blocks: [...(t.blocks ?? []), ...newBlocks], blocksUpdatedAt: now };
             });
             const groups = state.groups.map((g) => ({
               ...g,
               children: g.children.map((c) => {
                 if (c.id !== taskId) return c;
-                return { ...c, blocks: insertBlock(c.blocks, index, block), blocksUpdatedAt: now };
+                return { ...c, blocks: [...(c.blocks ?? []), ...newBlocks], blocksUpdatedAt: now };
               }),
             }));
             const newData = { ...state, tasks, groups };
@@ -565,18 +607,27 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
             groups: Array.isArray(data?.groups) ? data.groups.filter(isValidGroup) : [],
           };
-          saveData(normalized);
-          set(normalized);
+
+          // 按 id 合并：保留本地未在导入数据中的条目，避免多端并发场景下
+          // 整体覆盖冲掉他端刚刚更新的字段。同 id 时以导入数据为准。
+          const current = get();
+          const mergeById = <T extends { id: string }>(existing: T[], imported: T[]): T[] => {
+            const importedIds = new Set(imported.map((x) => x.id));
+            return [...existing.filter((x) => !importedIds.has(x.id)), ...imported];
+          };
+          const merged: TimelineData = {
+            tasks: mergeById(current.tasks, normalized.tasks),
+            notes: mergeById(current.notes, normalized.notes),
+            milestones: mergeById(current.milestones, normalized.milestones),
+            groups: mergeById(current.groups, normalized.groups),
+          };
+          saveData(merged);
+          set(merged);
         },
 
         exportData: () => {
           const { tasks, groups, notes, milestones } = get();
           return JSON.stringify({ tasks, groups, notes, milestones }, null, 2);
-        },
-
-        getFlatTasks: () => {
-          const { tasks } = get();
-          return tasks;
         },
       };
     },
@@ -646,14 +697,23 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
       let needsReconcile = false;
       const newGroups = state.groups.map((g) => {
         let groupChanged = false;
-        const newChildren = g.children.map((c) => {
-          const canonical = taskMap.get(c.id);
-          if (canonical && canonical !== c) {
-            groupChanged = true;
-            return { ...canonical, groupId: g.id };
-          }
-          return c;
-        });
+        // 同时处理两类不一致：
+        //   1) canonical 存在但与 c 引用不同 → 用 canonical 替换 c（保留 groupId）
+        //   2) canonical 不存在（孤儿）→ 返回 null 后过滤掉，避免幽灵分组框
+        const newChildren = g.children
+          .map((c): Task | null => {
+            const canonical = taskMap.get(c.id);
+            if (!canonical) {
+              groupChanged = true;
+              return null;
+            }
+            if (canonical !== c) {
+              groupChanged = true;
+              return { ...canonical, groupId: g.id };
+            }
+            return c;
+          })
+          .filter((c): c is Task => c !== null);
         if (groupChanged) {
           needsReconcile = true;
           return { ...g, children: newChildren };

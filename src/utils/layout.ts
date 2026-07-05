@@ -35,33 +35,37 @@ function packTasks(
 ): number {
   if (taskList.length === 0) return 0;
 
-  const mainTasks = taskList.filter((t) => t.isMain);
-  const normalTasks = taskList.filter((t) => !t.isMain);
-
-  const sortedMain = [...mainTasks].sort(
-    (a, b) => dayjs(a.start).valueOf() - dayjs(b.start).valueOf()
+  // 过滤掉 start/end 无效的任务，避免 NaN 污染行号与排序
+  const validTasks = taskList.filter(
+    (t) => dayjs(t.start).isValid() && dayjs(t.end).isValid(),
   );
-  const sortedNormal = [...normalTasks].sort(
-    (a, b) => dayjs(a.start).valueOf() - dayjs(b.start).valueOf()
-  );
+  if (validTasks.length === 0) return 0;
 
-  const localRows: TaskWithLayout[][] = [];
+  // 预计算时间戳，避免在 sort / tryPlace 内反复构造 dayjs 对象
+  const withTs = validTasks.map((t) => ({
+    task: t,
+    startTs: dayjs(t.start).valueOf(),
+    endTs: dayjs(t.end).valueOf(),
+  }));
 
-  function tryPlace(task: Task): void {
-    const taskStart = dayjs(task.start).valueOf();
-    const taskEnd = dayjs(task.end).valueOf();
+  const mainTasks = withTs.filter((x) => x.task.isMain);
+  const normalTasks = withTs.filter((x) => !x.task.isMain);
 
+  const sortedMain = [...mainTasks].sort((a, b) => a.startTs - b.startTs);
+  const sortedNormal = [...normalTasks].sort((a, b) => a.startTs - b.startTs);
+
+  const localRows: { task: Task; startTs: number; endTs: number }[][] = [];
+
+  function tryPlace(item: { task: Task; startTs: number; endTs: number }): void {
     let placed = false;
     for (let rowIdx = 0; rowIdx < localRows.length; rowIdx++) {
-      const overlaps = localRows[rowIdx].some((existing) => {
-        const exStart = dayjs(existing.start).valueOf();
-        const exEnd = dayjs(existing.end).valueOf();
-        return dateRangesOverlap(taskStart, taskEnd, exStart, exEnd);
-      });
+      const overlaps = localRows[rowIdx].some((existing) =>
+        dateRangesOverlap(item.startTs, item.endTs, existing.startTs, existing.endTs),
+      );
 
       if (!overlaps) {
-        const placedTask: TaskWithLayout = { ...task, row: rowIdx + rowOffset };
-        localRows[rowIdx].push(placedTask);
+        const placedTask: TaskWithLayout = { ...item.task, row: rowIdx + rowOffset };
+        localRows[rowIdx].push(item);
         result.push(placedTask);
         placed = true;
         break;
@@ -69,14 +73,14 @@ function packTasks(
     }
 
     if (!placed) {
-      const placedTask: TaskWithLayout = { ...task, row: localRows.length + rowOffset };
-      localRows.push([placedTask]);
+      const placedTask: TaskWithLayout = { ...item.task, row: localRows.length + rowOffset };
+      localRows.push([item]);
       result.push(placedTask);
     }
   }
 
-  for (const task of sortedMain) tryPlace(task);
-  for (const task of sortedNormal) tryPlace(task);
+  for (const item of sortedMain) tryPlace(item);
+  for (const item of sortedNormal) tryPlace(item);
 
   return localRows.length;
 }
@@ -125,11 +129,16 @@ export function calculateLayout(data: TimelineData): LayoutResult {
 
   // ── 2. 各分组独立行块（按最早任务开始日期排序） ──────
   const groupEntries = Array.from(groupedTasks.entries())
-    .map(([groupId, gTasks]) => ({
-      groupId,
-      tasks: gTasks,
-      earliest: Math.min(...gTasks.map((t) => dayjs(t.start).valueOf())),
-    }))
+    .map(([groupId, gTasks]) => {
+      const validStarts = gTasks
+        .map((t) => dayjs(t.start).valueOf())
+        .filter((v) => !Number.isNaN(v));
+      return {
+        groupId,
+        tasks: gTasks,
+        earliest: validStarts.length > 0 ? Math.min(...validStarts) : Number.POSITIVE_INFINITY,
+      };
+    })
     .sort((a, b) => a.earliest - b.earliest);
 
   for (const ge of groupEntries) {

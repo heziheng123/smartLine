@@ -245,7 +245,12 @@ const EbbView: React.FC = () => {
       if (!destination) return;
       const destId = destination.droppableId;
       // 看板列拖拽：board-col-today / board-col-future / board-col-done
-      if (destId === 'board-col-done') {
+      // 标签泳道模式下 droppableId 形如 `${colId}::${tag}`，取列前缀即可
+      const colId = destId.split('::')[0];
+      // 校验拖拽源任务存在（避免并发删除后误操作）
+      const taskExists = store.reviewTasks.some((t) => t.id === draggableId);
+      if (!taskExists) return;
+      if (colId === 'board-col-done') {
         // 校验轮次顺序（与 toggleReviewTask 一致）
         const err = store.toggleReviewTask(draggableId);
         if (err) {
@@ -253,17 +258,17 @@ const EbbView: React.FC = () => {
         } else {
           showToast('已标记完成');
         }
-      } else if (destId === 'board-col-today') {
+      } else if (colId === 'board-col-today') {
         store.updateReviewTask(draggableId, { dueDate: dayjs().format('YYYY-MM-DD'), isCompleted: false });
         showToast('已改期到今天');
-      } else if (destId === 'board-col-future') {
+      } else if (colId === 'board-col-future') {
         store.updateReviewTask(draggableId, {
           dueDate: dayjs().add(7, 'day').format('YYYY-MM-DD'),
           isCompleted: false,
         });
         showToast('已改期到下周');
-      } else if (destId.startsWith('ebb-day-')) {
-        const newDate = destId.replace('ebb-day-', '');
+      } else if (colId.startsWith('ebb-day-')) {
+        const newDate = colId.replace('ebb-day-', '');
         store.updateReviewTask(draggableId, { dueDate: newDate });
         showToast('已改期');
       }
@@ -312,15 +317,18 @@ const EbbView: React.FC = () => {
     if (entry) showToast(`已撤销：${entry.description}`);
   }, [store, showToast]);
 
-  // 共享的任务操作 props
-  const taskActions = {
-    onToggle: handleToggle,
-    onDelete: handleDelete,
-    onReschedule: handleReschedule,
-    onAddRound: handleAddRound,
-    onOpenRounds: handleOpenRounds,
-    onOpenTimeline: handleOpenTimeline,
-  };
+  // 共享的任务操作 props（memo 化：所有依赖均 useCallback 稳定，避免每次渲染产生新对象传递给子组件）
+  const taskActions = useMemo(
+    () => ({
+      onToggle: handleToggle,
+      onDelete: handleDelete,
+      onReschedule: handleReschedule,
+      onAddRound: handleAddRound,
+      onOpenRounds: handleOpenRounds,
+      onOpenTimeline: handleOpenTimeline,
+    }),
+    [handleToggle, handleDelete, handleReschedule, handleAddRound, handleOpenRounds, handleOpenTimeline],
+  );
 
   return (
     <DragDropContext onDragEnd={handleDndEnd}>
@@ -873,7 +881,7 @@ const TimelineStripModal: React.FC<TimelineStripModalProps> = ({
   onClose,
   onToggle,
 }) => {
-  const sorted = useMemo(() => [...tasks].sort((a, b) => a.dueDate.localeCompare(b.dueDate)), [tasks]);
+  const sorted = useMemo(() => [...tasks].sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')), [tasks]);
   const { roundMap } = useMemo(() => computeRounds(allTasks), [allTasks]);
   const completedCount = sorted.filter((t) => t.isCompleted).length;
   const ratio = sorted.length > 0 ? completedCount / sorted.length : 0;

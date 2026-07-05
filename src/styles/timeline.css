@@ -122,40 +122,6 @@ html, body, #root {
   margin-left: 4px;
 }
 
-/* ── 视图切换分段控件 ────────────────────────────────────── */
-.tl-segmented {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  background: #F3F4F6;
-  border-radius: 8px;
-  margin-left: 4px;
-}
-
-.tl-segmented-btn {
-  padding: 5px 12px;
-  border: none;
-  background: transparent;
-  font-size: 12px;
-  font-weight: 600;
-  color: #6B7280;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
-  white-space: nowrap;
-}
-
-.tl-segmented-btn:hover {
-  color: #374151;
-}
-
-.tl-segmented-btn--active {
-  background: #fff;
-  color: #5b6af0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
 /* ============================================================
    待办汇总视图样式（莫兰迪色系，与主应用风格统一）
    ============================================================ */
@@ -1853,6 +1819,44 @@ html, body, #root {
   color: #B91C1C;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* ── 历史日期警告条 ── */
+.bi-historical-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #FEF3C7;
+  border: 1px solid #F59E0B;
+  border-radius: 6px;
+  color: #78350F;
+  margin-bottom: 10px;
+}
+.bi-historical-warning > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #D97706;
+}
+.bi-historical-warning-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bi-historical-warning-text strong {
+  font-size: 13px;
+  color: #92400E;
+}
+.bi-historical-warning-text span {
+  color: #78350F;
+}
+.bi-historical-warning-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 /* ── 预览沙盒：统计栏 ── */

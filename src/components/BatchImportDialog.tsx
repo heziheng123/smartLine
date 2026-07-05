@@ -82,6 +82,12 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<ParsedRow | null>(null);
 
+  // 历史日期警告
+  const [historicalWarning, setHistoricalWarning] = useState<{
+    count: number;
+    sample: string[];
+  } | null>(null);
+
   const summary = useMemo(() => summarizeRows(rows), [rows]);
   const canConfirm = summary.valid > 0 && summary.errors === 0 && (
     fixedTask
@@ -164,7 +170,7 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
 
   // ── 确认导入 ──────────────────────────────────────────────
 
-  const handleConfirm = () => {
+  const doConfirm = () => {
     const blocks = mapRowsToBlocks(rows);
     if (blocks.length === 0) return;
 
@@ -190,6 +196,33 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
       const { start, end } = computeTaskDateRange(placeholderTask, blocks);
       onConfirm(blocks, { newTaskName: name, start, end, tag: newTaskTag.trim() || '未分类' });
     }
+  };
+
+  const handleConfirm = () => {
+    const blocks = mapRowsToBlocks(rows);
+    if (blocks.length === 0) return;
+
+    // 检测历史日期：早于今天的 block
+    const today = dayjs().format('YYYY-MM-DD');
+    const historicalDates: string[] = [];
+    for (const b of blocks) {
+      if (b.header.date && dayjs(b.header.date).isBefore(today, 'day')) {
+        historicalDates.push(b.header.date);
+      }
+    }
+    if (historicalDates.length > 0) {
+      // 去重取前 3 个作为样本
+      const unique = Array.from(new Set(historicalDates)).sort().slice(0, 3);
+      setHistoricalWarning({ count: historicalDates.length, sample: unique });
+      return;
+    }
+
+    doConfirm();
+  };
+
+  const confirmAnyway = () => {
+    setHistoricalWarning(null);
+    doConfirm();
   };
 
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -274,6 +307,37 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
           {/* ── 阶段 2：预览沙盒 ── */}
           {stage === 'preview' && (
             <>
+              {/* 历史日期警告 */}
+              {historicalWarning && (
+                <div className="bi-historical-warning">
+                  <AlertTriangle size={16} />
+                  <div className="bi-historical-warning-text">
+                    <strong>检测到 {historicalWarning.count} 个任务块的日期早于今天</strong>
+                    <span>
+                      这些 block 会落在历史周，周矩阵默认显示当前周将看不到它们。
+                      样本日期：{historicalWarning.sample.join('、')}
+                      {historicalWarning.count > 3 ? ' 等' : ''}
+                    </span>
+                  </div>
+                  <div className="bi-historical-warning-actions">
+                    <button
+                      type="button"
+                      className="tl-dialog-btn tl-dialog-btn--secondary"
+                      onClick={() => setHistoricalWarning(null)}
+                    >
+                      返回修改
+                    </button>
+                    <button
+                      type="button"
+                      className="tl-dialog-btn tl-dialog-btn--danger"
+                      onClick={confirmAnyway}
+                    >
+                      仍然导入
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* 统计栏 */}
               <div className="bi-summary">
                 <div className="bi-summary-item bi-summary-item--total">

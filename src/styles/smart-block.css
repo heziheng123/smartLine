@@ -860,6 +860,19 @@
   color: #6b7280;
 }
 .stb-mini-cal-header button:hover { background: #f3f4f6; }
+.stb-mini-cal-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-align: center;
+}
+.stb-mini-cal-title:hover { background: #f3f4f6; color: #3b82f6; }
 
 .stb-mini-cal-grid {
   display: grid;
@@ -892,6 +905,42 @@
 .stb-mini-cal-day--today { color: #3b82f6; font-weight: 600; }
 .stb-mini-cal-day--selected { background: #3b82f6; color: #fff; }
 .stb-mini-cal-day--selected:hover { background: #2563eb; }
+
+.stb-mini-cal-years {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px 0 8px;
+}
+.stb-mini-cal-year {
+  height: 36px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #374151;
+  transition: background var(--stb-transition), border-color var(--stb-transition);
+}
+.stb-mini-cal-year:hover { background: #f3f4f6; border-color: #d1d5db; }
+.stb-mini-cal-year--current { color: #3b82f6; font-weight: 600; }
+.stb-mini-cal-year--selected { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.stb-mini-cal-year--selected:hover { background: #2563eb; border-color: #2563eb; }
+
+.stb-mini-cal-today {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 0;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  color: #3b82f6;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--stb-transition);
+}
+.stb-mini-cal-today:hover { background: #dbeafe; }
 
 
 /* ============================================================
@@ -1201,7 +1250,7 @@
    ============================================================ */
 
 .wmv-container {
-  padding: 16px 24px;
+  padding: 12px 16px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -1240,8 +1289,14 @@
   text-align: center;
 }
 
-.wmv-mode-switch {
+.wmv-nav-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wmv-mode-switch {
   display: flex;
   background: #f3f4f6;
   border-radius: 6px;
@@ -1270,6 +1325,83 @@
   flex: 1;
   overflow: auto;
 }
+
+/* ── 跳转提示胶囊（悬停展开） ── */
+.wmv-offrange-capsule {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #92400e;
+  cursor: default;
+  transition: background var(--stb-transition), border-color var(--stb-transition);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.wmv-offrange-capsule:hover {
+  background: #fde68a;
+  border-color: #f59e0b;
+}
+.wmv-offrange-capsule-icon { font-size: 13px; line-height: 1; }
+.wmv-offrange-capsule-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wmv-offrange-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 300px;
+  background: #fff;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.12);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity .15s ease, transform .15s ease, visibility .15s;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wmv-offrange-capsule:hover .wmv-offrange-popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.wmv-offrange-popover-text {
+  font-size: 12px;
+  color: #78350f;
+  line-height: 1.5;
+}
+.wmv-offrange-popover-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.wmv-offrange-btn {
+  background: #fff;
+  border: 1px solid #f59e0b;
+  color: #92400e;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--stb-transition), color var(--stb-transition);
+  white-space: nowrap;
+}
+.wmv-offrange-btn:hover {
+  background: #f59e0b;
+  color: #fff;
+}
+.wmv-offrange-btn--before { }
+.wmv-offrange-btn--after { }
 
 .wmv-row {
   display: flex;

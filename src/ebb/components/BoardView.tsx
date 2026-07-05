@@ -86,7 +86,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
       const completedRounds = completedTasks.length;
       const uncompleted = group
         .filter((t) => !t.isCompleted)
-        .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+        .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
       const nextTask = uncompleted[0];
       const nextRound = nextTask ? roundMap.get(nextTask.id) ?? 0 : 0;
       const hasUrgent = uncompleted.some((t) => isOverdue(t) || isDueToday(t));
@@ -152,31 +152,41 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
     return { pending, progress, done };
   }, [tasks, roundMap, totalRoundsMap, settings.complexityConfigs]);
 
-  // 筛选
-  const filterTasks = (list: TopicCardData[]) => {
-    if (!query.trim()) return list;
-    const q = query.toLowerCase();
-    return list.filter(
-      (t) => t.topicName.toLowerCase().includes(q) || (t.tag || '').toLowerCase().includes(q),
-    );
-  };
+  // 筛选（memo 化：避免每次渲染都重新创建闭包）
+  const filterTasks = useMemo(
+    () => (list: TopicCardData[]) => {
+      if (!query.trim()) return list;
+      const q = query.toLowerCase();
+      return list.filter(
+        (t) => t.topicName.toLowerCase().includes(q) || (t.tag || '').toLowerCase().includes(q),
+      );
+    },
+    [query],
+  );
 
-  // 标签泳道分组
-  const groupByTagFn = (list: TopicCardData[]) => {
-    const map = new Map<string, TopicCardData[]>();
-    for (const t of list) {
-      const tag = t.tag || '无标签';
-      if (!map.has(tag)) map.set(tag, []);
-      map.get(tag)!.push(t);
-    }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  };
+  // 标签泳道分组（memo 化：稳定引用）
+  const groupByTagFn = useMemo(
+    () => (list: TopicCardData[]) => {
+      const map = new Map<string, TopicCardData[]>();
+      for (const t of list) {
+        const tag = t.tag || '无标签';
+        if (!map.has(tag)) map.set(tag, []);
+        map.get(tag)!.push(t);
+      }
+      return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    },
+    [],
+  );
 
-  const colConfig = [
-    { id: 'board-col-today', title: '待复习', icon: '🔴', tasks: filterTasks(columns.pending), color: '#EF4444' },
-    { id: 'board-col-future', title: '进行中', icon: '🟡', tasks: filterTasks(columns.progress), color: '#F59E0B' },
-    { id: 'board-col-done', title: '已完成', icon: '✅', tasks: filterTasks(columns.done), color: '#10B981' },
-  ];
+  // colConfig 包含已筛选列表，依赖 query 和 columns
+  const colConfig = useMemo(
+    () => [
+      { id: 'board-col-today', title: '待复习', icon: '🔴', tasks: filterTasks(columns.pending), color: '#EF4444' },
+      { id: 'board-col-future', title: '进行中', icon: '🟡', tasks: filterTasks(columns.progress), color: '#F59E0B' },
+      { id: 'board-col-done', title: '已完成', icon: '✅', tasks: filterTasks(columns.done), color: '#10B981' },
+    ],
+    [filterTasks, columns],
+  );
 
   return (
     <div className="eb-board">
@@ -217,27 +227,36 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
 
                 <div className="eb-board-col-body">
                   {groupByTag ? (
-                    groupByTagFn(col.tasks).flatMap(([tag, tagTasks], laneIdx, lanes) => {
-                      const prevCount = lanes.slice(0, laneIdx).reduce((s, [, ts]) => s + ts.length, 0);
-                      return [
-                        <div key={`lane-${tag}`} className="eb-board-lane">
-                          <div className="eb-board-lane-header">
-                            <span className="eb-board-lane-dot" style={{ backgroundColor: settings.tagColors[tag] || '#9CA3AF' }} />
-                            <span className="eb-board-lane-name">{tag}</span>
-                            <span className="eb-board-lane-count">{tagTasks.length}</span>
+                    groupByTagFn(col.tasks).map(([tag, tagTasks]) => (
+                      <Droppable droppableId={`${col.id}::${tag}`} key={tag}>
+                        {(laneProvided, laneSnapshot) => (
+                          <div
+                            ref={laneProvided.innerRef}
+                            {...laneProvided.droppableProps}
+                            className={`eb-board-lane ${laneSnapshot.isDraggingOver ? 'eb-board-lane--over' : ''}`}
+                          >
+                            <div className="eb-board-lane-header">
+                              <span className="eb-board-lane-dot" style={{ backgroundColor: settings.tagColors[tag] || '#9CA3AF' }} />
+                              <span className="eb-board-lane-name">{tag}</span>
+                              <span className="eb-board-lane-count">{tagTasks.length}</span>
+                            </div>
+                            {tagTasks.map((t, i) => (
+                              <BoardCard
+                                key={t.topicName}
+                                card={t}
+                                index={i}
+                                settings={settings}
+                                taskActions={taskActions}
+                              />
+                            ))}
+                            {tagTasks.length === 0 && (
+                              <div className="eb-board-empty">拖拽任务到此处</div>
+                            )}
+                            {laneProvided.placeholder}
                           </div>
-                        </div>,
-                        ...tagTasks.map((t, i) => (
-                          <BoardCard
-                            key={t.topicName}
-                            card={t}
-                            index={prevCount + i}
-                            settings={settings}
-                            taskActions={taskActions}
-                          />
-                        )),
-                      ];
-                    })
+                        )}
+                      </Droppable>
+                    ))
                   ) : (
                     col.tasks.map((t, i) => (
                       <BoardCard
@@ -249,7 +268,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
                       />
                     ))
                   )}
-                  {col.tasks.length === 0 && (
+                  {col.tasks.length === 0 && !groupByTag && (
                     <div className="eb-board-empty">拖拽任务到此处</div>
                   )}
                   {provided.placeholder}

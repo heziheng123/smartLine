@@ -9,6 +9,7 @@ import dayjs from 'dayjs';
 import { X, Eye, Check } from 'lucide-react';
 import type { ComplexityLevel } from '../types';
 import { useEbbStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import {
   getIntervalsForComplexity,
   parseIntervals,
@@ -25,7 +26,13 @@ interface AddContentModalProps {
 }
 
 const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGenerated }) => {
-  const store = useEbbStore();
+  const { reviewTasks, ebbSettings, addReviewTasks } = useEbbStore(
+    useShallow((s) => ({
+      reviewTasks: s.reviewTasks,
+      ebbSettings: s.ebbSettings,
+      addReviewTasks: s.addReviewTasks,
+    })),
+  );
   const [topicName, setTopicName] = useState('');
   const [tag, setTag] = useState('');
   const [startDate, setStartDate] = useState(dayjs().format('YYYY-MM-DD'));
@@ -39,15 +46,15 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
 
   const handleComplexityChange = useCallback(
     (level: ComplexityLevel) => {
-      if (intervalsDirty && !isDefaultIntervals(intervals ?? [], complexity, store.ebbSettings.complexityConfigs)) {
+      if (intervalsDirty && !isDefaultIntervals(intervals ?? [], complexity, ebbSettings.complexityConfigs)) {
         if (!confirm('已手动修改间隔，切换复杂度将覆盖当前间隔，是否继续？')) return;
       }
       setComplexity(level);
-      setIntervalsText(formatIntervals(getIntervalsForComplexity(level, store.ebbSettings.complexityConfigs)));
+      setIntervalsText(formatIntervals(getIntervalsForComplexity(level, ebbSettings.complexityConfigs)));
       setIntervalsDirty(false);
       setPreview(null);
     },
-    [complexity, intervals, intervalsDirty, store.ebbSettings.complexityConfigs],
+    [complexity, intervals, intervalsDirty, ebbSettings.complexityConfigs],
   );
 
   const handleIntervalsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -81,23 +88,23 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
     const input = buildInput();
     if (!input) return;
     try {
-      const result = generateTasks(input, store.reviewTasks, store.ebbSettings);
+      const result = generateTasks(input, reviewTasks, ebbSettings);
       setPreview(result);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [buildInput, store.reviewTasks, store.ebbSettings]);
+  }, [buildInput, reviewTasks, ebbSettings]);
 
   const handleDirectAdd = useCallback(() => {
     const input = buildInput();
     if (!input) return;
     try {
-      const result = generateTasks(input, store.reviewTasks, store.ebbSettings);
+      const result = generateTasks(input, reviewTasks, ebbSettings);
       if (result.tasks.length === 0) {
         setError('未生成任何任务');
         return;
       }
-      store.addReviewTasks(result.tasks);
+      addReviewTasks(result.tasks);
       onGenerated?.();
       // 重置表单
       setTopicName('');
@@ -108,18 +115,18 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [buildInput, store, onGenerated, onClose]);
+  }, [buildInput, reviewTasks, ebbSettings, addReviewTasks, onGenerated, onClose]);
 
   const handleConfirmPreview = useCallback(() => {
     if (!preview || preview.tasks.length === 0) return;
-    store.addReviewTasks(preview.tasks);
+    addReviewTasks(preview.tasks);
     onGenerated?.();
     setTopicName('');
     setTag('');
     setIntervalsDirty(false);
     setPreview(null);
     onClose();
-  }, [preview, store, onGenerated, onClose]);
+  }, [preview, addReviewTasks, onGenerated, onClose]);
 
   if (!open) return null;
 
@@ -173,7 +180,7 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
             <span className="eb-field-label">复杂度</span>
             <div className="eb-complexity-switch">
               {COMPLEXITY_LEVELS.map((level) => {
-                const cfg = store.ebbSettings.complexityConfigs[level];
+                const cfg = ebbSettings.complexityConfigs[level];
                 return (
                   <button
                     key={level}

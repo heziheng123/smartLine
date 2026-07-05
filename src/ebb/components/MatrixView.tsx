@@ -3,7 +3,7 @@
 // 筛选栏 + 标签统计 + 主题任务列表（圆形进度环卡片）
 // ============================================================
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { Search, ChevronRight } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
@@ -42,6 +42,24 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
   const [query, setQuery] = useState('');
 
   const tagStats = useMemo(() => computeTagStats(tasks), [tasks]);
+
+  // 上提 computeRounds 到父层（原 TopicRow 每行调用一次 → O(n²) 重复计算）
+  const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
+
+  // 按主题预分组，避免每个 TopicRow 都遍历整个 tasks 数组
+  const topicTasksMap = useMemo(() => {
+    const m = new Map<string, ReviewTask[]>();
+    for (const t of tasks) {
+      const list = m.get(t.topicName);
+      if (list) list.push(t);
+      else m.set(t.topicName, [t]);
+    }
+    // 每个主题内部按 dueDate 排序
+    for (const list of m.values()) {
+      list.sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
+    }
+    return m;
+  }, [tasks]);
 
   // 主题统计（带筛选）
   const topicStats = useMemo(() => {
@@ -131,9 +149,11 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
             <TopicRow
               key={stat.topicName}
               stat={stat}
-              tasks={tasks}
               settings={settings}
               taskActions={taskActions}
+              roundMap={roundMap}
+              totalRoundsMap={totalRoundsMap}
+              topicTasks={topicTasksMap.get(stat.topicName) ?? []}
             />
           ))
         )}
@@ -145,19 +165,15 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
 // ── 主题行（圆形进度环 + 任务卡片）──────────────────────────
 interface TopicRowProps {
   stat: TopicStat;
-  tasks: ReviewTask[];
   settings: EbbSettings;
   taskActions: TaskActions;
+  roundMap: Map<string, number>;
+  totalRoundsMap: Map<string, number>;
+  topicTasks: ReviewTask[];
 }
 
-const TopicRow: React.FC<TopicRowProps> = ({ stat, tasks, settings, taskActions }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, roundMap, totalRoundsMap, topicTasks }) => {
   const [expanded, setExpanded] = useState(false);
-  const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
-
-  const topicTasks = useMemo(
-    () => tasks.filter((t) => t.topicName === stat.topicName).sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [tasks, stat.topicName],
-  );
 
   const tagColor = stat.tag ? settings.tagColors[stat.tag] : undefined;
   const ratio = stat.ratio;
@@ -259,6 +275,6 @@ const TopicRow: React.FC<TopicRowProps> = ({ stat, tasks, settings, taskActions 
       )}
     </div>
   );
-};
+});
 
 export default MatrixView;

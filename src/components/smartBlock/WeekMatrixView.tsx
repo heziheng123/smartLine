@@ -12,6 +12,7 @@ import {
   getSmartTaskBlocks,
   getTagColor,
 } from '@/utils/blocks';
+import { sanitizeHtml } from '@/utils/sanitize';
 
 interface WeekMatrixViewProps {
   tasks: Task[];
@@ -79,6 +80,44 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
     return map;
   }, [allBlocks]);
 
+  // 检测落在当前显示范围外的 block（带有效日期）
+  const offRangeInfo = useMemo(() => {
+    const rangeStart = dateRange[0];
+    const rangeEnd = dateRange[dateRange.length - 1];
+    const beforeBlocks: { date: string; count: number }[] = [];
+    const afterBlocks: { date: string; count: number }[] = [];
+    const tally = new Map<string, number>();
+    for (const b of allBlocks) {
+      const d = b.header.date;
+      if (!d) continue;
+      if (tally.has(d)) {
+        tally.set(d, tally.get(d)! + 1);
+      } else {
+        tally.set(d, 1);
+      }
+    }
+    for (const [d, count] of tally) {
+      const dj = dayjs(d);
+      if (dj.isBefore(rangeStart, 'day')) beforeBlocks.push({ date: d, count });
+      else if (dj.isAfter(rangeEnd, 'day')) afterBlocks.push({ date: d, count });
+    }
+    const totalBefore = beforeBlocks.reduce((s, x) => s + x.count, 0);
+    const totalAfter = afterBlocks.reduce((s, x) => s + x.count, 0);
+    // 距离 cursor 最近的 off-range 日期
+    beforeBlocks.sort((a, b) => b.date.localeCompare(a.date)); // 最近的在前
+    afterBlocks.sort((a, b) => a.date.localeCompare(b.date)); // 最近的在前
+    return {
+      totalBefore,
+      totalAfter,
+      nearestBefore: beforeBlocks[0]?.date,
+      nearestAfter: afterBlocks[0]?.date,
+      beforeDates: beforeBlocks.map(x => x.date),
+      afterDates: afterBlocks.map(x => x.date),
+    };
+  }, [allBlocks, dateRange]);
+
+  const hasOffRangeBlocks = offRangeInfo.totalBefore > 0 || offRangeInfo.totalAfter > 0;
+
   const handleToggle = useCallback(
     (taskId: string, blockId: string, isCompleted: boolean) => {
       const now = dayjs().format('YYYY-MM-DD');
@@ -89,6 +128,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
     },
     [onUpdateBlockHeader],
   );
+
+  const jumpTo = useCallback((dateStr: string) => {
+    setCursor(dayjs(dateStr));
+  }, []);
 
   const rangeLabel = mode === 'week'
     ? `${dateRange[0].format('M.D')} - ${dateRange[6].format('M.D')}`
@@ -108,21 +151,61 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
         <button type="button" className="wmv-nav-btn" onClick={() => setCursor(dayjs())}>
           今天
         </button>
-        <div className="wmv-mode-switch">
-          <button
-            type="button"
-            className={`wmv-mode-btn ${mode === 'week' ? 'wmv-mode-btn--active' : ''}`}
-            onClick={() => setMode('week')}
-          >
-            周
-          </button>
-          <button
-            type="button"
-            className={`wmv-mode-btn ${mode === 'month' ? 'wmv-mode-btn--active' : ''}`}
-            onClick={() => setMode('month')}
-          >
-            月
-          </button>
+        <div className="wmv-nav-right">
+          {hasOffRangeBlocks && (
+            <div
+              className="wmv-offrange-capsule"
+              title="有任务块不在当前显示范围，悬停查看详情"
+            >
+              <span className="wmv-offrange-capsule-icon">💡</span>
+              <span className="wmv-offrange-capsule-count">
+                {offRangeInfo.totalBefore + offRangeInfo.totalAfter}
+              </span>
+              <div className="wmv-offrange-popover">
+                <div className="wmv-offrange-popover-text">
+                  有 {offRangeInfo.totalBefore + offRangeInfo.totalAfter} 个智能任务块不在当前{mode === 'week' ? '周' : '月'}显示范围内
+                </div>
+                <div className="wmv-offrange-popover-actions">
+                  {offRangeInfo.nearestBefore && (
+                    <button
+                      type="button"
+                      className="wmv-offrange-btn wmv-offrange-btn--before"
+                      onClick={() => jumpTo(offRangeInfo.nearestBefore!)}
+                      title={`跳到最近的早期块：${offRangeInfo.nearestBefore}`}
+                    >
+                      ◀ 早期 {offRangeInfo.totalBefore} 个 · {offRangeInfo.beforeDates.length} 天
+                    </button>
+                  )}
+                  {offRangeInfo.nearestAfter && (
+                    <button
+                      type="button"
+                      className="wmv-offrange-btn wmv-offrange-btn--after"
+                      onClick={() => jumpTo(offRangeInfo.nearestAfter!)}
+                      title={`跳到最近的后期块：${offRangeInfo.nearestAfter}`}
+                    >
+                      后期 {offRangeInfo.totalAfter} 个 · {offRangeInfo.afterDates.length} 天 ▶
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="wmv-mode-switch">
+            <button
+              type="button"
+              className={`wmv-mode-btn ${mode === 'week' ? 'wmv-mode-btn--active' : ''}`}
+              onClick={() => setMode('week')}
+            >
+              周
+            </button>
+            <button
+              type="button"
+              className={`wmv-mode-btn ${mode === 'month' ? 'wmv-mode-btn--active' : ''}`}
+              onClick={() => setMode('month')}
+            >
+              月
+            </button>
+          </div>
         </div>
       </div>
 
@@ -200,7 +283,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                           {block.body && (
                             <div className="wmv-block-body">
                               <div dangerouslySetInnerHTML={{
-                                __html: block.body,
+                                __html: sanitizeHtml(block.body),
                               }} />
                             </div>
                           )}

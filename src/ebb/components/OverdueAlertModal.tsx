@@ -7,6 +7,7 @@ import React, { useMemo, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Calendar, SkipForward, X } from 'lucide-react';
 import { useEbbStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '../scheduler';
 import { ROUND_COLORS } from '../constants';
 import type { ReviewTask } from '../types';
@@ -16,15 +17,17 @@ interface OverdueAlertModalProps {
 }
 
 const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
-  const store = useEbbStore();
+  const { reviewTasks, rescheduleOverdue } = useEbbStore(
+    useShallow((s) => ({ reviewTasks: s.reviewTasks, rescheduleOverdue: s.rescheduleOverdue })),
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // 所有逾期未完成任务
   const overdueTasks = useMemo(() => {
-    return store.reviewTasks
+    return reviewTasks
       .filter((t) => !t.isCompleted && isOverdue(t))
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  }, [store.reviewTasks]);
+      .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
+  }, [reviewTasks]);
 
   // 按主题分组
   const groupedByTopic = useMemo(() => {
@@ -37,7 +40,7 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
     return map;
   }, [overdueTasks]);
 
-  const { roundMap } = useMemo(() => computeRounds(store.reviewTasks), [store.reviewTasks]);
+  const { roundMap } = useMemo(() => computeRounds(reviewTasks), [reviewTasks]);
 
   // 全选/取消全选
   const allSelected = overdueTasks.length > 0 && selectedIds.size === overdueTasks.length;
@@ -61,15 +64,15 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
   // 顺延选中任务到今天
   const handleReschedule = useCallback(() => {
     if (selectedIds.size === 0) return;
-    store.rescheduleOverdue(Array.from(selectedIds));
+    rescheduleOverdue(Array.from(selectedIds));
     onClose();
-  }, [selectedIds, store, onClose]);
+  }, [selectedIds, rescheduleOverdue, onClose]);
 
   // 全部顺延
   const handleRescheduleAll = useCallback(() => {
-    store.rescheduleOverdue(overdueTasks.map((t) => t.id));
+    rescheduleOverdue(overdueTasks.map((t) => t.id));
     onClose();
-  }, [overdueTasks, store, onClose]);
+  }, [overdueTasks, rescheduleOverdue, onClose]);
 
   return createPortal(
     <div className="eb-modal-overlay" onClick={onClose}>

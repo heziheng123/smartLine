@@ -72,6 +72,67 @@ export function yToMinutes(y: number): number {
   return snapToQuarter(minutes);
 }
 
+// ── SourceId 解析工具 ────────────────────────────────────────
+
+export interface ParsedSourceId {
+  source: 'project' | 'review';
+  reviewId?: string;
+  parentTaskId?: string;
+  line?: number;
+  /** 来源为 SmartTaskBlock 时，存储 blockId */
+  blockId?: string;
+}
+
+/**
+ * 解析 sourceId 格式：
+ * - review: `review-{reviewId}`
+ * - project (markdown): `project-md:{parentTaskId}-{line}`
+ * - project (block): `project-blk:{parentTaskId}-{blockId}`
+ * - project (legacy): `project-{parentTaskId}-{line}`（向后兼容）
+ */
+export function parseSourceId(sourceId: string): ParsedSourceId | null {
+  if (sourceId.startsWith('review-')) {
+    return { source: 'review', reviewId: sourceId.slice(7) };
+  }
+
+  if (sourceId.startsWith('project-')) {
+    const fullId = sourceId.slice(8);
+
+    // 新格式：blk:{taskId}-{blockId}
+    if (fullId.startsWith('blk:')) {
+      const rest = fullId.slice(4);
+      const firstDash = rest.indexOf('-');
+      if (firstDash === -1) return null;
+      return {
+        source: 'project',
+        parentTaskId: rest.slice(0, firstDash),
+        blockId: rest.slice(firstDash + 1),
+      };
+    }
+
+    // 新格式：md:{taskId}-{line}
+    if (fullId.startsWith('md:')) {
+      const rest = fullId.slice(3);
+      const lastDash = rest.lastIndexOf('-');
+      if (lastDash === -1) return null;
+      const parentTaskId = rest.slice(0, lastDash);
+      const line = parseInt(rest.slice(lastDash + 1), 10);
+      if (isNaN(line)) return null;
+      return { source: 'project', parentTaskId, line };
+    }
+
+    // 旧格式兼容：{taskId}-{line}
+    const lastDash = fullId.lastIndexOf('-');
+    if (lastDash === -1) return null;
+    const parentTaskId = fullId.slice(0, lastDash);
+    const line = parseInt(fullId.slice(lastDash + 1), 10);
+    if (isNaN(line)) return null;
+    return { source: 'project', parentTaskId, line };
+  }
+
+  return null;
+}
+
 // ── 碰撞检测 ────────────────────────────────────────────────
 
 export interface CollisionResult {

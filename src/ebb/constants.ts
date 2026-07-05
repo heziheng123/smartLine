@@ -16,16 +16,6 @@ export const ROUND_COLORS = [
   '#C4D9D9', // 雾青
 ];
 
-/** 热力图 5 档色阶（莫兰迪绿系，由浅到深） */
-export const HEATMAP_LEVELS = [
-  '#F5F5F7', // 无负载
-  '#E8F0E8', // 极低
-  '#C8DEC8', // 低
-  '#9CC39C', // 中
-  '#6BA66B', // 高
-  '#4A8A4A', // 极高
-];
-
 /** 标签默认色板（自动分配） */
 export const TAG_COLOR_PALETTE = [
   '#A8C4D9', '#C4B8D9', '#D9B8C4', '#B8D9C4',

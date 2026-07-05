@@ -81,33 +81,3 @@ export function isDefaultIntervals(
   if (preset.length !== intervals.length) return false;
   return preset.every((v, i) => v === intervals[i]);
 }
-
-/**
- * 计算一组任务的总积分（已完成的积分）
- */
-export function calcEarnedPoints(
-  tasks: { round: number; isCompleted: boolean; complexity?: ComplexityLevel }[],
-  customConfigs?: ComplexityConfigs,
-): number {
-  let sum = 0;
-  for (const t of tasks) {
-    if (!t.isCompleted || !t.complexity) continue;
-    sum += getPointWeight(t.round, t.complexity, customConfigs);
-  }
-  return sum;
-}
-
-/**
- * 计算一组任务的总可得积分（含未完成）
- */
-export function calcTotalPoints(
-  tasks: { round: number; complexity?: ComplexityLevel }[],
-  customConfigs?: ComplexityConfigs,
-): number {
-  let sum = 0;
-  for (const t of tasks) {
-    if (!t.complexity) continue;
-    sum += getPointWeight(t.round, t.complexity, customConfigs);
-  }
-  return sum;
-}

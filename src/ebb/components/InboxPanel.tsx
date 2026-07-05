@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { X, Trash2, ArrowRight, Check } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useEbbStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { genId } from '../scheduler';
 import { getIntervalsForComplexity, formatIntervals, parseIntervals } from '../complexity';
 import { COMPLEXITY_LEVELS } from '../constants';
@@ -19,7 +20,23 @@ interface InboxPanelProps {
 }
 
 const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
-  const store = useEbbStore();
+  const {
+    inboxItems,
+    ebbSettings,
+    addInboxItem,
+    deleteInboxItem,
+    updateInboxItem,
+    generateTasksFromInbox,
+  } = useEbbStore(
+    useShallow((s) => ({
+      inboxItems: s.inboxItems,
+      ebbSettings: s.ebbSettings,
+      addInboxItem: s.addInboxItem,
+      deleteInboxItem: s.deleteInboxItem,
+      updateInboxItem: s.updateInboxItem,
+      generateTasksFromInbox: s.generateTasksFromInbox,
+    })),
+  );
   const [topicInput, setTopicInput] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -36,11 +53,11 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
       status: 'draft',
       createdAt: new Date().toISOString(),
     };
-    store.addInboxItem(item);
+    addInboxItem(item);
     setTopicInput('');
     // 光标保留在输入框
     inputRef.current?.focus();
-  }, [topicInput, tagInput, store]);
+  }, [topicInput, tagInput, addInboxItem]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
@@ -49,29 +66,29 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
     }
   };
 
-  const drafts = useMemo(() => store.inboxItems.filter((i) => i.status === 'draft'), [store.inboxItems]);
-  const staged = useMemo(() => store.inboxItems.filter((i) => i.status === 'staged'), [store.inboxItems]);
+  const drafts = useMemo(() => inboxItems.filter((i) => i.status === 'draft'), [inboxItems]);
+  const staged = useMemo(() => inboxItems.filter((i) => i.status === 'staged'), [inboxItems]);
 
   const handleDelete = useCallback((id: string) => {
-    store.deleteInboxItem(id);
+    deleteInboxItem(id);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
-  }, [store]);
+  }, [deleteInboxItem]);
 
   const handleStage = useCallback((id: string) => {
     // 升级为暂存：默认复杂度 normal + 默认间隔 + 今天起
-    const item = store.inboxItems.find((i) => i.id === id);
+    const item = inboxItems.find((i) => i.id === id);
     if (!item) return;
-    store.updateInboxItem(id, {
+    updateInboxItem(id, {
       status: 'staged',
       complexity: 'normal',
-      intervals: getIntervalsForComplexity('normal', store.ebbSettings.complexityConfigs),
+      intervals: getIntervalsForComplexity('normal', ebbSettings.complexityConfigs),
       startDate: dayjs().format('YYYY-MM-DD'),
     });
-  }, [store]);
+  }, [inboxItems, updateInboxItem, ebbSettings.complexityConfigs]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -85,20 +102,20 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
   const handleBatchGenerate = useCallback(() => {
     if (selectedIds.size === 0) return;
     const ids = Array.from(selectedIds);
-    const generated = store.generateTasksFromInbox(ids);
+    const generated = generateTasksFromInbox(ids);
     if (generated.length > 0) {
       setSelectedIds(new Set());
     }
-  }, [selectedIds, store]);
+  }, [selectedIds, generateTasksFromInbox]);
 
   const handleBatchDelete = useCallback(() => {
     if (selectedIds.size === 0) return;
     if (!confirm(`确认删除 ${selectedIds.size} 个收件箱项？`)) return;
     for (const id of selectedIds) {
-      store.deleteInboxItem(id);
+      deleteInboxItem(id);
     }
     setSelectedIds(new Set());
-  }, [selectedIds, store]);
+  }, [selectedIds, deleteInboxItem]);
 
   const content = (
     <div className={inline ? 'eb-inline-panel' : 'eb-panel eb-panel--inbox'} onClick={inline ? undefined : undefined}>
@@ -145,8 +162,8 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
                     selected={selectedIds.has(item.id)}
                     onSelect={toggleSelect}
                     onDelete={handleDelete}
-                    onUpdate={(patch) => store.updateInboxItem(item.id, patch)}
-                    settings={store.ebbSettings}
+                    onUpdate={(patch) => updateInboxItem(item.id, patch)}
+                    settings={ebbSettings}
                   />
                 ))}
               </div>
@@ -166,14 +183,14 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
                     onSelect={toggleSelect}
                     onDelete={handleDelete}
                     onStage={() => handleStage(item.id)}
-                    settings={store.ebbSettings}
+                    settings={ebbSettings}
                   />
                 ))}
               </div>
             </section>
           )}
 
-          {store.inboxItems.length === 0 && (
+          {inboxItems.length === 0 && (
             <div className="eb-inbox-empty">
               <div className="eb-inbox-empty-icon">📥</div>
               <div className="eb-inbox-empty-text">收件箱为空，添加主题开始管理</div>
