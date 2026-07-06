@@ -32,7 +32,6 @@ type ViewNode = {
   overdueCount: number;
   totalReviewCount: number;
   noteCount: number;
-  relationCount: number;
   importanceScore: number;
   labelPriority: 'high' | 'medium' | 'low';
   radius: number;
@@ -42,7 +41,7 @@ type ViewLink = {
   id: string;
   source: string;
   target: string;
-  kind: 'hierarchy' | 'relation';
+  kind: 'hierarchy';
   score: number;
 };
 
@@ -300,71 +299,7 @@ export const KnowledgeGraphView: React.FC = () => {
         score: 1,
       }));
 
-    const isHierarchyAdjacent = (sourceId: string, targetId: string) => {
-      const source = nodeMap.get(sourceId);
-      const target = nodeMap.get(targetId);
-      return source?.parentId === targetId || target?.parentId === sourceId;
-    };
-
-    const relationScores = new Map<string, ViewLink>();
-    const activityBuckets = new Map<string, Set<string>>();
-
-    const addActivity = (rootId: string, date: string | undefined, nodeId: string) => {
-      if (!date) return;
-      const bucketKey = `${rootId}:${date}`;
-      const bucket = activityBuckets.get(bucketKey) ?? new Set<string>();
-      bucket.add(nodeId);
-      activityBuckets.set(bucketKey, bucket);
-    };
-
-    reviewTasks.forEach(task => {
-      if (!task.graphNodeId || !nodeMap.has(task.graphNodeId)) return;
-      const rootId = nodeRootMap.get(task.graphNodeId) ?? task.graphNodeId;
-      addActivity(rootId, task.dueDate, task.graphNodeId);
-      addActivity(rootId, task.completedDate, task.graphNodeId);
-    });
-
-    activityBuckets.forEach(activeNodeIds => {
-      const ids = Array.from(activeNodeIds);
-      for (let i = 0; i < ids.length; i += 1) {
-        for (let j = i + 1; j < ids.length; j += 1) {
-          const sourceId = ids[i];
-          const targetId = ids[j];
-          if (sourceId === targetId) continue;
-          if (isHierarchyAdjacent(sourceId, targetId)) continue;
-          const pair = [sourceId, targetId].sort();
-          const key = pair.join('::');
-          const existing = relationScores.get(key);
-          if (existing) {
-            existing.score += 1;
-          } else {
-            relationScores.set(key, {
-              id: `rel-${pair[0]}-${pair[1]}`,
-              source: pair[0],
-              target: pair[1],
-              kind: 'relation',
-              score: 1,
-            });
-          }
-        }
-      }
-    });
-
-    const relationUsageCount = new Map<string, number>();
-    const relationLinks = Array.from(relationScores.values())
-      .sort((a, b) => b.score - a.score)
-      .filter(link => link.score >= 1)
-      .filter(link => {
-        const sourceCount = relationUsageCount.get(link.source) ?? 0;
-        const targetCount = relationUsageCount.get(link.target) ?? 0;
-        if (sourceCount >= 3 || targetCount >= 3) return false;
-        relationUsageCount.set(link.source, sourceCount + 1);
-        relationUsageCount.set(link.target, targetCount + 1);
-        return true;
-      })
-      .slice(0, 24);
-
-    const gNodes: ViewNode[] = nodes.map(n => {
+const gNodes: ViewNode[] = nodes.map(n => {
       const leafIds = descendantLeafMap.get(n.id) ?? [n.id];
       const isLeaf = leafIds.length === 1 && leafIds[0] === n.id;
       const totalLeafCount = isLeaf ? 0 : leafIds.length;
@@ -403,7 +338,6 @@ export const KnowledgeGraphView: React.FC = () => {
         overdueCount: stats.overdueCount,
         totalReviewCount: stats.totalReviewCount,
         noteCount: stats.noteCount,
-        relationCount: 0,
         importanceScore,
         labelPriority: 'low',
         radius: 0,
@@ -411,7 +345,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     // Calculate degrees and neighbors
-    const allLinks: ViewLink[] = [...hierarchyLinks, ...relationLinks];
+    const allLinks: ViewLink[] = [...hierarchyLinks];
     allLinks.forEach(link => {
       const a = gNodes.find(n => n.id === link.source);
       const b = gNodes.find(n => n.id === link.target);
@@ -420,12 +354,8 @@ export const KnowledgeGraphView: React.FC = () => {
         b.neighbors.push(a.id);
         a.links.push(link.id);
         b.links.push(link.id);
-        a.val += link.kind === 'relation' ? 0.45 * link.score : 1;
-        b.val += link.kind === 'relation' ? 0.45 * link.score : 1;
-        if (link.kind === 'relation') {
-          a.relationCount += 1;
-          b.relationCount += 1;
-        }
+        a.val += 1;
+        b.val += 1;
       }
     });
 
@@ -433,14 +363,14 @@ export const KnowledgeGraphView: React.FC = () => {
       node.labelPriority =
         node.depth === 0 || node.overdueCount > 0 || node.totalReviewCount >= 4
           ? 'high'
-          : node.relationCount > 0 || node.pendingCount > 0 || node.depth === 1
+          : node.pendingCount > 0 || node.depth === 1
             ? 'medium'
             : 'low';
       node.radius = Math.max(
         2.4,
         Math.min(
-          node.depth === 0 ? 8.5 : 6.0, // 稍微降低最大半径上限，防止节点变得过于臃肿
-          3 + node.importanceScore * 0.12 + node.relationCount * 0.3 - node.depth * 0.35, // 降低 importanceScore 的放大乘数
+          node.depth === 0 ? 8.5 : 6.0,
+          3 + node.importanceScore * 0.12 - node.depth * 0.35,
         ),
       );
     });
@@ -507,12 +437,10 @@ export const KnowledgeGraphView: React.FC = () => {
         return -250; // 稍微加大斥力，因为有聚拢力了
       }).distanceMax(800);
       
-      // 4. 结构边强约束，关系边极弱牵引
+      // 4. 结构边强约束
       fgRef.current.d3Force('link')
-        .distance((link: any) => {
-          return link.kind === 'relation' ? 180 : 70;
-        })
-        .strength((link: any) => link.kind === 'relation' ? 0.05 : 0.8); 
+        .distance(70)
+        .strength(0.8); 
 
       // 5. 全局弱居中力（防止极端情况下图谱整体偏移）
       fgRef.current.d3Force('center', forceCenter(dimensions.width / 2, dimensions.height / 2).strength(0.02));
@@ -522,7 +450,6 @@ export const KnowledgeGraphView: React.FC = () => {
         const baseR = node.radius ?? Math.max(3, Math.min(10, Math.sqrt(node.val || 1) * 2.5));
         let padding = node.depth === 0 ? 25 : (node.depth === 1 ? 15 : 8);
         if (node.labelPriority === 'high') padding += 5;
-        if (node.relationCount > 0) padding += Math.min(8, node.relationCount * 1.5);
         if (node.name && node.name.length > 6) {
           padding += (node.name.length - 6) * 1.5;
         }
@@ -665,16 +592,12 @@ export const KnowledgeGraphView: React.FC = () => {
             linkColor={(link: any) => {
               const isDimmed = hoverNode !== null && !highlightLinks.has(link.id);
               if (isDimmed) return '#f8fafc';
-              if (link.kind === 'relation') {
-                return highlightLinks.has(link.id) ? 'rgba(59, 130, 246, 0.55)' : 'rgba(148, 163, 184, 0.32)';
-              }
               return highlightLinks.has(link.id) ? '#64748b' : '#dbe4ee';
             }}
             linkWidth={(link: any) => {
-              if (link.kind === 'relation') return highlightLinks.has(link.id) ? 1.8 : 0.9;
               return highlightLinks.has(link.id) ? 2.4 : 1.15;
             }}
-            linkDirectionalParticles={(link: any) => link.kind === 'hierarchy' && highlightLinks.has(link.id) ? 2 : 0}
+            linkDirectionalParticles={(link: any) => highlightLinks.has(link.id) ? 2 : 0}
             linkDirectionalParticleWidth={2.5}
             linkDirectionalParticleSpeed={0.006}
             onNodeClick={(node: any, event: any) => {
@@ -887,8 +810,8 @@ export const KnowledgeGraphView: React.FC = () => {
                         <div className="mt-1 text-sm font-semibold text-emerald-600">{selectedGraphNode.completedCount}</div>
                       </div>
                       <div className="rounded-lg bg-white px-2.5 py-2 border border-slate-200/70">
-                        <div className="text-slate-400">弱连接</div>
-                        <div className="mt-1 text-sm font-semibold text-sky-600">{selectedGraphNode.relationCount}</div>
+                        <div className="text-slate-400">总复习</div>
+                        <div className="mt-1 text-sm font-semibold text-blue-600">{selectedGraphNode.totalReviewCount}</div>
                       </div>
                     </div>
                     {selectedNodeReviewPreview.length > 0 && (
