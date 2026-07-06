@@ -10,7 +10,7 @@ import { useEbbStore } from '@/ebb/store';
 import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '@/ebb/scheduler';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
-import { useDailyScheduleStore } from './store';
+import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import TimeGrid from './TimeGrid';
 import type { TimeBlock, TaskSource } from './types';
 import {
@@ -169,7 +169,6 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     })),
   );
   const {
-    getDaySchedule,
     addTimeBlock,
     resizeTimeBlock,
     toggleTimeBlock,
@@ -177,7 +176,6 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     updateTimeBlock,
   } = useDailyScheduleStore(
     useShallow((s) => ({
-      getDaySchedule: s.getDaySchedule,
       addTimeBlock: s.addTimeBlock,
       resizeTimeBlock: s.resizeTimeBlock,
       toggleTimeBlock: s.toggleTimeBlock,
@@ -186,7 +184,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     })),
   );
 
-  const daySchedule = getDaySchedule(selectedDate);
+  const scheduleForDate = useDailyScheduleStore((s) => s.schedules[selectedDate]);
+  const daySchedule = scheduleForDate ?? EMPTY_DAY_SCHEDULE;
   const blocks = useMemo(() => daySchedule.blocks ?? [], [daySchedule.blocks]);
 
   // ── 快速创建状态 ───────────────────────────────────────

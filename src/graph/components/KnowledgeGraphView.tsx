@@ -4,7 +4,7 @@ import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
 import { Plus, Trash2, Check, Settings2, X, Info } from 'lucide-react';
-import { forceCollide, forceRadial, forceX, forceY } from 'd3-force';
+import { forceCollide, forceRadial } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
 
 type NodeRollupStats = {
@@ -446,7 +446,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     return { nodes: gNodes, links: allLinks };
-  }, [nodes, getNodeColorHex, getDescendants, reviewTasks]);
+  }, [nodes, getNodeColorHex, reviewTasks]);
 
   useEffect(() => {
     if (fgRef.current) {
@@ -455,9 +455,6 @@ export const KnowledgeGraphView: React.FC = () => {
       // 预先计算有多少个不同的根节点，并给它们分配不同的中心 x 坐标
       const rootNodes = graphData.nodes.filter((n: any) => n.depth === 0);
       rootNodes.sort((a: any, b: any) => a.id.localeCompare(b.id)); // 保持顺序稳定
-      const numRoots = rootNodes.length || 1;
-      const rootIndexMap = new Map<string, number>();
-      rootNodes.forEach((n: any, i: number) => rootIndexMap.set(n.id, i));
 
       // 计算每个根学科星系需要的半径大小
       const rootRadii = new Map<string, number>();

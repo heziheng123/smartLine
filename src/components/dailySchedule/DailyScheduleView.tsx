@@ -23,7 +23,7 @@ import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '@/ebb/scheduler';
-import { useDailyScheduleStore } from './store';
+import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import BlockModeView from './BlockModeView';
 import {
   DEFAULT_TIME_SLOT_CONFIGS,
@@ -63,7 +63,6 @@ const DailyScheduleView: React.FC = () => {
     })),
   );
   const {
-    getDaySchedule,
     addScheduledItem,
     reorderScheduledItems,
     moveScheduledItem,
@@ -73,7 +72,6 @@ const DailyScheduleView: React.FC = () => {
     updateTimeBlock,
   } = useDailyScheduleStore(
     useShallow((s) => ({
-      getDaySchedule: s.getDaySchedule,
       addScheduledItem: s.addScheduledItem,
       reorderScheduledItems: s.reorderScheduledItems,
       moveScheduledItem: s.moveScheduledItem,
@@ -84,7 +82,8 @@ const DailyScheduleView: React.FC = () => {
     })),
   );
 
-  const daySchedule = getDaySchedule(selectedDate);
+  const scheduleForDate = useDailyScheduleStore((s) => s.schedules[selectedDate]);
+  const daySchedule = scheduleForDate ?? EMPTY_DAY_SCHEDULE;
 
   // 时间段配置（可自定义）
   const [slotConfigs, setSlotConfigs] = useState<TimeSlotConfig[]>(DEFAULT_TIME_SLOT_CONFIGS);
@@ -245,7 +244,7 @@ const DailyScheduleView: React.FC = () => {
       // 从左侧拖回右侧任务池 = 移除
       if (
         srcDroppableId.startsWith('ds-slot-') &&
-        (destDroppableId === DROPPABLE_POOL || destDroppableId === `${DROPPABLE_POOL}-review`)
+        (destDroppableId === DROPPABLE_POOL || destDroppableId === `${DROPPABLE_POOL}-review` || destDroppableId === 'ds-pool-container')
       ) {
         const srcSlot = srcDroppableId.replace('ds-slot-', '') as TimeSlot;
         const srcItems = getSlotItems(srcSlot);
@@ -571,22 +570,28 @@ const DailyScheduleView: React.FC = () => {
             <div className="ds-divider" />
 
             {/* 右侧：任务池 */}
-            <div className="ds-right">
-              <div className="ds-pool-header">
-                <h2 className="ds-pool-title">任务池</h2>
-                <div className="ds-pool-filters">
-                  {(['all', 'project', 'review'] as const).map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      className={`ds-filter-btn ${filterSource === f ? 'ds-filter-btn--active' : ''}`}
-                      onClick={() => setFilterSource(f)}
-                    >
-                      {f === 'all' ? '全部' : f === 'project' ? '项目' : '复习'}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <Droppable droppableId="ds-pool-container" isDropDisabled={false}>
+              {(provided, snapshot) => (
+                <div
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  className={`ds-right ${snapshot.isDraggingOver ? 'ds-right--drop-target' : ''}`}
+                >
+                  <div className="ds-pool-header">
+                    <h2 className="ds-pool-title">任务池</h2>
+                    <div className="ds-pool-filters">
+                      {(['all', 'project', 'review'] as const).map((f) => (
+                        <button
+                          key={f}
+                          type="button"
+                          className={`ds-filter-btn ${filterSource === f ? 'ds-filter-btn--active' : ''}`}
+                          onClick={() => setFilterSource(f)}
+                        >
+                          {f === 'all' ? '全部' : f === 'project' ? '项目' : '复习'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
               {/* 项目任务 */}
               {poolItems.filter((i) => i.source === 'project').length > 0 && (
@@ -691,7 +696,10 @@ const DailyScheduleView: React.FC = () => {
               {poolItems.length === 0 && (
                 <div className="ds-pool-empty">今日暂无待安排任务</div>
               )}
+              {provided.placeholder}
             </div>
+            )}
+          </Droppable>
           </div>
         </DragDropContext>
         )}
