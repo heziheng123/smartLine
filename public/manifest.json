@@ -1,0 +1,17 @@
+{
+  "name": "Smart Timeline",
+  "short_name": "Timeline",
+  "description": "智能知识大盘与排期系统",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -439,8 +439,8 @@ export const KnowledgeGraphView: React.FC = () => {
       node.radius = Math.max(
         2.4,
         Math.min(
-          node.depth === 0 ? 9.5 : 7.5,
-          3 + node.importanceScore * 0.18 + node.relationCount * 0.4 - node.depth * 0.35,
+          node.depth === 0 ? 8.5 : 6.0, // 稍微降低最大半径上限，防止节点变得过于臃肿
+          3 + node.importanceScore * 0.12 + node.relationCount * 0.3 - node.depth * 0.35, // 降低 importanceScore 的放大乘数
         ),
       );
     });
@@ -450,52 +450,57 @@ export const KnowledgeGraphView: React.FC = () => {
 
   useEffect(() => {
     if (fgRef.current) {
-      // 1. 预先计算学科团簇的横向坐标，用于实现多中心（Multi-foci）引力布局
+      // 1. 预先计算学科团簇的环形坐标，用于实现星系态多中心引力布局
       const rootNodes = graphData.nodes.filter((n: any) => n.depth === 0);
       rootNodes.sort((a: any, b: any) => a.id.localeCompare(b.id));
 
       const rootRadii = new Map<string, number>();
+      let maxRadius = 0;
       graphData.nodes.forEach((node: any) => {
         const rId = node.rootId || node.id;
         const currentMax = rootRadii.get(rId) || 0;
-        rootRadii.set(rId, Math.max(currentMax, (node.depth || 0) * 112 + 60));
+        const r = Math.max(currentMax, (node.depth || 0) * 45 + 60);
+        rootRadii.set(rId, r);
+        if (r > maxRadius) maxRadius = r;
       });
 
-      let totalWidth = 0;
-      const rootCenters = new Map<string, number>();
-      rootNodes.forEach((root: any, i: number) => {
-        const radius = rootRadii.get(root.id) || 100;
-        if (i === 0) {
-          rootCenters.set(root.id, radius);
-          totalWidth = radius * 2;
-        } else {
-          const prevRoot = rootNodes[i - 1];
-          const prevCenter = rootCenters.get(prevRoot.id)!;
-          const prevRadius = rootRadii.get(prevRoot.id) || 100;
-          const minGap = 40;
-          const currentCenter = prevCenter + prevRadius + minGap + radius;
-          rootCenters.set(root.id, currentCenter);
-          totalWidth = currentCenter + radius;
-        }
-      });
+      const numClusters = rootNodes.length;
+      const rootCenters = new Map<string, {x: number, y: number}>();
+      const cx = dimensions.width ? dimensions.width / 2 : 500;
+      const cy = dimensions.height ? dimensions.height / 2 : 500;
 
-      const offsetX = (dimensions.width - totalWidth) / 2;
-      const safeOffsetX = isNaN(offsetX) ? dimensions.width / 2 : offsetX;
+      if (numClusters <= 1) {
+        if (numClusters === 1) rootCenters.set(rootNodes[0].id, { x: cx, y: cy });
+      } else {
+        // 进一步降低团簇间的强制安全距离
+        // 将系数从 1.1 降至 0.6，允许更大的边缘交融，依靠排斥力(-250)自然隔开
+        const requiredDistance = maxRadius * 0.6 + 20; 
+        const orbitRadius = requiredDistance / (2 * Math.sin(Math.PI / numClusters));
+        
+        rootNodes.forEach((root: any, i: number) => {
+          // 2个学科水平分布；3个及以上呈环形多边形分布
+          const angleOffset = numClusters === 2 ? 0 : -Math.PI / 2;
+          const angle = angleOffset + (i * 2 * Math.PI) / numClusters;
+          rootCenters.set(root.id, {
+            x: cx + Math.cos(angle) * orbitRadius,
+            y: cy + Math.sin(angle) * orbitRadius
+          });
+        });
+      }
 
       // 2. 移除绝对的强制同心圆，改用多中心 X/Y 轴引力（Multi-foci）
       fgRef.current.d3Force('radial', null); // 彻底移除生硬的径向力
       
-      // 为每个节点根据其归属的学科，施加一个柔和的 X 轴引力，将其拉向对应的学科团簇中心
+      // 赋予相等的 X/Y 轴引力（0.06），消除受力不均导致的对角线侧滑
       fgRef.current.d3Force('cluster-x', forceX((node: any) => {
         const rId = node.rootId || node.id;
-        const center = rootCenters.get(rId) || 0;
-        return safeOffsetX + center;
+        return rootCenters.get(rId)?.x ?? cx;
       }).strength(0.06));
 
-      // 柔和的 Y 轴引力，让所有节点大致在屏幕垂直居中区域
-      fgRef.current.d3Force('cluster-y', forceY(() => {
-        return dimensions.height / 2;
-      }).strength(0.04));
+      fgRef.current.d3Force('cluster-y', forceY((node: any) => {
+        const rId = node.rootId || node.id;
+        return rootCenters.get(rId)?.y ?? cy;
+      }).strength(0.06));
 
       // 3. 控制排斥：增强排斥力，让节点自然散开，形成星云感
       fgRef.current.d3Force('charge').strength(() => {
@@ -700,11 +705,13 @@ export const KnowledgeGraphView: React.FC = () => {
               const label = node.name;
               
               // === Obsidian 风格的文字缩放逻辑 ===
-              const priorityBoost = node.labelPriority === 'high' ? 1.2 : node.labelPriority === 'medium' ? 0.5 : 0;
-              const rawFontSize = (11.5 + priorityBoost) / globalScale;
+              // 取消基于优先级的字号放大 (priorityBoost)，仅保留全局统一的基础字号
+              const rawFontSize = 11.5 / globalScale;
               const fontSize = Math.min(15, Math.max(3, rawFontSize));
 
-              ctx.font = `${isSelected || isHovered ? '600' : '400'} ${fontSize}px Inter, system-ui, sans-serif`;
+              // 恢复原有的加粗逻辑：仅在悬停或选中时加粗 (600)，常规状态保持 400
+              const isBold = isSelected || isHovered;
+              ctx.font = `${isBold ? '600' : '400'} ${fontSize}px Inter, system-ui, sans-serif`;
 
               const r = node.radius ?? Math.max(2.4, Math.min(6, node.val));
               const haloRadius = r + 3.5 / globalScale;
