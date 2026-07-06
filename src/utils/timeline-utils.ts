@@ -3,7 +3,7 @@
 // ============================================================
 
 import dayjs from 'dayjs';
-import { makeLocalDayjs, splitDate } from '@/utils/dateSafe';
+import { makeLocalDayjs } from '@/utils/dateSafe';
 import type {
   TaskWithLayout,
   MonthLayout,

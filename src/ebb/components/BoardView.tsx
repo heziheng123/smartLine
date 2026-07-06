@@ -61,6 +61,8 @@ interface TopicCardData {
   /** 主题总积分 */
   totalPoints: number;
   earnedPoints: number;
+  /** 累积的复习笔记/错题 */
+  accumulatedNotes: string[];
 }
 
 const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) => {
@@ -104,6 +106,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
       }
 
       const firstTask = group[0];
+      const accumulatedNotes = firstTask?.accumulatedNotes || [];
       topicCards.push({
         topicName,
         tag: firstTask?.tag,
@@ -116,6 +119,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
         hasUrgent,
         totalPoints,
         earnedPoints,
+        accumulatedNotes,
       });
     }
 
@@ -291,8 +295,9 @@ interface BoardCardProps {
 }
 
 const BoardCard: React.FC<BoardCardProps> = ({ card, index, settings, taskActions }) => {
-  const { topicName, group, totalRounds, completedRounds, nextTask, nextRound, complexity } = card;
+  const { topicName, group, totalRounds, completedRounds, nextTask, nextRound, complexity, accumulatedNotes } = card;
   const isAllDone = completedRounds >= totalRounds;
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // 下一轮积分
   const points = nextTask && complexity
@@ -325,58 +330,123 @@ const BoardCard: React.FC<BoardCardProps> = ({ card, index, settings, taskAction
   const draggableId = nextTask?.id || group[0]?.id || topicName;
 
   const cardContent = (
-    <>
-      <span className="eb-board-card-dot" style={{ backgroundColor: priorityColor }} />
-      <div className="eb-board-card-main">
-        <span
-          className="eb-board-card-name"
-          onClick={() => taskActions.onOpenTimeline(topicName)}
-        >
-          {topicName}
-        </span>
-        <div className="eb-board-card-meta">
-          {card.tag && (
-            <span
-              className="eb-board-card-tag"
-              style={tagColor ? { backgroundColor: `${tagColor}40`, color: '#374151' } : undefined}
-            >
-              {card.tag}
-            </span>
-          )}
-          <span className="eb-board-card-round" style={{ color: roundColor }}>
-            R{completedRounds}/{totalRounds}
+    <div onClick={() => { if (accumulatedNotes.length > 0) setDrawerOpen(!drawerOpen); }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+        <span className="eb-board-card-dot" style={{ backgroundColor: priorityColor }} />
+        <div className="eb-board-card-main">
+          <span
+            className="eb-board-card-name"
+            onClick={(e) => { e.stopPropagation(); taskActions.onOpenTimeline(topicName); }}
+          >
+            {topicName}
           </span>
-          {dateLabel && (
-            <span className={`eb-board-card-date eb-date-pill eb-date-pill--${dateLabel.variant}`}>
-              {dateLabel.text}
+          <div className="eb-board-card-meta">
+            {card.tag && (
+              <span
+                className="eb-board-card-tag"
+                style={tagColor ? { backgroundColor: `${tagColor}40`, color: '#374151' } : undefined}
+              >
+                {card.tag}
+              </span>
+            )}
+            <span className="eb-board-card-round" style={{ color: roundColor }}>
+              R{completedRounds}/{totalRounds}
             </span>
+            {dateLabel && (
+              <span className={`eb-board-card-date eb-date-pill eb-date-pill--${dateLabel.variant}`}>
+                {dateLabel.text}
+              </span>
+            )}
+            {points > 0 && <span className="eb-board-card-points">{points}分</span>}
+            {accumulatedNotes.length > 0 && (
+              <span className="eb-board-card-notes-badge" title="包含错题笔记">
+                📝 {accumulatedNotes.length}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="eb-board-card-actions">
+          {nextTask && (
+            <>
+              <button
+                type="button"
+                className="eb-icon-btn"
+                onClick={(e) => { e.stopPropagation(); taskActions.onToggle(nextTask.id); }}
+                title="标记当前轮次完成"
+              >
+                ✓
+              </button>
+              <button
+                type="button"
+                className="eb-icon-btn"
+                onClick={(e) => { e.stopPropagation(); taskActions.onReschedule(nextTask.id); }}
+                title="改期"
+              >
+                📅
+              </button>
+            </>
           )}
-          {points > 0 && <span className="eb-board-card-points">{points}分</span>}
         </div>
       </div>
-      <div className="eb-board-card-actions">
-        {nextTask && (
-          <>
-            <button
-              type="button"
-              className="eb-icon-btn"
-              onClick={(e) => { e.stopPropagation(); taskActions.onToggle(nextTask.id); }}
-              title="标记当前轮次完成"
+      
+      {/* 笔记抽屉 */}
+      {drawerOpen && accumulatedNotes.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-gray-100 flex flex-col gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">History</div>
+          <div className="flex flex-col gap-1">
+            {accumulatedNotes.map((note, idx) => {
+              let data = { date: '', type: '', typeLabel: '记录', title: '未知记录', notes: note };
+              try {
+                if (note.startsWith('{')) {
+                  data = JSON.parse(note);
+                } else {
+                  const match = note.match(/\[(.*?) (.*?)\]:\s*(.*)/);
+                  if (match) {
+                    data.date = match[1];
+                    data.typeLabel = match[2];
+                    data.notes = match[3];
+                  }
+                }
+              } catch {
+                // ignore error
+              }
+
+              const isExercise = data.type === 'exercise' || data.typeLabel.includes('做题');
+              const isNote = data.type === 'note' || data.typeLabel.includes('笔记');
+              const typeText = isExercise ? '做题' : isNote ? '笔记' : '记录';
+              const badgeColor = isExercise ? 'bg-blue-50 text-blue-600 border-blue-100' : isNote ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-600 border-gray-200';
+
+              return (
+                <div key={idx} className="flex flex-col p-1.5 bg-gray-50/50 rounded border border-gray-100/50 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="flex items-center gap-1 overflow-hidden">
+                      <span className={`text-[9px] px-1 py-0.5 rounded border font-medium whitespace-nowrap ${badgeColor}`}>
+                        {typeText}
+                      </span>
+                      <span className="text-[11px] font-medium text-gray-700 truncate">{data.title}</span>
+                    </div>
+                    <span className="text-[9px] text-gray-400 font-mono whitespace-nowrap shrink-0">{data.date}</span>
+                  </div>
+                  {data.notes && (
+                    <div className="text-[11px] text-gray-500 leading-snug whitespace-pre-wrap mt-1 pl-1 border-l-2 border-gray-200/60">
+                      {data.notes}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {nextTask && (
+            <button 
+              className="mt-1 bg-blue-50 hover:bg-blue-100 text-blue-600 text-[11px] font-medium py-1 px-3 rounded shadow-sm transition-colors self-end flex items-center gap-1"
+              onClick={(e) => { e.stopPropagation(); setDrawerOpen(false); taskActions.onToggle(nextTask.id); }}
             >
-              ✓
+              <span className="opacity-80">✓</span> 已掌握 (下一轮)
             </button>
-            <button
-              type="button"
-              className="eb-icon-btn"
-              onClick={(e) => { e.stopPropagation(); taskActions.onReschedule(nextTask.id); }}
-              title="改期"
-            >
-              📅
-            </button>
-          </>
-        )}
-      </div>
-    </>
+          )}
+        </div>
+      )}
+    </div>
   );
 
   return (

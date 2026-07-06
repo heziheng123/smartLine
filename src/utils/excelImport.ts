@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import type { SmartTaskBlock, Task } from '@/types';
 import { genBlockId, getTagColor } from './blocks';
-import { makeLocalDayjs, todayStr, getDayOfWeek, formatDateLocal } from './dateSafe';
+import { makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
 
 // ── 类型定义 ────────────────────────────────────────────────
 

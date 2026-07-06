@@ -5,9 +5,11 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import { createClient } from '@liveblocks/client';
+import { liveblocksClient } from './client';
 import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
 import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock } from '@/utils/blocks';
+import { useEbbStore } from '@/ebb/store';
+import { useGraphStore } from '@/graph/store';
 
 const STORAGE_KEY = 'smart-timeline-data';
 const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
@@ -145,9 +147,7 @@ function saveData(data: TimelineData) {
 
 // ── Liveblocks 客户端初始化 ───────────────────────────────────
 
-export const liveblocksClient = createClient({
-  publicApiKey: import.meta.env.VITE_LIVEBLOCKS_PUBLIC_KEY || '',
-});
+export { liveblocksClient } from './client';
 
 // ── Store 接口定义 ─────────────────────────────────────────────
 
@@ -307,9 +307,49 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         updateBlockHeader: (taskId, blockId, headerPatch) => {
           const now = new Date().toISOString();
+          let syncPayload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string } | null = null;
+
           set((state) => {
             const tasks = state.tasks.map((t) => {
               if (t.id !== taskId) return t;
+              
+              const block = t.blocks.find(b => b.type === 'smart-task' && b.id === blockId);
+              if (block && block.type === 'smart-task') {
+                const header = { ...block.header, ...headerPatch };
+                
+                // 检查是否触发了完成且开启了同步
+                if (headerPatch.isCompleted === true && header.autoSyncEbb && header.graphNodeId && !block.header.isCompleted) {
+                  // 清除 HTML 标签获取纯文本笔记
+                  const tempDiv = document.createElement('div');
+                  tempDiv.innerHTML = block.body || '';
+                  const plainTextNotes = tempDiv.textContent || tempDiv.innerText || '';
+
+                  // 获取大盘节点的真实名称
+                  const graphNode = useGraphStore.getState().getNodeById(header.graphNodeId);
+                  const actualTopicName = graphNode ? graphNode.name : header.title;
+
+                  syncPayload = {
+                    action: 'add',
+                    graphNodeId: header.graphNodeId,
+                    topicName: actualTopicName,
+                    taskType: header.taskType,
+                    taskNotes: plainTextNotes,
+                    taskTitle: header.title,
+                  };
+                } 
+                // 检查是否取消了完成
+                else if (headerPatch.isCompleted === false && header.autoSyncEbb && header.graphNodeId && block.header.isCompleted) {
+                  const graphNode = useGraphStore.getState().getNodeById(header.graphNodeId);
+                  const actualTopicName = graphNode ? graphNode.name : header.title;
+
+                  syncPayload = {
+                    action: 'remove',
+                    graphNodeId: header.graphNodeId,
+                    topicName: actualTopicName,
+                  };
+                }
+              }
+
               const newBlocks = updateBlockHeader(t.blocks, blockId, headerPatch);
               return { ...t, blocks: newBlocks, blocksUpdatedAt: now };
             });
@@ -325,6 +365,11 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             saveData(newData);
             return newData;
           });
+
+          // 执行 Ebb 拦截同步（在 set 之外调用，避免 store 嵌套更新问题）
+          if (syncPayload) {
+            useEbbStore.getState().syncTaskToEbb(syncPayload);
+          }
         },
 
         updateBlockBody: (taskId, blockId, body) => {

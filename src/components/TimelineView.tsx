@@ -3,8 +3,7 @@
 // ============================================================
 
 import React, { useMemo, useCallback } from 'react';
-import dayjs from 'dayjs';
-import { makeLocalDayjs, isBeforeDay, isAfterDay } from '@/utils/dateSafe';
+import { makeLocalDayjs } from '@/utils/dateSafe';
 import type { Task, TaskGroup, Note, Milestone } from '@/types';
 import { calculateLayout } from '@/utils/layout';
 import {

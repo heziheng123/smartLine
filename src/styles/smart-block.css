@@ -439,8 +439,9 @@
   padding: 10px 12px 10px 14px;
   box-shadow: var(--stb-shadow);
   transition: box-shadow var(--stb-transition), border-color var(--stb-transition), opacity var(--stb-transition);
-  overflow: hidden;
+  overflow: visible; /* 关键修改：原来是 hidden，会导致内部下拉菜单被裁切 */
   flex-shrink: 0;
+  z-index: 1;
 }
 .stb-accent-bar {
   position: absolute;
@@ -453,6 +454,7 @@
 .stb-card:hover {
   box-shadow: var(--stb-shadow-hover);
   border-color: #d1d5db;
+  z-index: 10; /* Hover 时提升卡片本身的层级 */
 }
 .stb-card--done {
   opacity: 0.5;
@@ -522,7 +524,8 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  position: relative;
+  position: relative; /* 确保 header 作为下拉菜单的相对定位参考点 */
+  z-index: 20; /* 确保 header 自身的层级足够高 */
 }
 
 /* ── 右侧内容容器 ── */
@@ -814,6 +817,108 @@
   height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.stb-type-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--stb-transition);
+  background-color: var(--stb-gray-100);
+  color: var(--stb-gray-600);
+  position: relative; /* 确保自身能包裹绝对定位的子元素 */
+}
+
+/* ── 任务类型下拉菜单 ── */
+.stb-type-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background-color: white;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  padding: 4px;
+  z-index: 1000; /* 再次提升 z-index 确保绝对不会被遮挡 */
+  min-width: 120px;
+  border: 1px solid #e5e7eb;
+}
+.stb-type-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #374151;
+}
+.stb-type-option:hover {
+  background: #f3f4f6;
+}
+
+/* ── 知识大盘节点选择器 ── */
+.stb-graph-picker {
+  background: #fff;
+  border-radius: 12px;
+  padding: 12px;
+  width: 260px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.12);
+}
+.stb-graph-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.stb-graph-picker-search input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 13px;
+}
+.stb-graph-picker-icon {
+  color: #9ca3af;
+}
+.stb-graph-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.stb-graph-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  text-align: left;
+}
+.stb-graph-option:hover {
+  background: #f3f4f6;
+}
+.stb-graph-option--active {
+  background: #eff6ff;
+  color: #3b82f6;
+  font-weight: 500;
+}
+.stb-graph-option--create {
+  color: #3b82f6;
 }
 
 /* ── 日期选择器浮层 ── */

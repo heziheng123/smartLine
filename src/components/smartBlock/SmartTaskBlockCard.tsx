@@ -16,10 +16,18 @@ import {
   Trash2,
   ChevronDown,
   Repeat,
+  Network,
+  RefreshCw,
+  Video,
+  BookOpen,
+  PenTool,
+  StickyNote,
 } from 'lucide-react';
 import type { SmartTaskBlock, SmartTaskHeader } from '@/types';
 import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
+import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
+import { useGraphStore } from '@/graph/store';
 
 interface SmartTaskBlockCardProps {
   block: SmartTaskBlock;
@@ -34,7 +42,14 @@ interface SmartTaskBlockCardProps {
 
 const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
 
-const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
+const TASK_TYPE_CONFIG = {
+  'video': { icon: <Video size={12} />, label: '网课 (吸收)', color: '#ef4444' },
+  'reading': { icon: <BookOpen size={12} />, label: '阅读 (吸收)', color: '#f59e0b' },
+  'exercise': { icon: <PenTool size={12} />, label: '做题 (输出)', color: '#3b82f6' },
+  'note': { icon: <StickyNote size={12} />, label: '笔记 (输出)', color: '#8b5cf6' },
+};
+
+export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   block,
   onUpdateHeader,
   onUpdateBody,
@@ -53,11 +68,16 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     }
   }, [expandOverride]);
   const [editingBody, setEditingBody] = useState(false);
-  const [showTagPicker, setShowTagPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showGraphPicker, setShowGraphPicker] = useState(false);
+  const [showTypePicker, setShowTypePicker] = useState(false);
+  const [showTagPicker, setShowTagPicker] = useState(false);
   const [dateAnchor, setDateAnchor] = useState<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
+
+  const { getNodeById } = useGraphStore();
+  const graphNode = header.graphNodeId ? getNodeById(header.graphNodeId) : null;
 
   // textarea 自动撑高
   useEffect(() => {
@@ -103,6 +123,12 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const handleDateSelect = useCallback((date: string) => {
     onUpdateHeader(block.id, { date });
     setShowDatePicker(false);
+  }, [block.id, onUpdateHeader]);
+
+  // 知识节点选择
+  const handleGraphNodeSelect = useCallback((nodeId: string) => {
+    onUpdateHeader(block.id, { graphNodeId: nodeId, autoSyncEbb: true });
+    setShowGraphPicker(false);
   }, [block.id, onUpdateHeader]);
 
   // 时长修改
@@ -244,6 +270,62 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               </span>
             )}
 
+            <button
+              type="button"
+              className={`stb-tag-badge ${header.autoSyncEbb ? 'stb-tag-badge--sync' : ''}`}
+              style={header.autoSyncEbb ? { backgroundColor: '#eff6ff', color: '#3b82f6' } : {}}
+              onClick={() => setShowGraphPicker(!showGraphPicker)}
+              title="绑定知识节点并自动同步至复习流"
+            >
+              <Network size={10} /> {graphNode ? graphNode.name : '未绑定节点'}
+              {header.autoSyncEbb && <RefreshCw size={8} style={{ marginLeft: 2 }} />}
+            </button>
+
+            {/* 任务类型选择器（仅当绑定了节点时才显示，因为只有进入复习流才有分类意义） */}
+            {header.graphNodeId && (
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  className="stb-tag-badge"
+                  style={{ 
+                    color: header.taskType ? TASK_TYPE_CONFIG[header.taskType].color : '#6b7280',
+                    backgroundColor: header.taskType ? `${TASK_TYPE_CONFIG[header.taskType].color}15` : '#f3f4f6'
+                  }}
+                  onClick={() => setShowTypePicker(!showTypePicker)}
+                >
+                  {header.taskType ? (
+                    <>
+                      {TASK_TYPE_CONFIG[header.taskType].icon}
+                      {TASK_TYPE_CONFIG[header.taskType].label.split(' ')[0]}
+                    </>
+                  ) : (
+                    <>
+                      <Tag size={10} /> 未分类
+                    </>
+                  )}
+                </button>
+                {showTypePicker && (
+                  <div className="stb-type-dropdown" onClick={(e) => e.stopPropagation()}>
+                    {(Object.keys(TASK_TYPE_CONFIG) as Array<keyof typeof TASK_TYPE_CONFIG>).map(type => (
+                      <div 
+                        key={type}
+                        className="stb-type-option"
+                        onClick={() => {
+                          onUpdateHeader(block.id, { taskType: type });
+                          setShowTypePicker(false);
+                        }}
+                      >
+                        <span style={{ color: TASK_TYPE_CONFIG[type].color, display: 'flex', alignItems: 'center' }}>
+                          {TASK_TYPE_CONFIG[type].icon}
+                        </span>
+                        <span>{TASK_TYPE_CONFIG[type].label}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Hover 快捷菜单（仅删除） */}
             <div className="stb-actions">
               <button
@@ -318,6 +400,31 @@ const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               selectedDate={header.date}
               onDateSelect={handleDateSelect}
             />
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* ── 知识节点选择器浮层 ── */}
+      {showGraphPicker && createPortal(
+        <div className="stb-tag-picker-overlay" onClick={() => setShowGraphPicker(false)}>
+          <div onClick={(e) => e.stopPropagation()}>
+            <GraphNodeSelect 
+              value={header.graphNodeId}
+              onChange={handleGraphNodeSelect}
+            />
+            {header.graphNodeId && (
+              <div style={{ marginTop: 8, padding: '8px 12px', background: '#fff', borderRadius: 8, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: '#374151' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={header.autoSyncEbb}
+                    onChange={(e) => onUpdateHeader(block.id, { autoSyncEbb: e.target.checked })}
+                  />
+                  完成时自动同步至 Ebb 复习流
+                </label>
+              </div>
+            )}
           </div>
         </div>,
         document.body,

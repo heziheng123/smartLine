@@ -4413,8 +4413,108 @@
 
 .eb-board-card-points {
   font-size: 11px;
-  color: #6B7FD7;
+  color: #10b981;
   font-weight: 500;
+}
+
+.eb-board-card-notes-badge {
+  font-size: 10px;
+  color: #8b5cf6;
+  background: #eff6ff;
+  padding: 1px 4px;
+  border-radius: 4px;
+  cursor: help;
+}
+
+/* ── 看板卡片笔记抽屉 ── */
+.eb-board-card-drawer {
+  margin-top: 10px;
+  padding: 10px;
+  background: #1f2937;
+  border-radius: 6px;
+  color: #e5e7eb;
+  font-size: 12px;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.1);
+}
+
+.eb-board-card-drawer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.eb-board-card-drawer-item {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.eb-board-card-drawer-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.eb-board-card-drawer-icon {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 1px;
+}
+
+.eb-board-card-drawer-text {
+  flex: 1;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.eb-board-card-drawer-btn {
+  width: 100%;
+  padding: 6px;
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.eb-board-card-drawer-btn:hover {
+  background: #2563eb;
+}
+
+/* ── 知识大盘 ── */
+.graph-node-pill {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  transition: all 0.3s ease;
+}
+.bg-gray-200 { background-color: #e5e7eb; }
+.text-gray-500 { color: #6b7280; }
+.bg-yellow-400 { background-color: #fbbf24; }
+.text-yellow-900 { color: #78350f; }
+.shadow-yellow-200 { box-shadow: 0 4px 14px rgba(251, 191, 36, 0.4); }
+.bg-emerald-500 { background-color: #10b981; }
+.text-white { color: #ffffff; }
+.shadow-emerald-200 { box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4); }
+.bg-lime-400 { background-color: #a3e635; }
+.text-lime-900 { color: #365314; }
+.shadow-lime-200 { box-shadow: 0 4px 14px rgba(163, 230, 53, 0.4); }
+.bg-red-500 { background-color: #ef4444; }
+.shadow-red-200 { box-shadow: 0 4px 14px rgba(239, 68, 68, 0.5); }
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); box-shadow: 0 0 15px rgba(239, 68, 68, 0.8); }
+}
+.animate-pulse {
+  animation: pulse-red 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .eb-board-card-actions {

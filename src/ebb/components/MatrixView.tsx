@@ -9,13 +9,9 @@ import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
   computeTagStats,
-  computeRounds,
   isOverdue,
   isDueToday,
-  getDateLabel,
 } from '../scheduler';
-import { getPointWeight } from '../complexity';
-import { ROUND_COLORS } from '../constants';
 
 export interface TaskActions {
   onToggle: (id: string) => void;
@@ -43,10 +39,6 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
 
   const tagStats = useMemo(() => computeTagStats(tasks), [tasks]);
 
-  // 上提 computeRounds 到父层（原 TopicRow 每行调用一次 → O(n²) 重复计算）
-  const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
-
-  // 按主题预分组，避免每个 TopicRow 都遍历整个 tasks 数组
   const topicTasksMap = useMemo(() => {
     const m = new Map<string, ReviewTask[]>();
     for (const t of tasks) {
@@ -151,8 +143,6 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
               stat={stat}
               settings={settings}
               taskActions={taskActions}
-              roundMap={roundMap}
-              totalRoundsMap={totalRoundsMap}
               topicTasks={topicTasksMap.get(stat.topicName) ?? []}
             />
           ))
@@ -167,12 +157,10 @@ interface TopicRowProps {
   stat: TopicStat;
   settings: EbbSettings;
   taskActions: TaskActions;
-  roundMap: Map<string, number>;
-  totalRoundsMap: Map<string, number>;
   topicTasks: ReviewTask[];
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, roundMap, totalRoundsMap, topicTasks }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, topicTasks }) => {
   const [expanded, setExpanded] = useState(false);
 
   const tagColor = stat.tag ? settings.tagColors[stat.tag] : undefined;
@@ -238,39 +226,87 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, r
         <ChevronRight size={16} className={`eb-topic-row-chevron ${expanded ? 'eb-topic-row-chevron--open' : ''}`} />
       </div>
 
-      {/* 展开后的任务卡片列表 */}
+      {/* 展开后的知识聚合抽屉（降噪处理） */}
       {expanded && (
-        <div className="eb-topic-rounds">
-          {topicTasks.map((t) => {
-            const round = roundMap.get(t.id) ?? 0;
-            const total = totalRoundsMap.get(t.topicName) ?? 0;
-            const points = t.complexity ? getPointWeight(round, t.complexity, settings.complexityConfigs) : 0;
-            const dateLabel = getDateLabel(t.dueDate, t.isCompleted);
-            const color = ROUND_COLORS[(round - 1) % ROUND_COLORS.length];
+        <div className="eb-topic-drawer p-3 bg-white/50 border-t border-gray-100 rounded-b-xl shadow-inner backdrop-blur-sm">
+          {(() => {
+            const firstTask = topicTasks[0];
+            const accumulatedNotes = firstTask?.accumulatedNotes || [];
+            
             return (
-              <div key={t.id} className={`eb-round-item ${t.isCompleted ? 'eb-round-item--done' : ''} ${isOverdue(t) ? 'eb-round-item--overdue' : ''}`}>
-                <span className="eb-round-item-dot" style={{ backgroundColor: color }} />
-                <span className="eb-round-item-num">R{round}/{total}</span>
-                <input
-                  type="checkbox"
-                  checked={t.isCompleted}
-                  onChange={() => taskActions.onToggle(t.id)}
-                  className="eb-round-item-check"
-                />
-                <span className={`eb-round-item-date eb-date-pill eb-date-pill--${dateLabel.variant}`}>
-                  {dateLabel.text}
-                </span>
-                <span className="eb-round-item-points">{points}分</span>
-                <div className="eb-round-item-actions">
-                  <button type="button" className="eb-icon-btn" onClick={() => taskActions.onReschedule(t.id)} title="改期">📅</button>
-                  <button type="button" className="eb-icon-btn" onClick={() => taskActions.onAddRound(t)} title="追加">➕</button>
-                  <button type="button" className="eb-icon-btn" onClick={() => taskActions.onOpenRounds(t)} title="轮次">⚙️</button>
-                  <button type="button" className="eb-icon-btn" onClick={() => taskActions.onOpenTimeline(t.topicName)} title="时间线">▶️</button>
-                  <button type="button" className="eb-icon-btn eb-icon-btn--danger" onClick={() => taskActions.onDelete(t.id)} title="删除">🗑️</button>
-                </div>
+              <div className="flex flex-col">
+                {accumulatedNotes.length > 0 ? (
+                  <div className="flex flex-col">
+                    <div className="text-[11px] font-semibold text-gray-400 mb-1.5 uppercase tracking-wider">History</div>
+                    <div className="flex flex-col bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
+                      {accumulatedNotes.map((note, idx) => {
+                         let data = { date: '', type: '', typeLabel: '记录', title: '未知记录', notes: note };
+                         try {
+                           if (note.startsWith('{')) {
+                             data = JSON.parse(note);
+                           } else {
+                             // fallback for old format
+                             const match = note.match(/\[(.*?) (.*?)\]:\s*(.*)/);
+                             if (match) {
+                               data.date = match[1];
+                               data.typeLabel = match[2];
+                               data.notes = match[3];
+                             }
+                           }
+                         } catch {
+                           // ignore error
+                         }
+
+                         const isExercise = data.type === 'exercise' || data.typeLabel.includes('做题');
+                         const isNote = data.type === 'note' || data.typeLabel.includes('笔记');
+                         const typeText = isExercise ? '做题' : isNote ? '笔记' : '记录';
+                         const badgeColor = isExercise ? 'bg-blue-50 text-blue-600 border-blue-100' : isNote ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-600 border-gray-200';
+                         
+                         return (
+                           <div key={idx} className="flex flex-col p-2.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
+                             <div className="flex items-baseline justify-between gap-2">
+                               <div className="flex items-center gap-1.5 overflow-hidden">
+                                 <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium whitespace-nowrap ${badgeColor}`}>
+                                   {typeText}
+                                 </span>
+                                 <span className="text-xs font-medium text-gray-700 truncate">{data.title}</span>
+                               </div>
+                               <span className="text-[10px] text-gray-400 font-mono whitespace-nowrap shrink-0">{data.date}</span>
+                             </div>
+                             {data.notes && (
+                               <div className="text-xs text-gray-500 leading-relaxed whitespace-pre-wrap mt-1.5 pl-1 border-l-2 border-gray-100">
+                                 {data.notes}
+                               </div>
+                             )}
+                           </div>
+                         );
+                       })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400 italic py-2 text-center bg-white/50 rounded-lg border border-gray-100 border-dashed">
+                    暂无输出型学习记录
+                  </div>
+                )}
+                
+                {nextTask && (
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium py-1.5 px-4 rounded-md shadow-sm transition-all flex items-center gap-1.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        taskActions.onToggle(nextTask.id);
+                        setExpanded(false);
+                      }}
+                    >
+                      <span className="opacity-80">✓</span> 已掌握 (下一轮)
+                    </button>
+                  </div>
+                )}
               </div>
             );
-          })}
+          })()}
         </div>
       )}
     </div>

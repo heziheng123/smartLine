@@ -6,7 +6,7 @@
 import dayjs from 'dayjs';
 import type { ReviewTask, ComplexityLevel, TagStat, TopicStat, EbbSettings } from './types';
 import { getPointWeight, getIntervalsForComplexity } from './complexity';
-import { todayStr, addDays, isBeforeDay, isAfterDay, diffDays, formatDate, getDayOfWeek } from '@/utils/dateSafe';
+import { todayStr, addDays, isBeforeDay, isAfterDay, diffDays, formatDate } from '@/utils/dateSafe';
 
 // ── 工具函数 ────────────────────────────────────────────────
 

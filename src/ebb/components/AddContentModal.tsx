@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { todayStr, formatDate, getDayOfWeek } from '@/utils/dateSafe';
+import { todayStr, getDayOfWeek } from '@/utils/dateSafe';
 import { X, Eye, Check } from 'lucide-react';
 import type { ComplexityLevel } from '../types';
 import { useEbbStore } from '../store';

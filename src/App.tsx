@@ -21,6 +21,7 @@ import EbbView from '@/ebb/components/EbbView';
 import DailyScheduleView from '@/components/dailySchedule/DailyScheduleView';
 import ProjectDocumentView from '@/components/smartBlock/ProjectDocumentView';
 import WeekMatrixView from '@/components/smartBlock/WeekMatrixView';
+import { KnowledgeGraphView } from '@/graph/components/KnowledgeGraphView';
 
 import '@/styles/timeline.css';
 import '@/styles/ebb.css';
@@ -403,9 +404,9 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix') ? 'tl-app--ebb' : ''}`}>
+    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
       <Sidebar current={currentView} onChange={setCurrentView} />
-      {currentView !== 'ebb' && currentView !== 'daily-schedule' && currentView !== 'week-matrix' && (
+      {currentView !== 'ebb' && currentView !== 'daily-schedule' && currentView !== 'week-matrix' && currentView !== 'knowledge-graph' && (
         <Toolbar
           displayYear={displayYear}
           onYearChange={setDisplayYear}
@@ -439,6 +440,12 @@ const App: React.FC = () => {
               tasks={store.tasks}
               onUpdateBlockHeader={store.updateBlockHeader}
             />
+          </div>
+        </div>
+      ) : currentView === 'knowledge-graph' ? (
+        <div className="tl-app-split tl-app-split--ebb">
+          <div className="tl-app-main">
+            <KnowledgeGraphView />
           </div>
         </div>
       ) : (

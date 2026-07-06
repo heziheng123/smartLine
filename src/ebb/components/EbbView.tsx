@@ -7,7 +7,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
-import { todayStr, addDays, formatDate, getDayOfWeek, isToday as isTodaySafe, makeLocalDayjs } from '@/utils/dateSafe';
+import { todayStr, addDays, formatDate, getDayOfWeek, makeLocalDayjs } from '@/utils/dateSafe';
 import {
   Plus,
   Settings as SettingsIcon,

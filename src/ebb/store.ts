@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import { todayStr, addDays, formatDateLocal } from '@/utils/dateSafe';
+import { todayStr, addDays } from '@/utils/dateSafe';
 import type {
   ReviewTask,
   InboxItem,
@@ -24,7 +24,7 @@ import {
   getDefaultEbbData,
   TAG_COLOR_PALETTE,
 } from './constants';
-import { liveblocksClient } from '@/store';
+import { liveblocksClient } from '@/store/client';
 import { genId, checkCanComplete } from './scheduler';
 
 // ── 同步设置持久化 ──────────────────────────────────────────
@@ -136,6 +136,9 @@ interface EbbStore extends EbbData {
   // 导入导出
   importEbbData: (data: EbbData) => void;
   exportEbbData: () => string;
+
+  // 新增：自动同步任务到 Ebb 复习流
+  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string }) => void;
 }
 
 // ── 创建 Store ──────────────────────────────────────────────
@@ -685,6 +688,148 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         exportEbbData: () => {
           const { reviewTasks, inboxItems, outlineNodes, ebbSettings } = get();
           return JSON.stringify({ reviewTasks, inboxItems, outlineNodes, ebbSettings }, null, 2);
+        },
+
+        // ── 自动同步任务到 Ebb 复习流 ─────────────────────────────────
+
+        syncTaskToEbb: (payload) => {
+          set((state) => {
+            const { action = 'add', graphNodeId, topicName, taskType, taskNotes, taskTitle } = payload;
+            
+            // 找到所有该 graphNodeId 关联的任务
+            const existingTasks = state.reviewTasks.filter(t => t.graphNodeId === graphNodeId);
+            
+            // 如果是取消完成操作
+            if (action === 'remove') {
+              // 检查是否有关联的任务，并且它们是否都没有被完成
+              // 只有当所有的复习任务都是未完成状态时，我们才安全地删除它们
+              const hasCompletedReview = existingTasks.some(t => t.isCompleted);
+              if (!hasCompletedReview) {
+                const newReviewTasks = state.reviewTasks.filter(t => t.graphNodeId !== graphNodeId);
+                const newData: EbbData = {
+                  ...state,
+                  reviewTasks: newReviewTasks,
+                };
+                saveEbbData(newData);
+                return newData;
+              }
+              return state;
+            }
+
+            let newReviewTasks = [...state.reviewTasks];
+            const nowStr = todayStr();
+            const tomorrowStr = addDays(nowStr, 1);
+            
+            const [m, d] = nowStr.split('-').slice(1);
+            
+            // 核心逻辑：只有输出型任务（做题、笔记）才产生需要未来看的内容实体
+            const isOutputTask = taskType === 'exercise' || taskType === 'note';
+            const taskTypeLabel = taskType === 'video' ? '看课' : taskType === 'reading' ? '看书' : taskType === 'exercise' ? '做题' : taskType === 'note' ? '笔记' : '任务';
+            
+            const noteEntry = isOutputTask 
+              ? JSON.stringify({
+                  date: `${m}.${d}`,
+                  type: taskType,
+                  typeLabel: taskTypeLabel,
+                  title: taskTitle || '未命名任务',
+                  notes: taskNotes || ''
+                })
+              : null;
+            
+            if (existingTasks.length === 0) {
+              // 分支 1：完全新学 -> 创建全新的 ReviewTask 序列
+              const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
+              let currentDueDate = tomorrowStr;
+              const generated: ReviewTask[] = [];
+              const accumulatedNotes = noteEntry ? [noteEntry] : [];
+              
+              for (let i = 0; i < intervals.length; i++) {
+                const interval = intervals[i];
+                if (i > 0) {
+                  currentDueDate = addDays(currentDueDate, interval);
+                }
+                generated.push({
+                  id: genId('rt'),
+                  topicName,
+                  graphNodeId,
+                  dueDate: currentDueDate,
+                  isCompleted: false,
+                  accumulatedNotes: accumulatedNotes, 
+                  complexity: 'normal',
+                  smStatus: 'scheduled',
+                });
+              }
+              newReviewTasks.push(...generated);
+            } else {
+              // 分支 2：找到了 -> 更新现有的 ReviewTask 序列
+              // 筛选出尚未完成的任务（即未来的复习轮次）
+              const uncompletedTasks = existingTasks.filter(t => !t.isCompleted).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+              
+              // 合并笔记（以第一条为准）
+              const firstExistingNotes = existingTasks[0].accumulatedNotes || [];
+              const newNotes = [...firstExistingNotes];
+              if (noteEntry) newNotes.push(noteEntry);
+              
+              if (uncompletedTasks.length > 0) {
+                // 将尚未完成的轮次重置，强制拉回到明天
+                const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
+                let currentDueDate = tomorrowStr;
+                
+                const updatedIds = new Set(uncompletedTasks.map(t => t.id));
+                
+                let i = 0;
+                newReviewTasks = newReviewTasks.map(t => {
+                  if (updatedIds.has(t.id)) {
+                    const newDueDate = i === 0 ? tomorrowStr : addDays(currentDueDate, intervals[Math.min(i, intervals.length - 1)]);
+                    currentDueDate = newDueDate;
+                    i++;
+                    return {
+                      ...t,
+                      topicName, // 强制纠正为最新的节点名称
+                      dueDate: newDueDate,
+                      accumulatedNotes: newNotes,
+                      smStatus: 'scheduled' as const,
+                    };
+                  }
+                  // 对于已完成的任务，更新一下笔记（如果需要）以及节点名称
+                  if (t.graphNodeId === graphNodeId) {
+                    return { ...t, topicName, accumulatedNotes: newNotes };
+                  }
+                  return t;
+                });
+              } else {
+                // 全部完成了？说明是彻底的重新学习，开启一轮新循环！
+                const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
+                let currentDueDate = tomorrowStr;
+                const generated: ReviewTask[] = [];
+                
+                for (let i = 0; i < intervals.length; i++) {
+                  if (i > 0) {
+                    currentDueDate = addDays(currentDueDate, intervals[i]);
+                  }
+                  generated.push({
+                    id: genId('rt'),
+                    topicName,
+                    graphNodeId,
+                    dueDate: currentDueDate,
+                    isCompleted: false,
+                    accumulatedNotes: newNotes, 
+                    complexity: 'normal',
+                    smStatus: 'scheduled',
+                  });
+                }
+                newReviewTasks = newReviewTasks.map(t => t.graphNodeId === graphNodeId ? { ...t, topicName, accumulatedNotes: newNotes } : t);
+                newReviewTasks.push(...generated);
+              }
+            }
+            
+            const newData: EbbData = {
+              ...state,
+              reviewTasks: newReviewTasks,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
         },
       };
     },

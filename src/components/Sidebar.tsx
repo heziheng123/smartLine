@@ -4,9 +4,9 @@
 // ============================================================
 
 import React from 'react';
-import { CalendarDays, BrainCircuit, CalendarClock, LayoutGrid } from 'lucide-react';
+import { CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network } from 'lucide-react';
 
-export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix';
+export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
 
 interface SidebarProps {
   current: AppModule;
@@ -22,6 +22,7 @@ const NAV_ITEMS: {
   { module: 'daily-schedule', label: '每日安排', icon: <CalendarClock size={18} /> },
   { module: 'week-matrix', label: '周矩阵', icon: <LayoutGrid size={18} /> },
   { module: 'ebb', label: '艾宾浩斯复习', icon: <BrainCircuit size={18} /> },
+  { module: 'knowledge-graph', label: '知识大盘', icon: <Network size={18} /> },
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ current, onChange }) => {

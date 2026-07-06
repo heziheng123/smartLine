@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import { liveblocksClient } from '@/store';
+import { liveblocksClient } from '@/store/client';
 import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
 
 const STORAGE_KEY = 'daily-schedule-data';
