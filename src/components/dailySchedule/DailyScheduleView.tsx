@@ -142,7 +142,7 @@ const DailyScheduleView: React.FC = () => {
     for (const todo of todayProjectTasks) {
       // 区分 blocks 和 markdown 来源的 sourceId
       const sourceId = todo._blockId
-        ? `project-blk:${todo.parentTaskId}-${todo._blockId}`
+        ? `project-blk:${todo.parentTaskId}::${todo._blockId}`
         : `project-md:${todo.id}`;
       if (scheduledSourceIds.has(sourceId)) continue;
       items.push({

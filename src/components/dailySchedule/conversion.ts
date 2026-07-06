@@ -98,9 +98,31 @@ export function parseSourceId(sourceId: string): ParsedSourceId | null {
   if (sourceId.startsWith('project-')) {
     const fullId = sourceId.slice(8);
 
-    // 新格式：blk:{taskId}-{blockId}
+    // 新格式：blk:{taskId}::{blockId} 或旧格式 blk:{taskId}-blk-{xxx}
     if (fullId.startsWith('blk:')) {
       const rest = fullId.slice(4);
+      
+      // 优先匹配新格式双冒号分隔符
+      const doubleColon = rest.indexOf('::');
+      if (doubleColon !== -1) {
+        return {
+          source: 'project',
+          parentTaskId: rest.slice(0, doubleColon),
+          blockId: rest.slice(doubleColon + 2),
+        };
+      }
+
+      // 回退匹配旧格式：寻找 '-blk-' 作为分隔特征
+      const blockIdIndex = rest.indexOf('-blk-');
+      if (blockIdIndex !== -1) {
+        return {
+          source: 'project',
+          parentTaskId: rest.slice(0, blockIdIndex),
+          blockId: rest.slice(blockIdIndex + 1), // 保留 'blk-' 前缀
+        };
+      }
+
+      // 最差情况回退（如果有不带 blk- 的旧 blockId）
       const firstDash = rest.indexOf('-');
       if (firstDash === -1) return null;
       return {

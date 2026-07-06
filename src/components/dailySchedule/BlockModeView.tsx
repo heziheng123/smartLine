@@ -242,7 +242,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     for (const todo of todayProjectTasks) {
       // sourceId 格式必须与 DailyScheduleView 保持一致，否则两模式间已安排状态不互通
       const sourceId = todo._blockId
-        ? `project-blk:${todo.parentTaskId}-${todo._blockId}`
+        ? `project-blk:${todo.parentTaskId}::${todo._blockId}`
         : `project-md:${todo.id}`;
       if (scheduledSourceIds.has(sourceId)) continue;
       items.push({
