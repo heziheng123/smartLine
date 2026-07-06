@@ -4,8 +4,47 @@ import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
 import { Plus, Trash2, Check, Settings2, X, Info } from 'lucide-react';
-import { forceCollide, forceRadial } from 'd3-force';
+import { forceCollide, forceRadial, forceX, forceY } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
+
+type NodeRollupStats = {
+  totalReviewCount: number;
+  pendingCount: number;
+  completedCount: number;
+  overdueCount: number;
+  noteCount: number;
+};
+
+type ViewNode = {
+  id: string;
+  name: string;
+  color: string;
+  val: number;
+  depth: number;
+  rootId: string;
+  isLeaf: boolean;
+  activeCount: number;
+  totalLeafCount: number;
+  neighbors: string[];
+  links: string[];
+  pendingCount: number;
+  completedCount: number;
+  overdueCount: number;
+  totalReviewCount: number;
+  noteCount: number;
+  relationCount: number;
+  importanceScore: number;
+  labelPriority: 'high' | 'medium' | 'low';
+  radius: number;
+};
+
+type ViewLink = {
+  id: string;
+  source: string;
+  target: string;
+  kind: 'hierarchy' | 'relation';
+  score: number;
+};
 
 export const KnowledgeGraphView: React.FC = () => {
   const { nodes, addNode, deleteNode, updateNode } = useGraphStore();
@@ -141,11 +180,30 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [reviewTasks, nodes, getDescendants]);
 
   const graphData = useMemo(() => {
-    // 1. First pass: build basic nodes map and calculate depth
+    const today = todayStr();
+    const nodeMap = new Map(nodes.map(node => [node.id, node]));
+    const childrenMap = new Map<string | null, string[]>();
+    nodes.forEach(node => {
+      const siblings = childrenMap.get(node.parentId) ?? [];
+      siblings.push(node.id);
+      childrenMap.set(node.parentId, siblings);
+    });
+
+    const mergeStats = (statsList: NodeRollupStats[]): NodeRollupStats => ({
+      totalReviewCount: statsList.reduce((sum, stats) => sum + stats.totalReviewCount, 0),
+      pendingCount: statsList.reduce((sum, stats) => sum + stats.pendingCount, 0),
+      completedCount: statsList.reduce((sum, stats) => sum + stats.completedCount, 0),
+      overdueCount: statsList.reduce((sum, stats) => sum + stats.overdueCount, 0),
+      noteCount: statsList.reduce((sum, stats) => sum + stats.noteCount, 0),
+    });
+
     const nodeDepthMap = new Map<string, number>();
+    const nodeRootMap = new Map<string, string>();
+    const descendantLeafMap = new Map<string, string[]>();
+    
     const getDepth = (nodeId: string, currentPath = new Set<string>()): number => {
       if (currentPath.has(nodeId)) return 0; // Prevent cycle infinite loop
-      const node = nodes.find(n => n.id === nodeId);
+      const node = nodeMap.get(nodeId);
       if (!node || !node.parentId) return 0; // Root node is depth 0
       
       if (nodeDepthMap.has(nodeId)) return nodeDepthMap.get(nodeId)!;
@@ -158,52 +216,203 @@ export const KnowledgeGraphView: React.FC = () => {
       return depth;
     };
 
+    const getRootId = (nodeId: string, currentPath = new Set<string>()): string => {
+      if (currentPath.has(nodeId)) return nodeId;
+      const node = nodeMap.get(nodeId);
+      if (!node || !node.parentId) return nodeId; // Itself is root
+      
+      if (nodeRootMap.has(nodeId)) return nodeRootMap.get(nodeId)!;
+      
+      currentPath.add(nodeId);
+      const rootId = getRootId(node.parentId, currentPath);
+      currentPath.delete(nodeId);
+      
+      nodeRootMap.set(nodeId, rootId);
+      return rootId;
+    };
+
+    const getLeafDescendants = (nodeId: string, currentPath = new Set<string>()): string[] => {
+      if (currentPath.has(nodeId)) return [];
+      if (descendantLeafMap.has(nodeId)) return descendantLeafMap.get(nodeId)!;
+
+      currentPath.add(nodeId);
+      const children = childrenMap.get(nodeId) ?? [];
+      let leafIds: string[] = [];
+
+      if (children.length === 0) {
+        leafIds = [nodeId];
+      } else {
+        children.forEach(childId => {
+          leafIds = leafIds.concat(getLeafDescendants(childId, currentPath));
+        });
+      }
+
+      currentPath.delete(nodeId);
+      descendantLeafMap.set(nodeId, leafIds);
+      return leafIds;
+    };
+
     nodes.forEach(n => {
       if (!nodeDepthMap.has(n.id)) {
         nodeDepthMap.set(n.id, getDepth(n.id));
       }
+      if (!nodeRootMap.has(n.id)) {
+        nodeRootMap.set(n.id, getRootId(n.id));
+      }
+      if (!descendantLeafMap.has(n.id)) {
+        descendantLeafMap.set(n.id, getLeafDescendants(n.id));
+      }
     });
 
-    const gNodes = nodes.map(n => {
-      const descendants = getDescendants(n.id);
-      const isLeaf = descendants.length === 0;
-      let activeCount = 0;
-      let totalLeafCount = 0;
+    const reviewTasksByNodeId = new Map<string, typeof reviewTasks>();
+    reviewTasks.forEach(task => {
+      if (!task.graphNodeId) return;
+      const bucket = reviewTasksByNodeId.get(task.graphNodeId) ?? [];
+      bucket.push(task);
+      reviewTasksByNodeId.set(task.graphNodeId, bucket);
+    });
 
-      if (!isLeaf) {
-        const leafIds = descendants.filter(id => !nodes.some(child => child.parentId === id));
-        totalLeafCount = leafIds.length;
-        activeCount = leafIds.filter(leafId => {
-          const leafTasks = reviewTasks.filter(t => t.graphNodeId === leafId);
-          // 只要有关联任务，就算激活
-          return leafTasks.length > 0;
-        }).length;
+    const nodeStatsMap = new Map<string, NodeRollupStats>();
+    nodes.forEach(node => {
+      const leafIds = descendantLeafMap.get(node.id) ?? [node.id];
+      const directStats = mergeStats(
+        leafIds.map(leafId => {
+          const leafTasks = reviewTasksByNodeId.get(leafId) ?? [];
+          return {
+            totalReviewCount: leafTasks.length,
+            pendingCount: leafTasks.filter(task => !task.isCompleted).length,
+            completedCount: leafTasks.filter(task => task.isCompleted).length,
+            overdueCount: leafTasks.filter(task => !task.isCompleted && diffDays(today, task.dueDate) > 0).length,
+            noteCount: leafTasks.reduce((sum, task) => sum + (task.accumulatedNotes?.length ?? 0), 0),
+          };
+        }),
+      );
+      nodeStatsMap.set(node.id, directStats);
+    });
+
+    const hierarchyLinks: ViewLink[] = nodes
+      .filter(n => n.parentId)
+      .map(n => ({
+        id: `${n.parentId}-${n.id}`,
+        source: n.parentId!,
+        target: n.id,
+        kind: 'hierarchy',
+        score: 1,
+      }));
+
+    const isHierarchyAdjacent = (sourceId: string, targetId: string) => {
+      const source = nodeMap.get(sourceId);
+      const target = nodeMap.get(targetId);
+      return source?.parentId === targetId || target?.parentId === sourceId;
+    };
+
+    const relationScores = new Map<string, ViewLink>();
+    const activityBuckets = new Map<string, Set<string>>();
+
+    const addActivity = (rootId: string, date: string | undefined, nodeId: string) => {
+      if (!date) return;
+      const bucketKey = `${rootId}:${date}`;
+      const bucket = activityBuckets.get(bucketKey) ?? new Set<string>();
+      bucket.add(nodeId);
+      activityBuckets.set(bucketKey, bucket);
+    };
+
+    reviewTasks.forEach(task => {
+      if (!task.graphNodeId || !nodeMap.has(task.graphNodeId)) return;
+      const rootId = nodeRootMap.get(task.graphNodeId) ?? task.graphNodeId;
+      addActivity(rootId, task.dueDate, task.graphNodeId);
+      addActivity(rootId, task.completedDate, task.graphNodeId);
+    });
+
+    activityBuckets.forEach(activeNodeIds => {
+      const ids = Array.from(activeNodeIds);
+      for (let i = 0; i < ids.length; i += 1) {
+        for (let j = i + 1; j < ids.length; j += 1) {
+          const sourceId = ids[i];
+          const targetId = ids[j];
+          if (sourceId === targetId) continue;
+          if (isHierarchyAdjacent(sourceId, targetId)) continue;
+          const pair = [sourceId, targetId].sort();
+          const key = pair.join('::');
+          const existing = relationScores.get(key);
+          if (existing) {
+            existing.score += 1;
+          } else {
+            relationScores.set(key, {
+              id: `rel-${pair[0]}-${pair[1]}`,
+              source: pair[0],
+              target: pair[1],
+              kind: 'relation',
+              score: 1,
+            });
+          }
+        }
       }
+    });
+
+    const relationUsageCount = new Map<string, number>();
+    const relationLinks = Array.from(relationScores.values())
+      .sort((a, b) => b.score - a.score)
+      .filter(link => link.score >= 1)
+      .filter(link => {
+        const sourceCount = relationUsageCount.get(link.source) ?? 0;
+        const targetCount = relationUsageCount.get(link.target) ?? 0;
+        if (sourceCount >= 3 || targetCount >= 3) return false;
+        relationUsageCount.set(link.source, sourceCount + 1);
+        relationUsageCount.set(link.target, targetCount + 1);
+        return true;
+      })
+      .slice(0, 24);
+
+    const gNodes: ViewNode[] = nodes.map(n => {
+      const leafIds = descendantLeafMap.get(n.id) ?? [n.id];
+      const isLeaf = leafIds.length === 1 && leafIds[0] === n.id;
+      const totalLeafCount = isLeaf ? 0 : leafIds.length;
+      const activeCount = isLeaf
+        ? 0
+        : leafIds.filter(leafId => (reviewTasksByNodeId.get(leafId)?.length ?? 0) > 0).length;
+      const stats = nodeStatsMap.get(n.id) ?? {
+        totalReviewCount: 0,
+        pendingCount: 0,
+        completedCount: 0,
+        overdueCount: 0,
+        noteCount: 0,
+      };
+      const importanceScore =
+        (nodeDepthMap.get(n.id) === 0 ? 2.8 : nodeDepthMap.get(n.id) === 1 ? 1.2 : 0) +
+        stats.totalReviewCount * 0.8 +
+        stats.pendingCount * 1.3 +
+        stats.overdueCount * 2.1 +
+        stats.noteCount * 0.2 +
+        (activeCount > 0 ? 0.8 : 0);
 
       return {
         id: n.id,
         name: n.name,
         color: getNodeColorHex(n.id),
-        val: 1, // Degree weight
-        depth: nodeDepthMap.get(n.id) || 0, // Inject depth into node data
+        val: 1,
+        depth: nodeDepthMap.get(n.id) || 0,
+        rootId: nodeRootMap.get(n.id) || n.id,
         isLeaf,
         activeCount,
         totalLeafCount,
-        neighbors: [] as string[],
-        links: [] as string[]
+        neighbors: [],
+        links: [],
+        pendingCount: stats.pendingCount,
+        completedCount: stats.completedCount,
+        overdueCount: stats.overdueCount,
+        totalReviewCount: stats.totalReviewCount,
+        noteCount: stats.noteCount,
+        relationCount: 0,
+        importanceScore,
+        labelPriority: 'low',
+        radius: 0,
       };
     });
 
-    const gLinks = nodes
-      .filter(n => n.parentId)
-      .map(n => ({
-        id: `${n.parentId}-${n.id}`,
-        source: n.parentId,
-        target: n.id
-      }));
-
     // Calculate degrees and neighbors
-    gLinks.forEach(link => {
+    const allLinks: ViewLink[] = [...hierarchyLinks, ...relationLinks];
+    allLinks.forEach(link => {
       const a = gNodes.find(n => n.id === link.source);
       const b = gNodes.find(n => n.id === link.target);
       if (a && b) {
@@ -211,57 +420,183 @@ export const KnowledgeGraphView: React.FC = () => {
         b.neighbors.push(a.id);
         a.links.push(link.id);
         b.links.push(link.id);
-        a.val += 1;
-        b.val += 1;
+        a.val += link.kind === 'relation' ? 0.45 * link.score : 1;
+        b.val += link.kind === 'relation' ? 0.45 * link.score : 1;
+        if (link.kind === 'relation') {
+          a.relationCount += 1;
+          b.relationCount += 1;
+        }
       }
     });
 
-    return { nodes: gNodes, links: gLinks };
+    gNodes.forEach(node => {
+      node.labelPriority =
+        node.depth === 0 || node.overdueCount > 0 || node.totalReviewCount >= 4
+          ? 'high'
+          : node.relationCount > 0 || node.pendingCount > 0 || node.depth === 1
+            ? 'medium'
+            : 'low';
+      node.radius = Math.max(
+        2.4,
+        Math.min(
+          node.depth === 0 ? 9.5 : 7.5,
+          3 + node.importanceScore * 0.18 + node.relationCount * 0.4 - node.depth * 0.35,
+        ),
+      );
+    });
+
+    return { nodes: gNodes, links: allLinks };
   }, [nodes, getNodeColorHex, getDescendants, reviewTasks]);
 
   useEffect(() => {
     if (fgRef.current) {
-      // "径向树（Radial Tree）秩序力场"模型
+      // “多学科小型同心圆”力场：每个根学科一套局部星系，层级按轨道展开
       
-      // 1. 削弱全局无方向排斥，改为带有定向分离的温和排斥
-      // 降低距离上限，不让节点之间排斥得太远
-      fgRef.current.d3Force('charge').strength(-150).distanceMax(250);
+      // 预先计算有多少个不同的根节点，并给它们分配不同的中心 x 坐标
+      const rootNodes = graphData.nodes.filter((n: any) => n.depth === 0);
+      rootNodes.sort((a: any, b: any) => a.id.localeCompare(b.id)); // 保持顺序稳定
+      const numRoots = rootNodes.length || 1;
+      const rootIndexMap = new Map<string, number>();
+      rootNodes.forEach((n: any, i: number) => rootIndexMap.set(n.id, i));
+
+      // 计算每个根学科星系需要的半径大小
+      const rootRadii = new Map<string, number>();
+      graphData.nodes.forEach((node: any) => {
+        const rId = node.rootId || node.id;
+        const currentMax = rootRadii.get(rId) || 0;
+        rootRadii.set(rId, Math.max(currentMax, (node.depth || 0) * 112 + 60)); // 给外圈留出 60px 边距
+      });
+
+      // 动态计算同心圆之间的间隔，避免固定 320 导致太空旷或太拥挤
+      let totalWidth = 0;
+      const rootCenters = new Map<string, number>();
       
-      // 2. 增强连线刚度（Link Rigidity）：让子节点死死绑在父节点身边，不乱跑
+      // 遍历所有根节点，计算它们连续排列时的总宽度
+      rootNodes.forEach((root: any, i: number) => {
+        const radius = rootRadii.get(root.id) || 100;
+        // 如果是第一个节点，中心点就是它自己的半径
+        // 如果是后续节点，中心点 = 上一个节点的中心点 + 上一个节点的半径 + 当前节点的半径 + 最小间距
+        if (i === 0) {
+          rootCenters.set(root.id, radius);
+          totalWidth = radius * 2;
+        } else {
+          const prevRoot = rootNodes[i - 1];
+          const prevCenter = rootCenters.get(prevRoot.id)!;
+          const prevRadius = rootRadii.get(prevRoot.id) || 100;
+          const minGap = 40; // 两个同心圆边缘之间的最小间距
+          
+          const currentCenter = prevCenter + prevRadius + minGap + radius;
+          rootCenters.set(root.id, currentCenter);
+          totalWidth = currentCenter + radius;
+        }
+      });
+
+      const centerY = dimensions.height / 2;
+      // 整体居中偏移量
+      const offsetX = (dimensions.width - totalWidth) / 2;
+
+      // 构建局部的父子关系映射，用于按子树分配角度，彻底避免同心圆连线交叉
+      const localChildrenMap = new Map<string, any[]>();
+      const nodeById = new Map<string, any>();
+      graphData.nodes.forEach((node: any) => nodeById.set(node.id, node));
+
+      graphData.links.forEach((link: any) => {
+        if (link.kind === 'hierarchy') {
+          const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+          const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+          const childNode = nodeById.get(targetId);
+          if (childNode) {
+            const bucket = localChildrenMap.get(sourceId) ?? [];
+            bucket.push(childNode);
+            localChildrenMap.set(sourceId, bucket);
+          }
+        }
+      });
+
+      // 扇形角度分配（Sunburst/树状展开），确保不同分支的节点占据不同角度，物理上隔离连线
+      // 但这里只用来分配初始位置，不作为物理约束锚点！
+      rootNodes.forEach((root: any) => {
+        const localCenterX = offsetX + (rootCenters.get(root.id) || 0);
+        
+        root.x = localCenterX;
+        root.y = centerY;
+
+        // BFS 分配扇区，初始给根节点整个圆 [-PI/2, 1.5*PI]
+        const queue = [{ node: root, startAngle: -Math.PI / 2, endAngle: 1.5 * Math.PI }];
+        
+        while (queue.length > 0) {
+          const { node, startAngle, endAngle } = queue.shift()!;
+          const children = localChildrenMap.get(node.id) ?? [];
+          
+          if (children.length > 0) {
+            // 排序：重要节点优先
+            children.sort((a, b) => {
+              if (b.importanceScore !== a.importanceScore) return b.importanceScore - a.importanceScore;
+              return String(a.name).localeCompare(String(b.name), 'zh-CN');
+            });
+            
+            // 按子树的叶子节点数量作为权重分配扇区，确保叶子多的分支获得更大角度
+            const totalWeight = children.reduce((sum, child) => sum + Math.max(1, child.totalLeafCount), 0);
+            
+            let currentAngle = startAngle;
+            children.forEach(child => {
+              const weight = Math.max(1, child.totalLeafCount);
+              const slice = (weight / totalWeight) * (endAngle - startAngle);
+              const childStart = currentAngle;
+              const childEnd = currentAngle + slice;
+              const midAngle = currentAngle + slice / 2;
+              
+              const radius = child.depth * 120;
+              child.x = localCenterX + Math.cos(midAngle) * radius;
+              child.y = centerY + Math.sin(midAngle) * radius;
+              
+              queue.push({ node: child, startAngle: childStart, endAngle: childEnd });
+              currentAngle += slice;
+            });
+          }
+        }
+      });
+      
+      // 1. 控制排斥：适当增加排斥力，让节点在同心圆轨道上能自然散开
+      fgRef.current.d3Force('charge').strength(-180).distanceMax(300);
+      
+      // 2. 结构边强约束，关系边极弱牵引
       fgRef.current.d3Force('link')
         .distance((link: any) => {
-          // 为了给文字留空间，把原先缩短的连线长度重新拉长
+          if (link.kind === 'relation') return 150;
           const depth = link.target.depth || 1;
-          return Math.max(40, 90 - depth * 10); 
+          return Math.max(50, 110 - depth * 12); 
         })
-        .strength(1.2); 
-      
-      // 3. 引入径向力（Radial Force）：按辈分排座位
+        .strength((link: any) => link.kind === 'relation' ? 0.05 : 1.2); 
+
+      // 3. 径向力负责层级轨道，强度适中，不要压得太死
       fgRef.current.d3Force('radial', forceRadial(
         (node: any) => {
           const depth = node.depth || 0;
-          // 轨道间距也同步拉长，避免内圈的文字盖住外圈的圆圈
           return depth * 120; 
         },
-        dimensions.width / 2, 
-        dimensions.height / 2
-      ).strength(0.8));
+        (node: any) => {
+          const rId = node.rootId || node.id;
+          return offsetX + (rootCenters.get(rId) || 0);
+        }, 
+        centerY
+      ).strength(0.6));
 
-      // 4. 彻底取消原来的全局黑洞中心力，因为它会把所有人拉回圆心，破坏径向轨道
+      // 4. X/Y 轨道锚点：不再写死绝对坐标！只给一个极弱的倾向，让它们能被拉开
+      fgRef.current.d3Force('orbit-x', null);
+      fgRef.current.d3Force('orbit-y', null);
+
+      // 5. 取消全局中心力，避免所有学科被吸成一坨
       fgRef.current.d3Force('center', null);
       
-      // 5. 增强碰撞检测：现在不仅考虑圆圈大小，还要为文字留出额外的防重叠空间
-      // 这里的 padding 在原先的基础上加大，作为文字的“保护罩”
+      // 6. 碰撞保护：标签与节点之间保留呼吸感
       fgRef.current.d3Force('collide', forceCollide().radius((node: any) => {
-        const baseR = Math.max(3, Math.min(10, Math.sqrt(node.val || 1) * 2.5));
-        
-        // 根节点（层级0）保护罩极大，一级子节点中等，深层节点稍微紧凑
-        // 我们给它额外的 10px-20px 的横向/纵向保护区，防止文字打架
-        let padding = node.depth === 0 ? 35 : (node.depth === 1 ? 25 : 15);
-        
-        // 如果名字特别长，给它更大的保护区
+        const baseR = node.radius ?? Math.max(3, Math.min(10, Math.sqrt(node.val || 1) * 2.5));
+        let padding = node.depth === 0 ? 34 : (node.depth === 1 ? 24 : 14);
+        if (node.labelPriority === 'high') padding += 8;
+        if (node.relationCount > 0) padding += Math.min(8, node.relationCount * 2);
         if (node.name && node.name.length > 6) {
-           padding += (node.name.length - 6) * 3;
+          padding += (node.name.length - 6) * 2.5;
         }
 
         return baseR + padding; 
@@ -281,6 +616,21 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [nodes.length]);
 
   const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId), [nodes, selectedNodeId]);
+  const selectedGraphNode = useMemo(
+    () => graphData.nodes.find((node: ViewNode) => node.id === selectedNodeId) ?? null,
+    [graphData, selectedNodeId],
+  );
+  const selectedNodeReviewPreview = useMemo(() => {
+    if (!selectedNodeId) return [];
+    const scopedIds = new Set([selectedNodeId, ...getDescendants(selectedNodeId)]);
+    return reviewTasks
+      .filter(task => task.graphNodeId && scopedIds.has(task.graphNodeId))
+      .sort((a, b) => {
+        if (a.isCompleted !== b.isCompleted) return Number(a.isCompleted) - Number(b.isCompleted);
+        return (a.dueDate || '').localeCompare(b.dueDate || '');
+      })
+      .slice(0, 3);
+  }, [selectedNodeId, getDescendants, reviewTasks]);
 
   useEffect(() => {
     if (selectedNode) {
@@ -385,10 +735,17 @@ export const KnowledgeGraphView: React.FC = () => {
             nodeRelSize={6}
             linkColor={(link: any) => {
               const isDimmed = hoverNode !== null && !highlightLinks.has(link.id);
-              return isDimmed ? '#f1f5f9' : (highlightLinks.has(link.id) ? '#94a3b8' : '#cbd5e1');
+              if (isDimmed) return '#f8fafc';
+              if (link.kind === 'relation') {
+                return highlightLinks.has(link.id) ? 'rgba(59, 130, 246, 0.55)' : 'rgba(148, 163, 184, 0.32)';
+              }
+              return highlightLinks.has(link.id) ? '#64748b' : '#dbe4ee';
             }}
-            linkWidth={(link: any) => highlightLinks.has(link.id) ? 2 : 1}
-            linkDirectionalParticles={(link: any) => highlightLinks.has(link.id) ? 3 : 0}
+            linkWidth={(link: any) => {
+              if (link.kind === 'relation') return highlightLinks.has(link.id) ? 1.8 : 0.9;
+              return highlightLinks.has(link.id) ? 2.4 : 1.15;
+            }}
+            linkDirectionalParticles={(link: any) => link.kind === 'hierarchy' && highlightLinks.has(link.id) ? 2 : 0}
             linkDirectionalParticleWidth={2.5}
             linkDirectionalParticleSpeed={0.006}
             onNodeClick={(node: any, event: any) => {
@@ -415,21 +772,23 @@ export const KnowledgeGraphView: React.FC = () => {
               const label = node.name;
               
               // === Obsidian 风格的文字缩放逻辑 ===
-              // 根据当前缩放比例，计算文字大小，最小不低于 3px，最大不高于 14px
-              // 这样在极度缩小时，文字不会变成巨大的色块互相遮挡
-              const rawFontSize = 12 / globalScale;
-              const fontSize = Math.min(14, Math.max(3, rawFontSize));
+              const priorityBoost = node.labelPriority === 'high' ? 1.2 : node.labelPriority === 'medium' ? 0.5 : 0;
+              const rawFontSize = (11.5 + priorityBoost) / globalScale;
+              const fontSize = Math.min(15, Math.max(3, rawFontSize));
 
               ctx.font = `${isSelected || isHovered ? '600' : '400'} ${fontSize}px Inter, system-ui, sans-serif`;
-              
-              const textWidth = ctx.measureText(label).width;
-              const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4);
-              
-              // 1. 缩小基础半径 (Base Radius)：将原本过大的圆缩小
-              // 以前可能是 Math.min(8, ...)，现在改为 Math.min(5, node.val)
-              const baseR = Math.max(3, Math.min(5, node.val)); 
-              // 2. 根据层级稍微调整大小，层级越深越小
-              const r = Math.max(2, baseR - (node.depth || 0) * 0.5);
+
+              const r = node.radius ?? Math.max(2.4, Math.min(6, node.val));
+              const haloRadius = r + 3.5 / globalScale;
+
+              if (!isDimmed && (node.overdueCount > 0 || node.labelPriority === 'high')) {
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, haloRadius, 0, 2 * Math.PI, false);
+                ctx.fillStyle = node.overdueCount > 0
+                  ? 'rgba(239, 68, 68, 0.14)'
+                  : 'rgba(59, 130, 246, 0.08)';
+                ctx.fill();
+              }
               
               // 绘制节点圆形
               ctx.beginPath();
@@ -460,12 +819,10 @@ export const KnowledgeGraphView: React.FC = () => {
               }
 
               // Show text if scale is sufficient, or if highlighted/selected
-              // 引入 Obsidian 的 Text fade threshold 概念：缩放太小（< 0.8）时，不显示非关键节点的文字
-              const isScaleSufficient = globalScale > 0.8;
-              const showText = isScaleSufficient || isHighlighted || isSelected;
+              const scaleThreshold = node.labelPriority === 'high' ? 0.42 : node.labelPriority === 'medium' ? 0.68 : 0.92;
+              const showText = globalScale > scaleThreshold || isHighlighted || isSelected || isHovered;
               
               if (showText && !isDimmed) {
-                // 如果缩放很小，文字位置稍微拉远一点，避免压住圆点
                 const padding = globalScale < 1 ? fontSize * 1.2 : fontSize * 0.8;
                 const textY = node.y + r + padding;
                 
@@ -482,20 +839,25 @@ export const KnowledgeGraphView: React.FC = () => {
                 const textWidth = ctx.measureText(displayLabel).width;
                 const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4);
                 
-                // 只有被选中或 hover 时，才显示纯白实底，平时用半透明毛玻璃底，甚至不画底（让视觉更轻）
-                const shouldDrawBg = isSelected || isHovered || isHighlighted;
+                const shouldDrawBg = isSelected || isHovered || isHighlighted || node.labelPriority === 'high';
                 
                 if (shouldDrawBg) {
-                  ctx.fillStyle = isSelected ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.7)';
-                  // 使用圆角矩形会让标签看起来更精致，但为了性能这里先用 fillRect
+                  ctx.fillStyle = isSelected
+                    ? 'rgba(255, 255, 255, 0.95)'
+                    : node.labelPriority === 'high'
+                      ? 'rgba(255, 255, 255, 0.82)'
+                      : 'rgba(255, 255, 255, 0.68)';
                   ctx.fillRect(node.x - bckgDimensions[0] / 2, textY - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
                 }
 
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 
-                // 颜色分级：选中的最深，其他的变浅，未高亮的更浅
-                ctx.fillStyle = isSelected ? '#0f172a' : (isHovered || isHighlighted ? '#334155' : '#64748b');
+                ctx.fillStyle = isSelected
+                  ? '#0f172a'
+                  : isHovered || isHighlighted || node.labelPriority === 'high'
+                    ? '#334155'
+                    : '#64748b';
                 
                 if (progressText) {
                   // 如果有进度文本，分两段绘制以实现不同的颜色/样式
@@ -568,6 +930,51 @@ export const KnowledgeGraphView: React.FC = () => {
                   <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
                   当前选中
                 </h3>
+                {selectedGraphNode && (
+                  <div className="mb-4 rounded-xl border border-slate-200/80 bg-slate-50/90 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">学习快照</span>
+                      <span className="text-[10px] text-slate-400">
+                        {selectedGraphNode.labelPriority === 'high' ? '核心节点' : selectedGraphNode.labelPriority === 'medium' ? '活跃节点' : '普通节点'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="rounded-lg bg-white px-2.5 py-2 border border-slate-200/70">
+                        <div className="text-slate-400">待复习</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-800">{selectedGraphNode.pendingCount}</div>
+                      </div>
+                      <div className="rounded-lg bg-white px-2.5 py-2 border border-slate-200/70">
+                        <div className="text-slate-400">逾期压力</div>
+                        <div className="mt-1 text-sm font-semibold text-rose-600">{selectedGraphNode.overdueCount}</div>
+                      </div>
+                      <div className="rounded-lg bg-white px-2.5 py-2 border border-slate-200/70">
+                        <div className="text-slate-400">已完成</div>
+                        <div className="mt-1 text-sm font-semibold text-emerald-600">{selectedGraphNode.completedCount}</div>
+                      </div>
+                      <div className="rounded-lg bg-white px-2.5 py-2 border border-slate-200/70">
+                        <div className="text-slate-400">弱连接</div>
+                        <div className="mt-1 text-sm font-semibold text-sky-600">{selectedGraphNode.relationCount}</div>
+                      </div>
+                    </div>
+                    {selectedNodeReviewPreview.length > 0 && (
+                      <div className="mt-3 border-t border-slate-200/80 pt-3">
+                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">近期复习</div>
+                        <div className="space-y-1.5">
+                          {selectedNodeReviewPreview.map(task => (
+                            <div key={task.id} className="rounded-lg bg-white px-2.5 py-2 border border-slate-200/70">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate text-[11px] font-medium text-slate-700">{task.topicName}</span>
+                                <span className={`shrink-0 text-[10px] ${task.isCompleted ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                  {task.isCompleted ? '已完成' : task.dueDate}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center gap-2 mb-6">
                   <input
                     className="flex-1 bg-white border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-gray-800 font-medium focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all shadow-inner"
