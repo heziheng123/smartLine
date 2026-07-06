@@ -3,7 +3,7 @@ import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
-import { Plus, Trash2, Check, Settings2, X, Info } from 'lucide-react';
+import { Plus, Trash2, Check, Settings2, X, Info, Search, ChevronDown, Filter, Command } from 'lucide-react';
 import { forceCollide, forceX, forceY, forceCenter } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
 
@@ -55,6 +55,11 @@ export const KnowledgeGraphView: React.FC = () => {
   const [newChildName, setNewChildName] = useState('');
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isAltPressed, setIsAltPressed] = useState(false);
+
+  // Filter States
+  const [selectedRootFilter, setSelectedRootFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'active' | 'completed'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<any>();
@@ -375,8 +380,55 @@ const gNodes: ViewNode[] = nodes.map(n => {
       );
     });
 
-    return { nodes: gNodes, links: allLinks };
-  }, [nodes, getNodeColorHex, reviewTasks]);
+    let finalNodes = gNodes;
+    let finalLinks = allLinks;
+
+    if (selectedRootFilter !== 'all') {
+      finalNodes = gNodes.filter(n => n.rootId === selectedRootFilter);
+      const validNodeIds = new Set(finalNodes.map(n => n.id));
+      finalLinks = allLinks.filter(l => validNodeIds.has(l.source) && validNodeIds.has(l.target));
+    }
+
+    return { nodes: finalNodes, links: finalLinks };
+  }, [nodes, getNodeColorHex, reviewTasks, selectedRootFilter]);
+
+  const rootNodes = useMemo(() => {
+    return nodes.filter(n => !n.parentId);
+  }, [nodes]);
+
+  const matchingNodeIds = useMemo(() => {
+    if (statusFilter === 'all' && !searchQuery.trim()) return null;
+
+    const query = searchQuery.trim().toLowerCase();
+    const matched = new Set<string>();
+
+    graphData.nodes.forEach((node: ViewNode) => {
+      let isMatch = false;
+
+      const matchStatus = statusFilter === 'all' 
+        || (statusFilter === 'overdue' && (node.overdueCount > 0 || node.color === '#ef4444'))
+        || (statusFilter === 'active' && ((node.pendingCount > 0 && node.color !== '#ef4444') || node.color === '#10b981' || node.color === '#86efac'))
+        || (statusFilter === 'completed' && node.color === '#eab308');
+
+      const matchQuery = !query || node.name.toLowerCase().includes(query);
+
+      if (matchStatus && matchQuery) {
+        isMatch = true;
+      }
+
+      if (isMatch) {
+        matched.add(node.id);
+        let currId = node.id;
+        while (currId) {
+          matched.add(currId);
+          const parent = nodes.find(n => n.id === currId);
+          currId = parent?.parentId || '';
+        }
+      }
+    });
+
+    return matched;
+  }, [graphData.nodes, statusFilter, searchQuery, nodes]);
 
   useEffect(() => {
     if (fgRef.current) {
@@ -469,7 +521,7 @@ const gNodes: ViewNode[] = nodes.map(n => {
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [nodes.length]);
+  }, [nodes.length, selectedRootFilter]);
 
   const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId), [nodes, selectedNodeId]);
   const selectedGraphNode = useMemo(
@@ -568,11 +620,84 @@ const gNodes: ViewNode[] = nodes.map(n => {
     <div className="knowledge-graph-view w-full h-full bg-white relative">
       {/* Global Hint for Alt + Click */}
       {isAltPressed && selectedNodeId && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-blue-600/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-lg text-sm font-medium transition-all duration-300 pointer-events-none z-20 flex items-center gap-2 animate-in slide-in-from-top-4 fade-in">
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-blue-600/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-lg text-sm font-medium transition-all duration-300 pointer-events-none z-20 flex items-center gap-2 animate-in slide-in-from-top-4 fade-in">
           <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
           快捷连线：点击任意高亮节点，将其设为 "{selectedNode?.name}" 的子节点
         </div>
       )}
+
+      {/* Filter Dock (Dual-Mode Focus Engine) - Ultra Minimalist macOS Capsule */}
+      <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-white/60 backdrop-blur-3xl border border-white/80 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.08),0_0_1px_rgba(0,0,0,0.12)] rounded-full px-1.5 py-1.5 z-10 flex items-center gap-1 transition-all animate-in slide-in-from-top-4">
+        
+        {/* Root Selector (Sub-Universe Mode) */}
+        <div className="relative group flex items-center hover:bg-black/5 rounded-full px-3 py-1.5 transition-colors">
+          <Command size={13} className="text-slate-400 mr-2" />
+          <select 
+            className="appearance-none bg-transparent text-[13px] font-semibold text-slate-700 outline-none cursor-pointer pr-5 w-[100px] truncate"
+            value={selectedRootFilter}
+            onChange={e => setSelectedRootFilter(e.target.value)}
+          >
+            <option value="all">全景视角</option>
+            {rootNodes.map(n => (
+              <option key={n.id} value={n.id}>{n.name}</option>
+            ))}
+          </select>
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+            <ChevronDown size={12} strokeWidth={3} />
+          </div>
+        </div>
+
+        <div className="w-[1px] h-4 bg-slate-200/60 mx-1"></div>
+
+        {/* Status Toggles (X-Ray Mode) */}
+        <div className="flex items-center gap-0.5 px-1">
+          <button 
+            onClick={() => setStatusFilter(prev => prev === 'overdue' ? 'all' : 'overdue')}
+            className={`group relative flex items-center justify-center w-8 h-8 rounded-full transition-all duration-300 ${statusFilter === 'overdue' ? 'bg-rose-50' : 'hover:bg-black/5'}`}
+            title="查看严重逾期"
+          >
+            <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${statusFilter === 'overdue' ? 'bg-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.6)] scale-110' : 'bg-slate-300 group-hover:bg-rose-400'}`}></div>
+          </button>
+          
+          <button 
+            onClick={() => setStatusFilter(prev => prev === 'active' ? 'all' : 'active')}
+            className={`group relative flex items-center justify-center w-8 h-8 rounded-full transition-all duration-300 ${statusFilter === 'active' ? 'bg-emerald-50' : 'hover:bg-black/5'}`}
+            title="查看进行中"
+          >
+            <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${statusFilter === 'active' ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.6)] scale-110' : 'bg-slate-300 group-hover:bg-emerald-400'}`}></div>
+          </button>
+
+          <button 
+            onClick={() => setStatusFilter(prev => prev === 'completed' ? 'all' : 'completed')}
+            className={`group relative flex items-center justify-center w-8 h-8 rounded-full transition-all duration-300 ${statusFilter === 'completed' ? 'bg-amber-50' : 'hover:bg-black/5'}`}
+            title="查看已圆满"
+          >
+            <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${statusFilter === 'completed' ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.6)] scale-110' : 'bg-slate-300 group-hover:bg-amber-400'}`}></div>
+          </button>
+        </div>
+
+        <div className="w-[1px] h-4 bg-slate-200/60 mx-1"></div>
+
+        {/* Search */}
+        <div className="flex items-center hover:bg-black/5 focus-within:bg-black/5 rounded-full px-3 py-1.5 transition-colors">
+          <Search size={13} className={`transition-colors ${searchQuery ? 'text-blue-500' : 'text-slate-400'}`} />
+          <input 
+            type="text" 
+            placeholder="搜索..." 
+            className="bg-transparent border-none outline-none text-[13px] font-medium w-16 focus:w-28 transition-all duration-300 text-slate-700 placeholder:text-slate-400 ml-2"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button 
+              onClick={() => setSearchQuery('')} 
+              className="text-slate-400 hover:text-slate-700 transition-colors ml-1"
+            >
+              <X size={13} strokeWidth={2.5} />
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Dot Grid Background */}
       <div className="absolute inset-0 pointer-events-none" style={{
@@ -590,8 +715,18 @@ const gNodes: ViewNode[] = nodes.map(n => {
             graphData={graphData}
             nodeRelSize={6}
             linkColor={(link: any) => {
-              const isDimmed = hoverNode !== null && !highlightLinks.has(link.id);
-              if (isDimmed) return '#f8fafc';
+              const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+              const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+              
+              const isXRayActive = matchingNodeIds !== null;
+              const isXRayMatched = isXRayActive && matchingNodeIds.has(sourceId) && matchingNodeIds.has(targetId);
+              
+              const isHoverDimmed = hoverNode !== null && !highlightLinks.has(link.id);
+              const isDimmed = isHoverDimmed || (isXRayActive && !isXRayMatched);
+              
+              if (isDimmed) return isXRayActive ? 'rgba(226, 232, 240, 0.2)' : '#f8fafc';
+              if (isXRayActive && isXRayMatched) return 'rgba(148, 163, 184, 0.7)'; // slate-400 semi-transparent for paths
+              
               return highlightLinks.has(link.id) ? '#64748b' : '#dbe4ee';
             }}
             linkWidth={(link: any) => {
@@ -622,7 +757,12 @@ const gNodes: ViewNode[] = nodes.map(n => {
               const isSelected = node.id === selectedNodeId;
               const isHovered = node.id === hoverNode;
               const isHighlighted = highlightNodes.has(node.id);
-              const isDimmed = hoverNode !== null && !isHighlighted;
+              
+              const isXRayActive = matchingNodeIds !== null;
+              const isXRayMatched = isXRayActive && matchingNodeIds.has(node.id);
+              
+              const isDimmed = (hoverNode !== null && !isHighlighted) || (isXRayActive && !isXRayMatched);
+              
               const canBeAbsorbed = isAltPressed && selectedNodeId && isHovered && !isSelected && !wouldCreateCycle(selectedNodeId, node.id);
 
               const label = node.name;
@@ -651,7 +791,7 @@ const gNodes: ViewNode[] = nodes.map(n => {
               // 绘制节点圆形
               ctx.beginPath();
               ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-              ctx.fillStyle = isDimmed ? '#f8fafc' : node.color;
+              ctx.fillStyle = isDimmed ? (isXRayActive ? 'rgba(226, 232, 240, 0.3)' : '#f8fafc') : node.color;
               ctx.fill();
 
               if (canBeAbsorbed) {
