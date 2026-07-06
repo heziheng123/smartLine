@@ -4,7 +4,7 @@ import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
 import { Plus, Trash2, Check, Settings2, X, Info } from 'lucide-react';
-import { forceCollide, forceRadial } from 'd3-force';
+import { forceCollide, forceX, forceY, forceCenter } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
 
 type NodeRollupStats = {
@@ -450,29 +450,21 @@ export const KnowledgeGraphView: React.FC = () => {
 
   useEffect(() => {
     if (fgRef.current) {
-      // “多学科小型同心圆”力场：每个根学科一套局部星系，层级按轨道展开
-      
-      // 预先计算有多少个不同的根节点，并给它们分配不同的中心 x 坐标
+      // 1. 预先计算学科团簇的横向坐标，用于实现多中心（Multi-foci）引力布局
       const rootNodes = graphData.nodes.filter((n: any) => n.depth === 0);
-      rootNodes.sort((a: any, b: any) => a.id.localeCompare(b.id)); // 保持顺序稳定
+      rootNodes.sort((a: any, b: any) => a.id.localeCompare(b.id));
 
-      // 计算每个根学科星系需要的半径大小
       const rootRadii = new Map<string, number>();
       graphData.nodes.forEach((node: any) => {
         const rId = node.rootId || node.id;
         const currentMax = rootRadii.get(rId) || 0;
-        rootRadii.set(rId, Math.max(currentMax, (node.depth || 0) * 112 + 60)); // 给外圈留出 60px 边距
+        rootRadii.set(rId, Math.max(currentMax, (node.depth || 0) * 112 + 60));
       });
 
-      // 动态计算同心圆之间的间隔，避免固定 320 导致太空旷或太拥挤
       let totalWidth = 0;
       const rootCenters = new Map<string, number>();
-      
-      // 遍历所有根节点，计算它们连续排列时的总宽度
       rootNodes.forEach((root: any, i: number) => {
         const radius = rootRadii.get(root.id) || 100;
-        // 如果是第一个节点，中心点就是它自己的半径
-        // 如果是后续节点，中心点 = 上一个节点的中心点 + 上一个节点的半径 + 当前节点的半径 + 最小间距
         if (i === 0) {
           rootCenters.set(root.id, radius);
           totalWidth = radius * 2;
@@ -480,124 +472,57 @@ export const KnowledgeGraphView: React.FC = () => {
           const prevRoot = rootNodes[i - 1];
           const prevCenter = rootCenters.get(prevRoot.id)!;
           const prevRadius = rootRadii.get(prevRoot.id) || 100;
-          const minGap = 40; // 两个同心圆边缘之间的最小间距
-          
+          const minGap = 40;
           const currentCenter = prevCenter + prevRadius + minGap + radius;
           rootCenters.set(root.id, currentCenter);
           totalWidth = currentCenter + radius;
         }
       });
 
-      const centerY = dimensions.height / 2;
-      // 整体居中偏移量
       const offsetX = (dimensions.width - totalWidth) / 2;
+      const safeOffsetX = isNaN(offsetX) ? dimensions.width / 2 : offsetX;
 
-      // 构建局部的父子关系映射，用于按子树分配角度，彻底避免同心圆连线交叉
-      const localChildrenMap = new Map<string, any[]>();
-      const nodeById = new Map<string, any>();
-      graphData.nodes.forEach((node: any) => nodeById.set(node.id, node));
-
-      graphData.links.forEach((link: any) => {
-        if (link.kind === 'hierarchy') {
-          const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-          const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-          const childNode = nodeById.get(targetId);
-          if (childNode) {
-            const bucket = localChildrenMap.get(sourceId) ?? [];
-            bucket.push(childNode);
-            localChildrenMap.set(sourceId, bucket);
-          }
-        }
-      });
-
-      // 扇形角度分配（Sunburst/树状展开），确保不同分支的节点占据不同角度，物理上隔离连线
-      // 但这里只用来分配初始位置，不作为物理约束锚点！
-      rootNodes.forEach((root: any) => {
-        const localCenterX = offsetX + (rootCenters.get(root.id) || 0);
-        
-        root.x = localCenterX;
-        root.y = centerY;
-
-        // BFS 分配扇区，初始给根节点整个圆 [-PI/2, 1.5*PI]
-        const queue = [{ node: root, startAngle: -Math.PI / 2, endAngle: 1.5 * Math.PI }];
-        
-        while (queue.length > 0) {
-          const { node, startAngle, endAngle } = queue.shift()!;
-          const children = localChildrenMap.get(node.id) ?? [];
-          
-          if (children.length > 0) {
-            // 排序：重要节点优先
-            children.sort((a, b) => {
-              if (b.importanceScore !== a.importanceScore) return b.importanceScore - a.importanceScore;
-              return String(a.name).localeCompare(String(b.name), 'zh-CN');
-            });
-            
-            // 按子树的叶子节点数量作为权重分配扇区，确保叶子多的分支获得更大角度
-            const totalWeight = children.reduce((sum, child) => sum + Math.max(1, child.totalLeafCount), 0);
-            
-            let currentAngle = startAngle;
-            children.forEach(child => {
-              const weight = Math.max(1, child.totalLeafCount);
-              const slice = (weight / totalWeight) * (endAngle - startAngle);
-              const childStart = currentAngle;
-              const childEnd = currentAngle + slice;
-              const midAngle = currentAngle + slice / 2;
-              
-              const radius = child.depth * 120;
-              child.x = localCenterX + Math.cos(midAngle) * radius;
-              child.y = centerY + Math.sin(midAngle) * radius;
-              
-              queue.push({ node: child, startAngle: childStart, endAngle: childEnd });
-              currentAngle += slice;
-            });
-          }
-        }
-      });
+      // 2. 移除绝对的强制同心圆，改用多中心 X/Y 轴引力（Multi-foci）
+      fgRef.current.d3Force('radial', null); // 彻底移除生硬的径向力
       
-      // 1. 控制排斥：适当增加排斥力，让节点在同心圆轨道上能自然散开
-      fgRef.current.d3Force('charge').strength(-180).distanceMax(300);
+      // 为每个节点根据其归属的学科，施加一个柔和的 X 轴引力，将其拉向对应的学科团簇中心
+      fgRef.current.d3Force('cluster-x', forceX((node: any) => {
+        const rId = node.rootId || node.id;
+        const center = rootCenters.get(rId) || 0;
+        return safeOffsetX + center;
+      }).strength(0.06));
+
+      // 柔和的 Y 轴引力，让所有节点大致在屏幕垂直居中区域
+      fgRef.current.d3Force('cluster-y', forceY(() => {
+        return dimensions.height / 2;
+      }).strength(0.04));
+
+      // 3. 控制排斥：增强排斥力，让节点自然散开，形成星云感
+      fgRef.current.d3Force('charge').strength(() => {
+        return -250; // 稍微加大斥力，因为有聚拢力了
+      }).distanceMax(800);
       
-      // 2. 结构边强约束，关系边极弱牵引
+      // 4. 结构边强约束，关系边极弱牵引
       fgRef.current.d3Force('link')
         .distance((link: any) => {
-          if (link.kind === 'relation') return 150;
-          const depth = link.target.depth || 1;
-          return Math.max(50, 110 - depth * 12); 
+          return link.kind === 'relation' ? 180 : 70;
         })
-        .strength((link: any) => link.kind === 'relation' ? 0.05 : 1.2); 
+        .strength((link: any) => link.kind === 'relation' ? 0.05 : 0.8); 
 
-      // 3. 径向力负责层级轨道，强度适中，不要压得太死
-      fgRef.current.d3Force('radial', forceRadial(
-        (node: any) => {
-          const depth = node.depth || 0;
-          return depth * 120; 
-        },
-        (node: any) => {
-          const rId = node.rootId || node.id;
-          return offsetX + (rootCenters.get(rId) || 0);
-        }, 
-        centerY
-      ).strength(0.6));
-
-      // 4. X/Y 轨道锚点：不再写死绝对坐标！只给一个极弱的倾向，让它们能被拉开
-      fgRef.current.d3Force('orbit-x', null);
-      fgRef.current.d3Force('orbit-y', null);
-
-      // 5. 取消全局中心力，避免所有学科被吸成一坨
-      fgRef.current.d3Force('center', null);
+      // 5. 全局弱居中力（防止极端情况下图谱整体偏移）
+      fgRef.current.d3Force('center', forceCenter(dimensions.width / 2, dimensions.height / 2).strength(0.02));
       
-      // 6. 碰撞保护：标签与节点之间保留呼吸感
+      // 6. 碰撞保护：标签与节点之间保留呼吸感，防止重叠
       fgRef.current.d3Force('collide', forceCollide().radius((node: any) => {
         const baseR = node.radius ?? Math.max(3, Math.min(10, Math.sqrt(node.val || 1) * 2.5));
-        let padding = node.depth === 0 ? 34 : (node.depth === 1 ? 24 : 14);
-        if (node.labelPriority === 'high') padding += 8;
-        if (node.relationCount > 0) padding += Math.min(8, node.relationCount * 2);
+        let padding = node.depth === 0 ? 25 : (node.depth === 1 ? 15 : 8);
+        if (node.labelPriority === 'high') padding += 5;
+        if (node.relationCount > 0) padding += Math.min(8, node.relationCount * 1.5);
         if (node.name && node.name.length > 6) {
-          padding += (node.name.length - 6) * 2.5;
+          padding += (node.name.length - 6) * 1.5;
         }
-
         return baseR + padding; 
-      }).iterations(3));
+      }).iterations(2)); // 降低碰撞迭代次数，防止物理爆炸
     }
   }, [dimensions, graphData]);
 
@@ -606,8 +531,10 @@ export const KnowledgeGraphView: React.FC = () => {
   useEffect(() => {
     if (fgRef.current && nodes.length > 0) {
       const timer = setTimeout(() => {
-        fgRef.current.zoomToFit(400, 50); // 400ms动画，50px内边距
-      }, 800); // 等待物理引擎初步稳定
+        if (fgRef.current) {
+          fgRef.current.zoomToFit(400, 80); // 恢复 zoomToFit
+        }
+      }, 800);
       return () => clearTimeout(timer);
     }
   }, [nodes.length]);
@@ -760,6 +687,10 @@ export const KnowledgeGraphView: React.FC = () => {
             onBackgroundClick={() => setSelectedNodeId(null)}
             onNodeHover={handleNodeHover}
             nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+              if (node.x === undefined || node.y === undefined || isNaN(node.x) || isNaN(node.y)) {
+                // Return early instead of logging to prevent console spam
+                return;
+              }
               const isSelected = node.id === selectedNodeId;
               const isHovered = node.id === hoverNode;
               const isHighlighted = highlightNodes.has(node.id);

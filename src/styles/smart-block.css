@@ -867,7 +867,7 @@
   background: #fff;
   border-radius: 12px;
   padding: 12px;
-  width: 260px;
+  width: 280px;
   box-shadow: 0 8px 30px rgba(0,0,0,.12);
 }
 .stb-graph-picker-search {
@@ -878,6 +878,13 @@
   background: #f9fafb;
   border-radius: 8px;
   margin-bottom: 8px;
+  border: 1px solid transparent;
+  transition: all var(--stb-transition);
+}
+.stb-graph-picker-search:focus-within {
+  background: #fff;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(147,197,253,.2);
 }
 .stb-graph-picker-search input {
   flex: 1;
@@ -889,36 +896,59 @@
 .stb-graph-picker-icon {
   color: #9ca3af;
 }
+.stb-graph-picker-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  padding: 4px 8px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 .stb-graph-picker-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 200px;
+  max-height: 240px;
   overflow-y: auto;
 }
 .stb-graph-option {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   padding: 8px 10px;
   border: none;
   background: transparent;
   border-radius: 6px;
-  font-size: 13px;
-  color: #374151;
   cursor: pointer;
   text-align: left;
+  transition: background var(--stb-transition);
 }
 .stb-graph-option:hover {
   background: #f3f4f6;
 }
 .stb-graph-option--active {
   background: #eff6ff;
-  color: #3b82f6;
+}
+.stb-graph-option-main {
+  font-size: 13px;
+  color: #374151;
   font-weight: 500;
 }
-.stb-graph-option--create {
+.stb-graph-option--active .stb-graph-option-main {
   color: #3b82f6;
+}
+.stb-graph-option-path {
+  font-size: 11px;
+  color: #9ca3af;
+}
+.stb-graph-option--create {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: #3b82f6;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 /* ── 日期选择器浮层 ── */
