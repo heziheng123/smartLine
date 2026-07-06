@@ -8,6 +8,7 @@ import { Cloud, Link, Unlink, Copy, Check } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
+import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 
 interface SyncDialogProps {
@@ -80,10 +81,32 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const dailyLeaveRoom = useDailyScheduleStore((state) => state.liveblocks?.leaveRoom);
   const dailyStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
 
+  // Graph store
+  const {
+    syncEnabled: graphSyncEnabled,
+    syncStatus: graphSyncStatus,
+    enableSync: graphEnableSync,
+    disableSync: graphDisableSync,
+    setSyncStatus: graphSetSyncStatus,
+  } = useGraphStore(
+    useShallow((s) => ({
+      syncEnabled: s.syncEnabled,
+      syncStatus: s.syncStatus,
+      enableSync: s.enableSync,
+      disableSync: s.disableSync,
+      setSyncStatus: s.setSyncStatus,
+    })),
+  );
+
+  const graphEnterRoom = useGraphStore((state) => state.liveblocks?.enterRoom);
+  const graphLeaveRoom = useGraphStore((state) => state.liveblocks?.leaveRoom);
+  const graphStatus = useGraphStore((state) => state.liveblocks?.status);
+
   const [roomCode, setRoomCode] = useState(tlSyncRoomCode || '');
   const [copied, setCopied] = useState(false);
   const [linkEbb, setLinkEbb] = useState(true);
   const [linkDaily, setLinkDaily] = useState(true);
+  const [linkGraph, setLinkGraph] = useState(true);
 
   // 监听 Timeline 连接状态变化
   useEffect(() => {
@@ -115,17 +138,28 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     dailySetSyncStatus(mappedStatus);
   }, [dailyStatus, dailySetSyncStatus]);
 
+  // 监听 Graph 连接状态变化
+  useEffect(() => {
+    if (!graphStatus) return;
+    const mappedStatus =
+      graphStatus === 'connected' ? 'connected' :
+      graphStatus === 'connecting' || graphStatus === 'reconnecting' ? 'connecting' :
+      graphStatus === 'disconnected' || graphStatus === 'initial' ? 'disconnected' : 'error';
+    graphSetSyncStatus(mappedStatus);
+  }, [graphStatus, graphSetSyncStatus]);
+
   // 综合状态
-  const anyEnabled = tlSyncEnabled || ebbSyncEnabled || dailySyncEnabled;
+  const anyEnabled = tlSyncEnabled || ebbSyncEnabled || dailySyncEnabled || graphSyncEnabled;
 
   const overallStatus =
-    tlSyncStatus === 'error' || ebbSyncStatus === 'error' || dailySyncStatus === 'error'
+    tlSyncStatus === 'error' || ebbSyncStatus === 'error' || dailySyncStatus === 'error' || graphSyncStatus === 'error'
       ? 'error'
       : tlSyncStatus === 'connected' 
         && (!ebbSyncEnabled || ebbSyncStatus === 'connected')
         && (!dailySyncEnabled || dailySyncStatus === 'connected')
+        && (!graphSyncEnabled || graphSyncStatus === 'connected')
         ? 'connected'
-      : tlSyncStatus === 'connecting' || ebbSyncStatus === 'connecting' || dailySyncStatus === 'connecting'
+      : tlSyncStatus === 'connecting' || ebbSyncStatus === 'connecting' || dailySyncStatus === 'connecting' || graphSyncStatus === 'connecting'
         ? 'connecting'
         : 'disconnected';
 
@@ -157,6 +191,12 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       dailyEnableSync(code);
       dailyEnterRoom(`${DAILY_ROOM_PREFIX}${code}`);
     }
+
+    // Graph 房间（前缀 graph-）
+    if (linkGraph && graphEnterRoom) {
+      graphEnableSync(code);
+      graphEnterRoom(`graph-${code}`);
+    }
   };
 
   const handleDisconnect = () => {
@@ -171,6 +211,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     if (dailyLeaveRoom && dailySyncEnabled) {
       dailyLeaveRoom();
       dailyDisableSync();
+    }
+    if (graphLeaveRoom && graphSyncEnabled) {
+      graphLeaveRoom();
+      graphDisableSync();
     }
   };
 
@@ -249,6 +293,20 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               </span>
             </label>
 
+            <label className="tl-sync-checkbox-row">
+              <input
+                type="checkbox"
+                checked={linkGraph}
+                onChange={(e) => setLinkGraph(e.target.checked)}
+              />
+              <span>
+                同时连接知识大盘（Graph）房间
+                <span className="tl-sync-checkbox-hint">
+                  使用前缀 <code>graph-</code> 隔离数据
+                </span>
+              </span>
+            </label>
+
             <div className="tl-dialog-actions">
               <button className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>
                 取消
@@ -298,6 +356,14 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 <span className="tl-sync-info-value" style={{ color: dailySyncEnabled ? (dailySyncStatus === 'connected' ? '#059669' : '#D97706') : '#9CA3AF' }}>
                   {dailySyncEnabled
                     ? (dailySyncStatus === 'connected' ? '已连接' : dailySyncStatus === 'connecting' ? '连接中' : '未连接')
+                    : '未启用'}
+                </span>
+              </div>
+              <div className="tl-sync-info-row">
+                <span className="tl-sync-info-label">知识大盘</span>
+                <span className="tl-sync-info-value" style={{ color: graphSyncEnabled ? (graphSyncStatus === 'connected' ? '#059669' : '#D97706') : '#9CA3AF' }}>
+                  {graphSyncEnabled
+                    ? (graphSyncStatus === 'connected' ? '已连接' : graphSyncStatus === 'connecting' ? '连接中' : '未连接')
                     : '未启用'}
                 </span>
               </div>
