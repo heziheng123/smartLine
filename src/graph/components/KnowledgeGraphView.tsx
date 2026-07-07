@@ -812,9 +812,10 @@ const gNodes: ViewNode[] = nodes.map(n => {
                 ctx.stroke();
               }
 
-              // Show text if scale is sufficient, or if highlighted/selected
+              // Show text if scale is sufficient, or if highlighted/hovered
               const scaleThreshold = node.labelPriority === 'high' ? 0.42 : node.labelPriority === 'medium' ? 0.68 : 0.92;
-              const showText = globalScale > scaleThreshold || isHighlighted || isSelected || isHovered;
+              // 取消了 isSelected 的强制豁免，保留 isHovered 和 isHighlighted 的豁免
+              const showText = globalScale > scaleThreshold || isHighlighted || isHovered;
               
               if (showText && !isDimmed) {
                 const padding = globalScale < 1 ? fontSize * 1.2 : fontSize * 0.8;
