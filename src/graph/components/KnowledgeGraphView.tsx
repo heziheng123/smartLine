@@ -777,7 +777,8 @@ const gNodes: ViewNode[] = nodes.map(n => {
               ctx.font = `${isBold ? '600' : '400'} ${fontSize}px Inter, system-ui, sans-serif`;
 
               const r = node.radius ?? Math.max(2.4, Math.min(6, node.val));
-              const haloRadius = r + 3.5 / globalScale;
+              // 收缩光晕范围，从 3.5 极度压缩到 1.5，变成紧贴的微光
+              const haloRadius = r + 1.5 / globalScale;
 
               if (!isDimmed && (node.overdueCount > 0 || node.labelPriority === 'high')) {
                 ctx.beginPath();
@@ -801,14 +802,9 @@ const gNodes: ViewNode[] = nodes.map(n => {
                 ctx.stroke();
                 ctx.setLineDash([]);
               } else if (isSelected) {
-                ctx.lineWidth = 1.5 / globalScale;
+                // 彻底删掉第二层浅蓝大环，仅保留一层稍微加粗的实线边框
+                ctx.lineWidth = 2.0 / globalScale;
                 ctx.strokeStyle = '#3b82f6';
-                ctx.stroke();
-                
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, r + 2.5/globalScale, 0, 2 * Math.PI, false);
-                ctx.lineWidth = 0.5 / globalScale;
-                ctx.strokeStyle = '#93c5fd';
                 ctx.stroke();
               } else if (isHovered || isHighlighted) {
                 ctx.lineWidth = 1 / globalScale;
