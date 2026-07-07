@@ -70,6 +70,7 @@ const DailyScheduleView: React.FC = () => {
     toggleScheduledItem,
     updateScheduledItem,
     updateTimeBlock,
+    removeTimeBlock,
   } = useDailyScheduleStore(
     useShallow((s) => ({
       addScheduledItem: s.addScheduledItem,
@@ -79,6 +80,7 @@ const DailyScheduleView: React.FC = () => {
       toggleScheduledItem: s.toggleScheduledItem,
       updateScheduledItem: s.updateScheduledItem,
       updateTimeBlock: s.updateTimeBlock,
+      removeTimeBlock: s.removeTimeBlock,
     })),
   );
 
@@ -318,14 +320,17 @@ const DailyScheduleView: React.FC = () => {
       if (item.source !== 'review') continue;
       const reviewId = item.sourceId.replace('review-', '');
       const reviewTask = ebbReviewTasks.find((t) => t.id === reviewId);
-      if (!reviewTask) continue;
+      if (!reviewTask) {
+        removeScheduledItem(selectedDate, item.id);
+        continue;
+      }
       if (item.completed !== reviewTask.isCompleted) {
         updateScheduledItem(selectedDate, item.id, {
           completed: reviewTask.isCompleted,
         });
       }
     }
-  }, [ebbReviewTasks, daySchedule.items, selectedDate, updateScheduledItem]);
+  }, [ebbReviewTasks, daySchedule.items, selectedDate, updateScheduledItem, removeScheduledItem]);
 
   useEffect(() => {
     for (const item of daySchedule.items) {
@@ -334,11 +339,18 @@ const DailyScheduleView: React.FC = () => {
       if (!parsed || parsed.source !== 'project') continue;
 
       const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-      if (!parentTask) continue;
+      if (!parentTask) {
+        removeScheduledItem(selectedDate, item.id);
+        continue;
+      }
       if (!parsed.blockId) continue;
 
       // blocks 来源：从 SmartTaskBlock 获取完成状态
       const block = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
+      if (!block) {
+        removeScheduledItem(selectedDate, item.id);
+        continue;
+      }
       const isActuallyCompleted = block?.type === 'smart-task' ? block.header.isCompleted : false;
 
       if (item.completed !== isActuallyCompleted) {
@@ -347,7 +359,7 @@ const DailyScheduleView: React.FC = () => {
         });
       }
     }
-  }, [tlTasks, daySchedule.items, selectedDate, updateScheduledItem]);
+  }, [tlTasks, daySchedule.items, selectedDate, updateScheduledItem, removeScheduledItem]);
 
   // ── 时间块模式双向同步 ──────────────────────────────────
   useEffect(() => {
@@ -356,7 +368,10 @@ const DailyScheduleView: React.FC = () => {
       if (tb.source === 'review') {
         const reviewId = tb.sourceId.replace('review-', '');
         const reviewTask = ebbReviewTasks.find((t) => t.id === reviewId);
-        if (!reviewTask) continue;
+        if (!reviewTask) {
+          removeTimeBlock(selectedDate, tb.id);
+          continue;
+        }
         if (tb.completed !== reviewTask.isCompleted) {
           updateTimeBlock(selectedDate, tb.id, {
             completed: reviewTask.isCompleted,
@@ -366,9 +381,16 @@ const DailyScheduleView: React.FC = () => {
         const parsed = parseSourceId(tb.sourceId);
         if (!parsed || parsed.source !== 'project' || !parsed.blockId) continue;
         const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-        if (!parentTask) continue;
+        if (!parentTask) {
+          removeTimeBlock(selectedDate, tb.id);
+          continue;
+        }
 
         const block = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
+        if (!block) {
+          removeTimeBlock(selectedDate, tb.id);
+          continue;
+        }
         const isActuallyCompleted = block?.type === 'smart-task' ? block.header.isCompleted : false;
 
         if (tb.completed !== isActuallyCompleted) {
@@ -378,7 +400,7 @@ const DailyScheduleView: React.FC = () => {
         }
       }
     }
-  }, [ebbReviewTasks, tlTasks, daySchedule.blocks, selectedDate, updateTimeBlock]);
+  }, [ebbReviewTasks, tlTasks, daySchedule.blocks, selectedDate, updateTimeBlock, removeTimeBlock]);
 
   return (
     <div className="ds-page">
