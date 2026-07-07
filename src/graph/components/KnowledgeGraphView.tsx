@@ -813,7 +813,8 @@ const gNodes: ViewNode[] = nodes.map(n => {
               }
 
               // Show text if scale is sufficient, or if highlighted/hovered
-              const scaleThreshold = node.labelPriority === 'high' ? 0.42 : node.labelPriority === 'medium' ? 0.68 : 0.92;
+              // 方案A：众生平等。所有节点统一使用 0.85 的阈值，无视优先级。
+              const scaleThreshold = 0.85;
               // 取消了 isSelected 的强制豁免，保留 isHovered 和 isHighlighted 的豁免
               const showText = globalScale > scaleThreshold || isHighlighted || isHovered;
               
