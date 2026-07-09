@@ -1,13 +1,14 @@
-// ============================================================
-// Smart Timeline - 工具栏（年份导航 + 新建 + 导入导出）
-// ============================================================
-
-import React, { useRef } from 'react';
-import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
+import { motion, AnimatePresence } from 'framer-motion';
+
+export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
 
 interface ToolbarProps {
+  currentView: AppModule;
+  onViewChange: (view: AppModule) => void;
   displayYear: number;
   onYearChange: (year: number) => void;
   onAddTask: () => void;
@@ -21,6 +22,8 @@ interface ToolbarProps {
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({
+  currentView,
+  onViewChange,
   displayYear,
   onYearChange,
   onAddTask,
@@ -33,8 +36,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
   taskCount,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { syncEnabled, syncStatus } = useTimelineStore(
-    useShallow((s) => ({ syncEnabled: s.syncEnabled, syncStatus: s.syncStatus })),
+  const { syncEnabled, syncStatus, dockContext, isDockHovered, setIsDockHovered } = useTimelineStore(
+    useShallow((s) => ({ 
+      syncEnabled: s.syncEnabled, 
+      syncStatus: s.syncStatus,
+      dockContext: s.dockContext,
+      isDockHovered: s.isDockHovered,
+      setIsDockHovered: s.setIsDockHovered
+    })),
   );
 
   const handleImportClick = () => {
@@ -51,100 +60,189 @@ const Toolbar: React.FC<ToolbarProps> = ({
       onImport(content);
     };
     reader.readAsText(file);
-
-    // 重置 input 以便重复导入同一文件
     e.target.value = '';
   };
 
+  const NAV_ITEMS: { module: AppModule; label: string; icon: React.ReactNode }[] = [
+    { module: 'timeline', label: '项目规划', icon: <CalendarDays size={18} /> },
+    { module: 'daily-schedule', label: '每日安排', icon: <CalendarClock size={18} /> },
+    { module: 'week-matrix', label: '周矩阵', icon: <LayoutGrid size={18} /> },
+    { module: 'ebb', label: '艾宾浩斯复习', icon: <BrainCircuit size={18} /> },
+    { module: 'knowledge-graph', label: '知识大盘', icon: <Network size={18} /> },
+  ];
+
   return (
-    <div className="tl-toolbar">
-      <div className="tl-toolbar-left">
-        <button
-          className="tl-toolbar-btn tl-toolbar-btn--primary"
-          onClick={onAddTask}
-          type="button"
-        >
-          <Plus size={14} />
-          添加任务
-        </button>
-        <button
-          className="tl-toolbar-btn tl-toolbar-btn--secondary"
-          onClick={onAddGroup}
-          type="button"
-          title="添加分组"
-        >
-          <FolderPlus size={14} />
-          分组
-        </button>
-        <button
-          className="tl-toolbar-btn tl-toolbar-btn--secondary"
-          onClick={onAddNote}
-          type="button"
-          title="添加便签"
-        >
-          <BookmarkPlus size={14} />
-          便签
-        </button>
-        <button
-          className="tl-toolbar-btn tl-toolbar-btn--secondary"
-          onClick={onAddMilestone}
-          type="button"
-          title="添加里程碑"
-        >
-          <Flag size={14} />
-          里程碑
-        </button>
-        <span className="tl-toolbar-count">共 {taskCount} 个任务</span>
-      </div>
+    <div className="tl-dock-wrapper">
+      <motion.div 
+        className="tl-dock"
+        layout
+        initial={{ opacity: 1, scale: 1, y: 0 }}
+        animate={{ 
+          opacity: 1, 
+          scale: 1,
+          y: 0
+        }}
+        transition={{ 
+          type: "spring", 
+          stiffness: 300, 
+          damping: 25,
+          layout: { type: "spring", stiffness: 350, damping: 30 }
+        }}
+      >
+        <AnimatePresence mode="popLayout" initial={false}>
+          {/* ── 视图导航 ── */}
+        {NAV_ITEMS.map((item) => {
+          const active = currentView === item.module;
+          // Context takeover: only show active view icon if context is not 'none'
+          if (dockContext !== 'none' && !active) return null;
+          
+          return (
+            <motion.button
+              layout
+              key={item.module}
+              initial={{ opacity: 0, width: 0, scale: 0.8 }}
+              animate={{ opacity: 1, width: 'auto', scale: 1 }}
+              exit={{ opacity: 0, width: 0, scale: 0.8 }}
+              type="button"
+              className={`tl-dock-btn ${active ? 'tl-dock-btn--active' : ''}`}
+              onClick={() => onViewChange(item.module)}
+              title={item.label}
+              style={{ position: 'relative', flexShrink: 0 }}
+            >
+              {item.icon}
+              {active && (
+                <motion.div
+                  layoutId="dock-active-indicator"
+                  className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-500"
+                  initial={false}
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              )}
+            </motion.button>
+          );
+        })}
 
-      <div className="tl-toolbar-center">
-        <button
-          className="tl-toolbar-year-btn"
-          onClick={() => onYearChange(displayYear - 1)}
-          type="button"
-          title="上一年"
-        >
-          ‹
-        </button>
-        <span className="tl-toolbar-year">{displayYear} 年</span>
-        <button
-          className="tl-toolbar-year-btn"
-          onClick={() => onYearChange(displayYear + 1)}
-          type="button"
-          title="下一年"
-        >
-          ›
-        </button>
-      </div>
+        <motion.div 
+          layout 
+          key="divider-1" 
+          className="tl-dock-divider" 
+          initial={{ opacity: 0, scale: 0 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0 }}
+        />
 
-      <div className="tl-toolbar-right">
-        <button
-          className={`tl-toolbar-btn tl-toolbar-btn--ghost ${syncEnabled && syncStatus === 'connected' ? 'tl-toolbar-btn--synced' : ''}`}
-          onClick={onOpenSync}
-          type="button"
-          title={syncEnabled ? `同步中 (${syncStatus})` : '云端同步'}
-        >
-          {syncEnabled && syncStatus === 'connected' ? <Cloud size={14} /> : <CloudOff size={14} />}
-          {syncEnabled && syncStatus === 'connected' ? '已同步' : '同步'}
-        </button>
-        <button
-          className="tl-toolbar-btn tl-toolbar-btn--ghost"
-          onClick={handleImportClick}
-          type="button"
-          title="导入 JSON"
-        >
-          <Upload size={14} />
-          导入
-        </button>
-        <button
-          className="tl-toolbar-btn tl-toolbar-btn--ghost"
-          onClick={onExport}
-          type="button"
-          title="导出 JSON"
-        >
-          <Download size={14} />
-          导出
-        </button>
+        {/* ── 动态视图控制插槽 (Portal Target) ── */}
+        <motion.div 
+          layout 
+          key="portal-target" 
+          id="tl-dock-portal-target" 
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '6px' 
+          }}
+        ></motion.div>
+
+        {/* ── 操作按钮 (仅部分视图可能需要，或全局提供) ── */}
+        {currentView === 'timeline' && dockContext === 'none' && (
+          <motion.div
+            key="timeline-actions"
+            layout
+            initial={{ opacity: 0, width: 0, scale: 0.8 }}
+            animate={{ opacity: 1, width: 'auto', scale: 1 }}
+            exit={{ opacity: 0, width: 0, scale: 0.8 }}
+            transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}
+          >
+            <button
+              className="tl-dock-btn tl-dock-btn--primary"
+              onClick={onAddTask}
+              type="button"
+              title="添加任务"
+            >
+              <Plus size={18} />
+            </button>
+            <button
+              className="tl-dock-btn"
+              onClick={onAddGroup}
+              type="button"
+              title="添加分组"
+            >
+              <FolderPlus size={18} />
+            </button>
+            <button
+              className="tl-dock-btn"
+              onClick={onAddNote}
+              type="button"
+              title="添加便签"
+            >
+              <BookmarkPlus size={18} />
+            </button>
+            <button
+              className="tl-dock-btn"
+              onClick={onAddMilestone}
+              type="button"
+              title="添加里程碑"
+            >
+              <Flag size={18} />
+            </button>
+
+            <div className="tl-dock-divider" />
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px' }}>
+              <button
+                className="tl-dock-btn"
+                style={{ width: '24px', height: '24px' }}
+                onClick={() => onYearChange(displayYear - 1)}
+                type="button"
+                title="上一年"
+              >
+                ‹
+              </button>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151', minWidth: '40px', textAlign: 'center' }}>
+                {displayYear}
+              </span>
+              <button
+                className="tl-dock-btn"
+                style={{ width: '24px', height: '24px' }}
+                onClick={() => onYearChange(displayYear + 1)}
+                type="button"
+                title="下一年"
+              >
+                ›
+              </button>
+            </div>
+
+            <div className="tl-dock-divider" />
+            
+            <button
+              className={`tl-dock-btn ${syncEnabled && syncStatus === 'connected' ? 'tl-dock-btn--synced' : ''}`}
+              onClick={onOpenSync}
+              type="button"
+              title={syncEnabled ? `同步中 (${syncStatus})` : '云端同步'}
+            >
+              {syncEnabled && syncStatus === 'connected' ? <Cloud size={18} /> : <CloudOff size={18} />}
+            </button>
+            <button
+              className="tl-dock-btn"
+              onClick={handleImportClick}
+              type="button"
+              title="导入 JSON"
+            >
+              <Upload size={18} />
+            </button>
+            <button
+              className="tl-dock-btn"
+              onClick={onExport}
+              type="button"
+              title="导出 JSON"
+            >
+              <Download size={18} />
+            </button>
+          </motion.div>
+        )}
+        </AnimatePresence>
+
         <input
           ref={fileInputRef}
           type="file"
@@ -152,7 +250,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
           onChange={handleFileChange}
           style={{ display: 'none' }}
         />
-      </div>
+      </motion.div>
     </div>
   );
 };

@@ -154,6 +154,11 @@ export { liveblocksClient } from './client';
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface TimelineStore extends TimelineData {
+  dockContext: 'none' | 'node-selected' | 'task-selected';
+  setDockContext: (ctx: 'none' | 'node-selected' | 'task-selected') => void;
+  isDockHovered: boolean;
+  setIsDockHovered: (hovered: boolean) => void;
+
   syncEnabled: boolean;
   syncRoomCode: string;
   syncStatus: SyncStatus;
@@ -231,6 +236,11 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         setSyncStatus: (status) => {
           set({ syncStatus: status });
         },
+
+        dockContext: 'none',
+        setDockContext: (ctx) => set({ dockContext: ctx }),
+        isDockHovered: false,
+        setIsDockHovered: (hovered) => set({ isDockHovered: hovered }),
 
         addTask: (task) => {
           set((state) => {

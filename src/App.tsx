@@ -9,19 +9,19 @@ import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types'
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import TimelineView from '@/components/TimelineView';
-import Toolbar from '@/components/Toolbar';
+import Toolbar, { type AppModule } from '@/components/Toolbar';
 import TaskDialog from '@/components/TaskDialog';
 import GroupDialog from '@/components/GroupDialog';
 import NoteDialog from '@/components/NoteDialog';
 import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
-import Sidebar, { type AppModule } from '@/components/Sidebar';
 import EbbView from '@/ebb/components/EbbView';
 import DailyScheduleView from '@/components/dailySchedule/DailyScheduleView';
 import ProjectDocumentView from '@/components/smartBlock/ProjectDocumentView';
 import WeekMatrixView from '@/components/smartBlock/WeekMatrixView';
 import { KnowledgeGraphView } from '@/graph/components/KnowledgeGraphView';
+import { DataIntegrityEngine } from '@/components/DataIntegrityEngine';
 
 import '@/styles/timeline.css';
 import '@/styles/ebb.css';
@@ -405,21 +405,20 @@ const App: React.FC = () => {
 
   return (
     <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
-      <Sidebar current={currentView} onChange={setCurrentView} />
-      {currentView !== 'ebb' && currentView !== 'daily-schedule' && currentView !== 'week-matrix' && currentView !== 'knowledge-graph' && (
-        <Toolbar
-          displayYear={displayYear}
-          onYearChange={setDisplayYear}
-          onAddTask={handleAddTask}
-          onAddGroup={handleAddGroup}
-          onAddNote={handleAddNote}
-          onAddMilestone={handleAddMilestone}
-          onImport={handleImport}
-          onExport={handleExport}
-          onOpenSync={handleOpenSync}
-          taskCount={store.tasks.length}
-        />
-      )}
+      <Toolbar
+        currentView={currentView}
+        onViewChange={setCurrentView}
+        displayYear={displayYear}
+        onYearChange={setDisplayYear}
+        onAddTask={handleAddTask}
+        onAddGroup={handleAddGroup}
+        onAddNote={handleAddNote}
+        onAddMilestone={handleAddMilestone}
+        onImport={handleImport}
+        onExport={handleExport}
+        onOpenSync={handleOpenSync}
+        taskCount={store.tasks.length}
+      />
 
       {currentView === 'ebb' ? (
         <div className="tl-app-split tl-app-split--ebb">
@@ -530,6 +529,9 @@ const App: React.FC = () => {
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {/* 数据一致性守护引擎 (Cascading Rules) */}
+      <DataIntegrityEngine />
     </div>
   );
 };

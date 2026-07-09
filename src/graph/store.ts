@@ -60,6 +60,7 @@ interface GraphStore extends GraphData {
   addNode: (name: string, parentId?: string | null) => GraphNode;
   updateNode: (id: string, updates: Partial<Omit<GraphNode, 'id' | 'createdAt'>>) => void;
   deleteNode: (id: string) => void;
+  restoreNode: (node: GraphNode, childrenIds: string[]) => void;
   getNodeById: (id: string) => GraphNode | undefined;
   importGraphData: (data: GraphData) => void;
 }
@@ -132,6 +133,20 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                 .map((node) => 
                   node.parentId === id ? { ...node, parentId: nodeToDelete.parentId } : node
                 ),
+            };
+            saveGraphData(newData);
+            return newData;
+          });
+        },
+
+        restoreNode: (node: GraphNode, childrenIds: string[]) => {
+          set((state) => {
+            // Restore the node and revert the children's parentId
+            const newData = {
+              nodes: [
+                ...state.nodes.map(n => childrenIds.includes(n.id) ? { ...n, parentId: node.id } : n),
+                node
+              ]
             };
             saveGraphData(newData);
             return newData;

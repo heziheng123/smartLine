@@ -2,68 +2,7 @@
    Ebbinghaus 复习模块样式（莫兰迪色系 + 卡片左侧高亮条）
    ============================================================ */
 
-/* ── 左侧侧边栏 ──────────────────────────────────────────── */
-.tl-sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 48px;
-  z-index: 200;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 50px 0 12px;
-  gap: 4px;
-  background: #FAFAFB;
-  border-right: 1px solid #ECECEF;
-}
-
-.tl-sidebar-item {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  cursor: pointer;
-  color: #9CA3AF;
-  transition: all 0.15s ease;
-}
-
-.tl-sidebar-item:hover {
-  background: #F3F4F6;
-  color: #4B5563;
-}
-
-.tl-sidebar-item--active {
-  background: #EEF2FF;
-  color: #5b6af0;
-}
-
-.tl-sidebar-item-bar {
-  position: absolute;
-  left: -4px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: transparent;
-  transition: background 0.15s ease;
-}
-
-.tl-sidebar-item--active .tl-sidebar-item-bar {
-  background: #5b6af0;
-}
-
-.tl-sidebar-item-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+/* ── 遗留的左侧边栏占位清理 ── */
 
 /* ── Ebb 视图布局 ────────────────────────────────────────── */
 .eb-view {

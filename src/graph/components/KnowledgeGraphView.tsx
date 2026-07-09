@@ -6,6 +6,8 @@ import { diffDays, todayStr } from '@/utils/dateSafe';
 import { Plus, Trash2, Check, Settings2, X, Info, Search, ChevronDown, Filter, Command, Zap } from 'lucide-react';
 import { forceCollide, forceX, forceY, forceCenter } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
+import { motion, AnimatePresence } from 'framer-motion';
+import { createPortal } from 'react-dom';
 
 type NodeRollupStats = {
   totalReviewCount: number;
@@ -60,6 +62,11 @@ export const KnowledgeGraphView: React.FC = () => {
   const [selectedRootFilter, setSelectedRootFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'active' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Portal into Dock
+  const dockPortalTarget = document.getElementById('tl-dock-portal-target');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<any>();
@@ -639,110 +646,108 @@ const gNodes: ViewNode[] = nodes.map(n => {
         </div>
       )}
 
-      {/* Filter Dock (Dual-Mode Focus Engine) - Ultra Minimalist macOS Capsule */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 animate-in slide-in-from-top-4 fade-in duration-500">
-        <div className="bg-gradient-to-b from-white/95 to-white/90 backdrop-blur-2xl border border-slate-200/60 shadow-[0_8px_32px_-4px_rgba(0,0,0,0.12),0_2px_8px_-2px_rgba(0,0,0,0.08)] rounded-2xl p-2 flex items-center gap-2">
-          
-          {/* Root Selector (Sub-Universe Mode) */}
-          <div className="relative group">
-            <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100/50 hover:from-slate-100 hover:to-slate-200/50 transition-all duration-300 border border-slate-200/50 shadow-sm hover:shadow group-hover:border-slate-300/60">
-              <Command size={14} className="text-slate-500 group-hover:text-slate-700 transition-colors" />
-              <select 
-                className="appearance-none bg-transparent text-[13px] font-semibold text-slate-700 outline-none cursor-pointer pr-4 min-w-[90px] max-w-[120px] truncate"
-                value={selectedRootFilter}
-                onChange={e => setSelectedRootFilter(e.target.value)}
-              >
-                <option value="all">全景视角</option>
-                {rootNodes.map(n => (
-                  <option key={n.id} value={n.id}>{n.name}</option>
-                ))}
-              </select>
-              <ChevronDown size={13} strokeWidth={2.5} className="text-slate-400 group-hover:text-slate-600 transition-colors -ml-1" />
-            </div>
+      {/* 知识大盘的专属控制台已经通过 Portal 注入到底部全局 Dock，故这里不再保留顶部独立的悬浮面板 */}
+      {dockPortalTarget && createPortal(
+        <motion.div
+          layout
+          key="knowledge-graph-actions"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 20 }}
+          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+          className="flex items-center gap-1"
+        >
+          {/* 2. Root Filter */}
+          <div className="relative group flex items-center px-1 cursor-pointer">
+            <Command size={16} className="text-slate-500 group-hover:text-slate-700 transition-colors" />
+            <select 
+              className="appearance-none bg-transparent text-[13px] font-semibold text-slate-700 outline-none cursor-pointer pl-1 pr-3 min-w-[20px] max-w-[80px] truncate"
+              value={selectedRootFilter}
+              onChange={e => setSelectedRootFilter(e.target.value)}
+              title="全景视角"
+            >
+              <option value="all">全景</option>
+              {rootNodes.map(n => (
+                <option key={n.id} value={n.id}>{n.name}</option>
+              ))}
+            </select>
+            <ChevronDown size={12} strokeWidth={2.5} className="text-slate-400 group-hover:text-slate-600 transition-colors absolute right-0" pointerEvents="none" />
           </div>
 
-          {/* Divider */}
-          <div className="w-px h-6 bg-gradient-to-b from-transparent via-slate-300/60 to-transparent"></div>
+          <div className="tl-dock-divider" />
 
-          {/* Status Toggles (X-Ray Mode) */}
-          <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-xl bg-slate-50/50">
+          {/* 3. Status Toggles (Compact Traffic Lights) */}
+          <div className="flex items-center gap-1.5 px-1">
             <button 
               onClick={() => setStatusFilter(prev => prev === 'overdue' ? 'all' : 'overdue')}
-              className={`group relative flex items-center justify-center w-9 h-9 rounded-lg transition-all duration-300 ${
-                statusFilter === 'overdue' 
-                  ? 'bg-gradient-to-br from-rose-500 to-rose-600 shadow-lg shadow-rose-500/30 scale-105' 
-                  : 'bg-white hover:bg-rose-50 border border-slate-200/60 hover:border-rose-200 shadow-sm hover:shadow'
-              }`}
+              className={`w-3 h-3 rounded-full transition-all duration-300 ${statusFilter === 'overdue' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)] scale-110' : statusFilter !== 'all' ? 'bg-slate-200' : 'bg-rose-400 hover:bg-rose-500 hover:scale-110'}`}
               title="查看严重逾期"
-            >
-              {statusFilter === 'overdue' ? (
-                <div className="w-3 h-3 rounded-full bg-white shadow-inner"></div>
-              ) : (
-                <div className="w-3 h-3 rounded-full bg-rose-400 group-hover:bg-rose-500 transition-colors"></div>
-              )}
-            </button>
-            
+            />
             <button 
               onClick={() => setStatusFilter(prev => prev === 'active' ? 'all' : 'active')}
-              className={`group relative flex items-center justify-center w-9 h-9 rounded-lg transition-all duration-300 ${
-                statusFilter === 'active' 
-                  ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg shadow-emerald-500/30 scale-105' 
-                  : 'bg-white hover:bg-emerald-50 border border-slate-200/60 hover:border-emerald-200 shadow-sm hover:shadow'
-              }`}
+              className={`w-3 h-3 rounded-full transition-all duration-300 ${statusFilter === 'active' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] scale-110' : statusFilter !== 'all' ? 'bg-slate-200' : 'bg-emerald-400 hover:bg-emerald-500 hover:scale-110'}`}
               title="查看进行中"
-            >
-              {statusFilter === 'active' ? (
-                <div className="w-3 h-3 rounded-full bg-white shadow-inner"></div>
-              ) : (
-                <div className="w-3 h-3 rounded-full bg-emerald-400 group-hover:bg-emerald-500 transition-colors"></div>
-              )}
-            </button>
-
+            />
             <button 
               onClick={() => setStatusFilter(prev => prev === 'completed' ? 'all' : 'completed')}
-              className={`group relative flex items-center justify-center w-9 h-9 rounded-lg transition-all duration-300 ${
-                statusFilter === 'completed' 
-                  ? 'bg-gradient-to-br from-amber-400 to-amber-500 shadow-lg shadow-amber-500/30 scale-105' 
-                  : 'bg-white hover:bg-amber-50 border border-slate-200/60 hover:border-amber-200 shadow-sm hover:shadow'
-              }`}
+              className={`w-3 h-3 rounded-full transition-all duration-300 ${statusFilter === 'completed' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)] scale-110' : statusFilter !== 'all' ? 'bg-slate-200' : 'bg-amber-400 hover:bg-amber-500 hover:scale-110'}`}
               title="查看已圆满"
-            >
-              {statusFilter === 'completed' ? (
-                <div className="w-3 h-3 rounded-full bg-white shadow-inner"></div>
-              ) : (
-                <div className="w-3 h-3 rounded-full bg-amber-400 group-hover:bg-amber-500 transition-colors"></div>
-              )}
-            </button>
-          </div>
-
-          {/* Divider */}
-          <div className="w-px h-6 bg-gradient-to-b from-transparent via-slate-300/60 to-transparent"></div>
-
-          {/* Search */}
-          <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all duration-300 ${
-            searchQuery 
-              ? 'bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200/60 shadow-sm' 
-              : 'bg-white hover:bg-slate-50 border border-slate-200/60 hover:border-slate-300/60 shadow-sm'
-          }`}>
-            <Search size={14} className={`transition-colors ${searchQuery ? 'text-blue-600' : 'text-slate-400'}`} />
-            <input 
-              type="text" 
-              placeholder="搜索知识..." 
-              className="bg-transparent border-none outline-none text-[13px] font-medium w-20 focus:w-32 transition-all duration-300 text-slate-700 placeholder:text-slate-400"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
             />
-            {searchQuery && (
-              <button 
-                onClick={() => setSearchQuery('')} 
-                className="text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 rounded-md p-0.5 transition-all duration-200"
-              >
-                <X size={14} strokeWidth={2.5} />
-              </button>
-            )}
           </div>
-        </div>
-      </div>
+
+          <div className="tl-dock-divider" />
+
+          {/* 4. Search (Collapsible) */}
+          <div className="flex items-center group relative h-[36px]">
+            <button
+              className="tl-dock-btn"
+              onClick={() => {
+                setIsSearchExpanded(true);
+                setTimeout(() => searchInputRef.current?.focus(), 50);
+              }}
+              title="搜索知识"
+            >
+              <Search size={16} className={`transition-colors ${searchQuery ? 'text-blue-600' : 'text-slate-500 group-hover:text-slate-700'}`} />
+            </button>
+            
+            <AnimatePresence>
+              {(isSearchExpanded || searchQuery) && (
+                <motion.div
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: 120, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                  className="flex items-center overflow-hidden"
+                >
+                  <input 
+                    ref={searchInputRef}
+                    type="text" 
+                    placeholder="搜索..." 
+                    className="bg-transparent border-none outline-none text-[13px] font-medium w-full text-slate-700 placeholder:text-slate-400 pl-1 pr-6"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    onBlur={() => {
+                      if (!searchQuery) setIsSearchExpanded(false);
+                    }}
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => {
+                        setSearchQuery('');
+                        setIsSearchExpanded(false);
+                      }} 
+                      className="absolute right-1 text-slate-400 hover:text-slate-700 p-0.5"
+                    >
+                      <X size={14} strokeWidth={2.5} />
+                    </button>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </motion.div>,
+        dockPortalTarget
+      )}
 
       {/* Dot Grid Background */}
       <div className="absolute inset-0 pointer-events-none" style={{
@@ -910,32 +915,29 @@ const gNodes: ViewNode[] = nodes.map(n => {
                    const bgY = textY - bckgDimensions[1] / 2;
                    const bgW = bckgDimensions[0];
                    const bgH = bckgDimensions[1];
-                   const radius = 4 / globalScale;
+                   const radiusCorner = 4 / globalScale;
                    
                    ctx.beginPath();
-                   ctx.moveTo(bgX + radius, bgY);
-                   ctx.lineTo(bgX + bgW - radius, bgY);
-                   ctx.quadraticCurveTo(bgX + bgW, bgY, bgX + bgW, bgY + radius);
-                   ctx.lineTo(bgX + bgW, bgY + bgH - radius);
-                   ctx.quadraticCurveTo(bgX + bgW, bgY + bgH, bgX + bgW - radius, bgY + bgH);
-                   ctx.lineTo(bgX + radius, bgY + bgH);
-                   ctx.quadraticCurveTo(bgX, bgY + bgH, bgX, bgY + bgH - radius);
-                   ctx.lineTo(bgX, bgY + radius);
-                   ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
+                   ctx.moveTo(bgX + radiusCorner, bgY);
+                   ctx.lineTo(bgX + bgW - radiusCorner, bgY);
+                   ctx.quadraticCurveTo(bgX + bgW, bgY, bgX + bgW, bgY + radiusCorner);
+                   ctx.lineTo(bgX + bgW, bgY + bgH - radiusCorner);
+                   ctx.quadraticCurveTo(bgX + bgW, bgY + bgH, bgX + bgW - radiusCorner, bgY + bgH);
+                   ctx.lineTo(bgX + radiusCorner, bgY + bgH);
+                   ctx.quadraticCurveTo(bgX, bgY + bgH, bgX, bgY + bgH - radiusCorner);
+                   ctx.lineTo(bgX, bgY + radiusCorner);
+                   ctx.quadraticCurveTo(bgX, bgY, bgX + radiusCorner, bgY);
                    ctx.closePath();
                    
-                   // 添加毛玻璃投影效果
                    ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
                    ctx.shadowBlur = 8 / globalScale;
                    ctx.shadowOffsetY = 2 / globalScale;
                    ctx.fill();
                    
-                   // 重置 shadow 以免影响后续绘制
                    ctx.shadowColor = 'transparent';
                    ctx.shadowBlur = 0;
                    ctx.shadowOffsetY = 0;
                    
-                   // 细微的边框增加精致感
                    ctx.strokeStyle = 'rgba(203, 213, 225, 0.5)';
                    ctx.lineWidth = 1 / globalScale;
                    ctx.stroke();
@@ -957,7 +959,6 @@ const gNodes: ViewNode[] = nodes.map(n => {
                   : '#64748b';
               
               if (progressText) {
-                 // 如果有进度文本，分两段绘制以实现不同的颜色/样式
                  const labelText = !isHovered && !isHighlighted && isTruncated ? label.substring(0, MAX_CHARS) + '...' : label;
                  const labelWidth = ctx.measureText(labelText).width;
                 const progressWidth = ctx.measureText(progressText).width;
@@ -966,17 +967,19 @@ const gNodes: ViewNode[] = nodes.map(n => {
                 ctx.textAlign = 'left';
                 ctx.fillText(labelText, startX, textY);
                 
-                // 绘制进度文本，使用较浅的颜色和稍小的字体
                 ctx.fillStyle = isSelected ? '#64748b' : '#94a3b8';
                 ctx.font = `${isSelected || isHovered ? '500' : '400'} ${fontSize * 0.9}px Inter, system-ui, sans-serif`;
                 ctx.fillText(progressText, startX + labelWidth, textY);
               } else {
                 ctx.fillText(displayLabel, node.x, textY);
               }
-              }
-            }}
-            nodeCanvasObjectMode={() => 'replace'}
-          />
+            }
+
+            // Restore global alpha
+            ctx.globalAlpha = 1;
+          }}
+          nodeCanvasObjectMode={() => 'replace'}
+        />
         )}
 
         {/* Floating Control Panel - Mac / Linear Style */}

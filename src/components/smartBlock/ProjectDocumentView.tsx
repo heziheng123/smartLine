@@ -97,8 +97,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     })),
   );
   const [metaExpanded, setMetaExpanded] = useState(false);
-  const [slashMenu, setSlashMenu] = useState<{ position: { top: number; left: number } } | null>(null);
-  const [newTextValue, setNewTextValue] = useState('');
+  const [slashMenu, setSlashMenu] = useState<{ position: { top: number; left: number }; blockId: string } | null>(null);
   const [showBatchImport, setShowBatchImport] = useState(false);
   const [showBatchEdit, setShowBatchEdit] = useState(false);
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
@@ -110,7 +109,6 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [todayOnly, setTodayOnly] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // 实时从 store 读取最新 blocks（防止 stale data）
   const { id: taskId } = task;
@@ -438,50 +436,68 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   const handleSlashSelect = useCallback(
     (key: string) => {
+      if (!slashMenu) return;
+      const { blockId } = slashMenu;
       setSlashMenu(null);
-      if (key === 'task') {
-        handleAddTaskBlock();
-      } else if (key === 'text') {
-        handleAddTextBlock();
+      
+      const currentBlocks = useTimelineStore.getState().tasks.find(t => t.id === task.id)?.blocks ?? [];
+      const blockIndex = currentBlocks.findIndex(b => b.id === blockId);
+      if (blockIndex === -1) return;
+
+      const newBlocks = [...currentBlocks];
+      const targetBlock = { ...newBlocks[blockIndex] };
+      newBlocks[blockIndex] = targetBlock;
+
+      if (targetBlock.type === 'text') {
+        const textBlock = targetBlock as TextBlock;
+        // Attempt to remove the trailing slash that triggered the menu
+        textBlock.content = textBlock.content.replace(/\/$/, '');
       }
-    },
-    [handleAddTaskBlock, handleAddTextBlock],
-  );
 
-  // ── 底部输入框：回车创建文本/任务 ──
-
-  const handleNewBlockKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-        e.preventDefault();
-        const text = newTextValue.trim();
-        if (!text) return;
-
-        if (text.startsWith('/')) {
-          // 触发 slash 命令菜单
-          const rect = inputRef.current?.getBoundingClientRect();
-          if (rect) {
-            setSlashMenu({
-              position: { top: rect.top - 120, left: rect.left },
-            });
-          }
-          setNewTextValue('');
-          return;
+      if (key === 'task') {
+        const today = todayStr();
+        const newBlock: SmartTaskBlock = {
+          type: 'smart-task',
+          id: genBlockId(),
+          header: {
+            title: '新任务',
+            tag: '默认',
+            tagColor: getTagColor('默认'),
+            date: today,
+            duration: 30,
+            isCompleted: false,
+          },
+          body: '',
+        };
+        
+        if (targetBlock.type === 'text' && !(targetBlock as TextBlock).content.trim()) {
+           newBlocks[blockIndex] = newBlock;
+        } else {
+           newBlocks.splice(blockIndex + 1, 0, newBlock);
         }
-
-        // 普通文本 → 作为 TextBlock 添加
+      } else if (key === 'text') {
         const newBlock: TextBlock = {
           type: 'text',
           id: genBlockId(),
-          content: text,
+          content: '',
         };
-        appendBlock(task.id, newBlock);
-        setNewTextValue('');
-        inputRef.current?.focus();
+        newBlocks.splice(blockIndex + 1, 0, newBlock);
+        
+        setTimeout(() => {
+          const cards = containerRef.current?.querySelectorAll('.tb-content');
+          const last = cards?.[cards.length - 1] as HTMLElement | undefined;
+          last?.focus();
+        }, 100);
       }
+
+      updateTaskBlocks(task.id, newBlocks);
     },
-    [newTextValue, appendBlock, task.id],
+    [task.id, updateTaskBlocks, slashMenu],
   );
+
+  const handleSlashCommandTrigger = useCallback((rect: { top: number; left: number }, blockId: string) => {
+    setSlashMenu({ position: rect, blockId });
+  }, []);
 
   // ── ESC 关闭 ──
   useEffect(() => {
@@ -759,22 +775,21 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                 block={block}
                 onUpdate={handleUpdateTextBlock}
                 onDelete={handleDeleteBlock}
+                onSlashCommand={handleSlashCommandTrigger}
               />
             ))}
           </DragDropContext>
         )}
-      </div>
-
-      {/* ── 底部常驻输入框 ── */}
-      <div className="pdv-input-bar">
-        <textarea
-          ref={inputRef}
-          className="pdv-input"
-          value={newTextValue}
-          onChange={(e) => setNewTextValue(e.target.value)}
-          onKeyDown={handleNewBlockKeyDown}
-          placeholder="+ 输入文本回车添加 / 输入 / 触发命令..."
-          rows={1}
+        
+        {/* 点击底部空白区域自动添加文本块 */}
+        <div 
+          className="pdv-body-pad" 
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleAddTextBlock();
+            }
+          }}
+          style={{ flex: 1, minHeight: '60px', cursor: 'text' }}
         />
       </div>
 

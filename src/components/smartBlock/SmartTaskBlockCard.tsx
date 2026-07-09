@@ -28,6 +28,7 @@ import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
 import { useGraphStore } from '@/graph/store';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface SmartTaskBlockCardProps {
   block: SmartTaskBlock;
@@ -170,18 +171,24 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   if (compact) {
     // 紧凑模式：单行卡条
     return (
-      <div
+      <motion.div
+        layout
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ type: "spring", stiffness: 400, damping: 30 }}
         className={`stb-card stb-card--compact ${header.isCompleted ? 'stb-card--done' : ''}`}
         style={{ borderLeftColor: leftBarColor }}
         onClick={() => setBodyExpanded(!bodyExpanded)}
       >
-        <button
+        <motion.button
+          whileTap={{ scale: 0.8 }}
           type="button"
           className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
-          onClick={(e) => { e.stopPropagation(); handleToggle(); }}
+          onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleToggle(); }}
         >
           {header.isCompleted && <Check size={12} strokeWidth={3} />}
-        </button>
+        </motion.button>
         <span className="stb-tag-badge" style={tagBgStyle}>
           {header.tag}
         </span>
@@ -194,21 +201,35 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
         <span className="stb-meta">
           <Clock size={12} /> {header.duration}min
         </span>
-        {bodyExpanded && (
-          <div className="stb-body-compact">
-            {hasBody ? (
-              <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }} />
-            ) : (
-              <span className="stb-body-empty">点击编辑详情...</span>
-            )}
-          </div>
-        )}
-      </div>
+        <AnimatePresence initial={false}>
+          {bodyExpanded && (
+            <motion.div 
+              className="stb-body-compact"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+              style={{ overflow: 'hidden', width: '100%' }}
+            >
+              {hasBody ? (
+                <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }} />
+              ) : (
+                <span className="stb-body-empty">点击编辑详情...</span>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     );
   }
 
   return (
-    <div
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
       className={`stb-card ${header.isCompleted ? 'stb-card--done' : ''}`}
       style={{ borderLeftColor: leftBarColor }}
     >
@@ -221,14 +242,15 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
       {/* ── 主容器：复选框 + 右侧内容 ── */}
       <div className="stb-header-main">
-        <button
+        <motion.button
+          whileTap={{ scale: 0.8 }}
           type="button"
           className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
           onClick={handleToggle}
           title={header.isCompleted ? '标记未完成' : '标记完成'}
         >
           {header.isCompleted && <Check size={11} strokeWidth={3} />}
-        </button>
+        </motion.button>
 
         {/* 右侧内容容器：标题 → 元数据 → Body */}
         <div className="stb-header-content">
@@ -371,24 +393,33 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           </div>
 
           {/* 第三层：Body 详情区（紧贴元数据下方，缩进+引述线） */}
-          {bodyExpanded && (
-            <div className="stb-body">
-              <div
-                ref={bodyRef}
-                className={`stb-body-editor ${editingBody ? 'stb-body-editor--active' : ''}`}
-                contentEditable={editingBody}
-                suppressContentEditableWarning
-                onBlur={handleBodyBlur}
-                onClick={handleBodyClick}
-                dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }}
-              />
-              {!hasBody && !editingBody && (
-                <span className="stb-body-placeholder" onClick={handleBodyClick}>
-                  点击编辑详情...
-                </span>
-              )}
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {bodyExpanded && (
+              <motion.div 
+                className="stb-body"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.25, ease: "easeInOut" }}
+                style={{ overflow: 'hidden' }}
+              >
+                <div
+                  ref={bodyRef}
+                  className={`stb-body-editor ${editingBody ? 'stb-body-editor--active' : ''}`}
+                  contentEditable={editingBody}
+                  suppressContentEditableWarning
+                  onBlur={handleBodyBlur}
+                  onClick={handleBodyClick}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }}
+                />
+                {!hasBody && !editingBody && (
+                  <span className="stb-body-placeholder" onClick={handleBodyClick}>
+                    点击编辑详情...
+                  </span>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -442,7 +473,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
         </div>,
         document.body
       )}
-    </div>
+    </motion.div>
   );
 };
 

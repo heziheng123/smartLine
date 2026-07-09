@@ -18,8 +18,8 @@ html, body, #root {
   flex-direction: column;
   height: 100vh;
   width: 100%;
-  padding-top: 50px;
-  padding-left: 48px;
+  padding-top: 0; /* Remove top padding since toolbar is now floating */
+  padding-left: 0;
   box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
   font-size: 12px;
@@ -28,98 +28,94 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+  position: relative;
 }
 
-/* ── 工具栏 ──────────────────────────────────────────────── */
-.tl-toolbar {
+/* ── 悬浮命令坞 (Floating Dock) ──────────────────────────────────────────────── */
+.tl-dock-wrapper {
   position: fixed;
-  top: 0;
-  left: 48px;
-  right: 0;
-  z-index: 100;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-  padding: 10px 20px;
-  background: #FFFFFF;
-  border-bottom: 1px solid #E5E7EB;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  gap: 12px;
-  transition: box-shadow 0.2s ease;
-  box-sizing: border-box;
+  justify-content: center;
+  align-items: flex-end;
+  pointer-events: none; /* Let clicks pass through empty space */
 }
 
-.tl-toolbar-left {
+.tl-dock {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.tl-toolbar-center {
-  display: flex;
-  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.6);
   gap: 6px;
+  pointer-events: auto; /* Re-enable clicks for the dock */
 }
 
-.tl-toolbar-right {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 4px;
+.tl-dock-divider {
+  width: 1px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 0 4px;
 }
 
-.tl-toolbar-btn {
+.tl-dock-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
   border: none;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-}
-
-.tl-toolbar-btn--primary {
-  background: #5b6af0;
-  color: #fff;
-  box-shadow: 0 1px 2px rgba(91, 106, 240, 0.2);
-}
-
-.tl-toolbar-btn--primary:hover {
-  filter: brightness(1.06);
-  box-shadow: 0 2px 4px rgba(91, 106, 240, 0.3);
-}
-
-.tl-toolbar-btn--secondary {
-  background: #F3F4F6;
-  color: #4B5563;
-}
-
-.tl-toolbar-btn--secondary:hover {
-  background: #E5E7EB;
-}
-
-.tl-toolbar-btn--ghost {
+  border-radius: 12px;
   background: transparent;
-  color: #6B7280;
-  padding: 6px 10px;
+  color: #4B5563;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+  position: relative;
 }
 
-.tl-toolbar-btn--ghost:hover {
-  background: #F3F4F6;
-  color: #374151;
+.tl-dock-btn:hover {
+  background: rgba(255, 255, 255, 0.8);
+  color: #111827;
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
-.tl-toolbar-count {
-  font-size: 11px;
-  color: #9CA3AF;
-  font-weight: 500;
-  margin-left: 4px;
+.tl-dock-btn--primary {
+  color: #5b6af0;
+}
+
+.tl-dock-btn--primary:hover {
+  background: rgba(91, 106, 240, 0.1);
+  color: #4a5ad0;
+}
+
+.tl-dock-btn--active {
+  background: transparent !important;
+  color: #5b6af0 !important;
+}
+
+.tl-dock-btn--active svg {
+  filter: drop-shadow(0 4px 8px rgba(91, 106, 240, 0.4));
+}
+
+.tl-dock-btn--synced {
+  color: #059669;
+}
+
+.tl-dock-btn--synced:hover {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+/* 隐藏旧版 Toolbar 样式（为了兼容可能没删掉的地方） */
+.tl-toolbar {
+  display: none;
 }
 
 /* ============================================================
