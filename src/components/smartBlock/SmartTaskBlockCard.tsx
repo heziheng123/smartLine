@@ -15,8 +15,6 @@ import {
   Tag,
   Trash2,
   ChevronDown,
-  Repeat,
-  Network,
   RefreshCw,
   Video,
   BookOpen,
@@ -166,7 +164,10 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
       : header.tagColor;
 
   // 极淡的标签底色（用于徽章）
-  const tagBgStyle = { backgroundColor: header.tagColor + '1A', color: header.tagColor };
+  const tagBgStyle = { color: header.tagColor };
+  const nodeBgStyle = header.graphNodeId && header.autoSyncEbb 
+    ? { color: '#3b82f6' } 
+    : { color: '#6b7280' };
 
   if (compact) {
     // 紧凑模式：单行卡条
@@ -312,8 +313,10 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               style={tagBgStyle}
               onClick={() => setShowTagPicker(!showTagPicker)}
             >
-              <Tag size={9} /> {header.tag}
+              {header.tag}
             </button>
+
+            <span className="text-slate-300">·</span>
 
             <button
               type="button"
@@ -321,11 +324,12 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               ref={setDateAnchor}
               onClick={() => setShowDatePicker(!showDatePicker)}
             >
-              <Calendar size={10} /> {dateLabel}
+              {dateLabel}
             </button>
 
+            <span className="text-slate-300">·</span>
+
             <span className="stb-duration-badge">
-              <Clock size={10} />
               <input
                 type="number"
                 className="stb-duration-input"
@@ -335,39 +339,29 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                 step={5}
                 title="预估时长（分钟）"
               />
-              <span>min</span>
+              <span style={{ fontSize: 10 }}>m</span>
             </span>
 
             {header.recurring && (
-              <span className="stb-recurring-badge" title={header.recurring}>
-                <Repeat size={10} /> 🔁
-              </span>
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="stb-recurring-badge" title={header.recurring}>
+                  循环
+                </span>
+              </>
             )}
+
+            <span className="text-slate-300">·</span>
 
             <button
               type="button"
-              className={`stb-tag-badge ${header.autoSyncEbb ? 'stb-tag-badge--sync' : ''}`}
-              style={header.autoSyncEbb ? { backgroundColor: '#eff6ff', color: '#3b82f6' } : {}}
+              className={`stb-tag-badge ${header.graphNodeId && header.autoSyncEbb ? 'stb-tag-badge--sync' : ''}`}
+              style={nodeBgStyle}
               onClick={() => setShowGraphPicker(!showGraphPicker)}
               title="绑定知识节点"
             >
-              <Network size={10} /> {graphNode ? graphNode.name : '未绑定节点'}
+              <span className="stb-node-name">{graphNode ? graphNode.name : '未绑定节点'}</span>
             </button>
-
-            {/* 直接可见且可交互的同步勾选框 */}
-            <label 
-              className="stb-sync-checkbox" 
-              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#64748b', cursor: 'pointer' }}
-              title="完成时自动同步至 Ebb 复习流"
-            >
-              <input 
-                type="checkbox" 
-                checked={header.autoSyncEbb ?? true}
-                onChange={(e) => onUpdateHeader(block.id, { autoSyncEbb: e.target.checked })}
-                style={{ accentColor: '#10b981', cursor: 'pointer', margin: 0 }}
-              />
-              同步 Ebb
-            </label>
 
             {/* Hover 快捷菜单（仅删除） */}
             <div className="stb-actions">

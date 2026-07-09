@@ -48,6 +48,7 @@ function weekdayShort(dateStr: string): string {
 }
 import type { Task, SmartTaskBlock, SmartTaskHeader, TextBlock } from '@/types';
 import { useTimelineStore } from '@/store';
+import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import {
   genBlockId,
@@ -103,6 +104,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [showExpandMenu, setShowExpandMenu] = useState(false);
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(new Set());
+  const [groupDimension, setGroupDimension] = useState<'time' | 'node'>('time');
   const [groupByWeek, setGroupByWeek] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -167,11 +169,14 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   // ── 按日期/周分组：smart-task 按 date 分组插入粘性表头，text 块单独收集 ──
   type DateGroup = {
-    key: string;            // 分组唯一标识（日期或周标识）
+    key: string;            // 分组唯一标识（日期或周标识，或者图谱节点 ID）
     label: string;          // 主显示文本
     subLabel?: string;      // 副显示文本（周模式下的日期范围）
+    icon?: React.ReactNode; // 节点专属图标
     blocks: SmartTaskBlock[];
   };
+
+  const { nodes } = useGraphStore();
 
   const groupedByDate = useMemo(() => {
     const groups: DateGroup[] = [];
@@ -184,34 +189,62 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         continue;
       }
       const sb = block as SmartTaskBlock;
-      const dateStr = sb.header.date || '__none__';
 
       let groupKey: string;
       let label: string;
       let subLabel: string | undefined;
+      let icon: React.ReactNode | undefined;
 
-      if (groupByWeek && dateStr !== '__none__') {
-        // 按周分组：用该日期所在周的周一作为 key
-        const mondayStr = getMondayOfWeek(dateStr);
-        const sundayStr = addDays(mondayStr, 6);
-        groupKey = mondayStr;
-        label = `第 ${formatDate(mondayStr, 'M.D')} ~ ${formatDate(sundayStr, 'M.D')} 周`;
-        subLabel = `${weekdayShort(mondayStr)} ~ ${weekdayShort(sundayStr)}`;
+      if (groupDimension === 'node') {
+        // 按图谱节点分组
+        const nodeId = sb.header.graphNodeId;
+        if (!nodeId) {
+          groupKey = '__unlinked__';
+          label = '未关联节点';
+          icon = '📥';
+        } else {
+          const node = nodes.find(n => n.id === nodeId);
+          groupKey = nodeId;
+          label = node ? node.name : '未知节点';
+          icon = '🕸️';
+        }
       } else {
-        groupKey = dateStr;
-        label = dateStr === '__none__' ? '未排期' : `${formatDate(dateStr, 'M.D')} ${weekdayShort(dateStr)}`;
+        // 按时间分组
+        const dateStr = sb.header.date || '__none__';
+        if (groupByWeek && dateStr !== '__none__') {
+          // 按周分组：用该日期所在周的周一作为 key
+          const mondayStr = getMondayOfWeek(dateStr);
+          const sundayStr = addDays(mondayStr, 6);
+          groupKey = mondayStr;
+          label = `第 ${formatDate(mondayStr, 'M.D')} ~ ${formatDate(sundayStr, 'M.D')} 周`;
+          subLabel = `${weekdayShort(mondayStr)} ~ ${weekdayShort(sundayStr)}`;
+          icon = '🗓️';
+        } else {
+          groupKey = dateStr;
+          label = dateStr === '__none__' ? '未排期' : `${formatDate(dateStr, 'M.D')} ${weekdayShort(dateStr)}`;
+          icon = '📅';
+        }
       }
 
       if (!groupMap.has(groupKey)) {
-        const group: DateGroup = { key: groupKey, label, subLabel, blocks: [] };
+        const group: DateGroup = { key: groupKey, label, subLabel, icon, blocks: [] };
         groupMap.set(groupKey, group);
         groups.push(group);
       }
       groupMap.get(groupKey)!.blocks.push(sb);
     }
 
+    // 如果是按节点分组，对分组进行排序：未关联排在最前面，其他按节点名称排序
+    if (groupDimension === 'node') {
+      groups.sort((a, b) => {
+        if (a.key === '__unlinked__') return -1;
+        if (b.key === '__unlinked__') return 1;
+        return a.label.localeCompare(b.label);
+      });
+    }
+
     return { groups, textBlocks };
-  }, [filteredSmartBlocks, groupByWeek]);
+  }, [filteredSmartBlocks, groupByWeek, groupDimension, nodes]);
 
   const toggleDateCollapse = useCallback((date: string) => {
     setCollapsedDates(prev => {
@@ -332,28 +365,44 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       const blockIndex = newBlocks.findIndex(b => b.id === blockId);
       if (blockIndex === -1 || newBlocks[blockIndex].type !== 'smart-task') return;
 
-      // 跨组：更新日期
+      // 跨组：更新日期或图谱节点
       if (sourceGroupKey !== destGroupKey) {
-        let newDate: string | undefined;
-        if (destGroupKey === '__none__') {
-          newDate = undefined;
+        if (groupDimension === 'node') {
+          let newGraphNodeId: string | undefined;
+          if (destGroupKey === '__unlinked__') {
+            newGraphNodeId = undefined;
+          } else {
+            newGraphNodeId = destGroupKey;
+          }
+          (newBlocks[blockIndex] as SmartTaskBlock) = {
+            ...newBlocks[blockIndex] as SmartTaskBlock,
+            header: {
+              ...(newBlocks[blockIndex] as SmartTaskBlock).header,
+              graphNodeId: newGraphNodeId,
+            },
+          };
         } else {
-          newDate = destGroupKey;
-          if (groupByWeek) {
-            const origDate = (newBlocks[blockIndex] as SmartTaskBlock).header.date;
-            if (origDate) {
-              const origDayOfWeek = getDayOfWeek(origDate);
-              newDate = addDays(destGroupKey, origDayOfWeek === 0 ? 6 : origDayOfWeek - 1);
+          let newDate: string | undefined;
+          if (destGroupKey === '__none__') {
+            newDate = undefined;
+          } else {
+            newDate = destGroupKey;
+            if (groupByWeek) {
+              const origDate = (newBlocks[blockIndex] as SmartTaskBlock).header.date;
+              if (origDate) {
+                const origDayOfWeek = getDayOfWeek(origDate);
+                newDate = addDays(destGroupKey, origDayOfWeek === 0 ? 6 : origDayOfWeek - 1);
+              }
             }
           }
+          (newBlocks[blockIndex] as SmartTaskBlock) = {
+            ...newBlocks[blockIndex] as SmartTaskBlock,
+            header: {
+              ...(newBlocks[blockIndex] as SmartTaskBlock).header,
+              ...(newDate !== undefined ? { date: newDate } : { date: undefined }),
+            },
+          };
         }
-        (newBlocks[blockIndex] as SmartTaskBlock) = {
-          ...newBlocks[blockIndex] as SmartTaskBlock,
-          header: {
-            ...(newBlocks[blockIndex] as SmartTaskBlock).header,
-            ...(newDate !== undefined ? { date: newDate } : { date: undefined }),
-          },
-        };
       }
 
       const [moved] = newBlocks.splice(blockIndex, 1);
@@ -363,12 +412,16 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         for (const b of currentBlocks) {
           if (b.type !== 'smart-task') continue;
           const sb = b as SmartTaskBlock;
-          const d = sb.header.date || '__none__';
           let bGroupKey: string;
-          if (groupByWeek && d !== '__none__') {
-            bGroupKey = getMondayOfWeek(d);
+          if (groupDimension === 'node') {
+            bGroupKey = sb.header.graphNodeId || '__unlinked__';
           } else {
-            bGroupKey = d;
+            const d = sb.header.date || '__none__';
+            if (groupByWeek && d !== '__none__') {
+              bGroupKey = getMondayOfWeek(d);
+            } else {
+              bGroupKey = d;
+            }
           }
           if (bGroupKey === groupKey) groupSmartIds.push(b.id);
         }
@@ -414,7 +467,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
       updateTaskBlocks(task.id, newBlocks);
     },
-    [task.id, groupByWeek, updateTaskBlocks, activeTag, hideCompleted],
+    [task.id, groupByWeek, groupDimension, updateTaskBlocks, activeTag, hideCompleted],
   );
 
   const handleAddTextBlock = useCallback(() => {
@@ -525,7 +578,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   );
 
   return (
-    <aside className={`pdv-container ${isFullscreen ? 'pdv-container--fullscreen' : ''}`} ref={containerRef}>
+    <aside className={`pdv-container ${isFullscreen ? 'pdv-container--fullscreen' : ''} ${groupDimension === 'node' ? 'pdv-container--node' : ''}`} ref={containerRef}>
       {/* ── 顶部导航栏 ── */}
       <header className="pdv-header">
         <button type="button" className="pdv-back" onClick={onClose}>
@@ -537,6 +590,25 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         </h2>
         <div className="pdv-header-actions">
           {smartBlocks.length > 0 && (
+            <div
+              className="pdv-group-toggle"
+              title={groupDimension === 'node' ? '按时间分组' : '按节点分组'}
+            >
+              <span 
+                className={`pdv-group-toggle-opt ${groupDimension === 'time' ? 'pdv-group-toggle-opt--active' : ''}`}
+                onClick={() => setGroupDimension('time')}
+              >
+                📅
+              </span>
+              <span 
+                className={`pdv-group-toggle-opt ${groupDimension === 'node' ? 'pdv-group-toggle-opt--active' : ''}`}
+                onClick={() => setGroupDimension('node')}
+              >
+                🕸️
+              </span>
+            </div>
+          )}
+          {smartBlocks.length > 0 && groupDimension === 'time' && (
             <div
               className={`pdv-group-toggle ${groupByWeek ? 'pdv-group-toggle--week' : ''}`}
               onClick={() => setGroupByWeek(prev => !prev)}
@@ -700,84 +772,95 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           </div>
         ) : (
           <DragDropContext onDragEnd={handleDragEnd}>
-            {/* 日期/周分组 */}
-            {groupedByDate.groups.map((group) => {
-              const isCollapsed = collapsedDates.has(group.key);
-              const duration = group.blocks.reduce((s, b) => s + b.header.duration, 0);
-              const doneCount = group.blocks.filter(b => b.header.isCompleted).length;
-              const today = todayStr();
-              const isToday = groupByWeek
-                ? getMondayOfWeek(today) === group.key
-                : group.key === today;
-              return (
-                <div key={group.key} className="pdv-date-group">
-                  <div
-                    className={`pdv-date-header ${isToday ? 'pdv-date-header--today' : ''} ${groupByWeek ? 'pdv-date-header--week' : ''}`}
-                    onClick={() => toggleDateCollapse(group.key)}
-                  >
-                    <span className="pdv-date-chevron">
-                      {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                    </span>
-                    <span className="pdv-date-icon">{groupByWeek ? '🗓️' : '📅'}</span>
-                    <span className="pdv-date-label">{group.label}</span>
-                    {group.subLabel && (
-                      <span className="pdv-date-sublabel">{group.subLabel}</span>
-                    )}
-                    <span className="pdv-date-summary">
-                      {group.blocks.length}项任务{doneCount > 0 ? `，${doneCount}项已完成` : ''}
-                      {duration > 0 ? `，共 ${duration} min` : ''}
-                    </span>
-                  </div>
-                  {!isCollapsed && (
-                    <Droppable droppableId={group.key}>
-                      {(provided, snapshot) => (
-                        <div
-                          ref={provided.innerRef}
-                          {...provided.droppableProps}
-                          className={`pdv-date-tasks ${snapshot.isDraggingOver ? 'pdv-date-tasks--drag-over' : ''}`}
-                        >
-                          {group.blocks.map((block, idx) => (
-                            <Draggable
-                              key={block.id}
-                              draggableId={`block-${block.id}`}
-                              index={idx}
-                            >
-                              {(provided, snapshot) => (
-                                <div
-                                  ref={provided.innerRef}
-                                  {...provided.draggableProps}
-                                  {...provided.dragHandleProps}
-                                  className={snapshot.isDragging ? 'pdv-drag-item--dragging' : ''}
-                                >
-                                  <SmartTaskBlockCard
-                                    block={block}
-                                    onUpdateHeader={handleUpdateHeader}
-                                    onUpdateBody={handleUpdateBody}
-                                    onDelete={handleDeleteBlock}
-                                    expandOverride={expandAll}
-                                  />
-                                </div>
-                              )}
-                            </Draggable>
-                          ))}
-                          {provided.placeholder}
-                        </div>
-                      )}
-                    </Droppable>
-                  )}
+            <div className="pdv-layout-content">
+              {/* 无日期的 text 块 */}
+              {groupedByDate.textBlocks.length > 0 && (
+                <div className="pdv-text-blocks">
+                  {groupedByDate.textBlocks.map((block) => (
+                    <TextBlockCard
+                      key={block.id}
+                      block={block}
+                      onUpdate={handleUpdateTextBlock}
+                      onDelete={handleDeleteBlock}
+                      onSlashCommand={handleSlashCommandTrigger}
+                    />
+                  ))}
                 </div>
-              );
-            })}
-            {/* 无日期的 text 块 */}
-            {groupedByDate.textBlocks.map((block) => (
-              <TextBlockCard
-                key={block.id}
-                block={block}
-                onUpdate={handleUpdateTextBlock}
-                onDelete={handleDeleteBlock}
-                onSlashCommand={handleSlashCommandTrigger}
-              />
-            ))}
+              )}
+
+              {/* 日期/周分组 */}
+              {groupedByDate.groups.length > 0 && (
+                <div className="pdv-kanban-board">
+                  {groupedByDate.groups.map((group) => {
+                    const isCollapsed = collapsedDates.has(group.key);
+                    const duration = group.blocks.reduce((s, b) => s + b.header.duration, 0);
+                    const doneCount = group.blocks.filter(b => b.header.isCompleted).length;
+                    const today = todayStr();
+                    const isToday = groupByWeek
+                      ? getMondayOfWeek(today) === group.key
+                      : group.key === today;
+                    return (
+                      <div key={group.key} className="pdv-date-group">
+                        <div
+                          className={`pdv-date-header ${isToday ? 'pdv-date-header--today' : ''} ${groupByWeek ? 'pdv-date-header--week' : ''}`}
+                          onClick={() => toggleDateCollapse(group.key)}
+                        >
+                          <span className="pdv-date-chevron">
+                            {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                          </span>
+                          <span className="pdv-date-icon">{group.icon || (groupByWeek ? '🗓️' : '📅')}</span>
+                          <span className="pdv-date-label">{group.label}</span>
+                          {group.subLabel && (
+                            <span className="pdv-date-sublabel">{group.subLabel}</span>
+                          )}
+                          <span className="pdv-date-summary">
+                            {group.blocks.length}项任务{doneCount > 0 ? `，${doneCount}项已完成` : ''}
+                            {duration > 0 ? `，共 ${duration} min` : ''}
+                          </span>
+                        </div>
+                        {!isCollapsed && (
+                          <Droppable droppableId={group.key}>
+                            {(provided, snapshot) => (
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.droppableProps}
+                                className={`pdv-date-tasks ${snapshot.isDraggingOver ? 'pdv-date-tasks--drag-over' : ''}`}
+                              >
+                                {group.blocks.map((block, idx) => (
+                                  <Draggable
+                                    key={block.id}
+                                    draggableId={`block-${block.id}`}
+                                    index={idx}
+                                  >
+                                    {(provided, snapshot) => (
+                                      <div
+                                        ref={provided.innerRef}
+                                        {...provided.draggableProps}
+                                        {...provided.dragHandleProps}
+                                        className={snapshot.isDragging ? 'pdv-drag-item--dragging' : ''}
+                                      >
+                                        <SmartTaskBlockCard
+                                          block={block}
+                                          onUpdateHeader={handleUpdateHeader}
+                                          onUpdateBody={handleUpdateBody}
+                                          onDelete={handleDeleteBlock}
+                                          expandOverride={expandAll}
+                                        />
+                                      </div>
+                                    )}
+                                  </Draggable>
+                                ))}
+                                {provided.placeholder}
+                              </div>
+                            )}
+                          </Droppable>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </DragDropContext>
         )}
         

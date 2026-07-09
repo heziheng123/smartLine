@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
+import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { genId, suggestNextInterval, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
 import { getPointWeight, parseIntervals } from '../complexity';
@@ -44,7 +45,7 @@ const EbbView: React.FC = () => {
   // 选择性订阅：只关心 reviewTasks/inboxItems/outlineNodes/ebbSettings/undoStack
   // + 各 CRUD 方法（方法引用稳定）。避免 syncStatus 等无关切片变化触发本组件重渲染。
   const {
-    reviewTasks,
+    reviewTasks: rawReviewTasks,
     inboxItems,
     outlineNodes,
     ebbSettings,
@@ -74,6 +75,14 @@ const EbbView: React.FC = () => {
       popUndo: s.popUndo,
     })),
   );
+
+  const { nodes: graphNodes } = useGraphStore();
+  
+  // 过滤掉已归档节点关联的复习任务，确保冷数据不出现在 Ebb 矩阵和排期中
+  const reviewTasks = useMemo(() => {
+    const archivedNodeIds = new Set(graphNodes.filter(n => n.isArchived).map(n => n.id));
+    return rawReviewTasks.filter(t => !t.isArchived && (!t.graphNodeId || !archivedNodeIds.has(t.graphNodeId)));
+  }, [rawReviewTasks, graphNodes]);
 
   // 重构 store 视图供下游代码以 `store.X` 形式访问。
   const store = useMemo(

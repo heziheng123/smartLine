@@ -32,6 +32,7 @@ export interface SmartTaskHeader {
   autoSyncEbb?: boolean;  // 🔄 是否自动同步至 Ebb 复习流
   taskType?: 'video' | 'reading' | 'exercise' | 'note'; // 🏷️ 任务类型
   taskNotes?: string;     // 📝 错题或详细笔记文本
+  isArchived?: boolean;   // 🗃️ 是否已归档（冷数据）
 }
 
 /** 智能任务块（核心：Header + Body 双层结构） */

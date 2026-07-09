@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network } from 'lucide-react';
+import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Search, Archive } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
+import { GlobalSearchModal, ArchiveLibraryModal } from './GlobalSearch';
 
 export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
 
@@ -45,6 +46,9 @@ const Toolbar: React.FC<ToolbarProps> = ({
       setIsDockHovered: s.setIsDockHovered
     })),
   );
+
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+  const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -130,6 +134,38 @@ const Toolbar: React.FC<ToolbarProps> = ({
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0 }}
         />
+
+        {/* ── 全局搜索 ── */}
+        <motion.button
+          layout
+          key="global-search"
+          initial={{ opacity: 0, width: 0, scale: 0.8 }}
+          animate={{ opacity: 1, width: 'auto', scale: 1 }}
+          exit={{ opacity: 0, width: 0, scale: 0.8 }}
+          type="button"
+          className="tl-dock-btn"
+          onClick={() => setIsGlobalSearchOpen(true)}
+          title="全局搜索 (查找知识点与归档)"
+          style={{ position: 'relative', flexShrink: 0 }}
+        >
+          <Search size={18} />
+        </motion.button>
+
+        {/* ── 归档库 ── */}
+        <motion.button
+          layout
+          key="archive-library"
+          initial={{ opacity: 0, width: 0, scale: 0.8 }}
+          animate={{ opacity: 1, width: 'auto', scale: 1 }}
+          exit={{ opacity: 0, width: 0, scale: 0.8 }}
+          type="button"
+          className="tl-dock-btn"
+          onClick={() => setIsArchiveLibraryOpen(true)}
+          title="归档库 (查看冷数据)"
+          style={{ position: 'relative', flexShrink: 0 }}
+        >
+          <Archive size={18} />
+        </motion.button>
 
         {/* ── 动态视图控制插槽 (Portal Target) ── */}
         <motion.div 
@@ -251,6 +287,9 @@ const Toolbar: React.FC<ToolbarProps> = ({
           style={{ display: 'none' }}
         />
       </motion.div>
+
+      <GlobalSearchModal isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />
+      <ArchiveLibraryModal isOpen={isArchiveLibraryOpen} onClose={() => setIsArchiveLibraryOpen(false)} />
     </div>
   );
 };

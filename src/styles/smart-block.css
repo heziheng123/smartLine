@@ -28,6 +28,8 @@
   overflow: hidden;
   position: relative;
   transition: width 0.2s ease, max-width 0.2s ease, border 0.2s ease;
+  container-type: inline-size;
+  container-name: pdv;
 }
 
 .pdv-container--fullscreen {
@@ -413,6 +415,164 @@
   font-size: 13px;
 }
 
+/* ── 容器感知布局 (Container Queries) ── */
+.pdv-layout-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pdv-text-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pdv-kanban-board {
+  display: flex;
+  flex-direction: column;
+}
+
+@container pdv (min-width: 800px) {
+  /* 宽屏下的多栏布局与看板流 */
+  .pdv-body {
+    overflow: hidden; /* 宽屏下禁止主体滚动，改为局部滚动 */
+    padding-bottom: 0;
+  }
+
+  .pdv-layout-content {
+    flex: 1;
+    flex-direction: row;
+    align-items: flex-start;
+    overflow: hidden;
+  }
+  
+  .pdv-body-pad {
+    display: none; /* 宽屏下隐藏底部点击区域 */
+  }
+  
+  .pdv-text-blocks {
+    flex: 0 0 320px; /* 左侧固定宽度 */
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 12px;
+  }
+  
+  .pdv-kanban-board {
+    flex: 1;
+    flex-direction: row;
+    gap: 16px;
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 16px;
+    align-items: flex-start;
+  }
+  
+  .pdv-date-group {
+    flex: 0 0 320px; /* 看板列宽 */
+    background: #f9fafb;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+  }
+  
+  .pdv-date-header {
+    margin: 0;
+    padding: 8px;
+    background: transparent;
+    border-radius: 4px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .pdv-date-header:hover {
+    background: #f3f4f6;
+  }
+  .pdv-date-header--today {
+    background: #eff6ff;
+  }
+  .pdv-date-header--week {
+    background: #f0fdf4;
+  }
+  
+  .pdv-date-tasks {
+    border-left: none;
+    margin-left: 0;
+    padding: 4px 4px 16px 4px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  
+  .pdv-date-header--today + .pdv-date-tasks,
+  .pdv-date-tasks--drag-over {
+    border-left-color: transparent;
+  }
+  .pdv-date-tasks--drag-over {
+    background: #f0f9ff;
+    border-radius: 8px;
+  }
+}
+
+@container pdv (max-width: 600px) {
+  /* 窄屏下的“去卡片化”极简列表 */
+  .stb-card {
+    border: none;
+    border-radius: 0;
+    border-bottom: 1px solid #f3f4f6;
+    box-shadow: none;
+    padding: 8px 0;
+    background: transparent;
+  }
+  .stb-card:hover {
+    box-shadow: none;
+    background: #f9fafb;
+  }
+  .stb-accent-bar {
+    width: 2px;
+    border-radius: 2px;
+    top: 8px;
+    bottom: 8px;
+  }
+  
+  /* 极致降噪：微缩或隐藏部分元素 */
+  .stb-meta-row {
+    margin-top: 2px;
+  }
+  .stb-tag-badge, .stb-date-badge, .stb-duration-badge {
+    background: transparent;
+    padding: 0 4px 0 0;
+  }
+  .stb-sync-checkbox {
+    display: none !important; /* 窄屏隐藏复选框，节省空间 */
+  }
+  .stb-actions {
+    opacity: 0; /* 默认隐藏操作，依靠 Hover */
+  }
+  .stb-title {
+    font-size: 13px;
+    padding: 0;
+  }
+  .stb-check {
+    width: 14px;
+    height: 14px;
+    margin-top: 2px;
+  }
+  
+  .pdv-date-header {
+    background: rgba(249, 250, 251, 0.8);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #f3f4f6;
+    padding: 6px 12px;
+  }
+  .pdv-date-tasks {
+    border-left: none;
+    padding-left: 0;
+    margin-left: 0;
+  }
+}
+
 /* ── 底部输入区（已废弃） ── */
 
 
@@ -491,6 +651,9 @@
   transition: all var(--stb-bounce);
   padding: 0;
 }
+.stb-check svg {
+  pointer-events: none;
+}
 .stb-check:hover {
   border-color: #9ca3af;
   background: #f9fafb;
@@ -564,12 +727,15 @@
 /* ── 第二层：元数据（紧贴标题下方，极小字号） ── */
 .stb-meta-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* 方案一：强制单行，禁止折行 */
   align-items: center;
-  gap: 6px 10px;
+  gap: 4px 6px;
   margin-top: 4px;
   font-size: 11px;
   color: #9ca3af;
+  padding-left: 2px;
+  width: 100%; /* 确保容器能感知宽度限制 */
+  min-width: 0; /* 允许 flex 子元素收缩 */
 }
 
 /* ── 折叠箭头 ── */
@@ -588,6 +754,9 @@
   flex-shrink: 0;
   margin-left: auto;
 }
+.stb-collapse-arrow svg {
+  pointer-events: none;
+}
 .stb-collapse-arrow:hover {
   background: #f3f4f6;
   color: #6b7280;
@@ -601,14 +770,26 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 7px;
-  border-radius: 8px;
   font-size: 11px;
   font-weight: 500;
+  background: transparent;
   border: none;
   cursor: pointer;
   white-space: nowrap;
   transition: all var(--stb-transition);
+  max-width: 100%; /* 允许在父容器受限时缩放 */
+  min-width: 0;
+  padding: 0;
+}
+.stb-tag-badge svg {
+  flex-shrink: 0; /* 图标不缩放 */
+  pointer-events: none;
+}
+.stb-tag-badge span.stb-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block; /* 必须是 block 或 inline-block 才能让 text-overflow 生效 */
 }
 .stb-tag-badge:hover {
   opacity: 0.85;
@@ -627,6 +808,9 @@
   white-space: nowrap;
   padding: 0;
   transition: all var(--stb-transition);
+}
+.stb-date-badge svg {
+  pointer-events: none;
 }
 .stb-date-badge:hover {
   color: #6b7280;
@@ -657,6 +841,7 @@
   color: #6b7280;
   text-align: center;
   outline: none;
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 .stb-duration-input::-webkit-inner-spin-button,
@@ -673,6 +858,8 @@
   font-size: 11px;
   color: #9ca3af;
 }
+
+/* 节点胶囊在特定视图下的处理 */
 
 /* ── Hover 快捷菜单 ── */
 .stb-actions {
@@ -698,6 +885,9 @@
   color: #9ca3af;
   transition: all var(--stb-transition);
 }
+.stb-action-btn svg {
+  pointer-events: none;
+}
 .stb-action-btn:hover {
   background: #f3f4f6;
   color: #374151;
@@ -707,11 +897,27 @@
   color: #ef4444;
 }
 
+/* ── 维度相关视觉互斥 (Context-Aware Metadata) ── */
+.pdv-container--node .stb-sync-checkbox {
+  display: none !important;
+}
+
+.pdv-container--node .stb-date-badge {
+  background: #fef2f2;
+  color: #ef4444;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.pdv-container--node .stb-date-badge--today {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
 /* ── Body 详情区（紧贴元数据下方，缩进+引述线） ── */
 .stb-body {
   margin-top: 6px;
-  padding-left: 10px;
-  border-left: 2px solid #f3f4f6;
+  padding-left: 0px;
   position: relative;
 }
 
@@ -762,7 +968,7 @@
 .stb-tag-picker-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 10000;
   background: rgba(0,0,0,.15);
   display: flex;
   align-items: center;
@@ -946,7 +1152,7 @@
 .stb-date-picker-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 10000;
   background: rgba(0,0,0,.15);
   display: flex;
   align-items: flex-start;
@@ -1129,7 +1335,7 @@
 .ssg-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1100;
+  z-index: 11000;
   background: rgba(0,0,0,.3);
   display: flex;
   align-items: center;
@@ -1309,7 +1515,7 @@
 
 .slash-menu {
   position: fixed;
-  z-index: 1200;
+  z-index: 12000;
   background: #fff;
   border-radius: 10px;
   padding: 6px;
@@ -1526,8 +1732,6 @@
   background: #f59e0b;
   color: #fff;
 }
-.wmv-offrange-btn--before { }
-.wmv-offrange-btn--after { }
 
 .wmv-row {
   display: flex;

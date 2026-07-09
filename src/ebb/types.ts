@@ -27,6 +27,7 @@ export interface ReviewTask {
   accumulatedNotes?: string[]; // 📚 累积的复习笔记/错题数组
   complexity?: ComplexityLevel;
   smStatus?: SmStatus;
+  isArchived?: boolean;   // 是否已归档（冷数据区）
 }
 
 /** 收件箱项 */

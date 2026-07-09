@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
+import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '@/ebb/scheduler';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
@@ -50,11 +51,11 @@ const DailyScheduleView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(today);
   const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
 
-  const { tasks: tlTasks, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
+  const { tasks: rawTlTasks, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, updateBlockHeader: s.updateBlockHeader })),
   );
   const {
-    reviewTasks: ebbReviewTasks,
+    reviewTasks: rawEbbReviewTasks,
     ebbSettings: ebbSettingsData,
     toggleReviewTask: ebbToggleReviewTask,
   } = useEbbStore(
@@ -64,6 +65,27 @@ const DailyScheduleView: React.FC = () => {
       toggleReviewTask: s.toggleReviewTask,
     })),
   );
+
+  const { nodes: graphNodes } = useGraphStore();
+
+  // 过滤冷数据（已归档节点关联的任务/块）
+  const archivedNodeIds = useMemo(() => new Set(graphNodes.filter(n => n.isArchived).map(n => n.id)), [graphNodes]);
+
+  const ebbReviewTasks = useMemo(() => {
+    return rawEbbReviewTasks.filter(t => !t.isArchived && (!t.graphNodeId || !archivedNodeIds.has(t.graphNodeId)));
+  }, [rawEbbReviewTasks, archivedNodeIds]);
+
+  const tlTasks = useMemo(() => {
+    return rawTlTasks.map(task => ({
+      ...task,
+      blocks: task.blocks?.filter(b => {
+        if (b.type === 'smart-task') {
+          return !b.header.isArchived && (!b.header.graphNodeId || !archivedNodeIds.has(b.header.graphNodeId));
+        }
+        return true;
+      }) ?? []
+    }));
+  }, [rawTlTasks, archivedNodeIds]);
   const {
     addScheduledItem,
     reorderScheduledItems,

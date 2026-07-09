@@ -61,6 +61,7 @@ interface GraphStore extends GraphData {
   updateNode: (id: string, updates: Partial<Omit<GraphNode, 'id' | 'createdAt'>>) => void;
   deleteNode: (id: string) => void;
   restoreNode: (node: GraphNode, childrenIds: string[]) => void;
+  archiveNodeCascade: (id: string, isArchived: boolean) => void;
   getNodeById: (id: string) => GraphNode | undefined;
   importGraphData: (data: GraphData) => void;
 }
@@ -153,6 +154,31 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
           });
         },
 
+        archiveNodeCascade: (id: string, isArchived: boolean) => {
+          set((state) => {
+            // 找到所有子孙节点
+            const toArchive = new Set<string>([id]);
+            let changed = true;
+            while (changed) {
+              changed = false;
+              for (const n of state.nodes) {
+                if (n.parentId && toArchive.has(n.parentId) && !toArchive.has(n.id)) {
+                  toArchive.add(n.id);
+                  changed = true;
+                }
+              }
+            }
+            
+            const newData = {
+              nodes: state.nodes.map(n => 
+                toArchive.has(n.id) ? { ...n, isArchived } : n
+              )
+            };
+            saveGraphData(newData);
+            return newData;
+          });
+        },
+
         getNodeById: (id: string) => {
           return get().nodes.find((node) => node.id === id);
         },
@@ -164,7 +190,8 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             return typeof r.id === 'string'
               && typeof r.name === 'string'
               && (typeof r.parentId === 'string' || r.parentId === null)
-              && typeof r.createdAt === 'number';
+              && typeof r.createdAt === 'number'
+              && (typeof r.isArchived === 'boolean' || r.isArchived === undefined);
           };
 
           const normalized: GraphData = {

@@ -3,11 +3,12 @@ import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
-import { Plus, Trash2, Check, Settings2, X, Info, Search, ChevronDown, Filter, Command, Zap } from 'lucide-react';
+import { Plus, Trash2, Check, Settings2, X, Info, Search, ChevronDown, Filter, Command, Zap, Archive } from 'lucide-react';
 import { forceCollide, forceX, forceY, forceCenter } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
+import { TimeCapsuleModal } from '@/components/GlobalSearch';
 
 type NodeRollupStats = {
   totalReviewCount: number;
@@ -48,7 +49,8 @@ type ViewLink = {
 };
 
 export const KnowledgeGraphView: React.FC = () => {
-  const { nodes, addNode, deleteNode, updateNode } = useGraphStore();
+  const { nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore();
+  const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
   const { reviewTasks } = useEbbStore();
 
   const [newRootName, setNewRootName] = useState('');
@@ -76,6 +78,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
   const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
+  const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
 
   // Track Alt key for Link Mode
   useEffect(() => {
@@ -450,6 +453,12 @@ const gNodes: ViewNode[] = nodes.map(n => {
     return matched;
   }, [graphData.nodes, statusFilter, searchQuery, nodes]);
 
+  const globalArchivedResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const query = searchQuery.trim().toLowerCase();
+    return allNodes.filter(n => n.isArchived && n.name.toLowerCase().includes(query));
+  }, [searchQuery, allNodes]);
+
   useEffect(() => {
     if (fgRef.current) {
       // 1. 预先计算学科团簇的环形坐标，用于实现星系态多中心引力布局
@@ -736,10 +745,40 @@ const gNodes: ViewNode[] = nodes.map(n => {
                         setSearchQuery('');
                         setIsSearchExpanded(false);
                       }} 
-                      className="absolute right-1 text-slate-400 hover:text-slate-700 p-0.5"
+                      className="absolute right-1 text-slate-400 hover:text-slate-700 p-0.5 z-10"
                     >
                       <X size={14} strokeWidth={2.5} />
                     </button>
+                  )}
+                  {/* 归档搜索结果下拉框 */}
+                  {searchQuery && globalArchivedResults.length > 0 && (
+                    <div className="absolute top-[calc(100%+8px)] right-0 w-64 bg-white/90 backdrop-blur-xl border border-slate-200/50 shadow-xl rounded-xl overflow-hidden flex flex-col z-50">
+                      <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50/50 border-b border-slate-100/80 flex items-center gap-1.5">
+                        <Archive size={12} />
+                        冷数据 (时光胶囊)
+                      </div>
+                      <div className="max-h-64 overflow-y-auto p-1">
+                        {globalArchivedResults.map(node => (
+                          <button
+                            key={node.id}
+                            onClick={() => {
+                              setCapsuleNodeId(node.id);
+                              setSearchQuery('');
+                              setIsSearchExpanded(false);
+                            }}
+                            className="w-full text-left flex items-center gap-2.5 px-2 py-2 hover:bg-blue-50/50 rounded-lg transition-colors group"
+                          >
+                            <div className="p-1.5 bg-slate-100 text-slate-500 rounded-md group-hover:bg-blue-100 group-hover:text-blue-500 transition-colors">
+                              <Archive size={14} />
+                            </div>
+                            <div className="flex-1 truncate">
+                              <div className="text-xs font-semibold text-slate-700 group-hover:text-blue-700">{node.name}</div>
+                              <div className="text-[10px] text-slate-400 mt-0.5 truncate">点击开启时光胶囊</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </motion.div>
               )}
@@ -748,6 +787,8 @@ const gNodes: ViewNode[] = nodes.map(n => {
         </motion.div>,
         dockPortalTarget
       )}
+
+      {capsuleNodeId && <TimeCapsuleModal nodeId={capsuleNodeId} onClose={() => setCapsuleNodeId(null)} />}
 
       {/* Dot Grid Background */}
       <div className="absolute inset-0 pointer-events-none" style={{
@@ -1091,7 +1132,7 @@ const gNodes: ViewNode[] = nodes.map(n => {
                   </div>
                 )}
                 
-                {/* 操作栏 (激活 / 删除) */}
+                {/* 操作栏 (激活 / 归档 / 删除) */}
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
@@ -1106,6 +1147,19 @@ const gNodes: ViewNode[] = nodes.map(n => {
                   >
                     <Zap size={14} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
                     {selectedNode.status === 'activated' ? '已激活' : '激活节点'}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      if(confirm('归档后，该节点及其所有子节点、复习任务将从主工作区隐藏，但仍可在全局搜索中查看。确定归档吗？')) {
+                        archiveNodeCascade(selectedNode.id, true);
+                        setSelectedNodeId(null);
+                      }
+                    }}
+                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-all"
+                    title="归档节点 (封存冷数据)"
+                  >
+                    <Archive size={15} />
                   </button>
 
                   <button
