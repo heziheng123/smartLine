@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { useCallback, useRef, useEffect, useState } from 'react';
-import { Check, X, Clock, GripVertical } from 'lucide-react';
+import { Check, X, Clock, GripVertical, CircleDashed, Link as LinkIcon } from 'lucide-react';
 import type { TimeBlock } from './types';
 import {
   timeToMinutes,
@@ -23,6 +23,8 @@ interface TimeBlockCardProps {
   onClick: (block: TimeBlock, rect: DOMRect) => void;
   onDragStart?: (blockId: string) => void;
   isConflict?: boolean;
+  isUnlinked?: boolean; // 新增：是否未绑定节点
+  isLinked?: boolean;
 }
 
 type DragMode = 'none' | 'move' | 'resize-top' | 'resize-bottom';
@@ -36,6 +38,8 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
   onClick,
   onDragStart,
   isConflict,
+  isUnlinked,
+  isLinked,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [dragMode, setDragMode] = useState<DragMode>('none');
@@ -180,11 +184,15 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
 
   // ── 背景色（极淡同色） ─────────────────────────────────
   const accentColor = block.color ?? '#8B9DC3';
+  
+  // 拖拽状态下加深透明度，让它看起来更清晰，而非处于底层半透明状态
+  const opacityHex = dragMode !== 'none' ? '80' : '60'; // 静态透明度提升到 60，拖拽时 80
+  
   const bgColor = block.completed
     ? '#ECFDF5'
     : isConflict || localConflict
       ? '#FEF2F2'
-      : `${accentColor}30`;
+      : `${accentColor}${opacityHex}`;
 
   const borderClass = isConflict || localConflict
     ? 'tb-card--conflict'
@@ -193,7 +201,7 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
   return (
     <div
       ref={cardRef}
-      className={`tb-card ${block.completed ? 'tb-card--completed' : ''} ${borderClass} ${dragMode !== 'none' ? 'tb-card--dragging' : ''}`}
+      className={`tb-card ${block.completed ? 'tb-card--completed' : ''} ${borderClass} ${dragMode !== 'none' ? 'tb-card--dragging' : ''} ${isUnlinked ? 'tb-card--unlinked' : ''}`}
       style={{
         top: displayTop,
         height: displayHeight,
@@ -234,7 +242,18 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
 
       {/* 内容区 */}
       <div className="tb-content">
-        <span className="tb-name">{block.name}</span>
+        <span className="tb-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {block.name}
+          {isUnlinked ? (
+            <span title="未绑定节点" className="inline-flex items-center">
+              <CircleDashed size={12} style={{ opacity: 0.4 }} />
+            </span>
+          ) : isLinked && (
+            <span title="已绑定节点" className="inline-flex items-center">
+              <LinkIcon size={12} className="opacity-60 text-blue-500" />
+            </span>
+          )}
+        </span>
         {block.detail && <span className="tb-detail">{block.detail}</span>}
         <span className="tb-time-label">
           <Clock size={10} />

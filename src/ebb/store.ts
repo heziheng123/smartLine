@@ -138,7 +138,7 @@ interface EbbStore extends EbbData {
   exportEbbData: () => string;
 
   // 新增：自动同步任务到 Ebb 复习流
-  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string }) => void;
+  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string; triggerSchedule?: boolean }) => void;
 }
 
 // ── 创建 Store ──────────────────────────────────────────────
@@ -694,7 +694,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         syncTaskToEbb: (payload) => {
           set((state) => {
-            const { action = 'add', graphNodeId, topicName, taskType, taskNotes, taskTitle } = payload;
+            const { action = 'add', graphNodeId, topicName, taskType, taskNotes, taskTitle, triggerSchedule = true } = payload;
             
             // 找到所有该 graphNodeId 关联的任务
             const existingTasks = state.reviewTasks.filter(t => t.graphNodeId === graphNodeId);
@@ -722,20 +722,61 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             
             const [m, d] = nowStr.split('-').slice(1);
             
-            // 核心逻辑：只有输出型任务（做题、笔记）才产生需要未来看的内容实体
-            const isOutputTask = taskType === 'exercise' || taskType === 'note';
-            const taskTypeLabel = taskType === 'video' ? '看课' : taskType === 'reading' ? '看书' : taskType === 'exercise' ? '做题' : taskType === 'note' ? '笔记' : '任务';
+            // 核心逻辑：移除吸收/输出型分类，统一提取并沉淀所有任务的笔记
+            // 将 taskType 固定映射为一个通用的“记录”标签
+            const taskTypeLabel = '记录';
             
-            const noteEntry = isOutputTask 
-              ? JSON.stringify({
-                  date: `${m}.${d}`,
-                  type: taskType,
-                  typeLabel: taskTypeLabel,
-                  title: taskTitle || '未命名任务',
-                  notes: taskNotes || ''
-                })
-              : null;
+            // 构建新的笔记实体
+            const noteEntry = JSON.stringify({
+              date: `${m}.${d}`,
+              type: 'note', // 统一使用 note 类型
+              typeLabel: taskTypeLabel,
+              title: taskTitle || '未命名任务',
+              notes: taskNotes || ''
+            });
             
+            // === 第一步：无条件把笔记送进蓄水池 ===
+            if (existingTasks.length > 0) {
+              // 找到了现有的复习序列，先把笔记追加进去
+              const firstExistingNotes = existingTasks[0].accumulatedNotes || [];
+              const newNotes = [...firstExistingNotes];
+              if (noteEntry) newNotes.push(noteEntry);
+              
+              newReviewTasks = newReviewTasks.map(t => {
+                if (t.graphNodeId === graphNodeId) {
+                  return { ...t, topicName, accumulatedNotes: newNotes };
+                }
+                return t;
+              });
+            }
+
+            // === 第二步：条件执行（是否排期） ===
+            if (!triggerSchedule) {
+              // 如果用户取消了同步排期，那么处理完笔记蓄水池后，直接结束流程！
+              // 如果是全新节点（existingTasks.length === 0），需要创建一个已完成的空壳任务来承载笔记，实现蓄水与排期解耦
+              if (existingTasks.length === 0) {
+                const accumulatedNotes = noteEntry ? [noteEntry] : [];
+                newReviewTasks.push({
+                  id: genId('rt'),
+                  topicName,
+                  graphNodeId,
+                  dueDate: nowStr,
+                  isCompleted: true,
+                  accumulatedNotes: accumulatedNotes,
+                  complexity: 'normal',
+                  smStatus: 'confirmed',
+                });
+              }
+
+              const newData: EbbData = {
+                ...state,
+                reviewTasks: newReviewTasks,
+              };
+              saveEbbData(newData);
+              return newData;
+            }
+
+            // === 第三步：如果 triggerSchedule 为 true，执行原本的时间线重置与生成逻辑 ===
             if (existingTasks.length === 0) {
               // 分支 1：完全新学 -> 创建全新的 ReviewTask 序列
               const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
@@ -761,14 +802,12 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               }
               newReviewTasks.push(...generated);
             } else {
-              // 分支 2：找到了 -> 更新现有的 ReviewTask 序列
+              // 分支 2：找到了 -> 更新现有的 ReviewTask 序列（笔记在上面已经更新好了，现在拿最新的笔记）
+              const updatedFirstTask = newReviewTasks.find(t => t.graphNodeId === graphNodeId);
+              const newNotes = updatedFirstTask?.accumulatedNotes || [];
+
               // 筛选出尚未完成的任务（即未来的复习轮次）
               const uncompletedTasks = existingTasks.filter(t => !t.isCompleted).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-              
-              // 合并笔记（以第一条为准）
-              const firstExistingNotes = existingTasks[0].accumulatedNotes || [];
-              const newNotes = [...firstExistingNotes];
-              if (noteEntry) newNotes.push(noteEntry);
               
               if (uncompletedTasks.length > 0) {
                 // 将尚未完成的轮次重置，强制拉回到明天
@@ -785,15 +824,9 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                     i++;
                     return {
                       ...t,
-                      topicName, // 强制纠正为最新的节点名称
                       dueDate: newDueDate,
-                      accumulatedNotes: newNotes,
                       smStatus: 'scheduled' as const,
                     };
-                  }
-                  // 对于已完成的任务，更新一下笔记（如果需要）以及节点名称
-                  if (t.graphNodeId === graphNodeId) {
-                    return { ...t, topicName, accumulatedNotes: newNotes };
                   }
                   return t;
                 });
@@ -818,7 +851,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                     smStatus: 'scheduled',
                   });
                 }
-                newReviewTasks = newReviewTasks.map(t => t.graphNodeId === graphNodeId ? { ...t, topicName, accumulatedNotes: newNotes } : t);
                 newReviewTasks.push(...generated);
               }
             }

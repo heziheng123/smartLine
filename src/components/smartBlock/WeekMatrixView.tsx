@@ -5,7 +5,7 @@
 // ============================================================
 
 import React, { useState, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader } from '@/types';
 import {
   getSmartTaskBlocks,
@@ -279,7 +279,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                       return (
                         <div
                           key={block.id}
-                          className={`wmv-block-card ${h.isCompleted ? 'wmv-block-card--done' : ''} ${isOverdue ? 'wmv-block-card--overdue' : ''}`}
+                          className={`wmv-block-card ${h.isCompleted ? 'wmv-block-card--done' : ''} ${isOverdue ? 'wmv-block-card--overdue' : ''} ${!h.graphNodeId ? 'wmv-block-card--unlinked' : ''}`}
                           style={{ backgroundColor: tagColor + '40', borderLeftColor: tagColor }}
                         >
                           {/* Header 行 */}
@@ -291,8 +291,13 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                             >
                               {h.isCompleted && '✓'}
                             </button>
-                            <span className={`wmv-block-title ${h.isCompleted ? 'wmv-block-title--done' : ''}`}>
+                            <span className={`wmv-block-title ${h.isCompleted ? 'wmv-block-title--done' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                               {h.title}
+                              {!h.graphNodeId && (
+                                <span title="未绑定节点" className="inline-flex items-center flex-shrink-0 opacity-40">
+                                  <CircleDashed size={12} />
+                                </span>
+                              )}
                             </span>
                           </div>
                           {/* Meta 行 */}

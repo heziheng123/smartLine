@@ -2700,7 +2700,7 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 20px;
+  padding: 6px 20px;
   background: #FFFFFF;
   border-bottom: 1px solid #E5E7EB;
   flex-shrink: 0;
@@ -2716,8 +2716,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 8px 14px;
+  gap: 0px;
+  padding: 4px 14px;
   background: #F9FAFB;
   border: 1px solid #E5E7EB;
   border-radius: 8px;
@@ -2736,26 +2736,27 @@
 }
 
 .eb-stat-icon {
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
+  margin-bottom: 2px;
 }
 
 .eb-stat-value {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   color: #1F2937;
-  line-height: 1.2;
+  line-height: 1.1;
 }
 
 .eb-stat-label {
-  font-size: 11px;
+  font-size: 10px;
   color: #6B7280;
 }
 
 .eb-stats-progress {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 200px;
 }
 
@@ -3367,6 +3368,12 @@
 
 .eb-topic-row--expanded {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.eb-topic-row--unlinked {
+  border: 1px dashed #D1D5DB;
+  border-left: 3px dashed var(--accent, #6B7FD7);
+  opacity: 0.85;
 }
 
 .eb-topic-row-main {

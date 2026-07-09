@@ -42,13 +42,6 @@ interface SmartTaskBlockCardProps {
 
 const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
 
-const TASK_TYPE_CONFIG = {
-  'video': { icon: <Video size={12} />, label: '网课 (吸收)', color: '#ef4444' },
-  'reading': { icon: <BookOpen size={12} />, label: '阅读 (吸收)', color: '#f59e0b' },
-  'exercise': { icon: <PenTool size={12} />, label: '做题 (输出)', color: '#3b82f6' },
-  'note': { icon: <StickyNote size={12} />, label: '笔记 (输出)', color: '#8b5cf6' },
-};
-
 export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   block,
   onUpdateHeader,
@@ -70,14 +63,30 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const [editingBody, setEditingBody] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showGraphPicker, setShowGraphPicker] = useState(false);
-  const [showTypePicker, setShowTypePicker] = useState(false);
   const [showTagPicker, setShowTagPicker] = useState(false);
   const [dateAnchor, setDateAnchor] = useState<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
 
-  const { getNodeById } = useGraphStore();
+  const { nodes, getNodeById } = useGraphStore();
   const graphNode = header.graphNodeId ? getNodeById(header.graphNodeId) : null;
+
+  // 计算任务标题的幽灵文本（智能推荐节点名称）
+  const titleGhostText = useMemo(() => {
+    if (!header.title || header.isCompleted) return '';
+    const match = nodes.find(n => n.name.toLowerCase().startsWith(header.title.toLowerCase()));
+    if (match) {
+      return header.title + match.name.slice(header.title.length);
+    }
+    return '';
+  }, [header.title, header.isCompleted, nodes]);
+
+  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab' && titleGhostText && titleGhostText !== header.title) {
+      e.preventDefault();
+      onUpdateHeader(block.id, { title: titleGhostText });
+    }
+  }, [block.id, header.title, titleGhostText, onUpdateHeader]);
 
   // textarea 自动撑高
   useEffect(() => {
@@ -90,9 +99,11 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   // 完成切换
   const handleToggle = useCallback(() => {
     const now = todayStr();
+    // 强制把所有任务默认设为输出型（note），以确保复习时始终继承备注
     onUpdateHeader(block.id, {
       isCompleted: !header.isCompleted,
       completedDate: !header.isCompleted ? now : undefined,
+      taskType: 'note' 
     });
   }, [block.id, header.isCompleted, onUpdateHeader]);
 
@@ -127,9 +138,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   // 知识节点选择
   const handleGraphNodeSelect = useCallback((nodeId: string) => {
-    onUpdateHeader(block.id, { graphNodeId: nodeId, autoSyncEbb: true });
+    onUpdateHeader(block.id, { graphNodeId: nodeId, autoSyncEbb: header.autoSyncEbb ?? true });
     setShowGraphPicker(false);
-  }, [block.id, onUpdateHeader]);
+  }, [block.id, header.autoSyncEbb, onUpdateHeader]);
 
   // 时长修改
   const handleDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -222,13 +233,54 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
         {/* 右侧内容容器：标题 → 元数据 → Body */}
         <div className="stb-header-content">
           {/* 第一层：标题（横向占满，允许折行） */}
-          <textarea
-            ref={titleRef}
-            className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
-            value={header.title}
-            onChange={(e) => onUpdateHeader(block.id, { title: e.target.value })}
-            rows={1}
-          />
+          <div style={{ position: 'relative', width: '100%' }}>
+            {titleGhostText && titleGhostText !== header.title && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 4,
+                  top: 0,
+                  right: 4,
+                  bottom: 0,
+                  pointerEvents: 'none',
+                  color: '#9ca3af',
+                  fontFamily: 'inherit',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'flex-start'
+                }}
+              >
+                <span style={{ opacity: 0 }}>{header.title}</span>
+                <span>{titleGhostText.slice(header.title.length)}</span>
+                <span style={{ 
+                  marginLeft: 8, 
+                  fontSize: 10, 
+                  backgroundColor: '#f3f4f6', 
+                  padding: '0 4px', 
+                  borderRadius: 4,
+                  color: '#6b7280',
+                  border: '1px solid #e5e7eb',
+                  height: '16px',
+                  lineHeight: '14px',
+                  marginTop: 3
+                }}>Tab</span>
+              </div>
+            )}
+            <textarea
+              ref={titleRef}
+              className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
+              value={header.title}
+              onChange={(e) => onUpdateHeader(block.id, { title: e.target.value })}
+              onKeyDown={handleTitleKeyDown}
+              rows={1}
+              style={{ position: 'relative', zIndex: 2, background: 'transparent' }}
+            />
+          </div>
 
           {/* 第二层：元数据（紧贴标题下方，极小字号） */}
           <div className="stb-meta-row">
@@ -275,56 +327,25 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               className={`stb-tag-badge ${header.autoSyncEbb ? 'stb-tag-badge--sync' : ''}`}
               style={header.autoSyncEbb ? { backgroundColor: '#eff6ff', color: '#3b82f6' } : {}}
               onClick={() => setShowGraphPicker(!showGraphPicker)}
-              title="绑定知识节点并自动同步至复习流"
+              title="绑定知识节点"
             >
               <Network size={10} /> {graphNode ? graphNode.name : '未绑定节点'}
-              {header.autoSyncEbb && <RefreshCw size={8} style={{ marginLeft: 2 }} />}
             </button>
 
-            {/* 任务类型选择器（仅当绑定了节点时才显示，因为只有进入复习流才有分类意义） */}
-            {header.graphNodeId && (
-              <div style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  className="stb-tag-badge"
-                  style={{ 
-                    color: header.taskType ? TASK_TYPE_CONFIG[header.taskType].color : '#6b7280',
-                    backgroundColor: header.taskType ? `${TASK_TYPE_CONFIG[header.taskType].color}15` : '#f3f4f6'
-                  }}
-                  onClick={() => setShowTypePicker(!showTypePicker)}
-                >
-                  {header.taskType ? (
-                    <>
-                      {TASK_TYPE_CONFIG[header.taskType].icon}
-                      {TASK_TYPE_CONFIG[header.taskType].label.split(' ')[0]}
-                    </>
-                  ) : (
-                    <>
-                      <Tag size={10} /> 未分类
-                    </>
-                  )}
-                </button>
-                {showTypePicker && (
-                  <div className="stb-type-dropdown" onClick={(e) => e.stopPropagation()}>
-                    {(Object.keys(TASK_TYPE_CONFIG) as Array<keyof typeof TASK_TYPE_CONFIG>).map(type => (
-                      <div 
-                        key={type}
-                        className="stb-type-option"
-                        onClick={() => {
-                          onUpdateHeader(block.id, { taskType: type });
-                          setShowTypePicker(false);
-                        }}
-                      >
-                        <span style={{ color: TASK_TYPE_CONFIG[type].color, display: 'flex', alignItems: 'center' }}>
-                          {TASK_TYPE_CONFIG[type].icon}
-                        </span>
-                        <span>{TASK_TYPE_CONFIG[type].label}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            {/* 直接可见且可交互的同步勾选框 */}
+            <label 
+              className="stb-sync-checkbox" 
+              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#64748b', cursor: 'pointer' }}
+              title="完成时自动同步至 Ebb 复习流"
+            >
+              <input 
+                type="checkbox" 
+                checked={header.autoSyncEbb ?? true}
+                onChange={(e) => onUpdateHeader(block.id, { autoSyncEbb: e.target.checked })}
+                style={{ accentColor: '#10b981', cursor: 'pointer', margin: 0 }}
+              />
+              同步 Ebb
+            </label>
 
             {/* Hover 快捷菜单（仅删除） */}
             <div className="stb-actions">
@@ -408,26 +429,18 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
       {/* ── 知识节点选择器浮层 ── */}
       {showGraphPicker && createPortal(
         <div className="stb-tag-picker-overlay" onClick={() => setShowGraphPicker(false)}>
-          <div onClick={(e) => e.stopPropagation()}>
+          <div 
+            className="stb-tag-picker stb-graph-picker-container"
+            onClick={e => e.stopPropagation()}
+          >
             <GraphNodeSelect 
               value={header.graphNodeId}
               onChange={handleGraphNodeSelect}
+              taskTitle={header.title}
             />
-            {header.graphNodeId && (
-              <div style={{ marginTop: 8, padding: '8px 12px', background: '#fff', borderRadius: 8, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: '#374151' }}>
-                  <input 
-                    type="checkbox" 
-                    checked={header.autoSyncEbb}
-                    onChange={(e) => onUpdateHeader(block.id, { autoSyncEbb: e.target.checked })}
-                  />
-                  完成时自动同步至 Ebb 复习流
-                </label>
-              </div>
-            )}
           </div>
         </div>,
-        document.body,
+        document.body
       )}
     </div>
   );

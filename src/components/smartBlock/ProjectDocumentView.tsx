@@ -19,6 +19,9 @@ import {
   FileSpreadsheet,
   ChevronDown,
   ChevronRight,
+  Maximize,
+  Minimize,
+  ListTree,
 } from 'lucide-react';
 import {
   todayStr,
@@ -57,6 +60,7 @@ import TextBlockCard from './TextBlockCard';
 import SlashCommandMenu from './SlashCommandMenu';
 import TaskMetaEditor from '@/components/TaskMetaEditor';
 import BatchImportDialog from '@/components/BatchImportDialog';
+import BatchEditDialog from '@/components/BatchEditDialog';
 
 interface ProjectDocumentViewProps {
   task: Task;
@@ -96,6 +100,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [slashMenu, setSlashMenu] = useState<{ position: { top: number; left: number } } | null>(null);
   const [newTextValue, setNewTextValue] = useState('');
   const [showBatchImport, setShowBatchImport] = useState(false);
+  const [showBatchEdit, setShowBatchEdit] = useState(false);
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [showExpandMenu, setShowExpandMenu] = useState(false);
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(new Set());
@@ -103,6 +108,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [hideCompleted, setHideCompleted] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [todayOnly, setTodayOnly] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -294,6 +300,22 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     [extendTaskBlocks, task.id],
   );
 
+  // ── 批量编辑确认：将修改后的 blocks 整体合并回 task ──
+  const handleBatchEditConfirm = useCallback(
+    (newSmartBlocks: SmartTaskBlock[]) => {
+      // 批量编辑目前只处理 smart-task，我们需要保留原来的 text blocks
+      const currentBlocks = useTimelineStore.getState().tasks.find(t => t.id === task.id)?.blocks ?? [];
+      const textBlocks = currentBlocks.filter(b => b.type === 'text');
+      
+      // 合并 text 块和新编辑的 smart-task 块
+      const mergedBlocks = [...newSmartBlocks, ...textBlocks];
+      
+      updateTaskBlocks(task.id, mergedBlocks);
+      setShowBatchEdit(false);
+    },
+    [updateTaskBlocks, task.id]
+  );
+
   // ── 拖拽排序 & 跨日排期 ──
 
   const handleDragEnd = useCallback(
@@ -467,12 +489,16 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       if (e.key === 'Escape') {
         const target = e.target as HTMLElement;
         if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable) return;
-        onClose();
+        if (isFullscreen) {
+          setIsFullscreen(false);
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [onClose, isFullscreen]);
 
   // ── 元信息即时更新 ──
   const handleUpdateTask = useCallback(
@@ -483,7 +509,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   );
 
   return (
-    <aside className="pdv-container" ref={containerRef}>
+    <aside className={`pdv-container ${isFullscreen ? 'pdv-container--fullscreen' : ''}`} ref={containerRef}>
       {/* ── 顶部导航栏 ── */}
       <header className="pdv-header">
         <button type="button" className="pdv-back" onClick={onClose}>
@@ -544,10 +570,26 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           <button
             type="button"
             className="pdv-btn"
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            title={isFullscreen ? "退出全屏" : "全屏显示"}
+          >
+            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+          </button>
+          <button
+            type="button"
+            className="pdv-btn"
             onClick={() => setShowBatchImport(true)}
             title="批量导入 Excel/CSV"
           >
             <FileSpreadsheet size={16} />
+          </button>
+          <button
+            type="button"
+            className="pdv-btn"
+            onClick={() => setShowBatchEdit(true)}
+            title="批量编辑任务"
+          >
+            <ListTree size={16} />
           </button>
           <button
             type="button"
@@ -752,6 +794,17 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           fixedTask={currentTask}
           onClose={() => setShowBatchImport(false)}
           onConfirm={handleBatchImportConfirm}
+        />,
+        document.body,
+      )}
+
+      {/* ── 批量编辑对话框 ── */}
+      {showBatchEdit && createPortal(
+        <BatchEditDialog
+          task={currentTask}
+          initialBlocks={smartBlocks}
+          onClose={() => setShowBatchEdit(false)}
+          onConfirm={handleBatchEditConfirm}
         />,
         document.body,
       )}

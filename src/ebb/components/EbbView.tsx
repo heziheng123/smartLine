@@ -11,11 +11,9 @@ import { todayStr, addDays, formatDate, getDayOfWeek, makeLocalDayjs } from '@/u
 import {
   Plus,
   Settings as SettingsIcon,
-  Inbox as InboxIcon,
   RotateCcw,
   X,
   LayoutGrid,
-  FolderTree,
   Columns3,
   Download,
   Upload,
@@ -34,15 +32,13 @@ import { getDateLabel } from '../scheduler';
 import type { ReviewTask, EbbSettings } from '../types';
 import AddContentModal from './AddContentModal';
 import SettingsPanel from './SettingsPanel';
-import InboxPanel from './InboxPanel';
 import EbbDatePicker from './EbbDatePicker';
 import RoundsPanel from './RoundsPanel';
 import OverdueAlertModal from './OverdueAlertModal';
 import MatrixView from './MatrixView';
-import DirectoryView from './DirectoryView';
 import BoardView from './BoardView';
 
-type ViewTab = 'matrix' | 'directory' | 'board';
+type ViewTab = 'matrix' | 'board';
 
 const EbbView: React.FC = () => {
   // 选择性订阅：只关心 reviewTasks/inboxItems/outlineNodes/ebbSettings/undoStack
@@ -114,7 +110,7 @@ const EbbView: React.FC = () => {
   );
   const [activeTab, setActiveTab] = useState<ViewTab>('matrix');
   const [addOpen, setAddOpen] = useState(false);
-  const [modal, setModal] = useState<'none' | 'settings' | 'inbox'>('none');
+  const [modal, setModal] = useState<'none' | 'settings'>('none');
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [datePicker, setDatePicker] = useState<{ taskId: string; anchor: HTMLElement | null } | null>(null);
   const [roundsTopic, setRoundsTopic] = useState<string | null>(null);
@@ -351,17 +347,6 @@ const EbbView: React.FC = () => {
             <button
               type="button"
               className="eb-nav-btn"
-              onClick={() => setModal('inbox')}
-            >
-              <InboxIcon size={15} />
-              收件箱
-              {store.inboxItems.length > 0 && (
-                <span className="eb-nav-badge">{store.inboxItems.length}</span>
-              )}
-            </button>
-            <button
-              type="button"
-              className="eb-nav-btn"
               onClick={() => setModal('settings')}
             >
               <SettingsIcon size={15} />
@@ -450,14 +435,6 @@ const EbbView: React.FC = () => {
           </button>
           <button
             type="button"
-            className={`eb-tab ${activeTab === 'directory' ? 'eb-tab--active' : ''}`}
-            onClick={() => setActiveTab('directory')}
-          >
-            <FolderTree size={14} />
-            目录视图
-          </button>
-          <button
-            type="button"
             className={`eb-tab ${activeTab === 'board' ? 'eb-tab--active' : ''}`}
             onClick={() => setActiveTab('board')}
           >
@@ -506,14 +483,6 @@ const EbbView: React.FC = () => {
                 taskActions={taskActions}
               />
             )}
-            {activeTab === 'directory' && (
-              <DirectoryView
-                tasks={store.reviewTasks}
-                nodes={store.outlineNodes}
-                settings={store.ebbSettings}
-                taskActions={taskActions}
-              />
-            )}
             {activeTab === 'board' && (
               <BoardView
                 tasks={store.reviewTasks}
@@ -527,9 +496,6 @@ const EbbView: React.FC = () => {
         {/* ── 模态弹窗 ────────────────────────────────────── */}
         {modal === 'settings' && (
           <SettingsPanel onClose={() => setModal('none')} />
-        )}
-        {modal === 'inbox' && (
-          <InboxPanel onClose={() => setModal('none')} />
         )}
 
         {/* 添加内容弹窗 */}

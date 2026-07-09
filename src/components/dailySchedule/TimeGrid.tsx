@@ -27,6 +27,8 @@ interface TimeGridProps {
   /** 从任务池拖入的预览块 */
   ghostBlock: { startTime: string; endTime: string; name: string; color?: string } | null;
   conflictIds: string[];
+  isUnlinkedTask: (sourceId: string) => boolean;
+  isLinkedTask: (sourceId: string) => boolean;
 }
 
 const TimeGrid: React.FC<TimeGridProps> = ({
@@ -40,6 +42,8 @@ const TimeGrid: React.FC<TimeGridProps> = ({
   onBlankClick,
   ghostBlock,
   conflictIds,
+  isUnlinkedTask,
+  isLinkedTask,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [nowY, setNowY] = useState<number | null>(null);
@@ -149,6 +153,8 @@ const TimeGrid: React.FC<TimeGridProps> = ({
             onClick={onBlockClick}
             onDragStart={onBlockDragStart}
             isConflict={conflictSet.has(block.id)}
+            isUnlinked={isUnlinkedTask(block.sourceId)}
+            isLinked={isLinkedTask(block.sourceId)}
           />
         ))}
 

@@ -5,6 +5,7 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { todayStr, isBeforeDay, isAfterDay } from '@/utils/dateSafe';
+import { Check, X, Clock, GripVertical, CircleDashed, Link as LinkIcon } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -187,6 +188,54 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   const scheduleForDate = useDailyScheduleStore((s) => s.schedules[selectedDate]);
   const daySchedule = scheduleForDate ?? EMPTY_DAY_SCHEDULE;
   const blocks = useMemo(() => daySchedule.blocks ?? [], [daySchedule.blocks]);
+
+  // ── 判断是否未绑定节点 ──────────────────────────────────
+  const checkIsUnlinkedTask = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (!parsed) return false;
+    
+    if (parsed.source === 'review') {
+      const reviewTask = ebbReviewTasks.find((t) => t.id === parsed.reviewId);
+      return reviewTask ? !reviewTask.graphNodeId : false;
+    }
+
+    if (parsed.source === 'project') {
+      const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
+      if (!parentTask || !parentTask.blocks) return false;
+      
+      if (parsed.blockId) {
+        const block = parentTask.blocks.find(b => b.id === parsed.blockId);
+        if (block?.type === 'smart-task') {
+          return !block.header.graphNodeId; // 如果没有 graphNodeId，说明未绑定
+        }
+      }
+    }
+    return false;
+  }, [tlTasks, ebbReviewTasks]);
+
+  // ── 判断是否已绑定节点 ──────────────────────────────────
+  const checkIsLinkedTask = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (!parsed) return false;
+    
+    if (parsed.source === 'review') {
+      const reviewTask = ebbReviewTasks.find((t) => t.id === parsed.reviewId);
+      return reviewTask ? !!reviewTask.graphNodeId : false;
+    }
+
+    if (parsed.source === 'project') {
+      const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
+      if (!parentTask || !parentTask.blocks) return false;
+      
+      if (parsed.blockId) {
+        const block = parentTask.blocks.find(b => b.id === parsed.blockId);
+        if (block?.type === 'smart-task') {
+          return !!block.header.graphNodeId; // 如果有 graphNodeId，说明已绑定
+        }
+      }
+    }
+    return false;
+  }, [tlTasks, ebbReviewTasks]);
 
   // ── 快速创建状态 ───────────────────────────────────────
   const [quickCreateTime, setQuickCreateTime] = useState<string | null>(null);
@@ -548,6 +597,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
             onBlankClick={handleBlankClick}
             ghostBlock={ghostBlock}
             conflictIds={conflictIds}
+            isUnlinkedTask={checkIsUnlinkedTask}
+            isLinkedTask={checkIsLinkedTask}
           />
         </div>
 
@@ -567,6 +618,12 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       {/* 右侧：任务池（纯 HTML5 拖拽，接收从画布拖回的时间块） */}
       <div
         className={`ds-right ${draggingBlockId ? 'ds-right--drop-target' : ''}`}
+        onDragEnter={(e) => {
+          if (e.dataTransfer.types.includes('application/x-timeblock')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }
+        }}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes('application/x-timeblock')) {
             e.preventDefault();
@@ -574,6 +631,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
           }
         }}
         onDrop={(e) => {
+          e.preventDefault();
           const blockId = e.dataTransfer.getData('application/x-timeblock');
           if (blockId) {
             removeTimeBlock(selectedDate, blockId);
@@ -608,7 +666,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                     style={{ backgroundColor: item.color ?? '#8B9DC3' }}
                   />
                   <div className="ds-pool-item-content">
-                    <span className="ds-pool-item-name">{item.name}</span>
+                    <span className="ds-pool-item-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title={item.name}>
+                      {item.name}
+                      {checkIsUnlinkedTask(item.sourceId) && (
+                        <span title="未绑定节点" className="ml-1 inline-flex items-center">
+                          <CircleDashed size={12} className="opacity-40" />
+                        </span>
+                      )}
+                    </span>
                     {item.detail && (
                       <span className="ds-pool-item-detail">{item.detail}</span>
                     )}
@@ -643,7 +708,18 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                       style={{ backgroundColor: item.color ?? '#8B9DC3' }}
                     />
                     <div className="ds-pool-item-content">
-                      <span className="ds-pool-item-name">{item.name}</span>
+                      <span className="ds-pool-item-name" title={item.name}>
+                            {item.name}
+                            {checkIsUnlinkedTask(item.sourceId) ? (
+                              <span title="未绑定节点" className="ml-1 inline-flex items-center">
+                                <CircleDashed size={12} className="opacity-40" />
+                              </span>
+                            ) : checkIsLinkedTask(item.sourceId) && (
+                              <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
+                                <LinkIcon size={12} className="opacity-60" />
+                              </span>
+                            )}
+                          </span>
                       {item.detail && (
                         <span className="ds-pool-item-detail">{item.detail}</span>
                       )}

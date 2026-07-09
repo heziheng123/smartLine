@@ -307,7 +307,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         updateBlockHeader: (taskId, blockId, headerPatch) => {
           const now = new Date().toISOString();
-          let syncPayload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string } | null = null;
+          let syncPayload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string; triggerSchedule?: boolean } | null = null;
+          let nodeToActivate: string | null = null;
 
           set((state) => {
             const tasks = state.tasks.map((t) => {
@@ -317,8 +318,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               if (block && block.type === 'smart-task') {
                 const header = { ...block.header, ...headerPatch };
                 
-                // 检查是否触发了完成且开启了同步
-                if (headerPatch.isCompleted === true && header.autoSyncEbb && header.graphNodeId && !block.header.isCompleted) {
+                // 检查是否触发了完成
+                if (headerPatch.isCompleted === true && header.graphNodeId && !block.header.isCompleted) {
+                  // 无条件激活节点状态
+                  nodeToActivate = header.graphNodeId;
+
+                  // 无论是否开启 autoSyncEbb，都准备发送 payload，只是 triggerSchedule 标志不同
                   // 清除 HTML 标签获取纯文本笔记
                   const tempDiv = document.createElement('div');
                   tempDiv.innerHTML = block.body || '';
@@ -335,10 +340,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     taskType: header.taskType,
                     taskNotes: plainTextNotes,
                     taskTitle: header.title,
+                    triggerSchedule: header.autoSyncEbb !== false // 默认 true，如果明确是 false 才传 false
                   };
                 } 
                 // 检查是否取消了完成
-                else if (headerPatch.isCompleted === false && header.autoSyncEbb && header.graphNodeId && block.header.isCompleted) {
+                else if (headerPatch.isCompleted === false && header.graphNodeId && block.header.isCompleted) {
+                  // 取消完成时，不论之前是不是自动排期，都发送 remove 让 ebb 去清理可能的时间线和该任务对应的笔记
                   const graphNode = useGraphStore.getState().getNodeById(header.graphNodeId);
                   const actualTopicName = graphNode ? graphNode.name : header.title;
 
@@ -369,6 +376,10 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           // 执行 Ebb 拦截同步（在 set 之外调用，避免 store 嵌套更新问题）
           if (syncPayload) {
             useEbbStore.getState().syncTaskToEbb(syncPayload);
+          }
+
+          if (nodeToActivate) {
+            useGraphStore.getState().updateNode(nodeToActivate, { status: 'activated' });
           }
         },
 

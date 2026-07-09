@@ -27,6 +27,18 @@
   border-left: 1px solid #e5e7eb;
   overflow: hidden;
   position: relative;
+  transition: width 0.2s ease, max-width 0.2s ease, border 0.2s ease;
+}
+
+.pdv-container--fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  z-index: 9999;
+  border-left: none;
+  border-radius: 0;
 }
 
 /* ── 顶部导航栏 ── */
@@ -788,6 +800,11 @@
   box-shadow: 0 8px 30px rgba(0,0,0,.12);
 }
 
+.stb-graph-picker-container {
+  width: 320px;
+  padding: 12px;
+}
+
 .stb-tag-picker-title {
   font-size: 13px;
   font-weight: 600;
@@ -864,11 +881,8 @@
 
 /* ── 知识大盘节点选择器 ── */
 .stb-graph-picker {
-  background: #fff;
-  border-radius: 12px;
-  padding: 12px;
-  width: 280px;
-  box-shadow: 0 8px 30px rgba(0,0,0,.12);
+  background: transparent;
+  width: 100%;
 }
 .stb-graph-picker-search {
   display: flex;
@@ -1626,6 +1640,11 @@
 .wmv-block-card--done {
   opacity: 0.6;
 }
+
+.wmv-block-card--unlinked {
+  border: 1px dashed #D1D5DB;
+}
+
 .wmv-block-card--overdue {
   border-left-color: #fca5a5 !important;
 }

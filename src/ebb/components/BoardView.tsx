@@ -413,8 +413,8 @@ const BoardCard: React.FC<BoardCardProps> = ({ card, index, settings, taskAction
 
               const isExercise = data.type === 'exercise' || data.typeLabel.includes('做题');
               const isNote = data.type === 'note' || data.typeLabel.includes('笔记');
-              const typeText = isExercise ? '做题' : isNote ? '笔记' : '记录';
-              const badgeColor = isExercise ? 'bg-blue-50 text-blue-600 border-blue-100' : isNote ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-600 border-gray-200';
+              const typeText = '记录';
+              const badgeColor = 'bg-gray-50 text-gray-600 border-gray-200';
 
               return (
                 <div key={idx} className="flex flex-col p-1.5 bg-gray-50/50 rounded border border-gray-100/50 hover:bg-gray-50 transition-colors">

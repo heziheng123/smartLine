@@ -22,7 +22,11 @@ export const DEFAULT_TAG_COLORS: Record<string, string> = {
   '复习': '#FDE68A',   // 黄色系
   '背诵': '#D9F993',   // 绿色系
   '写作': '#DDD6FE',   // 紫色系
+  '阅读': '#A5F3FC',   // 青色系
+  '实操': '#BBF7D0',   // 亮绿系
 };
+
+export const DEFAULT_TAGS = Object.keys(DEFAULT_TAG_COLORS);
 
 const TAG_COLOR_PALETTE = [
   '#FECDD3', '#BFDBFE', '#FDE68A', '#D9F993', '#DDD6FE',

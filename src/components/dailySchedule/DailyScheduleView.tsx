@@ -18,6 +18,8 @@ import {
   Clock,
   X,
   Settings2,
+  CircleDashed,
+  Link as LinkIcon,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
@@ -34,7 +36,7 @@ import {
   type ScheduleViewMode,
 } from './types';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
-import { parseSourceId } from './conversion';
+import { parseSourceId, timeToMinutes } from './conversion';
 
 // ── Droppable IDs ────────────────────────────────────────────
 
@@ -71,6 +73,7 @@ const DailyScheduleView: React.FC = () => {
     updateScheduledItem,
     updateTimeBlock,
     removeTimeBlock,
+    toggleTimeBlock,
   } = useDailyScheduleStore(
     useShallow((s) => ({
       addScheduledItem: s.addScheduledItem,
@@ -81,6 +84,7 @@ const DailyScheduleView: React.FC = () => {
       updateScheduledItem: s.updateScheduledItem,
       updateTimeBlock: s.updateTimeBlock,
       removeTimeBlock: s.removeTimeBlock,
+      toggleTimeBlock: s.toggleTimeBlock,
     })),
   );
 
@@ -120,6 +124,54 @@ const DailyScheduleView: React.FC = () => {
       return t.dueDate === selectedDate || (isOverdue(t) && selectedDate === today);
     });
   }, [ebbReviewTasks, selectedDate, today]);
+
+  // ── 判断是否未绑定节点 ──────────────────────────────────
+  const checkIsUnlinkedTask = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (!parsed) return false;
+
+    if (parsed.source === 'review') {
+      const reviewTask = ebbReviewTasks.find((t) => t.id === parsed.reviewId);
+      return reviewTask ? !reviewTask.graphNodeId : false;
+    }
+    
+    if (parsed.source === 'project') {
+      const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
+      if (!parentTask || !parentTask.blocks) return false;
+      
+      if (parsed.blockId) {
+        const block = parentTask.blocks.find(b => b.id === parsed.blockId);
+        if (block?.type === 'smart-task') {
+          return !block.header.graphNodeId; // 如果没有 graphNodeId，说明未绑定
+        }
+      }
+    }
+    return false;
+  }, [tlTasks, ebbReviewTasks]);
+
+  // ── 判断是否已绑定节点 ──────────────────────────────────
+  const checkIsLinkedTask = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (!parsed) return false;
+
+    if (parsed.source === 'review') {
+      const reviewTask = ebbReviewTasks.find((t) => t.id === parsed.reviewId);
+      return reviewTask ? !!reviewTask.graphNodeId : false;
+    }
+    
+    if (parsed.source === 'project') {
+      const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
+      if (!parentTask || !parentTask.blocks) return false;
+      
+      if (parsed.blockId) {
+        const block = parentTask.blocks.find(b => b.id === parsed.blockId);
+        if (block?.type === 'smart-task') {
+          return !!block.header.graphNodeId; // 如果有 graphNodeId，说明已绑定
+        }
+      }
+    }
+    return false;
+  }, [tlTasks, ebbReviewTasks]);
 
   // ── 已安排的 sourceId 集合（items + blocks 合并） ────────
   const scheduledSourceIds = useMemo(() => {
@@ -181,12 +233,27 @@ const DailyScheduleView: React.FC = () => {
     return filtered;
   }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, filterSource, ebbReviewTasks, ebbSettingsData]);
 
+  // ── 辅助函数：根据用户配置动态划分时段 ──────────────────
+  const getSlotForTime = useCallback((timeStr: string): TimeSlot => {
+    const mins = timeToMinutes(timeStr);
+    const afternoonCfg = slotConfigs.find(c => c.slot === 'afternoon');
+    const eveningCfg = slotConfigs.find(c => c.slot === 'evening');
+    const afternoonStart = afternoonCfg ? afternoonCfg.startHour * 60 : 12 * 60;
+    const eveningStart = eveningCfg ? eveningCfg.startHour * 60 : 18 * 60;
+    
+    if (mins < afternoonStart) return 'morning';
+    if (mins < eveningStart) return 'afternoon';
+    return 'evening';
+  }, [slotConfigs]);
+
   // ── 获取时间段内的已安排任务 ─────────────────────────────
   const getSlotItems = useCallback(
     (slot: TimeSlot): ScheduledItem[] => {
-      return daySchedule.items
+      const normalItems = daySchedule.items
         .filter((i) => i.timeSlot === slot)
         .sort((a, b) => a.order - b.order);
+
+      return normalItems;
     },
     [daySchedule.items],
   );
@@ -233,12 +300,17 @@ const DailyScheduleView: React.FC = () => {
         if (!draggedItem) return;
 
         if (srcSlot === destSlot) {
-          const newOrder = srcItems.map((i) => i.id);
+          const normalItems = srcItems.filter(i => !i.id.startsWith('virtual-block-'));
+          const newOrder = normalItems.map((i) => i.id);
           const [removed] = newOrder.splice(source.index, 1);
-          newOrder.splice(destIndex, 0, removed);
+          // 限制插入位置，防止拖拽到虚拟块的下方导致乱序
+          newOrder.splice(Math.min(destIndex, newOrder.length), 0, removed);
           reorderScheduledItems(selectedDate, srcSlot, newOrder);
         } else {
-          moveScheduledItem(selectedDate, draggedItem.id, destSlot, destIndex);
+          const destItems = getSlotItems(destSlot);
+          const normalDestItems = destItems.filter(i => !i.id.startsWith('virtual-block-'));
+          const clampedIndex = Math.min(destIndex, normalDestItems.length);
+          moveScheduledItem(selectedDate, draggedItem.id, destSlot, clampedIndex);
         }
         return;
       }
@@ -259,10 +331,45 @@ const DailyScheduleView: React.FC = () => {
   );
 
   // ── 完成/删除 操作（时段模式） ──────────────────────────
+  const syncProjectTaskCompletion = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (!parsed || parsed.source !== 'project') return false;
+    const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
+    if (!parentTask) return false;
+
+    if (parsed.blockId) {
+      const now = todayStr();
+      const currentBlock = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
+      const isCurrentlyDone = currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted;
+      tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
+        isCompleted: !isCurrentlyDone,
+        completedDate: !isCurrentlyDone ? now : undefined,
+      });
+      return true;
+    }
+    return false;
+  }, [tlTasks, tlUpdateBlockHeader]);
+
   // 先校验并写入源 store（ebb/timeline），成功后再同步 schedule，
   // 避免"先写 schedule 后校验失败"导致的 UI 闪烁与短暂不一致。
   const handleToggleItem = useCallback(
     (itemId: string) => {
+      if (itemId.startsWith('virtual-block-')) {
+        const blockId = itemId.replace('virtual-block-', '');
+        const block = daySchedule.blocks?.find(b => b.id === blockId);
+        if (!block) return;
+
+        if (block.source === 'review') {
+          const reviewId = block.sourceId.replace('review-', '');
+          const err = ebbToggleReviewTask(reviewId);
+          if (err) return;
+        } else if (block.source === 'project') {
+          syncProjectTaskCompletion(block.sourceId);
+        }
+        toggleTimeBlock(selectedDate, blockId);
+        return;
+      }
+
       const item = daySchedule.items.find((i) => i.id === itemId);
       if (!item) return;
 
@@ -271,35 +378,23 @@ const DailyScheduleView: React.FC = () => {
         // 先校验+更新 ebb；失败则不更新 schedule，避免回滚闪烁
         const err = ebbToggleReviewTask(reviewId);
         if (err) return;
-        toggleScheduledItem(selectedDate, itemId);
       } else if (item.source === 'project') {
-        const parsed = parseSourceId(item.sourceId);
-        if (!parsed || parsed.source !== 'project') return;
-        const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-        if (!parentTask) return;
-
-        if (parsed.blockId) {
-          const now = todayStr();
-          const currentBlock = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
-          const isCurrentlyDone = currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted;
-          // 先更新源 store 的 block header
-          tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
-            isCompleted: !isCurrentlyDone,
-            completedDate: !isCurrentlyDone ? now : undefined,
-          });
-          // 再同步 schedule
-          toggleScheduledItem(selectedDate, itemId);
-        }
+        syncProjectTaskCompletion(item.sourceId);
       }
+      toggleScheduledItem(selectedDate, itemId);
     },
-    [toggleScheduledItem, selectedDate, daySchedule.items, ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader],
+    [toggleScheduledItem, toggleTimeBlock, selectedDate, daySchedule.items, daySchedule.blocks, ebbToggleReviewTask, syncProjectTaskCompletion],
   );
 
   const handleRemoveItem = useCallback(
     (itemId: string) => {
-      removeScheduledItem(selectedDate, itemId);
+      if (itemId.startsWith('virtual-block-')) {
+        removeTimeBlock(selectedDate, itemId.replace('virtual-block-', ''));
+      } else {
+        removeScheduledItem(selectedDate, itemId);
+      }
     },
-    [removeScheduledItem, selectedDate],
+    [removeScheduledItem, removeTimeBlock, selectedDate],
   );
 
   // ── 时间段统计 ──────────────────────────────────────────
@@ -526,41 +621,67 @@ const DailyScheduleView: React.FC = () => {
                             </div>
                           )}
                           {slotItems.map((item, index) => (
-                            <Draggable key={item.id} draggableId={item.id} index={index}>
+                            <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={item.id.startsWith('virtual-block-')}>
                               {(provided, snapshot) => (
                                 <div
                                   ref={provided.innerRef}
                                   {...provided.draggableProps}
                                   className={`ds-item ${item.completed ? 'ds-item--completed' : ''} ${
                                     snapshot.isDragging ? 'ds-item--dragging' : ''
+                                  } ${item.id.startsWith('virtual-block-') ? 'ds-item--virtual' : ''} ${
+                                    checkIsUnlinkedTask(item.sourceId) ? 'ds-item--unlinked' : ''
                                   }`}
                                 >
                                   <div
                                     className="ds-item-accent"
                                     style={{ backgroundColor: item.color ?? '#8B9DC3' }}
                                   />
-                                  <div className="ds-item-grip" {...provided.dragHandleProps}>
-                                    <GripVertical size={14} />
-                                  </div>
+                                  {!item.id.startsWith('virtual-block-') && (
+                                    <div className="ds-item-grip" {...provided.dragHandleProps}>
+                                      <GripVertical size={14} />
+                                    </div>
+                                  )}
                                   <div className="ds-item-content">
-                                    <span className="ds-item-name">
-                                      {item.name}
-                                    </span>
+                                    <span className="ds-item-name" title={item.name}>
+                                        {item.name}
+                                        {checkIsUnlinkedTask(item.sourceId) ? (
+                                          <span title="未绑定节点" className="ml-1 inline-flex items-center">
+                                            <CircleDashed size={12} className="opacity-40" />
+                                          </span>
+                                        ) : checkIsLinkedTask(item.sourceId) && (
+                                          <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
+                                            <LinkIcon size={12} className="opacity-60" />
+                                          </span>
+                                        )}
+                                      </span>
                                     {item.detail && (
                                       <span className="ds-item-detail">{item.detail}</span>
                                     )}
                                   </div>
-                                  {item.duration && (
+
+                                  {item.id.startsWith('virtual-block-') && (
+                                    <div className="ds-item-duration ds-item-duration--virtual">
+                                      <Clock size={11} />
+                                      {(() => {
+                                        const b = daySchedule.blocks?.find(x => x.id === item.id.replace('virtual-block-', ''));
+                                        return b ? `${b.startTime}-${b.endTime}` : '';
+                                      })()}
+                                    </div>
+                                  )}
+
+                                  {item.duration && !item.id.startsWith('virtual-block-') && (
                                     <span className="ds-item-duration">
                                       <Clock size={11} />
                                       {item.duration}min
                                     </span>
                                   )}
+
                                   <span
                                     className={`ds-item-source ds-item-source--${item.source}`}
                                   >
-                                    {item.source === 'project' ? '项目' : '复习'}
+                                    {item.source === 'project' ? '项目' : item.source === 'review' ? '复习' : '自由'}
                                   </span>
+
                                   <button
                                     type="button"
                                     className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`}
@@ -568,6 +689,7 @@ const DailyScheduleView: React.FC = () => {
                                   >
                                     <Check size={13} />
                                   </button>
+
                                   <button
                                     type="button"
                                     className="ds-item-delete"
@@ -641,14 +763,27 @@ const DailyScheduleView: React.FC = () => {
                                   ref={provided.innerRef}
                                   {...provided.draggableProps}
                                   {...provided.dragHandleProps}
-                                  className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''}`}
+                                  className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''} ${
+                                    checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
+                                  }`}
                                 >
                                   <div
                                     className="ds-pool-item-accent"
                                     style={{ backgroundColor: item.color ?? '#8B9DC3' }}
                                   />
                                   <div className="ds-pool-item-content">
-                                    <span className="ds-pool-item-name">{item.name}</span>
+                                    <span className="ds-pool-item-name" title={item.name}>
+                                      {item.name}
+                                      {checkIsUnlinkedTask(item.sourceId) ? (
+                                        <span title="未绑定节点" className="ml-1 inline-flex items-center">
+                                          <CircleDashed size={12} className="opacity-40" />
+                                        </span>
+                                      ) : checkIsLinkedTask(item.sourceId) && (
+                                        <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
+                                          <LinkIcon size={12} className="opacity-60" />
+                                        </span>
+                                      )}
+                                    </span>
                                     {item.detail && (
                                       <span className="ds-pool-item-detail">{item.detail}</span>
                                     )}
@@ -691,14 +826,27 @@ const DailyScheduleView: React.FC = () => {
                                   ref={provided.innerRef}
                                   {...provided.draggableProps}
                                   {...provided.dragHandleProps}
-                                  className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''}`}
+                                  className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''} ${
+                                    checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
+                                  }`}
                                 >
                                   <div
                                     className="ds-pool-item-accent"
                                     style={{ backgroundColor: item.color ?? '#8B9DC3' }}
                                   />
                                   <div className="ds-pool-item-content">
-                                    <span className="ds-pool-item-name">{item.name}</span>
+                                    <span className="ds-pool-item-name" title={item.name}>
+                                      {item.name}
+                                      {checkIsUnlinkedTask(item.sourceId) ? (
+                                        <span title="未绑定节点" className="ml-1 inline-flex items-center">
+                                          <CircleDashed size={12} className="opacity-40" />
+                                        </span>
+                                      ) : checkIsLinkedTask(item.sourceId) && (
+                                        <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
+                                          <LinkIcon size={12} className="opacity-60" />
+                                        </span>
+                                      )}
+                                    </span>
                                     {item.detail && (
                                       <span className="ds-pool-item-detail">{item.detail}</span>
                                     )}

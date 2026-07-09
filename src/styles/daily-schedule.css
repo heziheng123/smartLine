@@ -311,12 +311,20 @@
 }
 
 .ds-item--completed {
-  opacity: 0.6;
+  opacity: 0.5;
+}
+
+.ds-item--unlinked {
+  border: 1px dashed #D1D5DB;
 }
 
 .ds-item--completed .ds-item-name {
   text-decoration: line-through;
   color: #9CA3AF;
+}
+
+.ds-item--virtual {
+  /* 移除特殊样式，使其与普通任务一致 */
 }
 
 /* 左侧颜色高亮条 */
@@ -387,6 +395,10 @@
   border-radius: 4px;
 }
 
+.ds-item-duration--virtual {
+  /* 移除特殊样式，使其与普通任务一致 */
+}
+
 .ds-item-source {
   font-size: 10px;
   font-weight: 600;
@@ -404,6 +416,11 @@
 .ds-item-source--review {
   background: #FEF3C7;
   color: #B45309;
+}
+
+.ds-item-source--free {
+  background: #F3F4F6;
+  color: #4B5563;
 }
 
 .ds-item-check {
@@ -555,23 +572,37 @@
   padding: 8px 12px;
   margin-bottom: 4px;
   background: #FFFFFF;
-  border: 1px solid #ECECEF;
-  border-radius: 6px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
   cursor: grab;
-  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
   position: relative;
   overflow: hidden;
+  user-select: none;
 }
 
 .ds-pool-item:hover {
   border-color: #D1D5DB;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.ds-pool-item:active {
+  cursor: grabbing;
 }
 
 .ds-pool-item--dragging {
-  opacity: 0.85;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transform: rotate(-1deg);
+  opacity: 0.95;
+  transform: rotate(2deg) scale(1.02);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  border-color: #9CA3AF;
+  filter: brightness(0.95);
+}
+
+.ds-pool-item--unlinked {
+  border: 1px dashed #D1D5DB;
 }
 
 .ds-pool-item-accent {
@@ -864,7 +895,7 @@
   left: 8px;
   right: 8px;
   border-radius: 6px;
-  border: 1px solid #ECECEF;
+  border: 1px solid #D1D5DB; /* 边框进一步加深 */
   display: flex;
   align-items: stretch;
   cursor: pointer;
@@ -872,17 +903,20 @@
   transition: box-shadow 0.15s, border-color 0.15s;
   overflow: hidden;
   min-height: 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); /* 默认状态增加轻微实体阴影 */
 }
 
 .tb-card:hover {
-  border-color: #D1D5DB;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  border-color: #6B7280; /* 悬浮时边框更深 */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
 .tb-card--dragging {
-  opacity: 0.9;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  opacity: 0.95;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
   z-index: 10;
+  /* 拖拽时加深背景颜色，使其在日历网格上更显眼 */
+  filter: brightness(0.95) saturate(1.1);
 }
 
 .tb-card--completed {
@@ -899,15 +933,21 @@
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
 }
 
+.tb-card--unlinked {
+  border: 1px dashed #D1D5DB;
+}
+
 /* 左侧颜色高亮条 */
 .tb-accent {
-  width: 3px;
+  width: 4px; /* 从 3px 加粗到 4px */
   flex-shrink: 0;
   border-radius: 6px 0 0 6px;
 }
 
 /* 拖拽把手（拖回任务池用） */
 .tb-grip {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -942,9 +982,9 @@
 }
 
 .tb-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: #1F2937;
+  font-size: 13px;
+  font-weight: 600; /* 加粗字体，使其在较深背景上更清晰 */
+  color: #111827; /* 加深文字颜色 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1029,7 +1069,7 @@
   right: 4px;
   height: 6px;
   cursor: ns-resize;
-  z-index: 2;
+  z-index: 3;
   opacity: 0;
   transition: opacity 0.15s;
 }

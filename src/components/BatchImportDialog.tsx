@@ -161,7 +161,8 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
   const handleApplySchedule = () => {
     const config: BatchScheduleConfig = {
       startDate: schedStart,
-      perDay: Math.max(1, schedPerDay),
+      mode: 'count',
+      limit: Math.max(1, schedPerDay),
       skipWeekend: schedSkipWeekend,
       onlyEmpty: schedOnlyEmpty,
     };

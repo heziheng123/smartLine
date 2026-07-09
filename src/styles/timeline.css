@@ -1684,12 +1684,21 @@ html, body, #root {
 }
 
 .bi-dialog {
-  width: 880px;
-  max-width: 94vw;
+  width: 960px;
+  max-width: 96vw;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.bi-dialog--maximized {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
 }
 
 .bi-header {
@@ -1991,7 +2000,7 @@ html, body, #root {
   border: 1px solid #E5E7EB;
   border-radius: 8px;
   overflow: auto;
-  max-height: 320px;
+  flex: 1;
   background: #fff;
 }
 
@@ -1999,7 +2008,7 @@ html, body, #root {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 12px;
+  font-size: 13px;
   table-layout: fixed;
 }
 
@@ -2009,25 +2018,24 @@ html, body, #root {
   background: #F9FAFB;
   text-align: left;
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: #6B7280;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
   border-bottom: 1px solid #E5E7EB;
-  z-index: 1;
+  z-index: 10;
+  white-space: nowrap;
 }
 
-.bi-th-title { width: 28%; }
+.bi-th-title { width: 20%; }
 .bi-th-tag { width: 10%; }
 .bi-th-duration { width: 8%; }
 .bi-th-date { width: 12%; }
-.bi-th-remark { width: 22%; }
-.bi-th-actions { width: 8%; }
+.bi-th-node { width: 15%; }
+.bi-th-remark { width: 20%; }
+.bi-th-actions { width: 5%; }
 
 .bi-table tbody tr {
   border-bottom: 1px solid #F3F4F6;
-  transition: background 0.1s;
 }
 
 .bi-table tbody tr:hover {
@@ -2038,116 +2046,73 @@ html, body, #root {
   border-bottom: none;
 }
 
-.bi-row--error {
+.bi-row--error td {
   background: #FEF2F2 !important;
 }
 
-.bi-row--error:hover {
-  background: #FEE2E2 !important;
-}
-
-.bi-row--empty {
-  opacity: 0.45;
+.bi-row--empty td {
+  background: #F9FAFB;
+  opacity: 0.6;
 }
 
 .bi-table td {
-  padding: 7px 10px;
+  padding: 0; /* 为 input 留出全填充空间 */
   vertical-align: middle;
-  color: #1f2937;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  height: 32px;
+  border-bottom: 1px solid #F3F4F6;
+  border-right: 1px solid transparent;
 }
 
-.bi-title-text {
-  font-weight: 500;
+/* ── 无缝内联输入框 ── */
+.bi-edit-input {
+  width: 100%;
+  height: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: inherit;
+  outline: none;
+  box-sizing: border-box;
 }
 
-.bi-muted {
-  color: #9CA3AF;
-  font-style: italic;
+.bi-edit-input:focus {
+  background: #fff;
+  border: 2px solid #5b6af0;
+  box-shadow: inset 0 0 0 1px #fff;
+  border-radius: 0;
+  z-index: 2;
+  position: relative;
 }
 
-.bi-tag {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 500;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bi-remark-text {
-  color: #6B7280;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: inline-block;
-}
-
-.bi-td-actions {
-  display: flex;
-  gap: 4px;
-  align-items: center;
+.bi-edit-input--sm {
+  text-align: center;
 }
 
 .bi-action-btn {
+  background: transparent;
+  border: none;
+  color: #9CA3AF;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid #E5E7EB;
-  background: #fff;
-  color: #6B7280;
-  border-radius: 5px;
-  cursor: pointer;
-  padding: 0;
-  transition: all 0.12s ease;
+  transition: all 0.15s;
+  margin-left: 8px;
 }
 
 .bi-action-btn:hover {
-  background: #F3F4F6;
-  color: #1f2937;
-}
-
-.bi-action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.bi-action-btn--save {
-  border-color: #5b6af0;
-  color: #5b6af0;
-}
-
-.bi-action-btn--save:hover {
-  background: #5b6af0;
-  color: #fff;
+  background: #E5E7EB;
+  color: #374151;
 }
 
 .bi-action-btn--danger:hover {
   background: #FEE2E2;
-  border-color: #FCA5A5;
-  color: #B91C1C;
-}
-
-.bi-edit-input {
-  width: 100%;
-  padding: 4px 6px;
-  border: 1px solid #5b6af0;
-  border-radius: 4px;
-  font-size: 12px;
-  background: #fff;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(91, 106, 240, 0.08);
-}
-
-.bi-edit-input--sm {
-  width: 70px;
+  color: #DC2626;
 }
 
 .bi-empty-row {

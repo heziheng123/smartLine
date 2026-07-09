@@ -10,6 +10,8 @@ import type { SmartTaskBlock, Task } from '@/types';
 import { genBlockId, getTagColor } from './blocks';
 import { makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
 
+import { useGraphStore } from '@/graph/store';
+
 // ── 类型定义 ────────────────────────────────────────────────
 
 /** 标准模板列定义 */
@@ -49,6 +51,8 @@ export interface ParsedRow {
   deadline: string;
   complexity: 'easy' | 'normal' | 'hard';
   remark: string;
+  graphNodeId?: string;
+  graphNodeName?: string;
   /** 校验错误信息（空字符串表示通过） */
   _error: string;
 }
@@ -56,7 +60,8 @@ export interface ParsedRow {
 /** 批量排期配置 */
 export interface BatchScheduleConfig {
   startDate: string;       // YYYY-MM-DD
-  perDay: number;          // 每天分配几个任务
+  mode: 'count' | 'duration';
+  limit: number;           // 每天任务数 or 每天最大分钟数
   skipWeekend: boolean;    // 是否跳过周末
   /** 仅对未排期的行生效；false = 覆盖所有行 */
   onlyEmpty: boolean;
@@ -331,7 +336,8 @@ export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfi
   if (!start.isValid()) return rows;
 
   let cursor = start;
-  let countToday = 0;
+  let currentDayCount = 0;
+  let currentDayDuration = 0;
 
   return rows.map((r) => {
     // 已有日期且不覆盖 → 跳过
@@ -345,6 +351,30 @@ export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfi
       cursor = cursor.add(1, 'day');
     }
 
+    const taskDuration = r.duration || 30;
+
+    // 检查是否需要换天
+    let needNextDay = false;
+    if (config.mode === 'count') {
+      if (currentDayCount > 0 && currentDayCount >= config.limit) {
+        needNextDay = true;
+      }
+    } else {
+      // 如果这一天已经有任务，且加上当前任务会超限，则换天
+      if (currentDayDuration > 0 && currentDayDuration + taskDuration > config.limit) {
+        needNextDay = true;
+      }
+    }
+
+    if (needNextDay) {
+      cursor = cursor.add(1, 'day');
+      while (config.skipWeekend && (cursor.day() === 0 || cursor.day() === 6)) {
+        cursor = cursor.add(1, 'day');
+      }
+      currentDayCount = 0;
+      currentDayDuration = 0;
+    }
+
     const newDate = `${cursor.year()}-${String(cursor.month() + 1).padStart(2, '0')}-${String(cursor.date()).padStart(2, '0')}`;
     const newRow: ParsedRow = { ...r, date: newDate, dateRaw: newDate };
 
@@ -355,11 +385,8 @@ export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfi
       newRow._error = '';
     }
 
-    countToday++;
-    if (countToday >= config.perDay) {
-      countToday = 0;
-      cursor = cursor.add(1, 'day');
-    }
+    currentDayCount++;
+    currentDayDuration += taskDuration;
 
     return newRow;
   });
@@ -368,13 +395,64 @@ export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfi
 // ── 结构映射：ParsedRow → SmartTaskBlock ─────────────────────
 
 /**
+ * 将现有的 SmartTaskBlock 数组反向映射为 ParsedRow 数组，用于批量编辑
+ */
+export function blocksToRows(blocks: SmartTaskBlock[]): ParsedRow[] {
+  const nodes = useGraphStore.getState().nodes;
+  return blocks.map((b) => {
+    // 简单提取 body 中的文本内容
+    const remarkMatch = b.body.match(/<p>(.*?)<\/p>/);
+    const remark = remarkMatch ? remarkMatch[1] : b.body.replace(/<[^>]*>?/gm, '');
+    
+    let graphNodeName = '';
+    if (b.header.graphNodeId) {
+      const node = nodes.find(n => n.id === b.header.graphNodeId);
+      if (node) graphNodeName = node.name;
+    }
+
+    return {
+      _rowId: b.id, // 直接使用 block id，方便后续回写匹配或原样保留
+      title: b.header.title,
+      tag: b.header.tag || '未分类',
+      duration: b.header.duration,
+      dateRaw: b.header.date || '',
+      date: b.header.date || '',
+      deadlineRaw: b.header.deadline || '',
+      deadline: b.header.deadline || '',
+      complexity: b.header.complexity || 'normal',
+      remark: remark,
+      graphNodeId: b.header.graphNodeId,
+      graphNodeName: graphNodeName,
+      _error: '',
+    };
+  });
+}
+
+/**
  * 将清洗后的 ParsedRow 数组映射为 SmartTaskBlock 数组。
- * 复用项目现有的 tagColor 映射规则，保持与手动创建的卡片视觉一致。
  */
 export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
+  const { nodes, addNode } = useGraphStore.getState();
   const blocks: SmartTaskBlock[] = [];
   for (const r of rows) {
     if (!r.title || r._error) continue;
+    
+    // 如果用户在批量编辑表格里输入了节点名称，尝试匹配或创建
+    let finalNodeId = r.graphNodeId;
+    if (r.graphNodeName && r.graphNodeName.trim()) {
+      const trimmedName = r.graphNodeName.trim();
+      const existing = nodes.find(n => n.name.toLowerCase() === trimmedName.toLowerCase());
+      if (existing) {
+        finalNodeId = existing.id;
+      } else {
+        // 创建新节点
+        const newNode = addNode(trimmedName);
+        finalNodeId = newNode.id;
+      }
+    } else if (!r.graphNodeName) {
+      finalNodeId = undefined; // 用户清空了单元格，解绑节点
+    }
+
     blocks.push({
       type: 'smart-task',
       id: genBlockId(),
@@ -387,6 +465,7 @@ export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
         duration: r.duration,
         isCompleted: false,
         complexity: r.complexity,
+        graphNodeId: finalNodeId,
       },
       body: r.remark ? `<p>${escapeHtml(r.remark)}</p>` : '',
     });

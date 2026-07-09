@@ -1,14 +1,46 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useGraphStore } from '../store';
-import { Search, Plus } from 'lucide-react';
+import { Search, Plus, Sparkles } from 'lucide-react';
 import type { GraphNode } from '../types';
 
 interface GraphNodeSelectProps {
   value?: string;
+  taskTitle?: string; // 传入任务标题用于智能推荐
   onChange: (nodeId: string) => void;
+  footer?: React.ReactNode;
 }
 
-export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ onChange }) => {
+// 简单的相似度计算：计算 nodeName 在 taskTitle 中出现的比例，或者共有字符的比例
+function calculateSimilarity(taskTitle: string, nodeName: string): number {
+  if (!taskTitle || !nodeName) return 0;
+  const title = taskTitle.toLowerCase();
+  const name = nodeName.toLowerCase();
+  
+  // 1. 完全包含，最高权重
+  if (title.includes(name)) return 100;
+  
+  // 2. 节点名包含在任务名中（通常任务名更长）
+  if (name.includes(title)) return 80;
+  
+  // 3. 计算共有中文字符/单词的比例
+  // 过滤掉常见无意义词汇
+  const stopWords = ['的', '了', '是', '复习', '看书', '看课', '做题', '笔记', '第', '章', '节', '课'];
+  const titleChars = Array.from(new Set(title.split('').filter(c => c.trim() && !stopWords.includes(c))));
+  const nameChars = Array.from(new Set(name.split('').filter(c => c.trim() && !stopWords.includes(c))));
+  
+  if (nameChars.length === 0) return 0;
+  
+  let matchCount = 0;
+  for (const char of nameChars) {
+    if (titleChars.includes(char)) {
+      matchCount++;
+    }
+  }
+  
+  return (matchCount / nameChars.length) * 50; // 最大 50 分
+}
+
+export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTitle = '', onChange, footer }) => {
   const { nodes, addNode, getNodeById } = useGraphStore();
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -44,14 +76,48 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ onChange }) =>
     return [...nodes].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
   }, [nodes]);
 
+  // 智能推荐：计算相似度
+  const recommendedNodes = useMemo(() => {
+    if (!taskTitle) return [];
+    
+    const scored = nodes.map(node => ({
+      node,
+      score: calculateSimilarity(taskTitle, node.name)
+    })).filter(n => n.score > 20); // 设置一个合理的阈值，避免推荐完全不相干的
+    
+    // 按分数降序排列，取前 3 个
+    return scored.sort((a, b) => b.score - a.score).slice(0, 3).map(s => s.node);
+  }, [nodes, taskTitle]);
+
   const filteredNodes = useMemo(() => {
-    if (!search) return recentNodes;
+    if (!search) {
+      // 过滤掉已经在推荐列表中的最近使用节点，避免重复显示
+      const recIds = new Set(recommendedNodes.map(n => n.id));
+      const filteredRecent = recentNodes.filter(n => !recIds.has(n.id));
+      return [...recommendedNodes, ...filteredRecent];
+    }
     return nodes.filter(n => n.name.toLowerCase().includes(search.toLowerCase()));
-  }, [nodes, search, recentNodes]);
+  }, [nodes, search, recentNodes, recommendedNodes]);
 
   const exactMatch = useMemo(() => {
     return nodes.find(n => n.name.toLowerCase() === search.trim().toLowerCase());
   }, [nodes, search]);
+
+  // 计算幽灵文本（Ghost Text）
+  const ghostText = useMemo(() => {
+    if (!search && recommendedNodes.length > 0) {
+      return recommendedNodes[0].name;
+    }
+    if (search && filteredNodes.length > 0) {
+      // 找到第一个以 search 开头的节点作为补全建议
+      const match = filteredNodes.find(n => n.name.toLowerCase().startsWith(search.toLowerCase()));
+      if (match) {
+        // 保持用户输入的大小写，补全剩余部分
+        return search + match.name.slice(search.length);
+      }
+    }
+    return '';
+  }, [search, recommendedNodes, filteredNodes]);
 
   const showCreate = search.trim() && !exactMatch;
   const totalItems = filteredNodes.length + (showCreate ? 1 : 0);
@@ -64,7 +130,12 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ onChange }) =>
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'Tab') {
+      if (ghostText && ghostText !== search) {
+        e.preventDefault();
+        setSearch(ghostText);
+      }
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIndex((prev) => (prev + 1) % totalItems);
     } else if (e.key === 'ArrowUp') {
@@ -84,36 +155,84 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ onChange }) =>
     <div className="stb-graph-picker">
       <div className="stb-graph-picker-search">
         <Search size={14} className="stb-graph-picker-icon" />
-        <input
-          ref={inputRef}
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="搜索或创建知识节点..."
-          onKeyDown={handleKeyDown}
-        />
+        <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+          {ghostText && ghostText !== search && (
+            <div 
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                color: '#9ca3af',
+                pointerEvents: 'none',
+                whiteSpace: 'pre',
+                fontSize: '13px',
+                fontFamily: 'inherit',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              <span style={{ opacity: 0 }}>{search}</span>
+              <span>{ghostText.slice(search.length)}</span>
+              {/* Tab 提示 */}
+              <span style={{ 
+                marginLeft: 8, 
+                fontSize: 10, 
+                backgroundColor: '#f3f4f6', 
+                padding: '2px 4px', 
+                borderRadius: 4,
+                color: '#6b7280',
+                border: '1px solid #e5e7eb'
+              }}>Tab</span>
+            </div>
+          )}
+          <input
+            ref={inputRef}
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={ghostText ? '' : "搜索或创建知识节点..."}
+            onKeyDown={handleKeyDown}
+            style={{ width: '100%', position: 'relative', zIndex: 1, background: 'transparent' }}
+          />
+        </div>
       </div>
       
-      {!search && recentNodes.length > 0 && (
+      {!search && recommendedNodes.length > 0 && (
+        <div className="stb-graph-picker-title" style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#8b5cf6' }}>
+          <Sparkles size={12} /> 智能推荐
+        </div>
+      )}
+      
+      {!search && recentNodes.length > 0 && recommendedNodes.length === 0 && (
         <div className="stb-graph-picker-title">最近使用</div>
       )}
 
       <div className="stb-graph-picker-list">
         {filteredNodes.map((node, index) => {
           const path = getNodePath(node);
+          const isRecommended = !search && index < recommendedNodes.length;
+          // 如果过了推荐区，并且是最近使用的第一个，插入一个小标题
+          const isFirstRecent = !search && recommendedNodes.length > 0 && index === recommendedNodes.length;
+          
           return (
-            <button
-              key={node.id}
-              type="button"
-              className={`stb-graph-option ${selectedIndex === index ? 'stb-graph-option--active' : ''}`}
-              onClick={() => onChange(node.id)}
-              onMouseEnter={() => setSelectedIndex(index)}
-            >
-              <div className="stb-graph-option-main">
-                {node.name}
-              </div>
-              {path && <div className="stb-graph-option-path">{path}</div>}
-            </button>
+            <React.Fragment key={node.id}>
+              {isFirstRecent && (
+                <div className="stb-graph-picker-title" style={{ marginTop: 8, borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>最近使用</div>
+              )}
+              <button
+                type="button"
+                className={`stb-graph-option ${selectedIndex === index ? 'stb-graph-option--active' : ''}`}
+                style={isRecommended ? { backgroundColor: selectedIndex === index ? '#f5f3ff' : '#faf5ff' } : {}}
+                onClick={() => onChange(node.id)}
+                onMouseEnter={() => setSelectedIndex(index)}
+              >
+                <div className="stb-graph-option-main">
+                  {isRecommended && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', backgroundColor: '#8b5cf6', marginRight: 6 }} />}
+                  {node.name}
+                </div>
+                {path && <div className="stb-graph-option-path">{path}</div>}
+              </button>
+            </React.Fragment>
           );
         })}
         {showCreate && (
@@ -127,6 +246,7 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ onChange }) =>
           </button>
         )}
       </div>
+      {footer}
     </div>
   );
 };

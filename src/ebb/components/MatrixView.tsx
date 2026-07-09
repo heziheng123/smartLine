@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, memo } from 'react';
-import { Search, ChevronRight } from 'lucide-react';
+import { Search, ChevronRight, CircleDashed } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
@@ -26,12 +26,13 @@ interface MatrixViewProps {
   tasks: ReviewTask[];
   settings: EbbSettings;
   taskActions: TaskActions;
+  isUnlinkedTask?: (sourceId: string) => boolean;
 }
 
 type FilterStatus = 'all' | 'pending' | 'completed';
 type SortBy = 'date' | 'ratio';
 
-const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions }) => {
+const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, isUnlinkedTask }) => {
   const [filterTag, setFilterTag] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('date');
@@ -144,6 +145,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
               settings={settings}
               taskActions={taskActions}
               topicTasks={topicTasksMap.get(stat.topicName) ?? []}
+              isUnlinkedTask={isUnlinkedTask}
             />
           ))
         )}
@@ -158,9 +160,10 @@ interface TopicRowProps {
   settings: EbbSettings;
   taskActions: TaskActions;
   topicTasks: ReviewTask[];
+  isUnlinkedTask?: (sourceId: string) => boolean;
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, topicTasks }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, topicTasks, isUnlinkedTask }) => {
   const [expanded, setExpanded] = useState(false);
 
   const tagColor = stat.tag ? settings.tagColors[stat.tag] : undefined;
@@ -177,8 +180,12 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, t
   // 左边框颜色
   const accentColor = isAllDone ? '#10B981' : isNextOverdue ? '#EF4444' : isNextToday ? '#F59E0B' : '#3B82F6';
 
+  // 检查是否未绑定节点（优先检查待复习任务，若无则检查最新的任务，避免历史包袱干扰）
+  const taskToCheck = nextTask || topicTasks[topicTasks.length - 1];
+  const isUnlinked = taskToCheck ? !taskToCheck.graphNodeId : false;
+
   return (
-    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''}`} style={{ '--accent': accentColor } as React.CSSProperties}>
+    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''}`} style={{ '--accent': accentColor } as React.CSSProperties}>
       <div className="eb-topic-row-main" onClick={() => setExpanded(!expanded)}>
         {/* 圆形进度环 */}
         <div className="eb-progress-ring" style={{ '--ring-color': ringColor } as React.CSSProperties}>
@@ -196,7 +203,14 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, t
         {/* 主题信息 */}
         <div className="eb-topic-row-info">
           <div className="eb-topic-row-header">
-            <span className="eb-topic-row-name">{stat.topicName}</span>
+            <span className="eb-topic-row-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {stat.topicName}
+              {isUnlinked && (
+                <span title="未绑定节点" className="inline-flex items-center opacity-40">
+                  <CircleDashed size={14} />
+                </span>
+              )}
+            </span>
             {stat.tag && (
               <span className="eb-topic-row-tag" style={tagColor ? { backgroundColor: `${tagColor}40`, color: '#374151' } : undefined}>
                 {stat.tag}
@@ -259,8 +273,8 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, t
 
                          const isExercise = data.type === 'exercise' || data.typeLabel.includes('做题');
                          const isNote = data.type === 'note' || data.typeLabel.includes('笔记');
-                         const typeText = isExercise ? '做题' : isNote ? '笔记' : '记录';
-                         const badgeColor = isExercise ? 'bg-blue-50 text-blue-600 border-blue-100' : isNote ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-600 border-gray-200';
+                         const typeText = '记录';
+                         const badgeColor = 'bg-gray-50 text-gray-600 border-gray-200';
                          
                          return (
                            <div key={idx} className="flex flex-col p-2.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
