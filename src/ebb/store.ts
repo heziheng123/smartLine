@@ -138,7 +138,7 @@ interface EbbStore extends EbbData {
   exportEbbData: () => string;
 
   // 新增：自动同步任务到 Ebb 复习流
-  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string; triggerSchedule?: boolean }) => void;
+  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; triggerSchedule?: boolean }) => void;
 }
 
 // ── 创建 Store ──────────────────────────────────────────────

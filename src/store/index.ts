@@ -317,7 +317,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         updateBlockHeader: (taskId, blockId, headerPatch) => {
           const now = new Date().toISOString();
-          let syncPayload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; taskType?: 'video' | 'reading' | 'exercise' | 'note'; taskNotes?: string; taskTitle?: string; triggerSchedule?: boolean } | null = null;
+          let syncPayload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; triggerSchedule?: boolean } | null = null;
           let nodeToActivate: string | null = null;
 
           set((state) => {
@@ -334,11 +334,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   nodeToActivate = header.graphNodeId;
 
                   // 无论是否开启 autoSyncEbb，都准备发送 payload，只是 triggerSchedule 标志不同
-                  // 清除 HTML 标签获取纯文本笔记
-                  const tempDiv = document.createElement('div');
-                  tempDiv.innerHTML = block.body || '';
-                  const plainTextNotes = tempDiv.textContent || tempDiv.innerText || '';
-
                   // 获取大盘节点的真实名称
                   const graphNode = useGraphStore.getState().getNodeById(header.graphNodeId);
                   const actualTopicName = graphNode ? graphNode.name : header.title;
@@ -347,9 +342,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     action: 'add',
                     graphNodeId: header.graphNodeId,
                     topicName: actualTopicName,
-                    taskType: header.taskType,
-                    taskNotes: plainTextNotes,
-                    taskTitle: header.title,
                     triggerSchedule: header.autoSyncEbb !== false // 默认 true，如果明确是 false 才传 false
                   };
                 } 

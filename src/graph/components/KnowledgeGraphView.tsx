@@ -313,7 +313,7 @@ export const KnowledgeGraphView: React.FC = () => {
             pendingCount: leafTasks.filter(task => !task.isCompleted).length,
             completedCount: leafTasks.filter(task => task.isCompleted).length,
             overdueCount: leafTasks.filter(task => !task.isCompleted && diffDays(today, task.dueDate) > 0).length,
-            noteCount: leafTasks.reduce((sum, task) => sum + (task.accumulatedNotes?.length ?? 0), 0),
+            noteCount: 0,
           };
         }),
       );
