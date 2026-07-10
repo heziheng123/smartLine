@@ -188,11 +188,13 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
   // 拖拽状态下加深透明度，让它看起来更清晰，而非处于底层半透明状态
   const opacityHex = dragMode !== 'none' ? '80' : '60'; // 静态透明度提升到 60，拖拽时 80
   
-  const bgColor = block.completed
-    ? '#ECFDF5'
-    : isConflict || localConflict
-      ? '#FEF2F2'
-      : `${accentColor}${opacityHex}`;
+  const bgColor = block.source === 'free' 
+    ? (dragMode !== 'none' ? '#E5E7EB' : '#F3F4F6')
+    : block.completed
+      ? '#ECFDF5'
+      : isConflict || localConflict
+        ? '#FEF2F2'
+        : `${accentColor}${opacityHex}`;
 
   const borderClass = isConflict || localConflict
     ? 'tb-card--conflict'
@@ -201,7 +203,7 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
   return (
     <div
       ref={cardRef}
-      className={`tb-card ${block.completed ? 'tb-card--completed' : ''} ${borderClass} ${dragMode !== 'none' ? 'tb-card--dragging' : ''} ${isUnlinked ? 'tb-card--unlinked' : ''}`}
+      className={`tb-card ${block.completed ? 'tb-card--completed' : ''} ${borderClass} ${dragMode !== 'none' ? 'tb-card--dragging' : ''} ${isUnlinked ? 'tb-card--unlinked' : ''} ${block.source === 'free' ? 'tb-card--free' : ''}`}
       style={{
         top: displayTop,
         height: displayHeight,
@@ -235,23 +237,29 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
       )}
 
       {/* 左侧颜色高亮条 */}
-      <div
-        className="tb-accent"
-        style={{ backgroundColor: block.completed ? '#6EE7B7' : accentColor }}
-      />
+      {block.source !== 'free' && (
+        <div
+          className="tb-accent"
+          style={{ backgroundColor: block.completed ? '#6EE7B7' : accentColor }}
+        />
+      )}
 
       {/* 内容区 */}
       <div className="tb-content">
         <span className="tb-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           {block.name}
-          {isUnlinked ? (
-            <span title="未绑定节点" className="inline-flex items-center">
-              <CircleDashed size={12} style={{ opacity: 0.4 }} />
-            </span>
-          ) : isLinked && (
-            <span title="已绑定节点" className="inline-flex items-center">
-              <LinkIcon size={12} className="opacity-60 text-blue-500" />
-            </span>
+          {block.source !== 'free' && (
+            <>
+              {isUnlinked ? (
+                <span title="未绑定节点" className="inline-flex items-center">
+                  <CircleDashed size={12} style={{ opacity: 0.4 }} />
+                </span>
+              ) : isLinked && (
+                <span title="已绑定节点" className="inline-flex items-center">
+                  <LinkIcon size={12} className="opacity-60 text-blue-500" />
+                </span>
+              )}
+            </>
           )}
         </span>
         {block.detail && <span className="tb-detail">{block.detail}</span>}
@@ -264,13 +272,15 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
 
       {/* 操作按钮 */}
       <div className="tb-actions">
-        <button
-          type="button"
-          className={`tb-check ${block.completed ? 'tb-check--done' : ''}`}
-          onClick={(e) => { e.stopPropagation(); onToggle(block.id); }}
-        >
-          <Check size={12} />
-        </button>
+        {block.source !== 'free' && (
+          <button
+            type="button"
+            className={`tb-check ${block.completed ? 'tb-check--done' : ''}`}
+            onClick={(e) => { e.stopPropagation(); onToggle(block.id); }}
+          >
+            <Check size={12} />
+          </button>
+        )}
         <button
           type="button"
           className="tb-delete"

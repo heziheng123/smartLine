@@ -5,7 +5,7 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { todayStr, isBeforeDay, isAfterDay } from '@/utils/dateSafe';
-import { Check, X, Clock, GripVertical, CircleDashed, Link as LinkIcon } from 'lucide-react';
+import { CircleDashed, Link as LinkIcon } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
@@ -33,12 +33,15 @@ const QuickCreateInput: React.FC<{
 }> = ({ initialTime, onCreate, onCancel }) => {
   const [name, setName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const isSubmitting = useRef(false);
 
   React.useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
   const handleSubmit = () => {
+    if (isSubmitting.current) return;
+    isSubmitting.current = true;
     const trimmed = name.trim();
     if (trimmed) onCreate(trimmed, initialTime);
     else onCancel();
@@ -54,7 +57,10 @@ const QuickCreateInput: React.FC<{
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') handleSubmit();
-          if (e.key === 'Escape') onCancel();
+          if (e.key === 'Escape') {
+            isSubmitting.current = true;
+            onCancel();
+          }
         }}
         onBlur={handleSubmit}
       />
@@ -576,9 +582,10 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   // ── 统计 ───────────────────────────────────────────────
   const stats = useMemo(() => {
-    const total = blocks.length;
-    const completed = blocks.filter((b) => b.completed).length;
-    const totalMin = blocks.reduce((sum, b) => sum + (timeToMinutes(b.endTime) - timeToMinutes(b.startTime)), 0);
+    const taskBlocks = blocks.filter(b => b.source !== 'free');
+    const total = taskBlocks.length;
+    const completed = taskBlocks.filter((b) => b.completed).length;
+    const totalMin = taskBlocks.reduce((sum, b) => sum + (timeToMinutes(b.endTime) - timeToMinutes(b.startTime)), 0);
     return { total, completed, totalMin };
   }, [blocks]);
 

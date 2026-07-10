@@ -4,7 +4,7 @@
 // 支持两种模式：时段模式(slots) / 时间块模式(blocks)
 // ============================================================
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { todayStr, isBeforeDay, isAfterDay } from '@/utils/dateSafe';
 import {
   DragDropContext,
@@ -37,7 +37,7 @@ import {
   type ScheduleViewMode,
 } from './types';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
-import { parseSourceId, timeToMinutes } from './conversion';
+import { parseSourceId } from './conversion';
 
 // ── Droppable IDs ────────────────────────────────────────────
 
@@ -119,6 +119,40 @@ const DailyScheduleView: React.FC = () => {
 
   // 筛选/排序
   const [filterSource, setFilterSource] = useState<'all' | TaskSource>('all');
+
+  // ── 添加自由占位符 ───────────────────────────────────────
+  const [addingFreeSlot, setAddingFreeSlot] = useState<TimeSlot | null>(null);
+  const [freeItemName, setFreeItemName] = useState('');
+  const freeInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (addingFreeSlot && freeInputRef.current) {
+      freeInputRef.current.focus();
+    }
+  }, [addingFreeSlot]);
+
+  const isCancelingFreeRef = useRef(false);
+
+  const handleAddFreeSubmit = useCallback((slot: TimeSlot) => {
+    if (isCancelingFreeRef.current) {
+      isCancelingFreeRef.current = false;
+      return;
+    }
+    setFreeItemName((currentName) => {
+      const trimmed = currentName.trim();
+      if (trimmed) {
+        addScheduledItem(selectedDate, {
+          sourceId: `free-${Date.now().toString(36)}`,
+          name: trimmed,
+          source: 'free',
+          timeSlot: slot,
+          completed: false,
+        });
+      }
+      return '';
+    });
+    setAddingFreeSlot(null);
+  }, [selectedDate, addScheduledItem]);
 
   // ── 获取指定日期的项目任务 ─────────────────────────────
   const allSmartTaskTodos = useSmartTaskTodos(tlTasks);
@@ -256,18 +290,6 @@ const DailyScheduleView: React.FC = () => {
   }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, filterSource, ebbReviewTasks, ebbSettingsData]);
 
   // ── 辅助函数：根据用户配置动态划分时段 ──────────────────
-  const getSlotForTime = useCallback((timeStr: string): TimeSlot => {
-    const mins = timeToMinutes(timeStr);
-    const afternoonCfg = slotConfigs.find(c => c.slot === 'afternoon');
-    const eveningCfg = slotConfigs.find(c => c.slot === 'evening');
-    const afternoonStart = afternoonCfg ? afternoonCfg.startHour * 60 : 12 * 60;
-    const eveningStart = eveningCfg ? eveningCfg.startHour * 60 : 18 * 60;
-    
-    if (mins < afternoonStart) return 'morning';
-    if (mins < eveningStart) return 'afternoon';
-    return 'evening';
-  }, [slotConfigs]);
-
   // ── 获取时间段内的已安排任务 ─────────────────────────────
   const getSlotItems = useCallback(
     (slot: TimeSlot): ScheduledItem[] => {
@@ -337,7 +359,7 @@ const DailyScheduleView: React.FC = () => {
         return;
       }
 
-      // 从左侧拖回右侧任务池 = 移除
+      // 从左侧拖回右侧任务池 = 移除 (自由块拖回任务池相当于直接删除)
       if (
         srcDroppableId.startsWith('ds-slot-') &&
         (destDroppableId === DROPPABLE_POOL || destDroppableId === `${DROPPABLE_POOL}-review` || destDroppableId === 'ds-pool-container')
@@ -422,7 +444,7 @@ const DailyScheduleView: React.FC = () => {
   // ── 时间段统计 ──────────────────────────────────────────
   const getSlotStats = useCallback(
     (slot: TimeSlot) => {
-      const items = getSlotItems(slot);
+      const items = getSlotItems(slot).filter(i => i.source !== 'free');
       const total = items.length;
       const completed = items.filter((i) => i.completed).length;
       const totalDuration = items.reduce((sum, i) => sum + (i.duration ?? 30), 0);
@@ -652,12 +674,14 @@ const DailyScheduleView: React.FC = () => {
                                     snapshot.isDragging ? 'ds-item--dragging' : ''
                                   } ${item.id.startsWith('virtual-block-') ? 'ds-item--virtual' : ''} ${
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-item--unlinked' : ''
-                                  }`}
+                                  } ${item.source === 'free' ? 'ds-item--free' : ''}`}
                                 >
-                                  <div
-                                    className="ds-item-accent"
-                                    style={{ backgroundColor: item.color ?? '#8B9DC3' }}
-                                  />
+                                  {item.source !== 'free' && (
+                                    <div
+                                      className="ds-item-accent"
+                                      style={{ backgroundColor: item.color ?? '#8B9DC3' }}
+                                    />
+                                  )}
                                   {!item.id.startsWith('virtual-block-') && (
                                     <div className="ds-item-grip" {...provided.dragHandleProps}>
                                       <GripVertical size={14} />
@@ -666,14 +690,18 @@ const DailyScheduleView: React.FC = () => {
                                   <div className="ds-item-content">
                                     <span className="ds-item-name" title={item.name}>
                                         {item.name}
-                                        {checkIsUnlinkedTask(item.sourceId) ? (
-                                          <span title="未绑定节点" className="ml-1 inline-flex items-center">
-                                            <CircleDashed size={12} className="opacity-40" />
-                                          </span>
-                                        ) : checkIsLinkedTask(item.sourceId) && (
-                                          <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
-                                            <LinkIcon size={12} className="opacity-60" />
-                                          </span>
+                                        {item.source !== 'free' && (
+                                          <>
+                                            {checkIsUnlinkedTask(item.sourceId) ? (
+                                              <span title="未绑定节点" className="ml-1 inline-flex items-center">
+                                                <CircleDashed size={12} className="opacity-40" />
+                                              </span>
+                                            ) : checkIsLinkedTask(item.sourceId) && (
+                                              <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
+                                                <LinkIcon size={12} className="opacity-60" />
+                                              </span>
+                                            )}
+                                          </>
                                         )}
                                       </span>
                                     {item.detail && (
@@ -701,16 +729,18 @@ const DailyScheduleView: React.FC = () => {
                                   <span
                                     className={`ds-item-source ds-item-source--${item.source}`}
                                   >
-                                    {item.source === 'project' ? '项目' : item.source === 'review' ? '复习' : '自由'}
+                                    {item.source === 'project' ? '项目' : item.source === 'review' ? '复习' : '占位'}
                                   </span>
 
-                                  <button
-                                    type="button"
-                                    className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`}
-                                    onClick={() => handleToggleItem(item.id)}
-                                  >
-                                    <Check size={13} />
-                                  </button>
+                                  {item.source !== 'free' && (
+                                    <button
+                                      type="button"
+                                      className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`}
+                                      onClick={() => handleToggleItem(item.id)}
+                                    >
+                                      <Check size={13} />
+                                    </button>
+                                  )}
 
                                   <button
                                     type="button"
@@ -724,6 +754,37 @@ const DailyScheduleView: React.FC = () => {
                             </Draggable>
                           ))}
                           {provided.placeholder}
+
+                          {/* 添加生活占位符的入口 */}
+                          {addingFreeSlot === config.slot ? (
+                            <div className="ds-slot-add-free-input-wrap">
+                              <input
+                                ref={freeInputRef}
+                                type="text"
+                                className="ds-slot-add-free-input"
+                                placeholder="输入生活安排..."
+                                value={freeItemName}
+                                onChange={(e) => setFreeItemName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleAddFreeSubmit(config.slot);
+                                  if (e.key === 'Escape') {
+                                    isCancelingFreeRef.current = true;
+                                    setAddingFreeSlot(null);
+                                    setFreeItemName('');
+                                  }
+                                }}
+                                onBlur={() => handleAddFreeSubmit(config.slot)}
+                              />
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="ds-slot-add-free-btn"
+                              onClick={() => setAddingFreeSlot(config.slot)}
+                            >
+                              + 添加生活占位
+                            </button>
+                          )}
                         </div>
                       )}
                     </Droppable>

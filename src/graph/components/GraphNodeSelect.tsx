@@ -40,7 +40,7 @@ function calculateSimilarity(taskTitle: string, nodeName: string): number {
   return (matchCount / nameChars.length) * 50; // 最大 50 分
 }
 
-export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTitle = '', onChange, footer }) => {
+export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ taskTitle = '', onChange, footer }) => {
   const { nodes, addNode, getNodeById } = useGraphStore();
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);

@@ -230,6 +230,7 @@ const EbbView: React.FC = () => {
         tag: task.tag,
         complexity: task.complexity,
         smStatus: 'scheduled',
+        graphNodeId: task.graphNodeId,
       }]);
       showToast(`已追加第 ${(totalRoundsMap.get(task.topicName) ?? 0) + 1} 轮`);
     },

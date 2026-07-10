@@ -19,7 +19,6 @@ interface ToolbarProps {
   onImport: (data: string) => void;
   onExport: () => void;
   onOpenSync: () => void;
-  taskCount: number;
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({
@@ -34,16 +33,13 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onImport,
   onExport,
   onOpenSync,
-  taskCount,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { syncEnabled, syncStatus, dockContext, isDockHovered, setIsDockHovered } = useTimelineStore(
+  const { syncEnabled, syncStatus, dockContext } = useTimelineStore(
     useShallow((s) => ({ 
       syncEnabled: s.syncEnabled, 
       syncStatus: s.syncStatus,
       dockContext: s.dockContext,
-      isDockHovered: s.isDockHovered,
-      setIsDockHovered: s.setIsDockHovered
     })),
   );
 
@@ -151,21 +147,23 @@ const Toolbar: React.FC<ToolbarProps> = ({
           <Search size={18} />
         </motion.button>
 
-        {/* ── 归档库 ── */}
-        <motion.button
-          layout
-          key="archive-library"
-          initial={{ opacity: 0, width: 0, scale: 0.8 }}
-          animate={{ opacity: 1, width: 'auto', scale: 1 }}
-          exit={{ opacity: 0, width: 0, scale: 0.8 }}
-          type="button"
-          className="tl-dock-btn"
-          onClick={() => setIsArchiveLibraryOpen(true)}
-          title="归档库 (查看冷数据)"
-          style={{ position: 'relative', flexShrink: 0 }}
-        >
-          <Archive size={18} />
-        </motion.button>
+        {/* ── 归档库 (仅在知识大盘中显示) ── */}
+        {currentView === 'knowledge-graph' && (
+          <motion.button
+            layout
+            key="archive-library"
+            initial={{ opacity: 0, width: 0, scale: 0.8 }}
+            animate={{ opacity: 1, width: 'auto', scale: 1 }}
+            exit={{ opacity: 0, width: 0, scale: 0.8 }}
+            type="button"
+            className="tl-dock-btn"
+            onClick={() => setIsArchiveLibraryOpen(true)}
+            title="归档库 (查看冷数据)"
+            style={{ position: 'relative', flexShrink: 0 }}
+          >
+            <Archive size={18} />
+          </motion.button>
+        )}
 
         {/* ── 动态视图控制插槽 (Portal Target) ── */}
         <motion.div 

@@ -12,6 +12,8 @@ import {
   isOverdue,
   isDueToday,
 } from '../scheduler';
+import { useGraphStore } from '../../graph/store';
+import { todayStr } from '../../utils/dateSafe';
 
 export interface TaskActions {
   onToggle: (id: string) => void;
@@ -32,17 +34,46 @@ interface MatrixViewProps {
 type FilterStatus = 'all' | 'pending' | 'completed';
 type SortBy = 'date' | 'ratio';
 
-const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, isUnlinkedTask }) => {
+const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions }) => {
   const [filterTag, setFilterTag] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('date');
   const [query, setQuery] = useState('');
 
-  const tagStats = useMemo(() => computeTagStats(tasks), [tasks]);
+  const nodes = useGraphStore((state) => state.nodes);
+
+  // 计算节点到根节点的映射
+  const rootNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    for (const node of nodes) {
+      let current = node;
+      const visited = new Set<string>();
+      while (current.parentId && nodeMap.has(current.parentId)) {
+        if (visited.has(current.id)) break; // 防御循环引用
+        visited.add(current.id);
+        current = nodeMap.get(current.parentId)!;
+      }
+      map.set(node.id, current.name);
+    }
+    return map;
+  }, [nodes]);
+
+  // 动态注入根节点作为标签
+  const enhancedTasks = useMemo(() => {
+    return tasks.map(task => {
+      if (task.graphNodeId && rootNameMap.has(task.graphNodeId)) {
+        return { ...task, tag: rootNameMap.get(task.graphNodeId) };
+      }
+      return task;
+    });
+  }, [tasks, rootNameMap]);
+
+  const tagStats = useMemo(() => computeTagStats(enhancedTasks), [enhancedTasks]);
 
   const topicTasksMap = useMemo(() => {
     const m = new Map<string, ReviewTask[]>();
-    for (const t of tasks) {
+    for (const t of enhancedTasks) {
       const list = m.get(t.topicName);
       if (list) list.push(t);
       else m.set(t.topicName, [t]);
@@ -52,11 +83,11 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, i
       list.sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
     }
     return m;
-  }, [tasks]);
+  }, [enhancedTasks]);
 
   // 主题统计（带筛选）
   const topicStats = useMemo(() => {
-    let list = computeTopicStats(tasks, settings);
+    let list = computeTopicStats(enhancedTasks, settings);
     if (filterTag) list = list.filter((t) => (t.tag || '') === filterTag);
     if (filterStatus === 'pending') {
       list = list.filter((t) => t.completedRounds < t.totalRounds);
@@ -73,7 +104,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, i
       list = [...list].sort((a, b) => a.ratio - b.ratio);
     }
     return list;
-  }, [tasks, settings, filterTag, filterStatus, query, sortBy]);
+  }, [enhancedTasks, settings, filterTag, filterStatus, query, sortBy]);
 
   return (
     <div className="eb-matrix">
@@ -143,9 +174,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, i
               key={stat.topicName}
               stat={stat}
               settings={settings}
-              taskActions={taskActions}
               topicTasks={topicTasksMap.get(stat.topicName) ?? []}
-              isUnlinkedTask={isUnlinkedTask}
             />
           ))
         )}
@@ -158,12 +187,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, i
 interface TopicRowProps {
   stat: TopicStat;
   settings: EbbSettings;
-  taskActions: TaskActions;
   topicTasks: ReviewTask[];
-  isUnlinkedTask?: (sourceId: string) => boolean;
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, topicTasks, isUnlinkedTask }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks }) => {
   const [expanded, setExpanded] = useState(false);
 
   const tagColor = stat.tag ? settings.tagColors[stat.tag] : undefined;
@@ -243,84 +270,46 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, taskActions, t
       {/* 展开后的知识聚合抽屉（降噪处理） */}
       {expanded && (
         <div className="eb-topic-drawer p-3 bg-white/50 border-t border-gray-100 rounded-b-xl shadow-inner backdrop-blur-sm">
-          {(() => {
-            const firstTask = topicTasks[0];
-            const accumulatedNotes = firstTask?.accumulatedNotes || [];
-            
-            return (
-              <div className="flex flex-col">
-                {accumulatedNotes.length > 0 ? (
-                  <div className="flex flex-col">
-                    <div className="text-[11px] font-semibold text-gray-400 mb-1.5 uppercase tracking-wider">History</div>
-                    <div className="flex flex-col bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
-                      {accumulatedNotes.map((note, idx) => {
-                         let data = { date: '', type: '', typeLabel: '记录', title: '未知记录', notes: note };
-                         try {
-                           if (note.startsWith('{')) {
-                             data = JSON.parse(note);
-                           } else {
-                             // fallback for old format
-                             const match = note.match(/\[(.*?) (.*?)\]:\s*(.*)/);
-                             if (match) {
-                               data.date = match[1];
-                               data.typeLabel = match[2];
-                               data.notes = match[3];
-                             }
-                           }
-                         } catch {
-                           // ignore error
-                         }
-
-                         const isExercise = data.type === 'exercise' || data.typeLabel.includes('做题');
-                         const isNote = data.type === 'note' || data.typeLabel.includes('笔记');
-                         const typeText = '记录';
-                         const badgeColor = 'bg-gray-50 text-gray-600 border-gray-200';
-                         
-                         return (
-                           <div key={idx} className="flex flex-col p-2.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
-                             <div className="flex items-baseline justify-between gap-2">
-                               <div className="flex items-center gap-1.5 overflow-hidden">
-                                 <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium whitespace-nowrap ${badgeColor}`}>
-                                   {typeText}
-                                 </span>
-                                 <span className="text-xs font-medium text-gray-700 truncate">{data.title}</span>
-                               </div>
-                               <span className="text-[10px] text-gray-400 font-mono whitespace-nowrap shrink-0">{data.date}</span>
-                             </div>
-                             {data.notes && (
-                               <div className="text-xs text-gray-500 leading-relaxed whitespace-pre-wrap mt-1.5 pl-1 border-l-2 border-gray-100">
-                                 {data.notes}
-                               </div>
-                             )}
-                           </div>
-                         );
-                       })}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-xs text-gray-400 italic py-2 text-center bg-white/50 rounded-lg border border-gray-100 border-dashed">
-                    暂无输出型学习记录
-                  </div>
-                )}
+          <div className="flex flex-col gap-2">
+            <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Review Plan</div>
+            <div className="flex flex-wrap gap-1.5">
+              {topicTasks.map((t, idx) => {
+                const isPast = t.isCompleted;
+                const isOverdue = !isPast && t.dueDate < todayStr();
+                const isToday = !isPast && t.dueDate === todayStr();
+                const isFuture = !isPast && t.dueDate > todayStr();
                 
-                {nextTask && (
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium py-1.5 px-4 rounded-md shadow-sm transition-all flex items-center gap-1.5"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        taskActions.onToggle(nextTask.id);
-                        setExpanded(false);
-                      }}
-                    >
-                      <span className="opacity-80">✓</span> 已掌握 (下一轮)
-                    </button>
+                let ringColor = 'border-gray-200 text-gray-400';
+                let bgColor = 'bg-white';
+                
+                if (isPast) {
+                  ringColor = 'border-emerald-200 text-emerald-600';
+                  bgColor = 'bg-emerald-50/50';
+                } else if (isOverdue) {
+                  ringColor = 'border-rose-300 text-rose-600 shadow-sm shadow-rose-100';
+                  bgColor = 'bg-rose-50';
+                } else if (isToday) {
+                  ringColor = 'border-blue-400 text-blue-600 shadow-sm shadow-blue-100';
+                  bgColor = 'bg-blue-50';
+                } else if (isFuture) {
+                  ringColor = 'border-blue-100 text-blue-400 border-dashed';
+                  bgColor = 'bg-white';
+                }
+
+                return (
+                  <div 
+                    key={t.id}
+                    className={`flex flex-col items-center justify-center w-14 h-14 rounded-full border-[1.5px] ${ringColor} ${bgColor} transition-all`}
+                  >
+                    <span className="text-[10px] font-medium leading-none mb-0.5">R{idx + 1}</span>
+                    <span className="text-[8px] opacity-70 leading-none">
+                      {t.dueDate.slice(5).replace('-', '.')}
+                    </span>
                   </div>
-                )}
-              </div>
-            );
-          })()}
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -165,6 +165,21 @@ const App: React.FC = () => {
     return dayjs().year();
   });
 
+  // 全局漫游导航监听
+  React.useEffect(() => {
+    const handleNav = (e: any) => {
+      const detail = e.detail;
+      if (detail?.view) {
+        setCurrentView(detail.view);
+      }
+      if (detail?.taskId) {
+        setDrawerTaskId(detail.taskId);
+      }
+    };
+    window.addEventListener('tl-navigate', handleNav);
+    return () => window.removeEventListener('tl-navigate', handleNav);
+  }, []);
+
   // ── 任务操作 ──────────────────────────────────────────────
 
   // 抽屉：打开任务详情（单击入口，元信息折叠）
@@ -417,7 +432,6 @@ const App: React.FC = () => {
         onImport={handleImport}
         onExport={handleExport}
         onOpenSync={handleOpenSync}
-        taskCount={store.tasks.length}
       />
 
       {currentView === 'ebb' ? (

@@ -30,8 +30,6 @@ export interface SmartTaskHeader {
   complexity?: 'easy' | 'normal' | 'hard';
   graphNodeId?: string;   // 🧠 绑定的知识大盘节点 ID
   autoSyncEbb?: boolean;  // 🔄 是否自动同步至 Ebb 复习流
-  taskType?: 'video' | 'reading' | 'exercise' | 'note'; // 🏷️ 任务类型
-  taskNotes?: string;     // 📝 错题或详细笔记文本
   isArchived?: boolean;   // 🗃️ 是否已归档（冷数据）
 }
 
@@ -235,8 +233,4 @@ export interface AggregatedTodo {
   _graphNodeId?: string;
   /** 是否自动同步至 Ebb 复习流 */
   _autoSyncEbb?: boolean;
-  /** 任务类型（看课/看书/做题/笔记） */
-  _taskType?: 'video' | 'reading' | 'exercise' | 'note';
-  /** 错题或详细笔记文本 */
-  _taskNotes?: string;
 }

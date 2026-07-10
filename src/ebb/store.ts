@@ -694,7 +694,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         syncTaskToEbb: (payload) => {
           set((state) => {
-            const { action = 'add', graphNodeId, topicName, taskType, taskNotes, taskTitle, triggerSchedule = true } = payload;
+            const { action = 'add', graphNodeId, topicName, triggerSchedule = true } = payload;
             
             // 找到所有该 graphNodeId 关联的任务
             const existingTasks = state.reviewTasks.filter(t => t.graphNodeId === graphNodeId);
@@ -720,49 +720,17 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             const nowStr = todayStr();
             const tomorrowStr = addDays(nowStr, 1);
             
-            const [m, d] = nowStr.split('-').slice(1);
-            
-            // 核心逻辑：移除吸收/输出型分类，统一提取并沉淀所有任务的笔记
-            // 将 taskType 固定映射为一个通用的“记录”标签
-            const taskTypeLabel = '记录';
-            
-            // 构建新的笔记实体
-            const noteEntry = JSON.stringify({
-              date: `${m}.${d}`,
-              type: 'note', // 统一使用 note 类型
-              typeLabel: taskTypeLabel,
-              title: taskTitle || '未命名任务',
-              notes: taskNotes || ''
-            });
-            
-            // === 第一步：无条件把笔记送进蓄水池 ===
-            if (existingTasks.length > 0) {
-              // 找到了现有的复习序列，先把笔记追加进去
-              const firstExistingNotes = existingTasks[0].accumulatedNotes || [];
-              const newNotes = [...firstExistingNotes];
-              if (noteEntry) newNotes.push(noteEntry);
-              
-              newReviewTasks = newReviewTasks.map(t => {
-                if (t.graphNodeId === graphNodeId) {
-                  return { ...t, topicName, accumulatedNotes: newNotes };
-                }
-                return t;
-              });
-            }
-
-            // === 第二步：条件执行（是否排期） ===
+            // === 条件执行（是否排期） ===
             if (!triggerSchedule) {
-              // 如果用户取消了同步排期，那么处理完笔记蓄水池后，直接结束流程！
-              // 如果是全新节点（existingTasks.length === 0），需要创建一个已完成的空壳任务来承载笔记，实现蓄水与排期解耦
+              // 如果用户取消了同步排期，直接结束流程！
+              // 如果是全新节点（existingTasks.length === 0），需要创建一个已完成的空壳任务，实现排期解耦
               if (existingTasks.length === 0) {
-                const accumulatedNotes = noteEntry ? [noteEntry] : [];
                 newReviewTasks.push({
                   id: genId('rt'),
                   topicName,
                   graphNodeId,
                   dueDate: nowStr,
                   isCompleted: true,
-                  accumulatedNotes: accumulatedNotes,
                   complexity: 'normal',
                   smStatus: 'confirmed',
                 });
@@ -776,13 +744,12 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               return newData;
             }
 
-            // === 第三步：如果 triggerSchedule 为 true，执行原本的时间线重置与生成逻辑 ===
+            // === 如果 triggerSchedule 为 true，执行原本的时间线重置与生成逻辑 ===
             if (existingTasks.length === 0) {
               // 分支 1：完全新学 -> 创建全新的 ReviewTask 序列
               const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
               let currentDueDate = tomorrowStr;
               const generated: ReviewTask[] = [];
-              const accumulatedNotes = noteEntry ? [noteEntry] : [];
               
               for (let i = 0; i < intervals.length; i++) {
                 const interval = intervals[i];
@@ -795,16 +762,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                   graphNodeId,
                   dueDate: currentDueDate,
                   isCompleted: false,
-                  accumulatedNotes: accumulatedNotes, 
                   complexity: 'normal',
                   smStatus: 'scheduled',
                 });
               }
               newReviewTasks.push(...generated);
             } else {
-              // 分支 2：找到了 -> 更新现有的 ReviewTask 序列（笔记在上面已经更新好了，现在拿最新的笔记）
-              const updatedFirstTask = newReviewTasks.find(t => t.graphNodeId === graphNodeId);
-              const newNotes = updatedFirstTask?.accumulatedNotes || [];
+              // 分支 2：找到了 -> 更新现有的 ReviewTask 序列
 
               // 筛选出尚未完成的任务（即未来的复习轮次）
               const uncompletedTasks = existingTasks.filter(t => !t.isCompleted).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -846,7 +810,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                     graphNodeId,
                     dueDate: currentDueDate,
                     isCompleted: false,
-                    accumulatedNotes: newNotes, 
                     complexity: 'normal',
                     smStatus: 'scheduled',
                   });

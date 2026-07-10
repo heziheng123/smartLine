@@ -2,8 +2,9 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
+import { useTimelineStore } from '@/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
-import { Plus, Trash2, Check, Settings2, X, Info, Search, ChevronDown, Filter, Command, Zap, Archive } from 'lucide-react';
+import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, CalendarDays } from 'lucide-react';
 import { forceCollide, forceX, forceY, forceCenter } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -52,11 +53,13 @@ export const KnowledgeGraphView: React.FC = () => {
   const { nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore();
   const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
   const { reviewTasks } = useEbbStore();
+  const { tasks } = useTimelineStore();
 
   const [newRootName, setNewRootName] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [newChildName, setNewChildName] = useState('');
+  const [isChildInputFocused, setIsChildInputFocused] = useState(false);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isAltPressed, setIsAltPressed] = useState(false);
 
@@ -569,6 +572,29 @@ const gNodes: ViewNode[] = nodes.map(n => {
       .slice(0, 3);
   }, [selectedNodeId, getDescendants, reviewTasks]);
 
+  const relatedTaskBlocks = useMemo(() => {
+    if (!selectedNodeId) return [];
+    const scopedIds = new Set([selectedNodeId, ...getDescendants(selectedNodeId)]);
+    
+    const results: { task: any, block: any }[] = [];
+    tasks.forEach(task => {
+      if (!task.blocks) return;
+      task.blocks.forEach(block => {
+        if (block.type === 'smart-task' && block.header.graphNodeId && scopedIds.has(block.header.graphNodeId)) {
+          results.push({ task, block });
+        }
+      });
+    });
+    
+    results.sort((a, b) => {
+      const dateA = a.block.header.date || '';
+      const dateB = b.block.header.date || '';
+      return dateB.localeCompare(dateA);
+    });
+    
+    return results;
+  }, [selectedNodeId, getDescendants, tasks]);
+
   useEffect(() => {
     if (selectedNode) {
       setEditName(selectedNode.name);
@@ -838,7 +864,7 @@ const gNodes: ViewNode[] = nodes.map(n => {
               }
               setSelectedNodeId(node.id as string);
             }}
-            onNodeRightClick={(node: any, event: any) => {
+            onNodeRightClick={(node: any) => {
               // 右击：聚焦/居中该节点，而不是改变其状态
               if (fgRef.current) {
                 fgRef.current.centerAt(node.x, node.y, 800);
@@ -1025,229 +1051,291 @@ const gNodes: ViewNode[] = nodes.map(n => {
 
         {/* Floating Control Panel - Mac / Linear Style */}
         {isPanelOpen ? (
-          <div className="absolute top-6 left-6 bg-white/85 backdrop-blur-xl rounded-2xl shadow-[0_12px_40px_-8px_rgba(0,0,0,0.12)] border border-slate-200/50 w-[280px] max-h-[90vh] overflow-y-auto overflow-x-hidden z-10 transition-all duration-300 custom-scrollbar flex flex-col">
-            {/* 标题栏 */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200/50 sticky top-0 bg-white/40 backdrop-blur-md z-10">
-              <div className="flex items-center gap-2">
-                <Command size={14} className="text-slate-600" />
-                <h3 className="font-semibold text-slate-800 text-[13px] tracking-wide">节点控制台</h3>
-              </div>
-              <button onClick={() => setIsPanelOpen(false)} className="text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 p-1.5 rounded-lg transition-all" title="收起">
-                <X size={14} />
-              </button>
-            </div>
+          <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_12px_40px_-8px_rgba(0,0,0,0.12)] border border-slate-200/50 w-[340px] max-h-[90vh] overflow-y-auto overflow-x-hidden z-10 transition-all duration-300 custom-scrollbar flex flex-col">
             
-            {/* 智能录入区 (Global) */}
-            <div className="p-4 border-b border-slate-200/50 bg-slate-50/30">
-              <div className="relative">
-                <textarea
-                  rows={1}
-                  placeholder="新建根节点 (支持 Markdown)"
-                  className="w-full bg-white border border-slate-200/60 rounded-xl pl-3 pr-8 py-2 text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:border-slate-300 focus:ring-4 focus:ring-slate-100 transition-all resize-none"
-                  value={newRootName}
-                  onChange={e => setNewRootName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey && newRootName.trim()) {
-                      e.preventDefault();
-                      handleImport(newRootName);
-                      setNewRootName('');
-                    }
-                  }}
-                  style={{ minHeight: '36px' }}
-                />
-                <button
-                  onClick={() => {
-                    if (newRootName.trim()) {
-                      handleImport(newRootName);
-                      setNewRootName('');
-                    }
-                  }}
-                  className="absolute right-1.5 top-1.5 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                  title="生成节点 (Enter)"
-                >
-                  <Plus size={14} strokeWidth={2.5} />
-                </button>
-              </div>
-            </div>
-
             {selectedNode ? (
-              <div className="p-4 animate-in fade-in duration-200 flex flex-col gap-4">
-                {/* 大标题 - 节点名称编辑 */}
-                <div className="relative group -mx-2">
-                  <textarea
-                    className="w-full bg-transparent text-sm font-semibold text-slate-800 placeholder-slate-400 resize-none focus:outline-none focus:bg-slate-50/80 rounded-lg px-2 py-1.5 border border-transparent focus:border-slate-200/60 transition-all"
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    onBlur={() => { if(editName.trim()) updateNode(selectedNode.id, { name: editName.trim() }) }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    rows={1}
-                    style={{ minHeight: '32px' }}
-                  />
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-[10px] text-slate-400 pointer-events-none transition-opacity">
-                    点击编辑
-                  </div>
-                </div>
-                
-                {/* 状态数据看板 */}
-                {selectedGraphNode && (
-                  <div className="grid grid-cols-4 gap-2">
-                    <div className="flex flex-col items-center p-2 rounded-xl bg-slate-50 border border-slate-100/80">
-                      <span className="text-[10px] font-medium text-slate-500 mb-0.5">待复习</span>
-                      <span className="text-xs font-semibold text-slate-700">{selectedGraphNode.pendingCount}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-2 rounded-xl bg-rose-50/50 border border-rose-100/50">
-                      <span className="text-[10px] font-medium text-rose-400 mb-0.5">逾期</span>
-                      <span className="text-xs font-semibold text-rose-600">{selectedGraphNode.overdueCount}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-2 rounded-xl bg-emerald-50/50 border border-emerald-100/50">
-                      <span className="text-[10px] font-medium text-emerald-500 mb-0.5">已完成</span>
-                      <span className="text-xs font-semibold text-emerald-600">{selectedGraphNode.completedCount}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-2 rounded-xl bg-blue-50/50 border border-blue-100/50">
-                      <span className="text-[10px] font-medium text-blue-500 mb-0.5">总计</span>
-                      <span className="text-xs font-semibold text-blue-600">{selectedGraphNode.totalReviewCount}</span>
-                    </div>
-                  </div>
-                )}
-                
-                {/* 近期复习预览 */}
-                {selectedNodeReviewPreview.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">近期复习</div>
-                    <div className="space-y-1">
-                      {selectedNodeReviewPreview.map(task => (
-                        <div key={task.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 border border-slate-100/80 flex items-center justify-between gap-2">
-                          <span className="truncate text-[10px] font-medium text-slate-600">{task.topicName}</span>
-                          <span className={`shrink-0 text-[9px] font-medium ${task.isCompleted ? 'text-emerald-500' : 'text-slate-400'}`}>
-                            {task.isCompleted ? '✓ 完成' : task.dueDate}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {/* 操作栏 (激活 / 归档 / 删除) */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      const newStatus = selectedNode.status === 'activated' ? 'unactivated' : 'activated';
-                      updateNode(selectedNode.id, { status: newStatus });
-                    }}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                      selectedNode.status === 'activated' 
-                        ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100' 
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Zap size={14} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
-                    {selectedNode.status === 'activated' ? '已激活' : '激活节点'}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if(confirm('归档后，该节点及其所有子节点、复习任务将从主工作区隐藏，但仍可在全局搜索中查看。确定归档吗？')) {
-                        archiveNodeCascade(selectedNode.id, true);
-                        setSelectedNodeId(null);
-                      }
-                    }}
-                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-all"
-                    title="归档节点 (封存冷数据)"
-                  >
-                    <Archive size={15} />
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if(confirm('确定删除该节点吗？')) {
-                        deleteNode(selectedNode.id);
-                        setSelectedNodeId(null);
-                      }
-                    }}
-                    className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 border border-transparent hover:border-rose-100 transition-all"
-                    title="删除节点"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-
-                {/* 分割线 */}
-                <div className="h-px w-full bg-slate-200/60"></div>
-
-                {/* 添加子节点 */}
-                <div className="space-y-2">
-                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">添加子节点</div>
-                  <div className="relative">
+              <div className="flex flex-col">
+                {/* 极简头部与操作区 */}
+                <div className="flex items-start justify-between px-5 pt-5 pb-3 sticky top-0 bg-white/90 backdrop-blur-md z-10">
+                  <div className="flex-1 pr-3 relative group w-0">
                     <input
                       type="text"
-                      placeholder="输入子节点名称..."
-                      className="w-full bg-white border border-slate-200/60 rounded-lg pl-3 pr-8 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-slate-300 focus:ring-4 focus:ring-slate-100 transition-all"
-                      value={newChildName}
-                      onChange={e => setNewChildName(e.target.value)}
+                      className="w-full bg-transparent text-lg font-bold text-slate-800 placeholder-slate-400 focus:outline-none rounded px-1 -ml-1 border border-transparent focus:border-slate-200/60 transition-all truncate"
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      onBlur={() => { if(editName.trim()) updateNode(selectedNode.id, { name: editName.trim() }) }}
                       onKeyDown={e => {
-                        if (e.key === 'Enter' && newChildName.trim()) {
-                          handleImport(newChildName, selectedNode.id);
-                          setNewChildName('');
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          e.currentTarget.blur();
                         }
                       }}
+                      title={editName}
                     />
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-[10px] text-slate-400 pointer-events-none transition-opacity bg-white/80 px-1">
+                      编辑
+                    </div>
+                  </div>
+                  
+                  {/* 右上角操作区 - 无界悬浮交互 */}
+                  <div className="flex items-center gap-0.5 shrink-0">
                     <button
                       onClick={() => {
-                        if (newChildName.trim()) {
-                          handleImport(newChildName, selectedNode.id);
-                          setNewChildName('');
+                        const newStatus = selectedNode.status === 'activated' ? 'unactivated' : 'activated';
+                        updateNode(selectedNode.id, { status: newStatus });
+                      }}
+                      className={`p-1.5 rounded-md transition-all ${
+                        selectedNode.status === 'activated' 
+                          ? 'text-blue-500 hover:bg-blue-50' 
+                          : 'text-slate-600 hover:text-slate-800 hover:bg-slate-100'
+                      }`}
+                      title={selectedNode.status === 'activated' ? '已激活' : '激活节点'}
+                    >
+                      <Zap size={13} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if(confirm('归档后，该节点及其所有子节点、复习任务将从主工作区隐藏，但仍可在全局搜索中查看。确定归档吗？')) {
+                          archiveNodeCascade(selectedNode.id, true);
+                          setSelectedNodeId(null);
                         }
                       }}
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-md transition-all"
+                      className="p-1.5 rounded-md text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-all"
+                      title="归档节点 (封存冷数据)"
                     >
-                      <Plus size={14} />
+                      <Archive size={13} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if(confirm('确定删除该节点吗？')) {
+                          deleteNode(selectedNode.id);
+                          setSelectedNodeId(null);
+                        }
+                      }}
+                      className="p-1.5 rounded-md text-slate-600 hover:text-rose-500 hover:bg-rose-50 transition-all"
+                      title="删除节点"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                    <button onClick={() => setIsPanelOpen(false)} className="p-1.5 rounded-md ml-0.5 text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-all" title="收起">
+                      <X size={13} />
                     </button>
                   </div>
                 </div>
 
-                {/* 吸纳节点 */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">吸纳已有节点</span>
-                    <div className="group relative">
-                      <Info size={12} className="text-slate-400" />
-                      <div className="absolute bottom-full right-0 mb-1 w-32 bg-slate-800 text-white text-[9px] p-1.5 rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity text-center shadow-lg">
-                        按住 Alt 点击图谱中的节点快速吸纳
+                <div className="px-5 pb-5 flex flex-col gap-5">
+                  {/* 无边框状态数据看板 - 极致降噪 */}
+                  {selectedGraphNode && (
+                    <div className="flex items-center justify-between px-2 py-3 border-y border-slate-100/60">
+                      <div className="flex flex-col items-center flex-1">
+                        <span className="text-lg font-bold text-blue-500 leading-none mb-1">{selectedGraphNode.pendingCount}</span>
+                        <span className="text-[10px] font-medium text-slate-400">待复习</span>
+                      </div>
+                      <div className="w-px h-3 bg-slate-200"></div>
+                      <div className="flex flex-col items-center flex-1">
+                        <span className={`text-lg font-bold leading-none mb-1 ${selectedGraphNode.overdueCount > 0 ? 'text-rose-500' : 'text-slate-500'}`}>{selectedGraphNode.overdueCount}</span>
+                        <span className="text-[10px] font-medium text-slate-400">逾期</span>
+                      </div>
+                      <div className="w-px h-3 bg-slate-200"></div>
+                      <div className="flex flex-col items-center flex-1">
+                        <span className="text-lg font-bold text-emerald-500 leading-none mb-1">{selectedGraphNode.completedCount}</span>
+                        <span className="text-[10px] font-medium text-slate-400">已完成</span>
+                      </div>
+                      <div className="w-px h-3 bg-slate-200"></div>
+                      <div className="flex flex-col items-center flex-1">
+                        <span className="text-lg font-bold text-indigo-500 leading-none mb-1">{selectedGraphNode.totalReviewCount}</span>
+                        <span className="text-[10px] font-medium text-slate-400">总计</span>
                       </div>
                     </div>
+                  )}
+                  
+                  {/* 近期复习预览 (无边框设计 + 日期优化) */}
+                  {selectedNodeReviewPreview.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-bold text-slate-400/80 uppercase tracking-widest flex items-center gap-1.5">
+                        <Zap size={11} className="text-amber-400" />
+                        近期复习
+                      </div>
+                      <div className="space-y-0.5">
+                        {selectedNodeReviewPreview.map(task => (
+                          <div 
+                            key={task.id} 
+                            onClick={() => {
+                              window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'ebb' } }));
+                            }}
+                            className="group flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
+                          >
+                            <div className="flex items-center gap-2 overflow-hidden flex-1">
+                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${task.isCompleted ? 'bg-emerald-400' : 'bg-amber-400'}`}></div>
+                              <span className="truncate text-xs font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{task.topicName}</span>
+                            </div>
+                            <span className={`shrink-0 text-[10px] font-medium ${task.isCompleted ? 'text-emerald-600' : 'text-slate-500 group-hover:text-blue-600 transition-colors'}`}>
+                              {task.isCompleted ? '✓' : task.dueDate}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 📝 相关任务块 (无边框幽灵列表 + 徽章化) */}
+                  {relatedTaskBlocks.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-bold text-slate-400/80 uppercase tracking-widest flex items-center gap-1.5">
+                        <Network size={11} className="text-blue-400" />
+                        关联任务记录
+                      </div>
+                      <div className="space-y-1">
+                        {relatedTaskBlocks.map(({ task, block }) => (
+                          <div 
+                            key={`${task.id}-${block.id}`} 
+                            onClick={() => {
+                              window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id } }));
+                            }}
+                            className="group flex flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="text-xs font-semibold text-slate-800 leading-snug group-hover:text-blue-600 transition-colors line-clamp-1 flex-1">
+                                {block.header.title}
+                              </div>
+                              <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                block.header.isCompleted 
+                                  ? 'text-emerald-600 bg-emerald-50' 
+                                  : 'text-amber-600 bg-amber-50'
+                              }`}>
+                                {block.header.isCompleted ? '已完成' : '进行中'}
+                              </span>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium">
+                              <span>{block.header.date}</span>
+                              {block.header.tag && (
+                                <>
+                                  <span>·</span>
+                                  <span style={{ color: block.header.tagColor || '#64748b' }}>{block.header.tag}</span>
+                                </>
+                              )}
+                              <span>·</span>
+                              <span className="truncate max-w-[120px]" title={task.name}>{task.name}</span>
+                            </div>
+                            
+                            {block.body && block.body.replace(/<[^>]*>?/gm, '').trim() && (
+                              <div className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">
+                                {block.body.replace(/<[^>]*>?/gm, '').trim()}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 显性化添加子节点输入框 */}
+                  <div className="pt-2 border-t border-slate-100/80">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="+ 添加子节点 (Enter 确认)..."
+                        className="w-full bg-slate-50 rounded-lg border border-slate-100/60 focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-50/50 px-3 py-2 text-xs font-medium text-slate-700 placeholder-slate-400 focus:outline-none transition-all"
+                        value={newChildName}
+                        onChange={e => setNewChildName(e.target.value)}
+                        onFocus={() => setIsChildInputFocused(true)}
+                        onBlur={() => {
+                          // 稍微延迟隐藏，让点击吸纳按钮的事件能触发
+                          setTimeout(() => setIsChildInputFocused(false), 200);
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && newChildName.trim()) {
+                            handleImport(newChildName, selectedNode.id);
+                            setNewChildName('');
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto custom-scrollbar">
-                    {availableNodesToAbsorb.length > 0 ? availableNodesToAbsorb.map(n => (
-                      <button
-                        key={n.id}
-                        onClick={() => updateNode(n.id, { parentId: selectedNode.id })}
-                        className="group flex items-center gap-1 bg-white border border-slate-200/60 hover:border-emerald-300 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 px-2 py-1 rounded-md text-[10px] transition-all shadow-sm"
-                        title={`吸纳 "${n.name}"`}
-                      >
-                        <span className="truncate max-w-[120px]">{n.name}</span>
-                        <Plus size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </button>
-                    )) : (
-                      <span className="text-[10px] text-slate-400">无可吸纳节点</span>
-                    )}
+
+                  {/* 吸纳节点 - 只有输入框聚焦时才 Popover 显示 */}
+                  {isChildInputFocused && availableNodesToAbsorb.length > 0 && (
+                    <div className="space-y-1.5 animate-in slide-in-from-top-2 fade-in duration-200">
+                      <div className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
+                        <Info size={10} />
+                        按住 Alt 点击图谱中的节点，或点击下方标签吸纳
+                      </div>
+                      <div className="flex flex-wrap gap-1 max-h-[120px] overflow-y-auto custom-scrollbar p-1">
+                        {availableNodesToAbsorb.map(n => (
+                          <button
+                            key={n.id}
+                            onClick={() => {
+                              updateNode(n.id, { parentId: selectedNode.id });
+                              setIsChildInputFocused(false);
+                            }}
+                            className="group flex items-center gap-1 bg-white border border-slate-200/60 hover:border-emerald-300 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 px-2 py-1 rounded-md text-[10px] transition-all shadow-sm"
+                            title={`吸纳 "${n.name}"`}
+                          >
+                            <span className="truncate max-w-[100px]">{n.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col h-full">
+                {/* 标题栏 */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white/90 backdrop-blur-md z-10">
+                  <div className="flex items-center gap-2">
+                    <Command size={14} className="text-slate-600" />
+                    <h3 className="font-semibold text-slate-800 text-sm tracking-wide">图谱控制台</h3>
+                  </div>
+                  <button onClick={() => setIsPanelOpen(false)} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-1.5 rounded-lg transition-all" title="收起">
+                    <X size={14} />
+                  </button>
+                </div>
+                
+                {/* 智能录入区 (Global) */}
+                <div className="p-5">
+                  <div className="text-[11px] font-bold text-slate-400/80 uppercase tracking-widest mb-2">快速构建</div>
+                  <div className="relative">
+                    <textarea
+                      rows={1}
+                      placeholder="新建根节点 (支持多行 Markdown)"
+                      className="w-full bg-slate-50/50 border border-slate-200/60 rounded-xl pl-3 pr-8 py-2.5 text-xs font-medium text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-50/50 transition-all resize-none"
+                      value={newRootName}
+                      onChange={e => setNewRootName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey && newRootName.trim()) {
+                          e.preventDefault();
+                          handleImport(newRootName);
+                          setNewRootName('');
+                        }
+                      }}
+                      style={{ minHeight: '40px' }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (newRootName.trim()) {
+                          handleImport(newRootName);
+                          setNewRootName('');
+                        }
+                      }}
+                      className="absolute right-1.5 top-1.5 p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                      title="生成节点 (Enter)"
+                    >
+                      <Plus size={14} strokeWidth={2.5} />
+                    </button>
                   </div>
                 </div>
 
-              </div>
-            ) : (
-              <div className="p-6 mx-4 my-4 bg-slate-50/50 rounded-xl flex flex-col items-center justify-center text-center border border-slate-200/50 border-dashed">
-                <div className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center mb-3 text-slate-400 border border-slate-100">
-                  <Command size={18} />
+                <div className="flex-1 flex flex-col items-center justify-center text-center px-8 opacity-60 pb-8">
+                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3 text-slate-400">
+                    <Network size={20} />
+                  </div>
+                  <h4 className="text-slate-600 font-semibold mb-1 text-xs">探索知识网络</h4>
+                  <p className="text-slate-400 text-[10px] leading-relaxed">
+                    点击图谱中的节点查看详情与复习记录，或在上方快速创建新节点
+                  </p>
                 </div>
-                <h4 className="text-slate-600 font-semibold mb-1 text-xs">未选中节点</h4>
-                <p className="text-slate-400 text-[10px] leading-relaxed">
-                  点击图谱中的节点开始编辑
-                </p>
               </div>
             )}
           </div>

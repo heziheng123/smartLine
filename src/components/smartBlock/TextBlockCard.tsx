@@ -40,8 +40,7 @@ const TextBlockCard: React.FC<TextBlockCardProps> = ({
     }, 0);
   }, []);
 
-  const handleInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
-    const text = e.currentTarget.innerText;
+  const handleInput = useCallback(() => {
     // Check if the text ends with '/' or if the caret is right after a '/'
     const selection = window.getSelection();
     if (selection && selection.rangeCount > 0) {

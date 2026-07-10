@@ -9,16 +9,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 // 时光胶囊模态框：展示归档节点的内容
 export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose: () => void }) => {
   const { nodes, archiveNodeCascade } = useGraphStore();
-  const { reviewTasks: allEbbTasks } = useEbbStore();
   const { tasks: tlTasks } = useTimelineStore();
   
   const node = nodes.find(n => n.id === nodeId);
   if (!node) return null;
-
-  // 获取该节点下所有的复习笔记和错题
-  const relatedTasks = allEbbTasks.filter(t => t.graphNodeId === nodeId);
   
-  // 提取智能块中的笔记
+  // 提取智能块中的备注
   const relatedBlocks = tlTasks.flatMap(t => 
     (t.blocks || []).filter(b => b.type === 'smart-task' && b.header.graphNodeId === nodeId)
   );
@@ -80,65 +76,50 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-slate-50/50">
-            {relatedTasks.length > 0 && (
-              <div className="space-y-4">
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <CalendarClock size={16} />
-                  复习轨迹
-                </h3>
-                <div className="grid gap-3">
-                  {relatedTasks.map(task => (
-                    <div key={task.id} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="font-semibold text-slate-700">{task.topicName}</div>
-                        <div className="text-xs text-slate-400">{task.completedDate || task.dueDate}</div>
+          <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+            {relatedBlocks.length > 0 ? (
+              <div className="space-y-6">
+                {/* 历史任务块 */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-slate-500 flex items-center gap-2">
+                    <CalendarClock size={14} />
+                    历史任务
+                  </h3>
+                  <div className="grid gap-2">
+                    {relatedBlocks.map((block: import('@/types').SmartTaskBlock, idx: number) => (
+                      <div key={block.id || idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3 group hover:border-blue-100 transition-colors">
+                        <div className="mt-0.5">
+                          {block.type === 'smart-task' && block.header.isCompleted ? (
+                            <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-bold">
+                              ✓
+                            </div>
+                          ) : (
+                            <div className="w-4 h-4 rounded-full border-2 border-slate-200" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-4 mb-1">
+                            <span className="font-medium text-slate-700 text-sm truncate">
+                              {block.type === 'smart-task' ? block.header.title : '文本块'}
+                            </span>
+                            {block.type === 'smart-task' && block.header.completedDate && (
+                              <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                                {block.header.completedDate}
+                              </span>
+                            )}
+                          </div>
+                          {block.type === 'smart-task' && block.body && (
+                            <div className="text-xs text-slate-500 line-clamp-2 leading-relaxed bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-100/50">
+                              {block.body.replace(/<[^>]*>?/gm, '')}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      {task.accumulatedNotes && task.accumulatedNotes.length > 0 && (
-                        <div className="mt-3 space-y-2 pl-3 border-l-2 border-slate-100">
-                          {task.accumulatedNotes.map((noteStr, idx) => {
-                            try {
-                              const note = JSON.parse(noteStr);
-                              return (
-                                <div key={idx} className="text-sm text-slate-600">
-                                  <span className="text-xs font-medium text-slate-400 mr-2">{note.date}</span>
-                                  {note.notes || note.title}
-                                </div>
-                              );
-                            } catch {
-                              return <div key={idx} className="text-sm text-slate-600">{noteStr}</div>;
-                            }
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </div>
-            )}
-
-            {relatedBlocks.length > 0 && (
-              <div className="space-y-4">
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <FileText size={16} />
-                  关联笔记
-                </h3>
-                <div className="grid gap-3">
-                  {relatedBlocks.map((b: import('@/types').SmartTaskBlock) => (
-                    <div key={b.id} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-                      <div className="font-semibold text-slate-700 mb-2">{b.header.title}</div>
-                      {b.header.taskNotes && (
-                        <div className="text-sm text-slate-600 whitespace-pre-wrap">
-                          {b.header.taskNotes}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {relatedTasks.length === 0 && relatedBlocks.length === 0 && (
+            ) : (
               <div className="text-center py-12 text-slate-400">
                 <Archive size={48} className="mx-auto mb-4 opacity-20" />
                 <p>该节点下没有留下笔记或错题记录</p>

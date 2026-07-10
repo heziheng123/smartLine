@@ -327,6 +327,63 @@
   /* 移除特殊样式，使其与普通任务一致 */
 }
 
+.ds-item--free {
+  background: #F9FAFB;
+  border-color: #F3F4F6;
+  box-shadow: none;
+}
+
+.ds-item--free:hover {
+  background: #F3F4F6;
+  border-color: #E5E7EB;
+  box-shadow: none;
+}
+
+.ds-item--free .ds-item-name {
+  color: #6B7280;
+}
+
+.ds-slot-add-free-btn {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  margin-top: 8px;
+  background: transparent;
+  border: 1px dashed #E5E7EB;
+  border-radius: 6px;
+  color: #9CA3AF;
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ds-slot-add-free-btn:hover {
+  border-color: #D1D5DB;
+  color: #6B7280;
+  background: #F9FAFB;
+}
+
+.ds-slot-add-free-input-wrap {
+  margin-top: 8px;
+}
+
+.ds-slot-add-free-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #374151;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.ds-slot-add-free-input:focus {
+  outline: none;
+  border-color: #8B9DC3;
+}
+
 /* 左侧颜色高亮条 */
 .ds-item-accent {
   position: absolute;
@@ -935,6 +992,15 @@
 
 .tb-card--unlinked {
   border: 1px dashed #D1D5DB;
+}
+
+.tb-card--free {
+  border: 1px dashed #D1D5DB;
+}
+
+.tb-card--free .tb-name {
+  color: #6B7280;
+  font-weight: 500;
 }
 
 /* 左侧颜色高亮条 */

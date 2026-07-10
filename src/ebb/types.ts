@@ -24,7 +24,6 @@ export interface ReviewTask {
   tag?: string;
   outlineNodeId?: string; // 保留以兼容旧版，新版推荐使用 graphNodeId
   graphNodeId?: string;   // 🧠 关联的知识大盘节点 ID
-  accumulatedNotes?: string[]; // 📚 累积的复习笔记/错题数组
   complexity?: ComplexityLevel;
   smStatus?: SmStatus;
   isArchived?: boolean;   // 是否已归档（冷数据区）

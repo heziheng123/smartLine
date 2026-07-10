@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   CalendarDays,
   Sparkles,
-  Pencil,
   Trash2,
   Maximize2,
   Minimize2,
@@ -73,10 +72,6 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   // 撤销历史
   const [history, setHistory] = useState<ParsedRow[][]>([]);
 
-  // 内联编辑
-  const [editingRowId, setEditingRowId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<ParsedRow | null>(null);
-
   // 历史日期警告
   const [historicalWarning, setHistoricalWarning] = useState<{
     count: number;
@@ -114,22 +109,12 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   
   const { nodes } = useGraphStore();
 
-  const startEditRow = (r: ParsedRow) => {
-    setEditingRowId(r._rowId);
-    setEditDraft({ ...r });
-  };
-
-  const cancelEditRow = () => {
-    setEditingRowId(null);
-    setEditDraft(null);
-  };
-
   // 直接编辑模式的更新
-  const updateRow = useCallback((rowId: string, field: keyof ParsedRow, value: any) => {
+  const updateRow = useCallback((rowId: string, field: keyof ParsedRow, value: ParsedRow[keyof ParsedRow]) => {
     setRows(prev => cleanseRows(prev.map(r => r._rowId === rowId ? { ...r, [field]: value } : r)));
   }, []);
 
-  const handleRowChange = (rowId: string, field: keyof ParsedRow, value: any) => {
+  const handleRowChange = (rowId: string, field: keyof ParsedRow, value: ParsedRow[keyof ParsedRow]) => {
     // 这里为了性能可以防抖，但对于批量编辑场景，直接更新即可
     updateRow(rowId, field, value);
   };
@@ -185,7 +170,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
     doConfirm();
   };
 
-  const tagStyle = (tag: string) => {
+  const tagStyle = () => {
     // 简易 mock tag 样式，也可复用 getTagColor
     return {
       backgroundColor: '#f3f4f6',
@@ -430,7 +415,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                           value={r.tag}
                           onChange={(e) => handleRowChange(r._rowId, 'tag', e.target.value)}
                           style={{
-                            ...tagStyle(r.tag),
+                            ...tagStyle(),
                             appearance: 'none',
                             paddingRight: '12px',
                             cursor: 'pointer'

@@ -248,8 +248,6 @@ export function convertBlocksToItems(
   const items: ScheduledItem[] = [];
 
   for (const block of sorted) {
-    if (block.source === 'free') continue; // 自由块无法转回时段模式
-
     const startMin = timeToMinutes(block.startTime);
     // 根据开始分钟确定时段
     let slot: TimeSlot = 'morning';
@@ -264,7 +262,7 @@ export function convertBlocksToItems(
       id: block.id,
       sourceId: block.sourceId,
       name: block.name,
-      source: block.source as 'project' | 'review',
+      source: block.source,
       timeSlot: slot,
       order: items.filter((i) => i.timeSlot === slot).length,
       completed: block.completed,

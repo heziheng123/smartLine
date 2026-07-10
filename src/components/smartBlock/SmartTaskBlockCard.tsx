@@ -10,16 +10,9 @@ import dayjs from 'dayjs';
 import { todayStr, formatDate, getDayOfWeek, isBeforeDay, makeLocalDayjs } from '@/utils/dateSafe';
 import {
   Check,
-  Calendar,
   Clock,
-  Tag,
   Trash2,
   ChevronDown,
-  RefreshCw,
-  Video,
-  BookOpen,
-  PenTool,
-  StickyNote,
 } from 'lucide-react';
 import type { SmartTaskBlock, SmartTaskHeader } from '@/types';
 import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
@@ -98,11 +91,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   // 完成切换
   const handleToggle = useCallback(() => {
     const now = todayStr();
-    // 强制把所有任务默认设为输出型（note），以确保复习时始终继承备注
     onUpdateHeader(block.id, {
       isCompleted: !header.isCompleted,
       completedDate: !header.isCompleted ? now : undefined,
-      taskType: 'note' 
     });
   }, [block.id, header.isCompleted, onUpdateHeader]);
 

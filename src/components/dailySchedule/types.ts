@@ -6,7 +6,7 @@
 export type TimeSlot = 'morning' | 'afternoon' | 'evening';
 
 /** 任务来源类型 */
-export type TaskSource = 'project' | 'review';
+export type TaskSource = 'project' | 'review' | 'free';
 
 /** 时间段配置 */
 export interface TimeSlotConfig {
@@ -50,7 +50,7 @@ export interface TimeBlock {
   /** 任务名称 */
   name: string;
   /** 来源类型 */
-  source: TaskSource | 'free';
+  source: TaskSource;
   /** 开始时间（HH:mm 格式，如 "14:00"） */
   startTime: string;
   /** 结束时间（HH:mm 格式，如 "15:30"） */
