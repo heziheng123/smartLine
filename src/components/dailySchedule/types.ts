@@ -31,8 +31,8 @@ export interface ScheduledItem {
   timeSlot: TimeSlot;
   /** 排序索引 */
   order: number;
-  /** 是否已完成 */
-  completed: boolean;
+  /** @deprecated 状态现在是实时计算派生的，不需要持久化 */
+  completed?: boolean;
   /** 标签颜色 */
   color?: string;
   /** 预计时长（分钟） */
@@ -55,8 +55,8 @@ export interface TimeBlock {
   startTime: string;
   /** 结束时间（HH:mm 格式，如 "15:30"） */
   endTime: string;
-  /** 是否已完成 */
-  completed: boolean;
+  /** @deprecated 状态现在是实时计算派生的，不需要持久化 */
+  completed?: boolean;
   /** 标签颜色 */
   color?: string;
   /** 额外信息 */

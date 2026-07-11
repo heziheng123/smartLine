@@ -10,6 +10,7 @@ import ForceGraph2D from 'react-force-graph-2d';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { TimeCapsuleModal } from '@/components/GlobalSearch';
+import styles from './GraphConsole.module.css';
 
 type NodeRollupStats = {
   totalReviewCount: number;
@@ -683,56 +684,74 @@ const gNodes: ViewNode[] = nodes.map(n => {
 
       {/* 知识大盘的专属控制台已经通过 Portal 注入到底部全局 Dock，故这里不再保留顶部独立的悬浮面板 */}
       {dockPortalTarget && createPortal(
-        <motion.div
-          layout
-          key="knowledge-graph-actions"
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: 20 }}
-          transition={{ type: "spring", stiffness: 400, damping: 30 }}
-          className="flex items-center gap-1"
-        >
-          {/* 2. Root Filter */}
-          <div className="relative group flex items-center px-1 cursor-pointer">
-            <Command size={16} className="text-slate-500 group-hover:text-slate-700 transition-colors" />
-            <select 
-              className="appearance-none bg-transparent text-[13px] font-semibold text-slate-700 outline-none cursor-pointer pl-1 pr-3 min-w-[20px] max-w-[80px] truncate"
-              value={selectedRootFilter}
-              onChange={e => setSelectedRootFilter(e.target.value)}
-              title="全景视角"
-            >
-              <option value="all">全景</option>
-              {rootNodes.map(n => (
-                <option key={n.id} value={n.id}>{n.name}</option>
-              ))}
-            </select>
-            <ChevronDown size={12} strokeWidth={2.5} className="text-slate-400 group-hover:text-slate-600 transition-colors absolute right-0" pointerEvents="none" />
-          </div>
+          <motion.div
+            layout
+            key="knowledge-graph-actions"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className="flex items-center gap-2 px-1"
+          >
+            {/* 2. Root Filter (Modern Pill Container) */}
+            <div className="relative group flex items-center bg-slate-100/50 hover:bg-slate-200/60 rounded-lg px-2 py-1.5 transition-all cursor-pointer border border-transparent hover:border-slate-200/80 shadow-sm">
+              <Command size={14} className="text-slate-500 group-hover:text-blue-500 transition-colors shrink-0" />
+              <select 
+                className="appearance-none bg-transparent border-none outline-none focus:ring-0 text-[13px] font-semibold text-slate-700 cursor-pointer pl-1.5 pr-5 min-w-[60px] max-w-[120px] truncate"
+                value={selectedRootFilter}
+                onChange={e => setSelectedRootFilter(e.target.value)}
+                title="全景视角"
+              >
+                <option value="all">全景视角</option>
+                {rootNodes.map(n => (
+                  <option key={n.id} value={n.id}>{n.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="text-slate-400 group-hover:text-slate-600 transition-colors absolute right-1.5" pointerEvents="none" />
+            </div>
 
-          <div className="tl-dock-divider" />
+            <div className="tl-dock-divider mx-0.5" />
 
-          {/* 3. Status Toggles (Compact Traffic Lights) */}
-          <div className="flex items-center gap-1.5 px-1">
-            <button 
-              onClick={() => setStatusFilter(prev => prev === 'overdue' ? 'all' : 'overdue')}
-              className={`w-3 h-3 rounded-full transition-all duration-300 ${statusFilter === 'overdue' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)] scale-110' : statusFilter !== 'all' ? 'bg-slate-200' : 'bg-rose-400 hover:bg-rose-500 hover:scale-110'}`}
-              title="查看严重逾期"
-            />
-            <button 
-              onClick={() => setStatusFilter(prev => prev === 'active' ? 'all' : 'active')}
-              className={`w-3 h-3 rounded-full transition-all duration-300 ${statusFilter === 'active' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] scale-110' : statusFilter !== 'all' ? 'bg-slate-200' : 'bg-emerald-400 hover:bg-emerald-500 hover:scale-110'}`}
-              title="查看进行中"
-            />
-            <button 
-              onClick={() => setStatusFilter(prev => prev === 'completed' ? 'all' : 'completed')}
-              className={`w-3 h-3 rounded-full transition-all duration-300 ${statusFilter === 'completed' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)] scale-110' : statusFilter !== 'all' ? 'bg-slate-200' : 'bg-amber-400 hover:bg-amber-500 hover:scale-110'}`}
-              title="查看已圆满"
-            />
-          </div>
+            {/* 3. Status Toggles (Modern Traffic Lights in a Pod) */}
+            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-100/50 rounded-full border border-slate-200/50 shadow-sm">
+              <button 
+                onClick={() => setStatusFilter(prev => prev === 'overdue' ? 'all' : 'overdue')}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 border border-black/5 shadow-inner transition-all duration-300 outline-none focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-rose-200 ${
+                  statusFilter === 'overdue' 
+                    ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)] scale-110' 
+                    : statusFilter !== 'all' 
+                      ? 'bg-slate-300/50 opacity-50' 
+                      : 'bg-rose-400 hover:bg-rose-500 hover:scale-110'
+                }`}
+                title="查看严重逾期"
+              />
+              <button 
+                onClick={() => setStatusFilter(prev => prev === 'active' ? 'all' : 'active')}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 border border-black/5 shadow-inner transition-all duration-300 outline-none focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-200 ${
+                  statusFilter === 'active' 
+                    ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)] scale-110' 
+                    : statusFilter !== 'all' 
+                      ? 'bg-slate-300/50 opacity-50' 
+                      : 'bg-emerald-400 hover:bg-emerald-500 hover:scale-110'
+                }`}
+                title="查看进行中"
+              />
+              <button 
+                onClick={() => setStatusFilter(prev => prev === 'completed' ? 'all' : 'completed')}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 border border-black/5 shadow-inner transition-all duration-300 outline-none focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-200 ${
+                  statusFilter === 'completed' 
+                    ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)] scale-110' 
+                    : statusFilter !== 'all' 
+                      ? 'bg-slate-300/50 opacity-50' 
+                      : 'bg-amber-400 hover:bg-amber-500 hover:scale-110'
+                }`}
+                title="查看已圆满"
+              />
+            </div>
 
-          <div className="tl-dock-divider" />
+            <div className="tl-dock-divider mx-0.5" />
 
-          {/* 4. Search (Collapsible) */}
+            {/* 4. Search (Collapsible) */}
           <div className="flex items-center group relative h-[36px]">
             <button
               className="tl-dock-btn"
@@ -1051,12 +1070,11 @@ const gNodes: ViewNode[] = nodes.map(n => {
 
         {/* Floating Control Panel - Mac / Linear Style */}
         {isPanelOpen ? (
-          <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_12px_40px_-8px_rgba(0,0,0,0.12)] border border-slate-200/50 w-[340px] max-h-[90vh] overflow-y-auto overflow-x-hidden z-10 transition-all duration-300 custom-scrollbar flex flex-col">
-            
+          <div className={styles.panel}>
             {selectedNode ? (
-              <div className="flex flex-col">
+              <div className={styles.panelContainer}>
                 {/* 极简头部与操作区 */}
-                <div className="flex items-start justify-between px-5 pt-5 pb-3 sticky top-0 bg-white/90 backdrop-blur-md z-10">
+                <div className={styles.header}>
                   <div className="flex-1 pr-3 relative group w-0">
                     <input
                       type="text"
@@ -1077,74 +1095,76 @@ const gNodes: ViewNode[] = nodes.map(n => {
                     </div>
                   </div>
                   
-                  {/* 右上角操作区 - 无界悬浮交互 */}
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <button
-                      onClick={() => {
-                        const newStatus = selectedNode.status === 'activated' ? 'unactivated' : 'activated';
-                        updateNode(selectedNode.id, { status: newStatus });
-                      }}
-                      className={`p-1.5 rounded-md transition-all ${
-                        selectedNode.status === 'activated' 
-                          ? 'text-blue-500 hover:bg-blue-50' 
-                          : 'text-slate-600 hover:text-slate-800 hover:bg-slate-100'
-                      }`}
-                      title={selectedNode.status === 'activated' ? '已激活' : '激活节点'}
-                    >
-                      <Zap size={13} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if(confirm('归档后，该节点及其所有子节点、复习任务将从主工作区隐藏，但仍可在全局搜索中查看。确定归档吗？')) {
-                          archiveNodeCascade(selectedNode.id, true);
-                          setSelectedNodeId(null);
-                        }
-                      }}
-                      className="p-1.5 rounded-md text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-all"
-                      title="归档节点 (封存冷数据)"
-                    >
-                      <Archive size={13} />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if(confirm('确定删除该节点吗？')) {
-                          deleteNode(selectedNode.id);
-                          setSelectedNodeId(null);
-                        }
-                      }}
-                      className="p-1.5 rounded-md text-slate-600 hover:text-rose-500 hover:bg-rose-50 transition-all"
-                      title="删除节点"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                    <button onClick={() => setIsPanelOpen(false)} className="p-1.5 rounded-md ml-0.5 text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-all" title="收起">
+                  {/* 右上角操作区 - 分段式胶囊控制器 */}
+                  <div className="flex items-center shrink-0">
+                    <div className={styles.actionGroup}>
+                      <button
+                        onClick={() => {
+                          const newStatus = selectedNode.status === 'activated' ? 'unactivated' : 'activated';
+                          updateNode(selectedNode.id, { status: newStatus });
+                        }}
+                        className={`${styles.actionBtn} ${selectedNode.status === 'activated' ? styles.active : ''}`}
+                        title={selectedNode.status === 'activated' ? '已激活' : '激活节点'}
+                      >
+                        <Zap size={13} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
+                      </button>
+                      <div className={styles.actionDivider}></div>
+                      <button
+                        onClick={() => {
+                          if(confirm('归档后，该节点及其所有子节点、复习任务将从主工作区隐藏，但仍可在全局搜索中查看。确定归档吗？')) {
+                            archiveNodeCascade(selectedNode.id, true);
+                            setSelectedNodeId(null);
+                          }
+                        }}
+                        className={styles.actionBtn}
+                        title="归档节点 (封存冷数据)"
+                      >
+                        <Archive size={13} />
+                      </button>
+                      <div className={styles.actionDivider}></div>
+                      <button
+                        onClick={() => {
+                          if(confirm('确定删除该节点吗？')) {
+                            deleteNode(selectedNode.id);
+                            setSelectedNodeId(null);
+                          }
+                        }}
+                        className={`${styles.actionBtn} ${styles.danger}`}
+                        title="删除节点"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn} title="收起">
                       <X size={13} />
                     </button>
                   </div>
                 </div>
 
                 <div className="px-5 pb-5 flex flex-col gap-5">
-                  {/* 无边框状态数据看板 - 极致降噪 */}
+                  {/* 无边框状态数据看板 - 单色调降噪 */}
                   {selectedGraphNode && (
-                    <div className="flex items-center justify-between px-2 py-3 border-y border-slate-100/60">
-                      <div className="flex flex-col items-center flex-1">
-                        <span className="text-lg font-bold text-blue-500 leading-none mb-1">{selectedGraphNode.pendingCount}</span>
-                        <span className="text-[10px] font-medium text-slate-400">待复习</span>
+                    <div className={styles.statsBoard}>
+                      <div className={styles.statItem}>
+                        <span className={styles.statValue}>{selectedGraphNode.pendingCount}</span>
+                        <span className={styles.statLabel}>待复习</span>
                       </div>
-                      <div className="w-px h-3 bg-slate-200"></div>
-                      <div className="flex flex-col items-center flex-1">
-                        <span className={`text-lg font-bold leading-none mb-1 ${selectedGraphNode.overdueCount > 0 ? 'text-rose-500' : 'text-slate-500'}`}>{selectedGraphNode.overdueCount}</span>
-                        <span className="text-[10px] font-medium text-slate-400">逾期</span>
+                      <div className={styles.statDivider}></div>
+                      <div className={styles.statItem}>
+                        <span className={`${styles.statValue} ${selectedGraphNode.overdueCount > 0 ? styles.overdue : ''}`}>
+                          {selectedGraphNode.overdueCount}
+                        </span>
+                        <span className={styles.statLabel}>逾期</span>
                       </div>
-                      <div className="w-px h-3 bg-slate-200"></div>
-                      <div className="flex flex-col items-center flex-1">
-                        <span className="text-lg font-bold text-emerald-500 leading-none mb-1">{selectedGraphNode.completedCount}</span>
-                        <span className="text-[10px] font-medium text-slate-400">已完成</span>
+                      <div className={styles.statDivider}></div>
+                      <div className={styles.statItem}>
+                        <span className={styles.statValue}>{selectedGraphNode.completedCount}</span>
+                        <span className={styles.statLabel}>已完成</span>
                       </div>
-                      <div className="w-px h-3 bg-slate-200"></div>
-                      <div className="flex flex-col items-center flex-1">
-                        <span className="text-lg font-bold text-indigo-500 leading-none mb-1">{selectedGraphNode.totalReviewCount}</span>
-                        <span className="text-[10px] font-medium text-slate-400">总计</span>
+                      <div className={styles.statDivider}></div>
+                      <div className={styles.statItem}>
+                        <span className={styles.statValue}>{selectedGraphNode.totalReviewCount}</span>
+                        <span className={styles.statLabel}>总计</span>
                       </div>
                     </div>
                   )}
@@ -1232,11 +1252,11 @@ const gNodes: ViewNode[] = nodes.map(n => {
 
                   {/* 显性化添加子节点输入框 */}
                   <div className="pt-2 border-t border-slate-100/80">
-                    <div className="relative">
+                    <div className={styles.composer}>
                       <input
                         type="text"
                         placeholder="+ 添加子节点 (Enter 确认)..."
-                        className="w-full bg-slate-50 rounded-lg border border-slate-100/60 focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-50/50 px-3 py-2 text-xs font-medium text-slate-700 placeholder-slate-400 focus:outline-none transition-all"
+                        className={styles.textarea}
                         value={newChildName}
                         onChange={e => setNewChildName(e.target.value)}
                         onFocus={() => setIsChildInputFocused(true)}
@@ -1250,6 +1270,7 @@ const gNodes: ViewNode[] = nodes.map(n => {
                             setNewChildName('');
                           }
                         }}
+                        style={{ paddingBottom: '12px' }} // 子节点不需要加号按钮，所以取消底部留白
                       />
                     </div>
                   </div>
@@ -1281,26 +1302,25 @@ const gNodes: ViewNode[] = nodes.map(n => {
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col h-full">
+              <div className={styles.panelContainer}>
                 {/* 标题栏 */}
-                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white/90 backdrop-blur-md z-10">
-                  <div className="flex items-center gap-2">
-                    <Command size={14} className="text-slate-600" />
-                    <h3 className="font-semibold text-slate-800 text-sm tracking-wide">图谱控制台</h3>
+                <div className={styles.header}>
+                  <div className={styles.headerTitleWrapper}>
+                    <Command size={14} />
+                    <h3 className={styles.headerTitle}>图谱控制台</h3>
                   </div>
-                  <button onClick={() => setIsPanelOpen(false)} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-1.5 rounded-lg transition-all" title="收起">
+                  <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn} title="收起">
                     <X size={14} />
                   </button>
                 </div>
                 
                 {/* 智能录入区 (Global) */}
-                <div className="p-5">
-                  <div className="text-[11px] font-bold text-slate-400/80 uppercase tracking-widest mb-2">快速构建</div>
-                  <div className="relative">
+                <div className={styles.section}>
+                  <div className={styles.sectionTitle}>快速构建</div>
+                  <div className={styles.composer}>
                     <textarea
-                      rows={1}
                       placeholder="新建根节点 (支持多行 Markdown)"
-                      className="w-full bg-slate-50/50 border border-slate-200/60 rounded-xl pl-3 pr-8 py-2.5 text-xs font-medium text-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-50/50 transition-all resize-none"
+                      className={styles.textarea}
                       value={newRootName}
                       onChange={e => setNewRootName(e.target.value)}
                       onKeyDown={e => {
@@ -1310,7 +1330,6 @@ const gNodes: ViewNode[] = nodes.map(n => {
                           setNewRootName('');
                         }
                       }}
-                      style={{ minHeight: '40px' }}
                     />
                     <button
                       onClick={() => {
@@ -1319,7 +1338,8 @@ const gNodes: ViewNode[] = nodes.map(n => {
                           setNewRootName('');
                         }
                       }}
-                      className="absolute right-1.5 top-1.5 p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                      disabled={!newRootName.trim()}
+                      className={styles.submitBtn}
                       title="生成节点 (Enter)"
                     >
                       <Plus size={14} strokeWidth={2.5} />
@@ -1327,12 +1347,12 @@ const gNodes: ViewNode[] = nodes.map(n => {
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col items-center justify-center text-center px-8 opacity-60 pb-8">
-                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3 text-slate-400">
+                <div className={styles.emptyState}>
+                  <div className={styles.emptyStateIcon}>
                     <Network size={20} />
                   </div>
-                  <h4 className="text-slate-600 font-semibold mb-1 text-xs">探索知识网络</h4>
-                  <p className="text-slate-400 text-[10px] leading-relaxed">
+                  <h4 className={styles.emptyStateTitle}>探索知识网络</h4>
+                  <p className={styles.emptyStateDesc}>
                     点击图谱中的节点查看详情与复习记录，或在上方快速创建新节点
                   </p>
                 </div>
@@ -1342,7 +1362,7 @@ const gNodes: ViewNode[] = nodes.map(n => {
         ) : (
           <button 
             onClick={() => setIsPanelOpen(true)}
-            className="absolute top-6 left-6 bg-white/90 backdrop-blur-md p-2.5 rounded-xl shadow-[0_4px_16px_-4px_rgba(0,0,0,0.1)] border border-slate-200/60 text-slate-600 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-all z-10"
+            className={styles.triggerBtn}
             title="打开节点控制台"
           >
             <Settings2 size={20} />

@@ -110,9 +110,6 @@ interface DailyScheduleStore {
   /** 同一时间段内重排序 */
   reorderScheduledItems: (date: string, slot: TimeSlot, itemIds: string[]) => void;
 
-  /** 标记完成/未完成 */
-  toggleScheduledItem: (date: string, itemId: string) => void;
-
   /** 更新安排项 */
   updateScheduledItem: (date: string, itemId: string, patch: Partial<ScheduledItem>) => void;
 
@@ -127,11 +124,11 @@ interface DailyScheduleStore {
   /** 删除时间块 */
   removeTimeBlock: (date: string, blockId: string) => void;
 
-  /** 切换时间块完成状态 */
-  toggleTimeBlock: (date: string, blockId: string) => void;
-
   /** 拉伸/移动时间块 */
   resizeTimeBlock: (date: string, blockId: string, startTime: string, endTime: string) => void;
+
+  /** 根据源任务 ID 批量清理失效的排期项和时间块 */
+  removeBySourceIds: (sourceIds: string[]) => void;
 }
 
 let _idCounter = 0;
@@ -247,20 +244,6 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
           });
         },
 
-        toggleScheduledItem: (date, itemId) => {
-          set((state) => {
-            const schedules = { ...state.schedules };
-            const day = schedules[date];
-            if (!day) return state;
-            const items = day.items.map((i) =>
-              i.id === itemId ? { ...i, completed: !i.completed } : i,
-            );
-            schedules[date] = { ...day, items };
-            saveSchedules(schedules);
-            return { schedules };
-          });
-        },
-
         updateScheduledItem: (date, itemId, patch) => {
           set((state) => {
             const schedules = { ...state.schedules };
@@ -314,20 +297,6 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
           });
         },
 
-        toggleTimeBlock: (date, blockId) => {
-          set((state) => {
-            const schedules = { ...state.schedules };
-            const day = schedules[date];
-            if (!day) return state;
-            const blocks = (day.blocks ?? []).map((b) =>
-              b.id === blockId ? { ...b, completed: !b.completed } : b,
-            );
-            schedules[date] = { ...day, blocks };
-            saveSchedules(schedules);
-            return { schedules };
-          });
-        },
-
         resizeTimeBlock: (date, blockId, startTime, endTime) => {
           set((state) => {
             const schedules = { ...state.schedules };
@@ -339,6 +308,38 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             schedules[date] = { ...day, blocks };
             saveSchedules(schedules);
             return { schedules };
+          });
+        },
+
+        removeBySourceIds: (sourceIds) => {
+          if (!sourceIds || sourceIds.length === 0) return;
+          const ids = new Set(sourceIds);
+          set((state) => {
+            const schedules = { ...state.schedules };
+            let changed = false;
+
+            for (const [date, day] of Object.entries(schedules)) {
+              const originalItemsCount = day.items?.length || 0;
+              const originalBlocksCount = day.blocks?.length || 0;
+
+              const newItems = (day.items || []).filter((i) => !ids.has(i.sourceId));
+              const newBlocks = (day.blocks || []).filter((b) => !ids.has(b.sourceId));
+
+              if (newItems.length !== originalItemsCount || newBlocks.length !== originalBlocksCount) {
+                schedules[date] = { ...day, items: newItems, blocks: newBlocks };
+                changed = true;
+              }
+            }
+
+            if (changed) {
+              // 重新排序受影响的日期
+              for (const date of Object.keys(schedules)) {
+                reorderSlotItems(schedules, date);
+              }
+              saveSchedules(schedules);
+              return { schedules };
+            }
+            return state;
           });
         },
       };

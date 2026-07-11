@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
-import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Search, Archive } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Search, Archive, Activity } from 'lucide-react';
 import { useTimelineStore } from '@/store';
+import { useDataIntegrityStore } from '@/store/dataIntegrity';
 import { useShallow } from 'zustand/react/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GlobalSearchModal, ArchiveLibraryModal } from './GlobalSearch';
@@ -43,8 +44,20 @@ const Toolbar: React.FC<ToolbarProps> = ({
     })),
   );
 
+  const { healthReport, setHealthPanelOpen, runHealthCheck } = useDataIntegrityStore();
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
+
+  // 初始化时自动运行一次健康检查
+  useEffect(() => {
+    runHealthCheck();
+  }, [runHealthCheck]);
+
+  const getHealthIconColor = () => {
+    if (healthReport.issues.some(i => i.severity === 'critical')) return 'text-red-500';
+    if (healthReport.issues.some(i => i.severity === 'error')) return 'text-red-400';
+    return 'text-amber-400';
+  };
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -146,6 +159,31 @@ const Toolbar: React.FC<ToolbarProps> = ({
         >
           <Search size={18} />
         </motion.button>
+
+        {/* ── 数据健康中心 (仅有问题时显示) ── */}
+        {healthReport.totalIssues > 0 && (
+          <motion.button
+            layout
+            key="health-center"
+            initial={{ opacity: 0, width: 0, scale: 0.8 }}
+            animate={{ opacity: 1, width: 'auto', scale: 1 }}
+            exit={{ opacity: 0, width: 0, scale: 0.8 }}
+            type="button"
+            className={`tl-dock-btn ${getHealthIconColor()}`}
+            onClick={() => setHealthPanelOpen(true)}
+            title={`数据健康异常 (${healthReport.totalIssues} 个问题)`}
+            style={{ position: 'relative', flexShrink: 0 }}
+          >
+            <Activity size={18} />
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              className="absolute -top-1 -right-1 flex items-center justify-center min-w-[14px] h-[14px] px-1 bg-red-500 text-white text-[9px] font-bold rounded-full border-2 border-slate-900"
+            >
+              {healthReport.totalIssues}
+            </motion.div>
+          </motion.button>
+        )}
 
         {/* ── 归档库 (仅在知识大盘中显示) ── */}
         {currentView === 'knowledge-graph' && (

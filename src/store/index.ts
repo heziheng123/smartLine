@@ -10,6 +10,7 @@ import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHe
 import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock } from '@/utils/blocks';
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 
 const STORAGE_KEY = 'smart-timeline-data';
 const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
@@ -264,6 +265,17 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         deleteTask: (taskId) => {
+          const state = get();
+          const taskToDelete = state.tasks.find((t) => t.id === taskId);
+          if (taskToDelete) {
+            const blockIds = taskToDelete.blocks.filter((b) => b.type === 'smart-task').map((b) => b.id);
+            if (blockIds.length > 0) {
+              setTimeout(() => {
+                useDailyScheduleStore.getState().removeBySourceIds(blockIds);
+              }, 0);
+            }
+          }
+
           set((state) => {
             const tasks = state.tasks.filter((t) => t.id !== taskId);
             const groups = state.groups.map((g) => ({
@@ -294,6 +306,20 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         updateTaskBlocks: (taskId, blocks) => {
+          const state = get();
+          const oldTask = state.tasks.find((t) => t.id === taskId);
+          if (oldTask) {
+            const newBlockIds = new Set(blocks.map((b) => b.id));
+            const removedIds = oldTask.blocks
+              .filter((b) => b.type === 'smart-task' && !newBlockIds.has(b.id))
+              .map((b) => b.id);
+            if (removedIds.length > 0) {
+              setTimeout(() => {
+                useDailyScheduleStore.getState().removeBySourceIds(removedIds);
+              }, 0);
+            }
+          }
+
           const now = new Date().toISOString();
           set((state) => {
             const tasks = state.tasks.map((t) =>
@@ -438,6 +464,10 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         removeBlock: (taskId, blockId) => {
+          setTimeout(() => {
+            useDailyScheduleStore.getState().removeBySourceIds([blockId]);
+          }, 0);
+
           const now = new Date().toISOString();
           set((state) => {
             const tasks = state.tasks.map((t) => {

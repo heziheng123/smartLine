@@ -26,6 +26,7 @@ import {
 } from './constants';
 import { liveblocksClient } from '@/store/client';
 import { genId, checkCanComplete } from './scheduler';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 
 // ── 同步设置持久化 ──────────────────────────────────────────
 
@@ -225,6 +226,9 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         },
 
         deleteReviewTask: (id) => {
+          setTimeout(() => {
+            useDailyScheduleStore.getState().removeBySourceIds([id]);
+          }, 0);
           set((state) => {
             const deleted = state.reviewTasks.find((t) => t.id === id);
             const reviewTasks = state.reviewTasks.filter((t) => t.id !== id);
@@ -304,6 +308,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         },
 
         clearAllTasks: () => {
+          const state = get();
+          const allIds = state.reviewTasks.map((t) => t.id);
+          if (allIds.length > 0) {
+            setTimeout(() => {
+              useDailyScheduleStore.getState().removeBySourceIds(allIds);
+            }, 0);
+          }
           set((state) => {
             const undoStack = state.reviewTasks.length > 0
               ? [
@@ -512,6 +523,14 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             const deletedTasks = state.reviewTasks.filter(
               (t) => t.outlineNodeId && toDelete.has(t.outlineNodeId),
             );
+
+            if (deletedTasks.length > 0) {
+              const ids = deletedTasks.map((t) => t.id);
+              setTimeout(() => {
+                useDailyScheduleStore.getState().removeBySourceIds(ids);
+              }, 0);
+            }
+
             const outlineNodes = state.outlineNodes
               .filter((n) => !toDelete.has(n.id))
               .map((n) => ({

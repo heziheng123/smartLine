@@ -13,6 +13,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '@/ebb/scheduler';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
+import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import TimeGrid from './TimeGrid';
 import type { TimeBlock, TaskSource } from './types';
 import {
@@ -200,14 +201,12 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   const {
     addTimeBlock,
     resizeTimeBlock,
-    toggleTimeBlock,
     removeTimeBlock,
     updateTimeBlock,
   } = useDailyScheduleStore(
     useShallow((s) => ({
       addTimeBlock: s.addTimeBlock,
       resizeTimeBlock: s.resizeTimeBlock,
-      toggleTimeBlock: s.toggleTimeBlock,
       removeTimeBlock: s.removeTimeBlock,
       updateTimeBlock: s.updateTimeBlock,
     })),
@@ -215,7 +214,15 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const scheduleForDate = useDailyScheduleStore((s) => s.schedules[selectedDate]);
   const daySchedule = scheduleForDate ?? EMPTY_DAY_SCHEDULE;
-  const blocks = useMemo(() => daySchedule.blocks ?? [], [daySchedule.blocks]);
+  
+  const { checkIsCompleted } = useTaskCompletionStatus();
+  const blocks = useMemo(() => {
+    const rawBlocks = daySchedule.blocks ?? [];
+    return rawBlocks.map(b => ({
+      ...b,
+      completed: checkIsCompleted(b.source, b.sourceId)
+    }));
+  }, [daySchedule.blocks, checkIsCompleted]);
 
   // ── 判断是否未绑定节点 ──────────────────────────────────
   const checkIsUnlinkedTask = useCallback((sourceId: string) => {
@@ -420,10 +427,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
       if (block.source === 'review') {
         const reviewId = block.sourceId.replace('review-', '');
-        // 先校验+更新 ebb；失败则不更新 schedule，避免回滚闪烁
-        const err = ebbToggleReviewTask(reviewId);
-        if (err) return;
-        toggleTimeBlock(selectedDate, blockId);
+        ebbToggleReviewTask(reviewId);
       } else if (block.source === 'project') {
         const parsed = parseSourceId(block.sourceId);
         if (!parsed || parsed.source !== 'project') return;
@@ -434,17 +438,15 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
           const currentBlock = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
           const isCurrentlyDone = currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted;
           const now = todayStr();
-          // 先更新源 store 的 block header
+          // 更新源 store 的 block header，无需手动 toggleTimeBlock
           tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
             isCompleted: !isCurrentlyDone,
             completedDate: !isCurrentlyDone ? now : undefined,
           });
-          // 再同步 schedule
-          toggleTimeBlock(selectedDate, blockId);
         }
       }
     },
-    [toggleTimeBlock, selectedDate, blocks, ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader],
+    [blocks, ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader],
   );
 
   const handleRemove = useCallback(
