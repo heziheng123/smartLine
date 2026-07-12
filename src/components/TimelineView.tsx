@@ -4,7 +4,7 @@
 
 import React, { useMemo, useCallback } from 'react';
 import { makeLocalDayjs } from '@/utils/dateSafe';
-import type { Task, TaskGroup, Note, Milestone } from '@/types';
+import type { Task, TaskGroup, Note, Milestone, SmartBlockDragPayload } from '@/types';
 import { calculateLayout } from '@/utils/layout';
 import {
   sliceTasksForYear,
@@ -29,6 +29,7 @@ interface TimelineViewProps {
   onMilestoneDoubleClick?: (milestone: Milestone) => void;
   onMilestoneContextMenu?: (e: React.MouseEvent, milestoneId: string) => void;
   onGroupDoubleClick?: (group: TaskGroup) => void;
+  onSmartBlockDrop?: (dragData: SmartBlockDragPayload, targetDate: string) => void;
 }
 
 // ── 主组件 ─────────────────────────────────────────────────
@@ -46,6 +47,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   onMilestoneDoubleClick,
   onMilestoneContextMenu,
   onGroupDoubleClick,
+  onSmartBlockDrop,
 }) => {
   const layout = useMemo(() => {
     const yearStart = makeLocalDayjs(`${displayYear}-01-01`);
@@ -175,6 +177,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
             onMilestoneDoubleClick={handleMilestoneDoubleClick}
             onMilestoneContextMenu={onMilestoneContextMenu}
             onGroupDoubleClick={handleGroupDoubleClick}
+            onSmartBlockDrop={onSmartBlockDrop}
           />
         ))}
       </div>

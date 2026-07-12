@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed } from 'lucide-react';
-import type { Task, SmartTaskBlock, SmartTaskHeader } from '@/types';
+import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
 import { getSmartTaskBlocks, getTagColor } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import {
@@ -21,14 +21,6 @@ interface WeekMatrixViewProps {
 
 interface ViewBlock extends SmartTaskBlock {
   _taskId: string;
-}
-
-interface DraggingState {
-  taskId: string;
-  blockId: string;
-  title: string;
-  fromDate: string;
-  tag: string;
 }
 
 interface MoveHistory {
@@ -59,7 +51,7 @@ function addMonths(dateStr: string, months: number): string {
 const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHeader }) => {
   const [cursor, setCursor] = useState(() => todayStr());
   const [mode, setMode] = useState<'week' | 'month'>('week');
-  const [draggingBlock, setDraggingBlock] = useState<DraggingState | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ tag: string; date: string } | null>(null);
   const [lastMove, setLastMove] = useState<MoveHistory | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -168,7 +160,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
   }, []);
 
   const clearDragState = useCallback(() => {
-    setDraggingBlock(null);
+    setDraggingId(null);
     setHoverCell(null);
   }, []);
 
@@ -184,13 +176,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
   );
 
   const handleDragStart = useCallback((block: ViewBlock) => {
-    setDraggingBlock({
-      taskId: block._taskId,
-      blockId: block.id,
-      title: block.header.title,
-      fromDate: block.header.date,
-      tag: block.header.tag,
-    });
+    setDraggingId(block.id);
   }, []);
 
   const handleDragEnd = useCallback(() => {
@@ -210,7 +196,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
   );
 
   const handleCellDragLeave = useCallback(
-    (tag: string, date: string) => {
+    (event: React.DragEvent<HTMLDivElement>, tag: string, date: string) => {
+      // 避免由于进入子元素而触发的意外 leave 导致闪烁
+      if (event.currentTarget.contains(event.relatedTarget as Node)) {
+        return;
+      }
       if (hoverCell?.tag === tag && hoverCell.date === date) {
         setHoverCell(null);
       }
@@ -222,24 +212,17 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
     (event: React.DragEvent<HTMLDivElement>, tag: string, targetDate: string) => {
       event.preventDefault();
       
-      let draggedData: DraggingState | null = draggingBlock;
+      let draggedData: SmartBlockDragPayload | null = null;
       
-      // 尝试从 dataTransfer 获取 Icebox 的任务数据
       try {
         const jsonStr = event.dataTransfer.getData('application/json');
         if (jsonStr) {
           const parsed = JSON.parse(jsonStr);
-          if (parsed.type === 'icebox-task') {
-            draggedData = {
-              taskId: parsed.taskId,
-              blockId: parsed.blockId,
-              title: parsed.title,
-              fromDate: '', // 冷冻任务没有原始日期
-              tag: parsed.tag,
-            };
+          if (parsed.type === 'smart-block') {
+            draggedData = parsed as SmartBlockDragPayload;
           }
         }
-      } catch (e) {
+      } catch {
         // 解析失败，忽略
       }
 
@@ -268,7 +251,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
       showToast(`已将“${draggedData.title}”改期到 ${targetDate}`);
       clearDragState();
     },
-    [clearDragState, draggingBlock, onUpdateBlockHeader, showToast],
+    [clearDragState, onUpdateBlockHeader, showToast],
   );
 
   const handleUndoMove = useCallback(() => {
@@ -312,9 +295,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
           今天
         </button>
 
-        {draggingBlock && (
+        {draggingId && (
           <div className="wmv-drag-hint">
-            正在拖动 <strong>{draggingBlock.title}</strong>，可直接放到同标签的其他日期列完成改期
+            正在拖动智能任务块，可直接放到同标签的其他日期列完成改期
           </div>
         )}
 
@@ -418,21 +401,38 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                       blocks.length > 0 ? 'wmv-cell--has-data' : ''
                     } ${isDropTarget ? 'wmv-cell--drop-target' : ''}`}
                     onDragOver={(event) => handleCellDragOver(event, tag, dateStr)}
-                    onDragLeave={() => handleCellDragLeave(tag, dateStr)}
+                    onDragLeave={(event) => handleCellDragLeave(event, tag, dateStr)}
                     onDrop={(event) => handleCellDrop(event, tag, dateStr)}
                   >
+                    <AnimatePresence mode="popLayout">
                     {blocks.map((block) => {
                       const header = block.header;
                       const isOverdue = !header.isCompleted && isBeforeDay(header.date, todayString);
-                      const isDragging = draggingBlock?.blockId === block.id;
+                      const isDragging = draggingId === block.id;
 
                       return (
-                        <div
+                        <motion.div
+                          layout
+                          initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.8, y: 30, filter: 'blur(4px)' }}
+                          transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                           key={block.id}
                           draggable
-                          onDragStart={(event) => {
+                          tabIndex={0}
+                          // @ts-expect-error framer-motion type collision
+                          onDragStart={(event: React.DragEvent<HTMLDivElement>) => {
+                            const dragData: SmartBlockDragPayload = {
+                              type: 'smart-block',
+                              source: 'week-matrix',
+                              taskId: block._taskId,
+                              blockId: block.id,
+                              tag: block.header.tag,
+                              title: block.header.title,
+                              fromDate: block.header.date || ''
+                            };
                             event.dataTransfer.effectAllowed = 'move';
-                            event.dataTransfer.setData('text/plain', block.id);
+                            event.dataTransfer.setData('application/json', JSON.stringify(dragData));
                             handleDragStart(block);
                           }}
                           onDragEnd={handleDragEnd}
@@ -478,9 +478,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                               />
                             </div>
                           )}
-                        </div>
+                        </motion.div>
                       );
                     })}
+                    </AnimatePresence>
                   </div>
                 );
               })}

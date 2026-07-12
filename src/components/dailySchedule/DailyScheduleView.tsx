@@ -90,6 +90,8 @@ const DailyScheduleView: React.FC = () => {
 
   const { checkIsCompleted } = useTaskCompletionStatus();
   const {
+    isHydrated,
+    hydrateStore,
     addScheduledItem,
     reorderScheduledItems,
     moveScheduledItem,
@@ -97,6 +99,8 @@ const DailyScheduleView: React.FC = () => {
     removeTimeBlock,
   } = useDailyScheduleStore(
     useShallow((s) => ({
+      isHydrated: s.isHydrated,
+      hydrateStore: s.hydrateStore,
       addScheduledItem: s.addScheduledItem,
       reorderScheduledItems: s.reorderScheduledItems,
       moveScheduledItem: s.moveScheduledItem,
@@ -446,6 +450,21 @@ const DailyScheduleView: React.FC = () => {
     [getSlotItems],
   );
 
+  // 异步加载 IndexedDB 数据
+  useEffect(() => {
+    if (!isHydrated) {
+      hydrateStore();
+    }
+  }, [isHydrated, hydrateStore]);
+
+  if (!isHydrated) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#FAFAFA]">
+        <div className="text-slate-400 text-sm">正在加载日程数据...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="ds-page">
         {/* ── 顶部栏 ─────────────────────────────────────── */}
@@ -461,9 +480,12 @@ const DailyScheduleView: React.FC = () => {
           </div>
           <div className="ds-header-right">
             {/* 视图模式切换 */}
-            <div className="ds-mode-switch">
+            <div className="ds-mode-switch" role="tablist" aria-label="排期模式切换">
               <button
                 type="button"
+                role="tab"
+                aria-selected={viewMode === 'slots'}
+                aria-controls="slots-view"
                 className={`ds-mode-btn ${viewMode === 'slots' ? 'ds-mode-btn--active' : ''}`}
                 onClick={() => setViewMode('slots')}
               >
@@ -471,6 +493,9 @@ const DailyScheduleView: React.FC = () => {
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={viewMode === 'blocks'}
+                aria-controls="blocks-view"
                 className={`ds-mode-btn ${viewMode === 'blocks' ? 'ds-mode-btn--active' : ''}`}
                 onClick={() => setViewMode('blocks')}
               >

@@ -7,6 +7,12 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
+import localforage from 'localforage';
+localforage.config({
+  name: 'smart-timeline',
+  storeName: 'ebb_data'
+});
+
 import { todayStr, addDays } from '@/utils/dateSafe';
 import type {
   ReviewTask,
@@ -49,32 +55,20 @@ function saveEbbSyncSettings(settings: EbbSyncSettings) {
 
 // ── 数据加载/保存 ───────────────────────────────────────────
 
-function loadEbbData(): EbbData {
-  try {
-    const raw = localStorage.getItem(EBB_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        reviewTasks: parsed.reviewTasks ?? [],
-        inboxItems: parsed.inboxItems ?? [],
-        outlineNodes: parsed.outlineNodes ?? [],
-        ebbSettings: { ...DEFAULT_EBB_SETTINGS, ...(parsed.ebbSettings ?? {}) },
-      };
-    }
-  } catch (e) {
-    console.warn('[smart-ebb] 本地数据解析失败，已回退到默认数据：', e);
-  }
+function getInitialEbbData(): EbbData {
   return getDefaultEbbData();
 }
 
-function saveEbbData(data: EbbData) {
+async function saveEbbDataAsync(data: EbbData) {
   try {
-    localStorage.setItem(EBB_STORAGE_KEY, JSON.stringify(data));
+    await localforage.setItem(EBB_STORAGE_KEY, data);
   } catch (e) {
-    // 配额溢出或隐私模式下写入失败：不阻塞 store 更新（内存状态仍正确），
-    // 提示用户导出清理。避免一次 setItem 失败导致后续 UI 与存储不一致。
-    console.warn('[smart-ebb] 本地存储写入失败，数据可能无法持久化，请导出备份或清理旧数据：', e);
+    console.warn('[smart-ebb] IndexedDB 写入失败：', e);
   }
+}
+
+function saveEbbData(data: EbbData) {
+  saveEbbDataAsync(data);
 }
 
 // ── 标签颜色自动分配 ────────────────────────────────────────
@@ -98,6 +92,9 @@ function ensureTagColors(tasks: ReviewTask[], settings: EbbSettings): EbbSetting
 export type EbbSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface EbbStore extends EbbData {
+  isHydrated: boolean;
+  hydrateStore: () => Promise<void>;
+
   syncEnabled: boolean;
   syncRoomCode: string;
   syncStatus: EbbSyncStatus;
@@ -147,12 +144,42 @@ interface EbbStore extends EbbData {
 export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
   liveblocks(
     (set, get) => {
-      const initial = loadEbbData();
+      const initial = getInitialEbbData();
       const initialSync = loadEbbSyncSettings();
 
       return {
         ...initial,
         ebbSettings: ensureTagColors(initial.reviewTasks, initial.ebbSettings),
+        isHydrated: false,
+        hydrateStore: async () => {
+          try {
+            let raw = await localforage.getItem<EbbData>(EBB_STORAGE_KEY);
+            if (!raw) {
+              const lsRaw = localStorage.getItem(EBB_STORAGE_KEY);
+              if (lsRaw) {
+                raw = JSON.parse(lsRaw) as EbbData;
+                await localforage.setItem(EBB_STORAGE_KEY, raw);
+                localStorage.removeItem(EBB_STORAGE_KEY);
+              }
+            } else if (typeof raw === 'string') {
+              raw = JSON.parse(raw) as EbbData;
+            }
+
+            if (raw) {
+              set({
+                reviewTasks: raw.reviewTasks ?? [],
+                inboxItems: raw.inboxItems ?? [],
+                outlineNodes: raw.outlineNodes ?? [],
+                ebbSettings: { ...DEFAULT_EBB_SETTINGS, ...(raw.ebbSettings ?? {}) },
+                isHydrated: true,
+              });
+              return;
+            }
+          } catch (e) {
+            console.warn('[smart-ebb] IndexedDB 数据解析失败：', e);
+          }
+          set({ isHydrated: true });
+        },
         syncEnabled: initialSync.enabled,
         syncRoomCode: initialSync.roomCode,
         syncStatus: 'disconnected' as EbbSyncStatus,

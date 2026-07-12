@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Archive, X, GripVertical } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { getSmartTaskBlocks, getTagColor } from '@/utils/blocks';
-import type { SmartTaskBlock } from '@/types';
+import type { SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import styles from './IceboxPalette.module.css';
 
 interface IceboxTask extends SmartTaskBlock {
@@ -43,12 +43,14 @@ export const IceboxPalette: React.FC = () => {
 
   // 拖拽处理
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, block: IceboxTask) => {
-    const dragData = {
-      type: 'icebox-task',
+    const dragData: SmartBlockDragPayload = {
+      type: 'smart-block',
+      source: 'icebox',
       taskId: block._taskId,
       blockId: block.id,
       tag: block.header.tag,
-      title: block.header.title
+      title: block.header.title,
+      fromDate: '' // 冷冻任务没有原始日期
     };
     e.dataTransfer.setData('application/json', JSON.stringify(dragData));
     e.dataTransfer.effectAllowed = 'move';

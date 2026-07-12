@@ -6,8 +6,14 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
+import localforage from 'localforage';
 import { liveblocksClient } from '@/store/client';
 import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
+
+localforage.config({
+  name: 'smart-timeline',
+  storeName: 'daily_schedule_data'
+});
 
 const STORAGE_KEY = 'daily-schedule-data';
 const SYNC_SETTINGS_KEY = 'daily-schedule-liveblocks';
@@ -47,35 +53,20 @@ function saveSyncSettings(settings: SyncSettings) {
 
 // ── 数据加载/保存 ───────────────────────────────────────────
 
-function loadSchedules(): Record<string, DaySchedule> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== 'object') return {};
-      const result: Record<string, DaySchedule> = {};
-      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-        // 跳过非法条目（远端 LWW 合并冲突 / JSON 损坏时可能出现 null 或非对象）
-        if (!value || typeof value !== 'object') continue;
-        const v = value as Partial<DaySchedule>;
-        result[key] = {
-          date: typeof v.date === 'string' ? v.date : key,
-          items: Array.isArray(v.items) ? v.items : [],
-          blocks: Array.isArray(v.blocks) ? v.blocks : [],
-        };
-      }
-      return result;
-    }
-  } catch { /* ignore */ }
+function getInitialSchedules(): Record<string, DaySchedule> {
   return {};
 }
 
-function saveSchedules(schedules: Record<string, DaySchedule>) {
+async function saveSchedulesAsync(schedules: Record<string, DaySchedule>) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(schedules));
+    await localforage.setItem(STORAGE_KEY, schedules);
   } catch (e) {
-    console.warn('[daily-schedule] 本地存储写入失败：', e);
+    console.warn('[daily-schedule] IndexedDB 写入失败：', e);
   }
+}
+
+function saveSchedules(schedules: Record<string, DaySchedule>) {
+  saveSchedulesAsync(schedules);
 }
 
 // ── Store 接口 ──────────────────────────────────────────────
@@ -83,6 +74,9 @@ function saveSchedules(schedules: Record<string, DaySchedule>) {
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface DailyScheduleStore {
+  isHydrated: boolean;
+  hydrateStore: () => Promise<void>;
+
   /** 所有日期的安排数据 */
   schedules: Record<string, DaySchedule>;
 
@@ -142,7 +136,41 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
       const initialSyncSettings = loadSyncSettings();
 
       return {
-        schedules: loadSchedules(),
+        schedules: getInitialSchedules(),
+        isHydrated: false,
+        hydrateStore: async () => {
+          try {
+            let parsed = await localforage.getItem<unknown>(STORAGE_KEY);
+            if (!parsed) {
+              const lsRaw = localStorage.getItem(STORAGE_KEY);
+              if (lsRaw) {
+                parsed = JSON.parse(lsRaw);
+                await localforage.setItem(STORAGE_KEY, parsed);
+                localStorage.removeItem(STORAGE_KEY);
+              }
+            } else if (typeof parsed === 'string') {
+              parsed = JSON.parse(parsed);
+            }
+
+            if (parsed && typeof parsed === 'object') {
+              const result: Record<string, DaySchedule> = {};
+              for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+                if (!value || typeof value !== 'object') continue;
+                const v = value as Partial<DaySchedule>;
+                result[key] = {
+                  date: typeof v.date === 'string' ? v.date : key,
+                  items: Array.isArray(v.items) ? v.items : [],
+                  blocks: Array.isArray(v.blocks) ? v.blocks : [],
+                };
+              }
+              set({ schedules: result, isHydrated: true });
+              return;
+            }
+          } catch (e) {
+            console.warn('[daily-schedule] IndexedDB数据加载失败：', e);
+          }
+          set({ isHydrated: true });
+        },
         syncEnabled: initialSyncSettings.enabled,
         syncRoomCode: initialSyncSettings.roomCode,
         syncStatus: 'disconnected' as SyncStatus,

@@ -8,7 +8,7 @@ import { todayStr, splitDate } from '@/utils/dateSafe';
 import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
-import TimelineView from '@/components/TimelineView';
+// import TimelineView from '@/components/TimelineView';
 import Toolbar, { type AppModule } from '@/components/Toolbar';
 import TaskDialog from '@/components/TaskDialog';
 import GroupDialog from '@/components/GroupDialog';
@@ -32,6 +32,7 @@ type TimelineNavigateDetail = {
   taskId?: string;
 };
 
+const TimelineView = React.lazy(() => import('@/components/TimelineView'));
 const EbbView = React.lazy(() => import('@/ebb/components/EbbView'));
 const DailyScheduleView = React.lazy(() => import('@/components/dailySchedule/DailyScheduleView'));
 const ProjectDocumentView = React.lazy(() => import('@/components/smartBlock/ProjectDocumentView'));
@@ -53,6 +54,8 @@ const App: React.FC = () => {
   // CRUD 方法在 zustand 中是 store 创建时一次性定义的稳定引用，
   // 故即便 syncStatus 等其它切片变化，本组件也不会重渲染。
   const {
+    isHydrated,
+    hydrateStore,
     tasks,
     groups,
     notes,
@@ -75,6 +78,8 @@ const App: React.FC = () => {
     updateBlockHeader,
   } = useTimelineStore(
     useShallow((s) => ({
+      isHydrated: s.isHydrated,
+      hydrateStore: s.hydrateStore,
       tasks: s.tasks,
       groups: s.groups,
       notes: s.notes,
@@ -185,6 +190,13 @@ const App: React.FC = () => {
 
   // 挂载冷冻库自动监控
   useIceboxMonitor();
+
+  // 异步加载 IndexedDB 数据
+  React.useEffect(() => {
+    if (!isHydrated) {
+      hydrateStore();
+    }
+  }, [isHydrated, hydrateStore]);
 
   // 全局漫游导航监听
   React.useEffect(() => {
@@ -440,6 +452,14 @@ const App: React.FC = () => {
     setDialogType('sync');
   }, []);
 
+  if (!isHydrated) {
+    return (
+      <div className="tl-app flex items-center justify-center">
+        <div className="text-slate-400 text-sm">正在加载数据...</div>
+      </div>
+    );
+  }
+
   return (
     <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
       <Toolbar
@@ -457,81 +477,99 @@ const App: React.FC = () => {
       />
 
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
-      <Suspense fallback={<ViewFallback />}>
-        <AnimatePresence mode="wait">
-          {currentView === 'ebb' && (
-            <motion.div 
-              key="ebb"
-              className="tl-app-split tl-app-split--ebb"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <div className="tl-app-main">
+      <AnimatePresence mode="wait">
+        {currentView === 'ebb' && (
+          <motion.div 
+            key="ebb"
+            id="view-ebb"
+            role="tabpanel"
+            className="tl-app-split tl-app-split--ebb"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
                 <EbbView />
-              </div>
-            </motion.div>
-          )}
+              </Suspense>
+            </div>
+          </motion.div>
+        )}
 
-          {currentView === 'daily-schedule' && (
-            <motion.div 
-              key="daily-schedule"
-              className="tl-app-split tl-app-split--ebb"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <div className="tl-app-main">
+        {currentView === 'daily-schedule' && (
+          <motion.div 
+            key="daily-schedule"
+            id="view-daily-schedule"
+            role="tabpanel"
+            className="tl-app-split tl-app-split--ebb"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
                 <DailyScheduleView />
-              </div>
-            </motion.div>
-          )}
+              </Suspense>
+            </div>
+          </motion.div>
+        )}
 
-          {currentView === 'week-matrix' && (
-            <motion.div 
-              key="week-matrix"
-              className="tl-app-split tl-app-split--ebb"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <div className="tl-app-main">
+        {currentView === 'week-matrix' && (
+          <motion.div 
+            key="week-matrix"
+            id="view-week-matrix"
+            role="tabpanel"
+            className="tl-app-split tl-app-split--ebb"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
                 <WeekMatrixView
                   tasks={store.tasks}
                   onUpdateBlockHeader={store.updateBlockHeader}
                 />
-              </div>
-            </motion.div>
-          )}
+              </Suspense>
+            </div>
+          </motion.div>
+        )}
 
-          {currentView === 'knowledge-graph' && (
-            <motion.div 
-              key="knowledge-graph"
-              className="tl-app-split tl-app-split--ebb"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <div className="tl-app-main">
+        {currentView === 'knowledge-graph' && (
+          <motion.div 
+            key="knowledge-graph"
+            id="view-knowledge-graph"
+            role="tabpanel"
+            className="tl-app-split tl-app-split--ebb"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
                 <KnowledgeGraphView />
-              </div>
-            </motion.div>
-          )}
+              </Suspense>
+            </div>
+          </motion.div>
+        )}
 
-          {currentView === 'timeline' && (
-            <motion.div 
-              key="timeline"
-              className="tl-app-split"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <div className="tl-app-main">
+        {currentView === 'timeline' && (
+          <motion.div 
+            key="timeline"
+            id="view-timeline"
+            role="tabpanel"
+            className="tl-app-split"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
                 <TimelineView
                   tasks={store.tasks}
                   groups={store.groups}
@@ -545,33 +583,38 @@ const App: React.FC = () => {
                   onMilestoneDoubleClick={handleEditMilestone}
                   onMilestoneContextMenu={handleMilestoneContextMenu}
                   onGroupDoubleClick={handleEditGroup}
+                  onSmartBlockDrop={(dragData, targetDate) => {
+                    store.updateBlockHeader(dragData.taskId, dragData.blockId, { date: targetDate });
+                  }}
                 />
-              </div>
+              </Suspense>
+            </div>
 
-              {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
-              <AnimatePresence mode="popLayout">
-                {drawerTask && (
-                  <motion.div
-                    key={drawerTask.id}
-                    initial={{ width: 0, opacity: 0, x: 20 }}
-                    animate={{ width: 450, opacity: 1, x: 0 }}
-                    exit={{ width: 0, opacity: 0, x: 20 }}
-                    transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                    style={{ overflow: 'hidden', borderLeft: '1px solid #E5E7EB', background: '#fff', flexShrink: 0 }}
-                  >
+            {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
+            <AnimatePresence mode="popLayout">
+              {drawerTask && (
+                <motion.div
+                  key={drawerTask.id}
+                  initial={{ width: 0, opacity: 0, x: 20 }}
+                  animate={{ width: 450, opacity: 1, x: 0 }}
+                  exit={{ width: 0, opacity: 0, x: 20 }}
+                  transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                  style={{ overflow: 'hidden', borderLeft: '1px solid #E5E7EB', background: '#fff', flexShrink: 0 }}
+                >
+                  <Suspense fallback={<ViewFallback />}>
                     <ProjectDocumentView
                       task={drawerTask}
                       onClose={handleCloseDrawer}
                       onUpdateTask={handleUpdateTaskMeta}
                       onDeleteTask={handleDeleteTaskFromDrawer}
                     />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </Suspense>
+                  </Suspense>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 对话框 */}
       {dialogType === 'task' && (

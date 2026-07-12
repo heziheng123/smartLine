@@ -98,6 +98,19 @@ export interface TimelineData {
   milestones: Milestone[];
 }
 
+/** 智能任务块跨视图拖拽标准数据协议 */
+export interface SmartBlockDragPayload {
+  type: 'smart-block';
+  /** 拖拽来源标识，用于分析和特殊处理 */
+  source: 'icebox' | 'week-matrix' | 'timeline' | 'unknown';
+  taskId: string;
+  blockId: string;
+  tag: string;
+  title: string;
+  /** 原始日期（YYYY-MM-DD），如果是从 Icebox 拖出则为空字符串 */
+  fromDate: string;
+}
+
 /** 经布局计算后的任务，附加行号 */
 export interface TaskWithLayout extends Task {
   row: number;

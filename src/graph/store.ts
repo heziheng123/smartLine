@@ -1,9 +1,15 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
+import localforage from 'localforage';
 import { GraphNode, GraphData } from './types';
 import { genId } from '@/ebb/scheduler';
 import { liveblocksClient } from '@/store/client';
+
+localforage.config({
+  name: 'smart-timeline',
+  storeName: 'graph_data'
+});
 
 const GRAPH_STORAGE_KEY = 'line-graph-storage';
 const GRAPH_SYNC_SETTINGS_KEY = 'line-graph-liveblocks';
@@ -25,29 +31,28 @@ function saveGraphSyncSettings(settings: GraphSyncSettings) {
   localStorage.setItem(GRAPH_SYNC_SETTINGS_KEY, JSON.stringify(settings));
 }
 
-function loadGraphData(): GraphData {
-  try {
-    const raw = localStorage.getItem(GRAPH_STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw);
-    }
-  } catch (e) {
-    console.warn('[smart-graph] 本地数据解析失败：', e);
-  }
+function getInitialGraphData(): GraphData {
   return { nodes: [] };
 }
 
-function saveGraphData(data: GraphData) {
+async function saveGraphDataAsync(data: GraphData) {
   try {
-    localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(data));
+    await localforage.setItem(GRAPH_STORAGE_KEY, data);
   } catch (e) {
-    console.warn('[smart-graph] 本地存储写入失败：', e);
+    console.warn('[smart-graph] IndexedDB 写入失败：', e);
   }
+}
+
+function saveGraphData(data: GraphData) {
+  saveGraphDataAsync(data);
 }
 
 export type GraphSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface GraphStore extends GraphData {
+  isHydrated: boolean;
+  hydrateStore: () => Promise<void>;
+
   syncEnabled: boolean;
   syncRoomCode: string;
   syncStatus: GraphSyncStatus;
@@ -69,11 +74,38 @@ interface GraphStore extends GraphData {
 export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
   liveblocks(
     (set, get) => {
-      const initial = loadGraphData();
+      const initial = getInitialGraphData();
       const initialSync = loadGraphSyncSettings();
 
       return {
         ...initial,
+        isHydrated: false,
+        hydrateStore: async () => {
+          try {
+            let raw = await localforage.getItem<GraphData>(GRAPH_STORAGE_KEY);
+            if (!raw) {
+              const lsRaw = localStorage.getItem(GRAPH_STORAGE_KEY);
+              if (lsRaw) {
+                raw = JSON.parse(lsRaw) as GraphData;
+                await localforage.setItem(GRAPH_STORAGE_KEY, raw);
+                localStorage.removeItem(GRAPH_STORAGE_KEY);
+              }
+            } else if (typeof raw === 'string') {
+              raw = JSON.parse(raw) as GraphData;
+            }
+
+            if (raw) {
+              set({
+                nodes: raw.nodes ?? [],
+                isHydrated: true,
+              });
+              return;
+            }
+          } catch (e) {
+            console.warn('[smart-graph] IndexedDB数据加载失败：', e);
+          }
+          set({ isHydrated: true });
+        },
         syncEnabled: initialSync.enabled,
         syncRoomCode: initialSync.roomCode,
         syncStatus: 'disconnected' as GraphSyncStatus,

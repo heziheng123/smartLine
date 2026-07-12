@@ -88,6 +88,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
     <div className="tl-dock-wrapper">
       <motion.div 
         className="tl-dock"
+        role="tablist"
+        aria-label="主导航"
         layout
         initial={{ opacity: 1, scale: 1, y: 0 }}
         animate={{ 
@@ -113,6 +115,9 @@ const Toolbar: React.FC<ToolbarProps> = ({
             <motion.button
               layout
               key={item.module}
+              role="tab"
+              aria-selected={active}
+              aria-controls={`view-${item.module}`}
               initial={{ opacity: 0, width: 0, scale: 0.8 }}
               animate={{ opacity: 1, width: 'auto', scale: 1 }}
               exit={{ opacity: 0, width: 0, scale: 0.8 }}

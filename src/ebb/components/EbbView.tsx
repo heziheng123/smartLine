@@ -42,9 +42,11 @@ import BoardView from './BoardView';
 type ViewTab = 'matrix' | 'board';
 
 const EbbView: React.FC = () => {
-  // 选择性订阅：只关心 reviewTasks/inboxItems/outlineNodes/ebbSettings/undoStack
+  // 选择性订阅: 只关心 reviewTasks/inboxItems/outlineNodes/ebbSettings/undoStack
   // + 各 CRUD 方法（方法引用稳定）。避免 syncStatus 等无关切片变化触发本组件重渲染。
   const {
+    isHydrated,
+    hydrateStore,
     reviewTasks: rawReviewTasks,
     inboxItems,
     outlineNodes,
@@ -60,6 +62,8 @@ const EbbView: React.FC = () => {
     popUndo,
   } = useEbbStore(
     useShallow((s) => ({
+      isHydrated: s.isHydrated,
+      hydrateStore: s.hydrateStore,
       reviewTasks: s.reviewTasks,
       inboxItems: s.inboxItems,
       outlineNodes: s.outlineNodes,
@@ -84,7 +88,7 @@ const EbbView: React.FC = () => {
     return rawReviewTasks.filter(t => !t.isArchived && (!t.graphNodeId || !archivedNodeIds.has(t.graphNodeId)));
   }, [rawReviewTasks, graphNodes]);
 
-  // 重构 store 视图供下游代码以 `store.X` 形式访问。
+  // 重构 store 视图供下游代码以 `store.X` 形式访问
   const store = useMemo(
     () => ({
       reviewTasks,
@@ -128,6 +132,13 @@ const EbbView: React.FC = () => {
   const [timelineTopic, setTimelineTopic] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 异步加载 IndexedDB 数据
+  useEffect(() => {
+    if (!isHydrated) {
+      hydrateStore();
+    }
+  }, [isHydrated, hydrateStore]);
 
   // 启动时检测逾期任务
   useEffect(() => {
@@ -337,6 +348,14 @@ const EbbView: React.FC = () => {
     [handleToggle, handleDelete, handleReschedule, handleAddRound, handleOpenRounds, handleOpenTimeline],
   );
 
+  if (!isHydrated) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#FAFAFA]">
+        <div className="text-slate-400 text-sm">正在加载数据...</div>
+      </div>
+    );
+  }
+
   return (
     <DragDropContext onDragEnd={handleDndEnd}>
       <div className="eb-app">
@@ -434,21 +453,29 @@ const EbbView: React.FC = () => {
         )}
 
         {/* ── 视图Tab ─────────────────────────────────────── */}
-        <nav className="eb-tabs">
+        <nav className="eb-tabs" role="tablist" aria-label="复习视图切换">
           <button
             type="button"
+            role="tab"
+            aria-selected={activeTab === 'matrix'}
+            aria-controls="matrix-panel"
+            id="tab-matrix"
             className={`eb-tab ${activeTab === 'matrix' ? 'eb-tab--active' : ''}`}
             onClick={() => setActiveTab('matrix')}
           >
-            <LayoutGrid size={14} />
+            <LayoutGrid size={14} aria-hidden="true" />
             矩阵视图
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={activeTab === 'board'}
+            aria-controls="board-panel"
+            id="tab-board"
             className={`eb-tab ${activeTab === 'board' ? 'eb-tab--active' : ''}`}
             onClick={() => setActiveTab('board')}
           >
-            <Columns3 size={14} />
+            <Columns3 size={14} aria-hidden="true" />
             看板视图
           </button>
         </nav>
@@ -487,18 +514,22 @@ const EbbView: React.FC = () => {
           </aside>
           <main className="eb-main">
             {activeTab === 'matrix' && (
-              <MatrixView
-                tasks={store.reviewTasks}
-                settings={store.ebbSettings}
-                taskActions={taskActions}
-              />
+              <div id="matrix-panel" role="tabpanel" aria-labelledby="tab-matrix" className="h-full">
+                <MatrixView
+                  tasks={store.reviewTasks}
+                  settings={store.ebbSettings}
+                  taskActions={taskActions}
+                />
+              </div>
             )}
             {activeTab === 'board' && (
-              <BoardView
-                tasks={store.reviewTasks}
-                settings={store.ebbSettings}
-                taskActions={taskActions}
-              />
+              <div id="board-panel" role="tabpanel" aria-labelledby="tab-board" className="h-full">
+                <BoardView
+                  tasks={store.reviewTasks}
+                  settings={store.ebbSettings}
+                  taskActions={taskActions}
+                />
+              </div>
             )}
           </main>
         </div>

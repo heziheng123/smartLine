@@ -2,9 +2,9 @@
 // Smart Timeline - 月份行
 // ============================================================
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import dayjs from 'dayjs';
-import type { MonthLayout } from '@/types';
+import type { MonthLayout, SmartBlockDragPayload } from '@/types';
 import { isWeekend, MONTH_NAMES, ROW_HEIGHT, getGroupBorderColor, getGroupLabelTextColor } from '@/utils/timeline-utils';
 import SegmentBar from './SegmentBar';
 
@@ -18,7 +18,8 @@ const MonthRow: React.FC<{
   onMilestoneDoubleClick?: (milestoneId: string) => void;
   onMilestoneContextMenu?: (e: React.MouseEvent, milestoneId: string) => void;
   onGroupDoubleClick?: (groupId: string) => void;
-}> = ({ monthLayout, year, onTaskClick, onTaskContextMenu, onNoteDoubleClick, onNoteContextMenu, onMilestoneDoubleClick, onMilestoneContextMenu, onGroupDoubleClick }) => {
+  onSmartBlockDrop?: (dragData: import('@/types').SmartBlockDragPayload, targetDate: string) => void;
+}> = ({ monthLayout, year, onTaskClick, onTaskContextMenu, onNoteDoubleClick, onNoteContextMenu, onMilestoneDoubleClick, onMilestoneContextMenu, onGroupDoubleClick, onSmartBlockDrop }) => {
   const { month, daysInMonth, segments, noteSegments, milestones, groupRanges, totalRows: taskRows } = monthLayout;
 
   // 画布总行数：取任务行和分组范围行的最大值（用 reduce 避免 spread 大数组栈溢出）
@@ -42,6 +43,55 @@ const MonthRow: React.FC<{
     }
     return s;
   }, [year, month, daysInMonth]);
+
+  const canvasRef = React.useRef<HTMLDivElement>(null);
+  const [dragOverDay, setDragOverDay] = useState<number | null>(null);
+
+  const getDayFromEvent = useCallback((e: React.DragEvent) => {
+    if (!canvasRef.current) return null;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const ratio = x / rect.width;
+    const day = Math.floor(ratio * daysInMonth) + 1;
+    return Math.max(1, Math.min(day, daysInMonth));
+  }, [daysInMonth]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const day = getDayFromEvent(e);
+    if (day !== null && dragOverDay !== day) {
+      setDragOverDay(day);
+    }
+  }, [dragOverDay, getDayFromEvent]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // 如果鼠标移出 canvas 区域，才清除
+    if (!canvasRef.current?.contains(e.relatedTarget as Node)) {
+      setDragOverDay(null);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const day = getDayFromEvent(e);
+    setDragOverDay(null);
+    
+    if (!day || !onSmartBlockDrop) return;
+    
+    try {
+      const jsonStr = e.dataTransfer.getData('application/json');
+      if (jsonStr) {
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.type === 'smart-block') {
+          const targetDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          onSmartBlockDrop(parsed as SmartBlockDragPayload, targetDate);
+        }
+      }
+    } catch {
+      // 解析失败，忽略
+    }
+  }, [getDayFromEvent, onSmartBlockDrop, year, month]);
 
   return (
     <div className={`tl-month-row ${!hasTasks ? 'tl-month-row--empty' : ''}`}>
@@ -87,8 +137,12 @@ const MonthRow: React.FC<{
 
         {/* 任务画布 */}
         <div
+          ref={canvasRef}
           className="tl-month-canvas"
           style={{ minHeight: canvasHeight }}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
           {/* 全高垂直日线 */}
           {Array.from({ length: daysInMonth + 1 }, (_, i) => (
@@ -98,6 +152,25 @@ const MonthRow: React.FC<{
               style={{ left: `${(i / daysInMonth) * 100}%` }}
             />
           ))}
+
+          {/* 拖拽放置感应区（高亮显示当前悬停的日期列，不再响应事件，仅作视觉反馈） */}
+          {dragOverDay && (
+            <div
+              className="tl-drop-zone tl-drop-zone--active"
+              style={{
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: `${((dragOverDay - 1) / daysInMonth) * 100}%`,
+                width: `${(1 / daysInMonth) * 100}%`,
+                zIndex: 4, // 放置在背景之下，任务之上
+                backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                borderLeft: '2px solid #3B82F6',
+                borderRight: '2px solid #3B82F6',
+                pointerEvents: 'none', // 不阻挡事件
+              }}
+            />
+          )}
 
           {/* 今日竖线 */}
           {todayDay > 0 && (

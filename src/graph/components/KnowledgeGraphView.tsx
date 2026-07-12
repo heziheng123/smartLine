@@ -51,7 +51,7 @@ type ViewLink = {
 };
 
 export const KnowledgeGraphView: React.FC = () => {
-  const { nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore();
+  const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore();
   const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
   const { reviewTasks } = useEbbStore();
   const { tasks } = useTimelineStore();
@@ -83,6 +83,12 @@ export const KnowledgeGraphView: React.FC = () => {
   const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
   const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isHydrated) {
+      hydrateStore();
+    }
+  }, [isHydrated, hydrateStore]);
 
   // Track Alt key for Link Mode
   useEffect(() => {
@@ -671,6 +677,14 @@ const gNodes: ViewNode[] = nodes.map(n => {
     setHighlightNodes(newHighlightNodes);
     setHighlightLinks(newHighlightLinks);
   }, []);
+
+  if (!isHydrated) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#FAFAFA]">
+        <div className="text-slate-400 text-sm">正在加载图谱数据...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="knowledge-graph-view w-full h-full bg-white relative">

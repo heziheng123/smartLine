@@ -5,7 +5,14 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
+import localforage from 'localforage';
 import { liveblocksClient } from './client';
+
+localforage.config({
+  name: 'smart-timeline',
+  storeName: 'timeline_data'
+});
+
 import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
 import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock } from '@/utils/blocks';
 import { useEbbStore } from '@/ebb/store';
@@ -98,52 +105,20 @@ function getDefaultData(): TimelineData {
   };
 }
 
-function loadData(): TimelineData {
+function getInitialSyncData(): TimelineData {
+  return getDefaultData();
+}
+
+async function saveDataAsync(data: TimelineData) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const normalizeTask = (t: Task): Task => {
-        const task = { ...t } as Task & { markdown?: string };
-        // 一次性迁移：残留 markdown 字段 → 生成 blocks 后清空
-        if (task.markdown && (!task.blocks || task.blocks.length === 0)) {
-          const blocks = migrateMarkdownToBlocks(t);
-          delete task.markdown;
-          return { ...task, blocks };
-        }
-        // 确保 blocks 字段存在；同时清掉历史残留的 markdown 字段
-        delete task.markdown;
-        return { ...task, blocks: task.blocks ?? [] };
-      };
-      const tasks = (parsed.tasks ?? []).map(normalizeTask);
-      // 同步规范化 groups.children，确保每个 child 都有 blocks 字段（防止 deleteBlock 等操作踩到 undefined）
-      const groups = (parsed.groups ?? []).map((g: { children?: Task[] }) => ({
-        ...g,
-        children: Array.isArray(g.children) ? g.children.map(normalizeTask) : [],
-      }));
-      return {
-        tasks,
-        groups,
-        notes: parsed.notes ?? [],
-        milestones: parsed.milestones ?? [],
-      };
-    }
-    return getDefaultData();
+    await localforage.setItem(STORAGE_KEY, data);
   } catch (e) {
-    // 本地存储损坏：回退到默认示例数据，避免用户看到空白界面
-    console.warn('[smart-timeline] 本地数据解析失败，已回退到默认数据：', e);
-    return getDefaultData();
+    console.warn('[smart-timeline] IndexedDB 写入失败：', e);
   }
 }
 
 export function saveData(data: TimelineData) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (e) {
-    // 配额溢出或隐私模式下写入失败：不阻塞 store 更新（内存状态仍正确），
-    // 提示用户导出清理。避免一次 setItem 失败导致后续 UI 与存储不一致。
-    console.warn('[smart-timeline] 本地存储写入失败，数据可能无法持久化，请导出备份或清理旧数据：', e);
-  }
+  saveDataAsync(data);
 }
 
 // ── Liveblocks 客户端初始化 ───────────────────────────────────
@@ -155,6 +130,9 @@ export { liveblocksClient } from './client';
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface TimelineStore extends TimelineData {
+  isHydrated: boolean;
+  hydrateStore: () => Promise<void>;
+
   dockContext: 'none' | 'node-selected' | 'task-selected';
   setDockContext: (ctx: 'none' | 'node-selected' | 'task-selected') => void;
   isDockHovered: boolean;
@@ -217,7 +195,53 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
       const initialSyncSettings = loadSyncSettings();
 
       return {
-        ...loadData(),
+        ...getInitialSyncData(),
+        isHydrated: false,
+        hydrateStore: async () => {
+          try {
+            let raw = await localforage.getItem<TimelineData>(STORAGE_KEY);
+            if (!raw) {
+              const lsRaw = localStorage.getItem(STORAGE_KEY);
+              if (lsRaw) {
+                raw = JSON.parse(lsRaw) as TimelineData;
+                await localforage.setItem(STORAGE_KEY, raw);
+                localStorage.removeItem(STORAGE_KEY);
+              }
+            } else if (typeof raw === 'string') {
+              raw = JSON.parse(raw) as TimelineData;
+            }
+
+            if (raw) {
+              const normalizeTask = (t: Task): Task => {
+                const task = { ...t } as Task & { markdown?: string };
+                if (task.markdown && (!task.blocks || task.blocks.length === 0)) {
+                  const blocks = migrateMarkdownToBlocks(t);
+                  delete task.markdown;
+                  return { ...task, blocks };
+                }
+                delete task.markdown;
+                return { ...task, blocks: task.blocks ?? [] };
+              };
+              const tasks = (raw.tasks ?? []).map(normalizeTask);
+              const groups = (raw.groups ?? []).map((g: TaskGroup) => ({
+                ...g,
+                children: Array.isArray(g.children) ? g.children.map(normalizeTask) : [],
+              }));
+              
+              set({
+                tasks,
+                groups,
+                notes: raw.notes ?? [],
+                milestones: raw.milestones ?? [],
+                isHydrated: true,
+              });
+              return;
+            }
+          } catch (e) {
+            console.warn('[smart-timeline] IndexedDB数据加载失败：', e);
+          }
+          set({ isHydrated: true });
+        },
         syncEnabled: initialSyncSettings.enabled,
         syncRoomCode: initialSyncSettings.roomCode,
         syncStatus: 'disconnected' as SyncStatus,
