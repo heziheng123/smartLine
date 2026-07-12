@@ -2,7 +2,7 @@
 // Smart Timeline - React App 根组件（独立网页版）
 // ============================================================
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { Suspense, useState, useCallback, useMemo } from 'react';
 import dayjs from 'dayjs';
 import { todayStr, splitDate } from '@/utils/dateSafe';
 import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types';
@@ -16,12 +16,10 @@ import NoteDialog from '@/components/NoteDialog';
 import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
-import EbbView from '@/ebb/components/EbbView';
-import DailyScheduleView from '@/components/dailySchedule/DailyScheduleView';
-import ProjectDocumentView from '@/components/smartBlock/ProjectDocumentView';
-import WeekMatrixView from '@/components/smartBlock/WeekMatrixView';
-import { KnowledgeGraphView } from '@/graph/components/KnowledgeGraphView';
 import { DataIntegrityEngine } from '@/components/DataIntegrityEngine';
+import { IceboxPalette } from '@/components/smartBlock/IceboxPalette';
+import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
+import { AnimatePresence, motion } from 'framer-motion';
 
 import '@/styles/timeline.css';
 import '@/styles/ebb.css';
@@ -29,6 +27,26 @@ import '@/styles/daily-schedule.css';
 import '@/styles/smart-block.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
+type TimelineNavigateDetail = {
+  view?: AppModule;
+  taskId?: string;
+};
+
+const EbbView = React.lazy(() => import('@/ebb/components/EbbView'));
+const DailyScheduleView = React.lazy(() => import('@/components/dailySchedule/DailyScheduleView'));
+const ProjectDocumentView = React.lazy(() => import('@/components/smartBlock/ProjectDocumentView'));
+const WeekMatrixView = React.lazy(() => import('@/components/smartBlock/WeekMatrixView'));
+const KnowledgeGraphView = React.lazy(() =>
+  import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView })),
+);
+
+const ViewFallback: React.FC = () => (
+  <div className="tl-app-split tl-app-split--ebb">
+    <div className="tl-app-main flex items-center justify-center text-sm text-slate-500">
+      正在加载视图...
+    </div>
+  </div>
+);
 
 const App: React.FC = () => {
   // 选择性订阅：只关心 tasks/groups/notes/milestones 数据切片 + 各 CRUD 方法。
@@ -165,9 +183,13 @@ const App: React.FC = () => {
     return dayjs().year();
   });
 
+  // 挂载冷冻库自动监控
+  useIceboxMonitor();
+
   // 全局漫游导航监听
   React.useEffect(() => {
-    const handleNav = (e: any) => {
+    const handleNav = (event: Event) => {
+      const e = event as CustomEvent<TimelineNavigateDetail>;
       const detail = e.detail;
       if (detail?.view) {
         setCurrentView(detail.view);
@@ -434,66 +456,122 @@ const App: React.FC = () => {
         onOpenSync={handleOpenSync}
       />
 
-      {currentView === 'ebb' ? (
-        <div className="tl-app-split tl-app-split--ebb">
-          <div className="tl-app-main">
-            <EbbView />
-          </div>
-        </div>
-      ) : currentView === 'daily-schedule' ? (
-        <div className="tl-app-split tl-app-split--ebb">
-          <div className="tl-app-main">
-            <DailyScheduleView />
-          </div>
-        </div>
-      ) : currentView === 'week-matrix' ? (
-        <div className="tl-app-split tl-app-split--ebb">
-          <div className="tl-app-main">
-            <WeekMatrixView
-              tasks={store.tasks}
-              onUpdateBlockHeader={store.updateBlockHeader}
-            />
-          </div>
-        </div>
-      ) : currentView === 'knowledge-graph' ? (
-        <div className="tl-app-split tl-app-split--ebb">
-          <div className="tl-app-main">
-            <KnowledgeGraphView />
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* 左右分屏容器：左侧内容视图 + 右侧任务详情面板 */}
-          <div className="tl-app-split">
-            <div className="tl-app-main">
-              <TimelineView
-                tasks={store.tasks}
-                groups={store.groups}
-                notes={store.notes}
-                milestones={store.milestones}
-                displayYear={displayYear}
-                onTaskClick={handleOpenDrawer}
-                onTaskContextMenu={handleTaskContextMenu}
-                onNoteDoubleClick={handleEditNote}
-                onNoteContextMenu={handleNoteContextMenu}
-                onMilestoneDoubleClick={handleEditMilestone}
-                onMilestoneContextMenu={handleMilestoneContextMenu}
-                onGroupDoubleClick={handleEditGroup}
-              />
-            </div>
+      {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
+      <Suspense fallback={<ViewFallback />}>
+        <AnimatePresence mode="wait">
+          {currentView === 'ebb' && (
+            <motion.div 
+              key="ebb"
+              className="tl-app-split tl-app-split--ebb"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="tl-app-main">
+                <EbbView />
+              </div>
+            </motion.div>
+          )}
 
-            {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
-            {drawerTask && (
-              <ProjectDocumentView
-                task={drawerTask}
-                onClose={handleCloseDrawer}
-                onUpdateTask={handleUpdateTaskMeta}
-                onDeleteTask={handleDeleteTaskFromDrawer}
-              />
-            )}
-          </div>
-        </>
-      )}
+          {currentView === 'daily-schedule' && (
+            <motion.div 
+              key="daily-schedule"
+              className="tl-app-split tl-app-split--ebb"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="tl-app-main">
+                <DailyScheduleView />
+              </div>
+            </motion.div>
+          )}
+
+          {currentView === 'week-matrix' && (
+            <motion.div 
+              key="week-matrix"
+              className="tl-app-split tl-app-split--ebb"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="tl-app-main">
+                <WeekMatrixView
+                  tasks={store.tasks}
+                  onUpdateBlockHeader={store.updateBlockHeader}
+                />
+              </div>
+            </motion.div>
+          )}
+
+          {currentView === 'knowledge-graph' && (
+            <motion.div 
+              key="knowledge-graph"
+              className="tl-app-split tl-app-split--ebb"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="tl-app-main">
+                <KnowledgeGraphView />
+              </div>
+            </motion.div>
+          )}
+
+          {currentView === 'timeline' && (
+            <motion.div 
+              key="timeline"
+              className="tl-app-split"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="tl-app-main">
+                <TimelineView
+                  tasks={store.tasks}
+                  groups={store.groups}
+                  notes={store.notes}
+                  milestones={store.milestones}
+                  displayYear={displayYear}
+                  onTaskClick={handleOpenDrawer}
+                  onTaskContextMenu={handleTaskContextMenu}
+                  onNoteDoubleClick={handleEditNote}
+                  onNoteContextMenu={handleNoteContextMenu}
+                  onMilestoneDoubleClick={handleEditMilestone}
+                  onMilestoneContextMenu={handleMilestoneContextMenu}
+                  onGroupDoubleClick={handleEditGroup}
+                />
+              </div>
+
+              {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
+              <AnimatePresence mode="popLayout">
+                {drawerTask && (
+                  <motion.div
+                    key={drawerTask.id}
+                    initial={{ width: 0, opacity: 0, x: 20 }}
+                    animate={{ width: 450, opacity: 1, x: 0 }}
+                    exit={{ width: 0, opacity: 0, x: 20 }}
+                    transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                    style={{ overflow: 'hidden', borderLeft: '1px solid #E5E7EB', background: '#fff', flexShrink: 0 }}
+                  >
+                    <ProjectDocumentView
+                      task={drawerTask}
+                      onClose={handleCloseDrawer}
+                      onUpdateTask={handleUpdateTaskMeta}
+                      onDeleteTask={handleDeleteTaskFromDrawer}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Suspense>
 
       {/* 对话框 */}
       {dialogType === 'task' && (
@@ -546,6 +624,13 @@ const App: React.FC = () => {
 
       {/* 数据一致性守护引擎 (Cascading Rules) */}
       <DataIntegrityEngine />
+
+      {/* 悬浮磁吸面板：冷冻库 (Icebox) - 仅在周矩阵视图中显示 */}
+      <AnimatePresence>
+        {currentView === 'week-matrix' && (
+          <IceboxPalette />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

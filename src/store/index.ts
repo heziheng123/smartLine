@@ -136,7 +136,7 @@ function loadData(): TimelineData {
   }
 }
 
-function saveData(data: TimelineData) {
+export function saveData(data: TimelineData) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (e) {

@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, Archive, X, CalendarClock, BrainCircuit, FileText } from 'lucide-react';
+import { Search, Archive, X, CalendarClock, BrainCircuit } from 'lucide-react';
 import { useGraphStore } from '@/graph/store';
-import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';

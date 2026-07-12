@@ -4,7 +4,7 @@ import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
-import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, CalendarDays } from 'lucide-react';
+import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network } from 'lucide-react';
 import { forceCollide, forceX, forceY, forceCenter } from 'd3-force';
 import ForceGraph2D from 'react-force-graph-2d';
 import { motion, AnimatePresence } from 'framer-motion';

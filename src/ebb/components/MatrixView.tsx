@@ -34,7 +34,7 @@ interface MatrixViewProps {
 type FilterStatus = 'all' | 'pending' | 'completed';
 type SortBy = 'date' | 'ratio';
 
-const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions }) => {
+const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings }) => {
   const [filterTag, setFilterTag] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('date');

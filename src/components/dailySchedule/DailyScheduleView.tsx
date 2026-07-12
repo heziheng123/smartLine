@@ -94,8 +94,6 @@ const DailyScheduleView: React.FC = () => {
     reorderScheduledItems,
     moveScheduledItem,
     removeScheduledItem,
-    updateScheduledItem,
-    updateTimeBlock,
     removeTimeBlock,
   } = useDailyScheduleStore(
     useShallow((s) => ({
@@ -103,8 +101,6 @@ const DailyScheduleView: React.FC = () => {
       reorderScheduledItems: s.reorderScheduledItems,
       moveScheduledItem: s.moveScheduledItem,
       removeScheduledItem: s.removeScheduledItem,
-      updateScheduledItem: s.updateScheduledItem,
-      updateTimeBlock: s.updateTimeBlock,
       removeTimeBlock: s.removeTimeBlock,
     })),
   );
@@ -424,7 +420,7 @@ const DailyScheduleView: React.FC = () => {
       }
       // toggleScheduledItem 已经被移除，底层数据变化后 getSlotItems 自动重新计算
     },
-    [selectedDate, daySchedule.items, daySchedule.blocks, ebbToggleReviewTask, syncProjectTaskCompletion],
+    [daySchedule.items, daySchedule.blocks, ebbToggleReviewTask, syncProjectTaskCompletion],
   );
 
   const handleRemoveItem = useCallback(

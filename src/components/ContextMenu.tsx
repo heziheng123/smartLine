@@ -2,7 +2,7 @@
 // Smart Timeline - 右键上下文菜单
 // ============================================================
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ContextMenuItem } from '@/types';
 
 interface ContextMenuProps {
@@ -34,17 +34,34 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
     };
   }, [onClose]);
 
-  // 确保菜单不超出视口
-  useEffect(() => {
-    if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    const menu = menuRef.current;
+  // 计算 transform-origin
+  // 如果菜单在鼠标右下角展开，origin 是 top left
+  // 根据视口边缘自适应（如靠近右侧则改为右展开）
+  const [origin, setOrigin] = useState('top left');
+  const [position, setPosition] = useState({ top: y, left: x });
 
-    if (rect.right > window.innerWidth) {
-      menu.style.left = `${x - rect.width}px`;
-    }
-    if (rect.bottom > window.innerHeight) {
-      menu.style.top = `${y - rect.height}px`;
+  useEffect(() => {
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+      
+      let newOriginY = 'top';
+      let newOriginX = 'left';
+      let newTop = y;
+      let newLeft = x;
+
+      if (x + rect.width > viewportW) {
+        newLeft = x - rect.width;
+        newOriginX = 'right';
+      }
+      if (y + rect.height > viewportH) {
+        newTop = y - rect.height;
+        newOriginY = 'bottom';
+      }
+      
+      setPosition({ top: newTop, left: newLeft });
+      setOrigin(`${newOriginY} ${newOriginX}`);
     }
   }, [x, y]);
 
@@ -52,7 +69,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
     <div
       ref={menuRef}
       className="tl-context-menu"
-      style={{ left: x, top: y }}
+      style={{ left: position.left, top: position.top, transformOrigin: origin }}
     >
       {items.map((item, idx) => {
         // 纯分隔线项：只渲染分割线，不渲染按钮

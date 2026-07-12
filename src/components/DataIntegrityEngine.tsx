@@ -5,7 +5,7 @@ import { useDataIntegrityStore } from '@/store/dataIntegrity';
 import { HealthCenterPanel } from './HealthCenterPanel';
 
 export const DataIntegrityEngine: React.FC = () => {
-  const { toast, hideToast, healthPanelOpen } = useDataIntegrityStore();
+  const { toast, hideToast } = useDataIntegrityStore();
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {

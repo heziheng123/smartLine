@@ -1,16 +1,8 @@
-// ============================================================
-// 周矩阵视图（Week Matrix View）
-// 行 = 标签，列 = 日期，格子 = 智能任务块卡片（含 Body）
-// 数据来源：所有 Task 的 SmartTaskBlock
-// ============================================================
-
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader } from '@/types';
-import {
-  getSmartTaskBlocks,
-  getTagColor,
-} from '@/utils/blocks';
+import { getSmartTaskBlocks, getTagColor } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import {
   todayStr,
@@ -27,116 +19,158 @@ interface WeekMatrixViewProps {
   onUpdateBlockHeader: (taskId: string, blockId: string, patch: Partial<SmartTaskHeader>) => void;
 }
 
+interface ViewBlock extends SmartTaskBlock {
+  _taskId: string;
+}
+
+interface DraggingState {
+  taskId: string;
+  blockId: string;
+  title: string;
+  fromDate: string;
+  tag: string;
+}
+
+interface MoveHistory {
+  taskId: string;
+  blockId: string;
+  title: string;
+  fromDate: string;
+  toDate: string;
+}
+
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-/** 给定 YYYY-MM-DD，返回同一周的周一（YYYY-MM-DD） */
 function getWeekStartStr(dateStr: string): string {
-  const dow = getDayOfWeek(dateStr); // 0=周日, 1=周一, ..., 6=周六
+  const dow = getDayOfWeek(dateStr);
   const offset = dow === 0 ? -6 : 1 - dow;
   return addDays(dateStr, offset);
 }
 
-/** 给定 YYYY-MM-DD 和月偏移量，返回目标月同日（超出则截断到月末） */
 function addMonths(dateStr: string, months: number): string {
-  const { year: y, month: m, day: d } = splitDate(dateStr);
-  const totalMonths = y * 12 + (m - 1) + months;
-  const newYear = Math.floor(totalMonths / 12);
-  const newMonth = (totalMonths % 12) + 1;
-  const maxDay = new Date(newYear, newMonth, 0).getDate();
-  const newDay = Math.min(d, maxDay);
-  return `${newYear}-${String(newMonth).padStart(2, '0')}-${String(newDay).padStart(2, '0')}`;
+  const { year, month, day } = splitDate(dateStr);
+  const totalMonths = year * 12 + (month - 1) + months;
+  const nextYear = Math.floor(totalMonths / 12);
+  const nextMonth = (totalMonths % 12) + 1;
+  const maxDay = new Date(nextYear, nextMonth, 0).getDate();
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 }
 
-const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
-  tasks,
-  onUpdateBlockHeader,
-}) => {
+const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHeader }) => {
   const [cursor, setCursor] = useState(() => todayStr());
   const [mode, setMode] = useState<'week' | 'month'>('week');
+  const [draggingBlock, setDraggingBlock] = useState<DraggingState | null>(null);
+  const [hoverCell, setHoverCell] = useState<{ tag: string; date: string } | null>(null);
+  const [lastMove, setLastMove] = useState<MoveHistory | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
-  // 计算日期范围（YYYY-MM-DD 字符串数组）
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
   const dateRange = useMemo(() => {
     if (mode === 'week') {
       const start = getWeekStartStr(cursor);
-      return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+      return Array.from({ length: 7 }, (_, index) => addDays(start, index));
     }
-    // 月模式：显示当月所有天
-    const { year: y, month: m } = splitDate(cursor);
-    const daysInMonth = new Date(y, m, 0).getDate();
-    const start = `${y}-${String(m).padStart(2, '0')}-01`;
-    return Array.from({ length: daysInMonth }, (_, i) => addDays(start, i));
+
+    const { year, month } = splitDate(cursor);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const start = `${year}-${String(month).padStart(2, '0')}-01`;
+    return Array.from({ length: daysInMonth }, (_, index) => addDays(start, index));
   }, [cursor, mode]);
 
   const todayString = todayStr();
 
-  // 提取所有 SmartTaskBlock（附所属 taskId）
   const allBlocks = useMemo(() => {
-    const result: (SmartTaskBlock & { _taskId: string })[] = [];
+    const result: ViewBlock[] = [];
     for (const task of tasks) {
       const blocks = getSmartTaskBlocks(task.blocks ?? []);
-      for (const b of blocks) {
-        result.push({ ...b, _taskId: task.id });
+      for (const block of blocks) {
+        result.push({ ...block, _taskId: task.id });
       }
     }
     return result;
   }, [tasks]);
 
-  // 提取所有标签
   const tags = useMemo(() => {
     const tagSet = new Set<string>();
-    for (const b of allBlocks) {
-      tagSet.add(b.header.tag);
+    for (const block of allBlocks) {
+      tagSet.add(block.header.tag);
     }
     return Array.from(tagSet);
   }, [allBlocks]);
 
-  // 按标签 × 日期分组
   const matrix = useMemo(() => {
-    const map = new Map<string, (SmartTaskBlock & { _taskId: string })[]>();
+    const map = new Map<string, ViewBlock[]>();
     for (const block of allBlocks) {
       const key = `${block.header.tag}::${block.header.date}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(block);
     }
+
+    for (const blocks of map.values()) {
+      blocks.sort((a, b) => {
+        if (a.header.isCompleted !== b.header.isCompleted) return Number(a.header.isCompleted) - Number(b.header.isCompleted);
+        return a.header.title.localeCompare(b.header.title);
+      });
+    }
+
     return map;
   }, [allBlocks]);
 
-  // 检测落在当前显示范围外的 block（带有效日期）
   const offRangeInfo = useMemo(() => {
     const rangeStartStr = dateRange[0];
     const rangeEndStr = dateRange[dateRange.length - 1];
     const beforeBlocks: { date: string; count: number }[] = [];
     const afterBlocks: { date: string; count: number }[] = [];
     const tally = new Map<string, number>();
-    for (const b of allBlocks) {
-      const d = b.header.date;
-      if (!d) continue;
-      if (tally.has(d)) {
-        tally.set(d, tally.get(d)! + 1);
-      } else {
-        tally.set(d, 1);
-      }
+
+    for (const block of allBlocks) {
+      const date = block.header.date;
+      if (!date) continue;
+      tally.set(date, (tally.get(date) ?? 0) + 1);
     }
-    for (const [d, count] of tally) {
-      if (isBeforeDay(d, rangeStartStr)) beforeBlocks.push({ date: d, count });
-      else if (isAfterDay(d, rangeEndStr)) afterBlocks.push({ date: d, count });
+
+    for (const [date, count] of tally) {
+      if (isBeforeDay(date, rangeStartStr)) beforeBlocks.push({ date, count });
+      else if (isAfterDay(date, rangeEndStr)) afterBlocks.push({ date, count });
     }
-    const totalBefore = beforeBlocks.reduce((s, x) => s + x.count, 0);
-    const totalAfter = afterBlocks.reduce((s, x) => s + x.count, 0);
-    // 距离 cursor 最近的 off-range 日期
-    beforeBlocks.sort((a, b) => b.date.localeCompare(a.date)); // 最近的在前
-    afterBlocks.sort((a, b) => a.date.localeCompare(b.date)); // 最近的在前
+
+    beforeBlocks.sort((a, b) => b.date.localeCompare(a.date));
+    afterBlocks.sort((a, b) => a.date.localeCompare(b.date));
+
     return {
-      totalBefore,
-      totalAfter,
+      totalBefore: beforeBlocks.reduce((sum, item) => sum + item.count, 0),
+      totalAfter: afterBlocks.reduce((sum, item) => sum + item.count, 0),
       nearestBefore: beforeBlocks[0]?.date,
       nearestAfter: afterBlocks[0]?.date,
-      beforeDates: beforeBlocks.map(x => x.date),
-      afterDates: afterBlocks.map(x => x.date),
+      beforeDates: beforeBlocks.map((item) => item.date),
+      afterDates: afterBlocks.map((item) => item.date),
     };
   }, [allBlocks, dateRange]);
 
   const hasOffRangeBlocks = offRangeInfo.totalBefore > 0 || offRangeInfo.totalAfter > 0;
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 4500);
+  }, []);
+
+  const clearDragState = useCallback(() => {
+    setDraggingBlock(null);
+    setHoverCell(null);
+  }, []);
 
   const handleToggle = useCallback(
     (taskId: string, blockId: string, isCompleted: boolean) => {
@@ -149,41 +183,152 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
     [onUpdateBlockHeader],
   );
 
+  const handleDragStart = useCallback((block: ViewBlock) => {
+    setDraggingBlock({
+      taskId: block._taskId,
+      blockId: block.id,
+      title: block.header.title,
+      fromDate: block.header.date,
+      tag: block.header.tag,
+    });
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    clearDragState();
+  }, [clearDragState]);
+
+  const handleCellDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, tag: string, date: string) => {
+      // 允许所有拖拽（包括来自外部的 Icebox）
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      if (!hoverCell || hoverCell.tag !== tag || hoverCell.date !== date) {
+        setHoverCell({ tag, date });
+      }
+    },
+    [hoverCell],
+  );
+
+  const handleCellDragLeave = useCallback(
+    (tag: string, date: string) => {
+      if (hoverCell?.tag === tag && hoverCell.date === date) {
+        setHoverCell(null);
+      }
+    },
+    [hoverCell],
+  );
+
+  const handleCellDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, tag: string, targetDate: string) => {
+      event.preventDefault();
+      
+      let draggedData: DraggingState | null = draggingBlock;
+      
+      // 尝试从 dataTransfer 获取 Icebox 的任务数据
+      try {
+        const jsonStr = event.dataTransfer.getData('application/json');
+        if (jsonStr) {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.type === 'icebox-task') {
+            draggedData = {
+              taskId: parsed.taskId,
+              blockId: parsed.blockId,
+              title: parsed.title,
+              fromDate: '', // 冷冻任务没有原始日期
+              tag: parsed.tag,
+            };
+          }
+        }
+      } catch (e) {
+        // 解析失败，忽略
+      }
+
+      if (!draggedData || draggedData.tag !== tag) {
+        clearDragState();
+        return;
+      }
+
+      if (draggedData.fromDate === targetDate) {
+        clearDragState();
+        return;
+      }
+
+      onUpdateBlockHeader(draggedData.taskId, draggedData.blockId, { date: targetDate });
+      
+      if (draggedData.fromDate) {
+        setLastMove({
+          taskId: draggedData.taskId,
+          blockId: draggedData.blockId,
+          title: draggedData.title,
+          fromDate: draggedData.fromDate,
+          toDate: targetDate,
+        });
+      }
+      
+      showToast(`已将“${draggedData.title}”改期到 ${targetDate}`);
+      clearDragState();
+    },
+    [clearDragState, draggingBlock, onUpdateBlockHeader, showToast],
+  );
+
+  const handleUndoMove = useCallback(() => {
+    if (!lastMove) return;
+    onUpdateBlockHeader(lastMove.taskId, lastMove.blockId, { date: lastMove.fromDate });
+    showToast(`已撤销“${lastMove.title}”的改期`);
+    setLastMove(null);
+  }, [lastMove, onUpdateBlockHeader, showToast]);
+
   const jumpTo = useCallback((dateStr: string) => {
     setCursor(dateStr);
   }, []);
 
-  const rangeLabel = mode === 'week'
-    ? `${formatDate(dateRange[0], 'M.D')} - ${formatDate(dateRange[6], 'M.D')}`
-    : (() => { const { year, month } = splitDate(cursor); return `${year}年${month}月`; })();
+  const rangeLabel =
+    mode === 'week'
+      ? `${formatDate(dateRange[0], 'M.D')} - ${formatDate(dateRange[6], 'M.D')}`
+      : (() => {
+          const { year, month } = splitDate(cursor);
+          return `${year}年${month}月`;
+        })();
 
   return (
     <div className="wmv-container">
-      {/* ── 顶部导航 ── */}
       <div className="wmv-nav">
-        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(c => mode === 'week' ? addDays(c, -7) : addMonths(c, -1))}>
+        <button
+          type="button"
+          className="wmv-nav-btn"
+          onClick={() => setCursor((current) => (mode === 'week' ? addDays(current, -7) : addMonths(current, -1)))}
+        >
           <ChevronLeft size={16} />
         </button>
         <span className="wmv-nav-label">{rangeLabel}</span>
-        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(c => mode === 'week' ? addDays(c, 7) : addMonths(c, 1))}>
+        <button
+          type="button"
+          className="wmv-nav-btn"
+          onClick={() => setCursor((current) => (mode === 'week' ? addDays(current, 7) : addMonths(current, 1)))}
+        >
           <ChevronRight size={16} />
         </button>
         <button type="button" className="wmv-nav-btn" onClick={() => setCursor(todayStr())}>
           今天
         </button>
+
+        {draggingBlock && (
+          <div className="wmv-drag-hint">
+            正在拖动 <strong>{draggingBlock.title}</strong>，可直接放到同标签的其他日期列完成改期
+          </div>
+        )}
+
         <div className="wmv-nav-right">
           {hasOffRangeBlocks && (
             <div
               className="wmv-offrange-capsule"
-              title="有任务块不在当前显示范围，悬停查看详情"
+              title="存在不在当前显示范围内的任务块，悬停可查看最近日期"
             >
-              <span className="wmv-offrange-capsule-icon">💡</span>
-              <span className="wmv-offrange-capsule-count">
-                {offRangeInfo.totalBefore + offRangeInfo.totalAfter}
-              </span>
+              <span className="wmv-offrange-capsule-icon">📕</span>
+              <span className="wmv-offrange-capsule-count">{offRangeInfo.totalBefore + offRangeInfo.totalAfter}</span>
               <div className="wmv-offrange-popover">
                 <div className="wmv-offrange-popover-text">
-                  有 {offRangeInfo.totalBefore + offRangeInfo.totalAfter} 个智能任务块不在当前{mode === 'week' ? '周' : '月'}显示范围内
+                  共有 {offRangeInfo.totalBefore + offRangeInfo.totalAfter} 个智能任务块不在当前{mode === 'week' ? '周' : '月'}视图中
                 </div>
                 <div className="wmv-offrange-popover-actions">
                   {offRangeInfo.nearestBefore && (
@@ -191,9 +336,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                       type="button"
                       className="wmv-offrange-btn wmv-offrange-btn--before"
                       onClick={() => jumpTo(offRangeInfo.nearestBefore!)}
-                      title={`跳到最近的早期块：${offRangeInfo.nearestBefore}`}
+                      title={`跳到最近的早期日期：${offRangeInfo.nearestBefore}`}
                     >
-                      ◀ 早期 {offRangeInfo.totalBefore} 个 · {offRangeInfo.beforeDates.length} 天
+                      ◀ 早期 {offRangeInfo.totalBefore} 项 · {offRangeInfo.beforeDates.length} 天
                     </button>
                   )}
                   {offRangeInfo.nearestAfter && (
@@ -201,15 +346,16 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                       type="button"
                       className="wmv-offrange-btn wmv-offrange-btn--after"
                       onClick={() => jumpTo(offRangeInfo.nearestAfter!)}
-                      title={`跳到最近的后期块：${offRangeInfo.nearestAfter}`}
+                      title={`跳到最近的后期日期：${offRangeInfo.nearestAfter}`}
                     >
-                      后期 {offRangeInfo.totalAfter} 个 · {offRangeInfo.afterDates.length} 天 ▶
+                      后期 {offRangeInfo.totalAfter} 项 · {offRangeInfo.afterDates.length} 天 ▶
                     </button>
                   )}
                 </div>
               </div>
             </div>
           )}
+
           <div className="wmv-mode-switch">
             <button
               type="button"
@@ -229,9 +375,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
         </div>
       </div>
 
-      {/* ── 矩阵表格 ── */}
       <div className="wmv-matrix">
-        {/* 表头 */}
         <div className="wmv-row wmv-row--header">
           <div className="wmv-cell wmv-cell--tag" />
           {dateRange.map((dateStr) => {
@@ -243,16 +387,13 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                 key={dateStr}
                 className={`wmv-cell wmv-cell--date ${isToday ? 'wmv-cell--today' : ''} ${isWeekend ? 'wmv-cell--weekend' : ''}`}
               >
-                <span className="wmv-date-weekday">
-                  {WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}
-                </span>
+                <span className="wmv-date-weekday">{WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}</span>
                 <span className="wmv-date-num">{splitDate(dateStr).day}</span>
               </div>
             );
           })}
         </div>
 
-        {/* 数据行（每标签一行） */}
         {tags.map((tag) => {
           const tagColor = getTagColor(tag);
           return (
@@ -262,54 +403,79 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
                   {tag}
                 </span>
               </div>
+
               {dateRange.map((dateStr) => {
                 const key = `${tag}::${dateStr}`;
                 const blocks = matrix.get(key) ?? [];
                 const dow = getDayOfWeek(dateStr);
                 const isWeekend = dow === 0 || dow === 6;
+                const isDropTarget = hoverCell?.tag === tag && hoverCell.date === dateStr;
 
                 return (
                   <div
                     key={dateStr}
-                    className={`wmv-cell ${isWeekend ? 'wmv-cell--weekend' : ''} ${blocks.length > 0 ? 'wmv-cell--has-data' : ''}`}
+                    className={`wmv-cell ${isWeekend ? 'wmv-cell--weekend' : ''} ${
+                      blocks.length > 0 ? 'wmv-cell--has-data' : ''
+                    } ${isDropTarget ? 'wmv-cell--drop-target' : ''}`}
+                    onDragOver={(event) => handleCellDragOver(event, tag, dateStr)}
+                    onDragLeave={() => handleCellDragLeave(tag, dateStr)}
+                    onDrop={(event) => handleCellDrop(event, tag, dateStr)}
                   >
                     {blocks.map((block) => {
-                      const h = block.header;
-                      const isOverdue = !h.isCompleted && isBeforeDay(h.date, todayString);
+                      const header = block.header;
+                      const isOverdue = !header.isCompleted && isBeforeDay(header.date, todayString);
+                      const isDragging = draggingBlock?.blockId === block.id;
+
                       return (
                         <div
                           key={block.id}
-                          className={`wmv-block-card ${h.isCompleted ? 'wmv-block-card--done' : ''} ${isOverdue ? 'wmv-block-card--overdue' : ''} ${!h.graphNodeId ? 'wmv-block-card--unlinked' : ''}`}
-                          style={{ backgroundColor: tagColor + '40', borderLeftColor: tagColor }}
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', block.id);
+                            handleDragStart(block);
+                          }}
+                          onDragEnd={handleDragEnd}
+                          className={`wmv-block-card ${header.isCompleted ? 'wmv-block-card--done' : ''} ${
+                            isOverdue ? 'wmv-block-card--overdue' : ''
+                          } ${!header.graphNodeId ? 'wmv-block-card--unlinked' : ''} ${
+                            isDragging ? 'wmv-block-card--dragging' : ''
+                          }`}
+                          style={{ backgroundColor: `${tagColor}40`, borderLeftColor: tagColor }}
+                          title="拖动到同标签的其他日期列即可直接改期"
                         >
-                          {/* Header 行 */}
                           <div className="wmv-block-header">
                             <button
                               type="button"
-                              className={`wmv-check ${h.isCompleted ? 'wmv-check--done' : ''}`}
-                              onClick={() => handleToggle(block._taskId, block.id, h.isCompleted)}
+                              className={`wmv-check ${header.isCompleted ? 'wmv-check--done' : ''}`}
+                              onClick={() => handleToggle(block._taskId, block.id, header.isCompleted)}
                             >
-                              {h.isCompleted && '✓'}
+                              {header.isCompleted && '✓'}
                             </button>
-                            <span className={`wmv-block-title ${h.isCompleted ? 'wmv-block-title--done' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              {h.title}
-                              {!h.graphNodeId && (
-                                <span title="未绑定节点" className="inline-flex items-center flex-shrink-0 opacity-40">
+                            <span
+                              className={`wmv-block-title ${header.isCompleted ? 'wmv-block-title--done' : ''}`}
+                              style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              {header.title}
+                              {!header.graphNodeId && (
+                                <span title="未绑定知识节点" className="inline-flex items-center flex-shrink-0 opacity-40">
                                   <CircleDashed size={12} />
                                 </span>
                               )}
                             </span>
                           </div>
-                          {/* Meta 行 */}
+
                           <div className="wmv-block-meta">
-                            <span>⏳{h.duration}m</span>
+                            <span>⏱ {header.duration}m</span>
                           </div>
-                          {/* Body 完整内容 */}
+
                           {block.body && (
                             <div className="wmv-block-body">
-                              <div dangerouslySetInnerHTML={{
-                                __html: sanitizeHtml(block.body),
-                              }} />
+                              <div
+                                dangerouslySetInnerHTML={{
+                                  __html: sanitizeHtml(block.body),
+                                }}
+                              />
                             </div>
                           )}
                         </div>
@@ -322,7 +488,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
           );
         })}
 
-        {/* 空状态 */}
         {tags.length === 0 && (
           <div className="wmv-empty">
             <CalendarDays size={48} />
@@ -331,6 +496,24 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            className="wmv-toast"
+          >
+            <span className="wmv-toast-text">{toastMessage}</span>
+            {lastMove && (
+              <button type="button" className="wmv-toast-btn" onClick={handleUndoMove}>
+                撤销
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

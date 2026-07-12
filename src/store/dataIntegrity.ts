@@ -1,21 +1,56 @@
 import { create } from 'zustand';
-import { useTimelineStore } from './index';
+import dayjs from 'dayjs';
+import { saveData, useTimelineStore } from './index';
 import { useDailyScheduleStore } from '../components/dailySchedule/store';
 import { useEbbStore } from '../ebb/store';
 import { useGraphStore } from '../graph/store';
-import dayjs from 'dayjs';
+import { parseSourceId } from '../components/dailySchedule/conversion';
 
-// 新增类型定义
 export type HealthCheckCategory = 'tasks' | 'groups' | 'schedule' | 'graph' | 'ebb' | 'sync';
+export type HealthIssueSeverity = 'warning' | 'error' | 'critical';
+export type HealthRiskLevel = 'low' | 'medium' | 'high';
+export type HealthEntityType =
+  | 'task'
+  | 'group'
+  | 'schedule_item'
+  | 'time_block'
+  | 'smart_block'
+  | 'graph_node'
+  | 'review_task'
+  | 'date';
+
+export interface HealthEntityPreview {
+  id: string;
+  type: HealthEntityType;
+  title: string;
+  subtitle?: string;
+  meta?: string;
+}
+
+export interface HealthPreviewRow {
+  label: string;
+  before: string;
+  after: string;
+}
+
+export interface HealthFixPreview {
+  summary: string;
+  rows: HealthPreviewRow[];
+}
 
 export interface HealthIssue {
   id: string;
   category: HealthCheckCategory;
-  severity: 'warning' | 'error' | 'critical';
+  severity: HealthIssueSeverity;
+  riskLevel: HealthRiskLevel;
   title: string;
   description: string;
+  impactSummary: string;
   affectedIds: string[];
+  affectedEntities: HealthEntityPreview[];
   autoFixable: boolean;
+  requiresConfirm?: boolean;
+  fixPreview?: HealthFixPreview;
   fix?: () => Promise<void>;
 }
 
@@ -27,7 +62,6 @@ export interface HealthReport {
 }
 
 interface DataIntegrityStore {
-  // 现有字段
   toast: {
     isOpen: boolean;
     message: string;
@@ -36,26 +70,93 @@ interface DataIntegrityStore {
   } | null;
   showToast: (message: string, onConfirm?: () => void, onUndo?: () => void) => void;
   hideToast: () => void;
-
-  // 新增字段
   healthReport: HealthReport;
   healthPanelOpen: boolean;
-
-  // 新增方法
   setHealthPanelOpen: (open: boolean) => void;
   runHealthCheck: () => Promise<void>;
   fixIssue: (issueId: string) => Promise<void>;
   fixAllIssues: () => Promise<void>;
+  previewFixableIssues: () => HealthFixPreview | null;
   exportReport: () => string;
 }
 
-let _issueIdCounter = 0;
+let issueCounter = 0;
+
 function genIssueId(): string {
-  return `issue-${Date.now().toString(36)}-${(++_issueIdCounter).toString(36)}`;
+  issueCounter += 1;
+  return `issue-${Date.now().toString(36)}-${issueCounter.toString(36)}`;
 }
 
-function isValidDate(dateStr: string): boolean {
-  return dayjs(dateStr).isValid();
+function isValidDate(dateStr: string | undefined): boolean {
+  return !!dateStr && dayjs(dateStr).isValid();
+}
+
+function entity(
+  type: HealthEntityType,
+  id: string,
+  title: string,
+  subtitle?: string,
+  meta?: string,
+): HealthEntityPreview {
+  return { type, id, title, subtitle, meta };
+}
+
+function preview(summary: string, rows: HealthPreviewRow[]): HealthFixPreview {
+  return { summary, rows };
+}
+
+function createIssue(input: Omit<HealthIssue, 'id' | 'affectedIds'>): HealthIssue {
+  return {
+    id: genIssueId(),
+    ...input,
+    affectedIds: input.affectedEntities.map((item) => item.id),
+  };
+}
+
+function getRiskLevel(
+  severity: HealthIssueSeverity,
+  autoFixable: boolean,
+  entityCount: number,
+): HealthRiskLevel {
+  if (!autoFixable && severity === 'critical') return 'high';
+  if (severity === 'error' || entityCount >= 5) return 'medium';
+  return 'low';
+}
+
+function resolveSourceExists(
+  source: 'project' | 'review' | 'free',
+  sourceId: string,
+  timelineState: ReturnType<typeof useTimelineStore.getState>,
+  ebbState: ReturnType<typeof useEbbStore.getState>,
+): boolean {
+  if (source === 'free') return true;
+
+  if (source === 'review') {
+    const reviewId = sourceId.startsWith('review-') ? sourceId.slice(7) : sourceId;
+    return ebbState.reviewTasks.some((task) => task.id === reviewId);
+  }
+
+  const parsed = parseSourceId(sourceId);
+  if (!parsed || parsed.source !== 'project' || !parsed.parentTaskId) return false;
+
+  const task = timelineState.tasks.find((item) => item.id === parsed.parentTaskId);
+  if (!task) return false;
+
+  if (parsed.blockId) {
+    return task.blocks.some((block) => block.type === 'smart-task' && block.id === parsed.blockId);
+  }
+
+  // 当前项目的数据源已经统一为 SmartTaskBlock。
+  // 历史 markdown / legacy sourceId 仅用于兼容旧数据，应视为待迁移或待清理数据。
+  if (parsed.line !== undefined) {
+    return false;
+  }
+
+  return true;
+}
+
+function toLocaleDateTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString();
 }
 
 export const useDataIntegrityStore = create<DataIntegrityStore>((set, get) => ({
@@ -71,10 +172,15 @@ export const useDataIntegrityStore = create<DataIntegrityStore>((set, get) => ({
   },
   healthPanelOpen: false,
 
-  setHealthPanelOpen: (open: boolean) => set({ healthPanelOpen: open }),
+  setHealthPanelOpen: (open) => set({ healthPanelOpen: open }),
 
   runHealthCheck: async () => {
-    set({ healthReport: { ...get().healthReport, isChecking: true } });
+    set((state) => ({
+      healthReport: {
+        ...state.healthReport,
+        isChecking: true,
+      },
+    }));
 
     const issues: HealthIssue[] = [];
     const timelineState = useTimelineStore.getState();
@@ -82,233 +188,341 @@ export const useDataIntegrityStore = create<DataIntegrityStore>((set, get) => ({
     const ebbState = useEbbStore.getState();
     const graphState = useGraphStore.getState();
 
-    const taskIds = new Set(timelineState.tasks.map(t => t.id));
-    const graphNodeIds = new Set(graphState.nodes.map(n => n.id));
+    const taskIds = new Set(timelineState.tasks.map((task) => task.id));
+    const graphNodeIds = new Set(graphState.nodes.map((node) => node.id));
 
-    // 1. 检查孤儿分组子任务
     for (const group of timelineState.groups) {
-      const orphanChildren = group.children.filter(child => !taskIds.has(child.id));
-      if (orphanChildren.length > 0) {
-        const issueId = genIssueId();
-        issues.push({
-          id: issueId,
-          category: 'groups',
-          severity: 'warning',
-          title: `分组「${group.name}」包含孤儿子任务`,
-          description: `${orphanChildren.length} 个子任务在主任务列表中不存在`,
-          affectedIds: [group.id, ...orphanChildren.map(c => c.id)],
-          autoFixable: true,
-          fix: async () => {
-            useTimelineStore.setState(state => ({
-              groups: state.groups.map(g =>
-                g.id === group.id
-                  ? { ...g, children: g.children.filter(c => taskIds.has(c.id)) }
-                  : g
-              )
-            }));
-          }
-        });
-      }
+      const orphanChildren = group.children.filter((child) => !taskIds.has(child.id));
+      if (orphanChildren.length === 0) continue;
+
+      const affectedEntities = [
+        entity('group', group.id, group.name, '受影响分组'),
+        ...orphanChildren.map((child) => entity('task', child.id, child.name, '无效子任务引用')),
+      ];
+
+      issues.push(createIssue({
+        category: 'groups',
+        severity: 'warning',
+        riskLevel: getRiskLevel('warning', true, affectedEntities.length),
+        title: `分组“${group.name}”包含失效的子任务引用`,
+        description: `发现 ${orphanChildren.length} 个子任务已不存在，但仍然残留在该分组中。`,
+        impactSummary: `修复后会从该分组中移除 ${orphanChildren.length} 个无效引用，不影响仍存在的任务本体。`,
+        affectedEntities,
+        autoFixable: true,
+        fixPreview: preview(
+          '将清理分组内部的失效任务引用。',
+          [
+            { label: '分组子任务数量', before: `${group.children.length}`, after: `${group.children.length - orphanChildren.length}` },
+            { label: '实际删除任务实体', before: '0', after: '0' },
+          ],
+        ),
+        fix: async () => {
+          useTimelineStore.setState((state) => {
+            const groups = state.groups.map((item) =>
+              item.id === group.id
+                ? { ...item, children: item.children.filter((child) => taskIds.has(child.id)) }
+                : item,
+            );
+            saveData({
+              tasks: state.tasks,
+              groups,
+              notes: state.notes,
+              milestones: state.milestones,
+            });
+            return { groups };
+          });
+        },
+      }));
     }
 
-    // 2. 检查已排期但源任务不存在
     for (const [date, schedule] of Object.entries(dailyState.schedules)) {
-      // 检查 ScheduledItem
-      const orphanItems = schedule.items.filter(item => {
-        if (item.source === 'project') {
-          return !timelineState.tasks.some(t => t.blocks.some(b => b.type === 'smart-task' && (b as any).id === item.sourceId));
-        } else if (item.source === 'review') {
-          return !ebbState.reviewTasks.some(t => t.id === item.sourceId);
-        }
-        return false;
-      });
+      const orphanItems = schedule.items.filter((item) => !resolveSourceExists(item.source, item.sourceId, timelineState, ebbState));
 
       if (orphanItems.length > 0) {
-        const issueId = genIssueId();
-        issues.push({
-          id: issueId,
+        const affectedEntities = [
+          entity('date', date, date, '受影响日期'),
+          ...orphanItems.map((item) =>
+            entity(
+              'schedule_item',
+              item.id,
+              item.name || item.sourceId,
+              `${date} · ${item.source}`,
+              item.sourceId,
+            ),
+          ),
+        ];
+
+        issues.push(createIssue({
           category: 'schedule',
           severity: 'warning',
-          title: `${date} 有 ${orphanItems.length} 个排期项关联的源任务不存在`,
-          description: '这些排期项可能是过期数据',
-          affectedIds: [date, ...orphanItems.map(i => i.id)],
+          riskLevel: getRiskLevel('warning', true, affectedEntities.length),
+          title: `${date} 存在 ${orphanItems.length} 个幽灵排期项`,
+          description: '这些排期项关联的源任务已经不存在，继续保留会污染每日排期视图。',
+          impactSummary: `修复后将移除 ${orphanItems.length} 个失效排期项，不会影响仍存在的源任务和时间线数据。`,
+          affectedEntities,
           autoFixable: true,
+          fixPreview: preview(
+            '将从每日排期 items 中移除失效条目。',
+            [
+              { label: '当日排期项', before: `${schedule.items.length}`, after: `${schedule.items.length - orphanItems.length}` },
+              { label: '删除条目', before: '0', after: `${orphanItems.length}` },
+            ],
+          ),
           fix: async () => {
-            useDailyScheduleStore.setState(state => {
-              const day = state.schedules[date];
-              if (!day) return state;
-              return {
-                schedules: {
-                  ...state.schedules,
-                  [date]: {
-                    ...day,
-                    items: day.items.filter(i => !orphanItems.some(oi => oi.id === i.id))
-                  }
-                }
-              };
-            });
-          }
-        });
+            useDailyScheduleStore
+              .getState()
+              .removeBySourceIds([...new Set(orphanItems.map((item) => item.sourceId))]);
+          },
+        }));
       }
 
-      // 检查 TimeBlock
-      const orphanBlocks = schedule.blocks.filter(block => {
-        if (block.source === 'project') {
-          return !timelineState.tasks.some(t => t.blocks.some(b => b.type === 'smart-task' && (b as any).id === block.sourceId));
-        } else if (block.source === 'review') {
-          return !ebbState.reviewTasks.some(t => t.id === block.sourceId);
-        }
-        return false;
-      });
+      const orphanBlocks = (schedule.blocks ?? []).filter(
+        (block) => !resolveSourceExists(block.source, block.sourceId, timelineState, ebbState),
+      );
 
       if (orphanBlocks.length > 0) {
-        const issueId = genIssueId();
-        issues.push({
-          id: issueId,
+        const affectedEntities = [
+          entity('date', date, date, '受影响日期'),
+          ...orphanBlocks.map((block) =>
+            entity(
+              'time_block',
+              block.id,
+              block.name || block.sourceId,
+              `${date} · ${block.startTime}-${block.endTime}`,
+              block.sourceId,
+            ),
+          ),
+        ];
+
+        issues.push(createIssue({
           category: 'schedule',
           severity: 'warning',
-          title: `${date} 有 ${orphanBlocks.length} 个时间块关联的源任务不存在`,
-          description: '这些时间块可能是过期数据',
-          affectedIds: [date, ...orphanBlocks.map(b => b.id)],
+          riskLevel: getRiskLevel('warning', true, affectedEntities.length),
+          title: `${date} 存在 ${orphanBlocks.length} 个幽灵时间块`,
+          description: '这些时间块已经无法追溯到有效源任务，会造成时间视图和真实数据不一致。',
+          impactSummary: `修复后将移除 ${orphanBlocks.length} 个失效时间块，保留其他合法时间安排。`,
+          affectedEntities,
           autoFixable: true,
+          fixPreview: preview(
+            '将从每日排期 blocks 中移除失效时间块。',
+            [
+              { label: '当日时间块', before: `${schedule.blocks.length}`, after: `${schedule.blocks.length - orphanBlocks.length}` },
+              { label: '删除时间块', before: '0', after: `${orphanBlocks.length}` },
+            ],
+          ),
           fix: async () => {
-            useDailyScheduleStore.setState(state => {
-              const day = state.schedules[date];
-              if (!day) return state;
-              return {
-                schedules: {
-                  ...state.schedules,
-                  [date]: {
-                    ...day,
-                    blocks: day.blocks.filter(b => !orphanBlocks.some(ob => ob.id === b.id))
-                  }
-                }
-              };
-            });
-          }
-        });
+            useDailyScheduleStore
+              .getState()
+              .removeBySourceIds([...new Set(orphanBlocks.map((block) => block.sourceId))]);
+          },
+        }));
       }
 
-      // 5. 检查同一天时间块冲突
-      const timeBlocks = [...schedule.blocks].sort((a, b) => a.startTime.localeCompare(b.startTime));
-      const conflicts: { block1: string; block2: string }[] = [];
-      for (let i = 0; i < timeBlocks.length - 1; i++) {
-        for (let j = i + 1; j < timeBlocks.length; j++) {
+      const timeBlocks = [...(schedule.blocks ?? [])].sort((a, b) => a.startTime.localeCompare(b.startTime));
+      const conflicts: Array<{ block1: typeof timeBlocks[number]; block2: typeof timeBlocks[number] }> = [];
+
+      for (let i = 0; i < timeBlocks.length - 1; i += 1) {
+        for (let j = i + 1; j < timeBlocks.length; j += 1) {
           if (timeBlocks[i].endTime > timeBlocks[j].startTime) {
-            conflicts.push({ block1: timeBlocks[i].id, block2: timeBlocks[j].id });
+            conflicts.push({ block1: timeBlocks[i], block2: timeBlocks[j] });
           }
         }
       }
+
       if (conflicts.length > 0) {
-        const issueId = genIssueId();
-        issues.push({
-          id: issueId,
+        const affectedEntities = [
+          entity('date', date, date, '冲突日期'),
+          ...conflicts.flatMap(({ block1, block2 }) => [
+            entity('time_block', block1.id, block1.name, `${block1.startTime}-${block1.endTime}`),
+            entity('time_block', block2.id, block2.name, `${block2.startTime}-${block2.endTime}`),
+          ]),
+        ];
+
+        issues.push(createIssue({
           category: 'schedule',
           severity: 'error',
-          title: `${date} 有 ${conflicts.length} 个时间块冲突`,
-          description: '时间块之间存在时间重叠',
-          affectedIds: conflicts.flatMap(c => [c.block1, c.block2]),
+          riskLevel: getRiskLevel('error', false, conflicts.length * 2),
+          title: `${date} 存在 ${conflicts.length} 组时间冲突`,
+          description: '同一天内有时间块发生重叠，时间视图会出现执行冲突。',
+          impactSummary: `共检测到 ${conflicts.length} 组时间块重叠，需要人工决定保留、错开或删除哪一项。`,
+          affectedEntities,
           autoFixable: false,
-        });
+          requiresConfirm: true,
+          fixPreview: preview(
+            '该问题不自动修复，需要你人工调整冲突块。',
+            conflicts.map(({ block1, block2 }, index) => ({
+              label: `冲突 ${index + 1}`,
+              before: `${block1.name} ${block1.startTime}-${block1.endTime}`,
+              after: `${block2.name} ${block2.startTime}-${block2.endTime}`,
+            })),
+          ),
+        }));
       }
     }
 
-    // 3. 检查绑定了不存在 graphNodeId 的 block
     for (const task of timelineState.tasks) {
       for (const block of task.blocks) {
-        if (block.type === 'smart-task') {
-          const smartBlock = block as any;
-          if (smartBlock.header.graphNodeId && !graphNodeIds.has(smartBlock.header.graphNodeId)) {
-            const issueId = genIssueId();
-            issues.push({
-              id: issueId,
-              category: 'tasks',
-              severity: 'warning',
-              title: `任务「${task.name}」的智能块绑定了不存在的知识节点`,
-              description: `graphNodeId: ${smartBlock.header.graphNodeId}`,
-              affectedIds: [task.id, block.id],
-              autoFixable: true,
-              fix: async () => {
-                useTimelineStore.getState().updateBlockHeader(task.id, block.id, { graphNodeId: undefined });
-              }
-            });
-          }
+        if (block.type !== 'smart-task') continue;
+
+        if (block.header.graphNodeId && !graphNodeIds.has(block.header.graphNodeId)) {
+          const affectedEntities = [
+            entity('task', task.id, task.name, '所属任务'),
+            entity('smart_block', block.id, block.header.title, '绑定了不存在的图谱节点', block.header.graphNodeId),
+          ];
+
+          issues.push(createIssue({
+            category: 'tasks',
+            severity: 'warning',
+            riskLevel: getRiskLevel('warning', true, affectedEntities.length),
+            title: `任务“${task.name}”中存在失效的图谱绑定`,
+            description: `任务块“${block.header.title}”绑定的 graphNodeId 已不存在。`,
+            impactSummary: '修复后仅会解绑这条失效关联，不会删除任务块内容或正文。',
+            affectedEntities,
+            autoFixable: true,
+            fixPreview: preview(
+              '将清空失效的 graphNodeId。',
+              [
+                { label: '图谱绑定', before: block.header.graphNodeId, after: '未绑定' },
+                { label: '任务块正文', before: '保留', after: '保留' },
+              ],
+            ),
+            fix: async () => {
+              useTimelineStore.getState().updateBlockHeader(task.id, block.id, { graphNodeId: undefined });
+            },
+          }));
+        }
+
+        if (block.header.date && !isValidDate(block.header.date)) {
+          const affectedEntities = [
+            entity('task', task.id, task.name, '所属任务'),
+            entity('smart_block', block.id, block.header.title, `非法日期: ${block.header.date}`),
+          ];
+
+          issues.push(createIssue({
+            category: 'tasks',
+            severity: 'error',
+            riskLevel: getRiskLevel('error', false, affectedEntities.length),
+            title: `任务“${task.name}”存在非法排期日期`,
+            description: `任务块“${block.header.title}”的 date 字段格式无效。`,
+            impactSummary: '这会导致周矩阵、项目文档排序和排期视图出现异常，需要人工修正日期。',
+            affectedEntities,
+            autoFixable: false,
+            requiresConfirm: true,
+            fixPreview: preview(
+              '该问题需要人工修正合法日期。',
+              [{ label: '当前 date', before: String(block.header.date), after: '手动改为 YYYY-MM-DD' }],
+            ),
+          }));
+        }
+
+        if (
+          block.header.deadline &&
+          block.header.date &&
+          isValidDate(block.header.deadline) &&
+          isValidDate(block.header.date) &&
+          dayjs(block.header.deadline).isBefore(dayjs(block.header.date))
+        ) {
+          const affectedEntities = [
+            entity('task', task.id, task.name, '所属任务'),
+            entity(
+              'smart_block',
+              block.id,
+              block.header.title,
+              `${block.header.deadline} 早于 ${block.header.date}`,
+            ),
+          ];
+
+          issues.push(createIssue({
+            category: 'tasks',
+            severity: 'warning',
+            riskLevel: getRiskLevel('warning', true, affectedEntities.length),
+            title: `任务“${task.name}”存在截止日早于排期日`,
+            description: `任务块“${block.header.title}”的 deadline 早于 date，容易误导排期和提醒逻辑。`,
+            impactSummary: '修复后会清空这条异常截止日，保留原有排期日和任务块正文。',
+            affectedEntities,
+            autoFixable: true,
+            requiresConfirm: true,
+            fixPreview: preview(
+              '将移除异常 deadline 字段。',
+              [
+                { label: '排期日期', before: block.header.date, after: block.header.date },
+                { label: '截止日期', before: String(block.header.deadline), after: '未设置' },
+              ],
+            ),
+            fix: async () => {
+              useTimelineStore.getState().updateBlockHeader(task.id, block.id, { deadline: undefined });
+            },
+          }));
         }
       }
-    }
 
-    // 4. 检查日期非法、截止早于排期
-    for (const task of timelineState.tasks) {
       if (!isValidDate(task.start) || !isValidDate(task.end)) {
-        const issueId = genIssueId();
-        issues.push({
-          id: issueId,
+        const affectedEntities = [
+          entity('task', task.id, task.name, `${task.start} ~ ${task.end}`),
+        ];
+
+        issues.push(createIssue({
           category: 'tasks',
           severity: 'error',
-          title: `任务「${task.name}」日期格式非法`,
-          description: `start: ${task.start}, end: ${task.end}`,
-          affectedIds: [task.id],
+          riskLevel: getRiskLevel('error', false, affectedEntities.length),
+          title: `任务“${task.name}”的起止日期非法`,
+          description: `start: ${task.start}，end: ${task.end}。`,
+          impactSummary: '任务本体日期异常会影响时间线渲染、范围计算和跨视图联动，需要人工修正。',
+          affectedEntities,
           autoFixable: false,
-        });
-      }
-
-      for (const block of task.blocks) {
-        if (block.type === 'smart-task') {
-          const smartBlock = block as any;
-          if (smartBlock.header.date && !isValidDate(smartBlock.header.date)) {
-            const issueId = genIssueId();
-            issues.push({
-              id: issueId,
-              category: 'tasks',
-              severity: 'warning',
-              title: `任务「${task.name}」的智能块排期日期非法`,
-              description: `date: ${smartBlock.header.date}`,
-              affectedIds: [task.id, block.id],
-              autoFixable: false,
-            });
-          }
-          if (smartBlock.header.deadline && smartBlock.header.date &&
-              isValidDate(smartBlock.header.deadline) && isValidDate(smartBlock.header.date) &&
-              dayjs(smartBlock.header.deadline).isBefore(dayjs(smartBlock.header.date))) {
-            const issueId = genIssueId();
-            issues.push({
-              id: issueId,
-              category: 'tasks',
-              severity: 'warning',
-              title: `任务「${task.name}」的智能块截止日期早于排期日期`,
-              description: `deadline: ${smartBlock.header.deadline} < date: ${smartBlock.header.date}`,
-              affectedIds: [task.id, block.id],
-              autoFixable: true,
-              fix: async () => {
-                useTimelineStore.getState().updateBlockHeader(task.id, block.id, { deadline: undefined });
-              }
-            });
-          }
-        }
+          requiresConfirm: true,
+          fixPreview: preview(
+            '该问题需要人工修正开始和结束日期。',
+            [
+              { label: '开始日期', before: String(task.start), after: '手动改为 YYYY-MM-DD' },
+              { label: '结束日期', before: String(task.end), after: '手动改为 YYYY-MM-DD' },
+            ],
+          ),
+        }));
       }
     }
 
-    // 6. 检查已归档节点仍有活跃复习
-    const archivedGraphNodes = graphState.nodes.filter(n => n.isArchived);
+    const archivedGraphNodes = graphState.nodes.filter((node) => node.isArchived);
     for (const node of archivedGraphNodes) {
-      const activeReviews = ebbState.reviewTasks.filter(t => t.graphNodeId === node.id && !t.isCompleted);
-      if (activeReviews.length > 0) {
-        const issueId = genIssueId();
-        issues.push({
-          id: issueId,
-          category: 'ebb',
-          severity: 'warning',
-          title: `已归档节点「${node.name}」仍有 ${activeReviews.length} 个活跃复习任务`,
-          description: '这些复习任务应该被归档',
-          affectedIds: [node.id, ...activeReviews.map(t => t.id)],
-          autoFixable: true,
-          fix: async () => {
-            for (const review of activeReviews) {
-              useEbbStore.getState().updateReviewTask(review.id, { isArchived: true });
-            }
+      const activeReviews = ebbState.reviewTasks.filter(
+        (task) => task.graphNodeId === node.id && !task.isCompleted && !task.isArchived,
+      );
+
+      if (activeReviews.length === 0) continue;
+
+      const affectedEntities = [
+        entity('graph_node', node.id, node.name, '已归档节点'),
+        ...activeReviews.map((review) =>
+          entity('review_task', review.id, review.topicName, `复习日期 ${review.dueDate}`),
+        ),
+      ];
+
+      issues.push(createIssue({
+        category: 'ebb',
+        severity: 'warning',
+        riskLevel: getRiskLevel('warning', true, affectedEntities.length),
+        title: `已归档节点“${node.name}”仍有活跃复习任务`,
+        description: `检测到 ${activeReviews.length} 个复习任务仍然挂在已归档节点下。`,
+        impactSummary: `修复后会把这 ${activeReviews.length} 个复习任务标记为归档，避免继续出现在 Ebb 和每日排期中。`,
+        affectedEntities,
+        autoFixable: true,
+        fixPreview: preview(
+          '将归档这些仍然活跃的复习任务。',
+          [
+            { label: '活跃复习任务', before: `${activeReviews.length}`, after: '0' },
+            { label: '图谱节点状态', before: '已归档', after: '已归档' },
+          ],
+        ),
+        fix: async () => {
+          const sourceIds = activeReviews.map((review) => `review-${review.id}`);
+          for (const review of activeReviews) {
+            useEbbStore.getState().updateReviewTask(review.id, { isArchived: true });
           }
-        });
-      }
+          if (sourceIds.length > 0) {
+            useDailyScheduleStore.getState().removeBySourceIds(sourceIds);
+          }
+        },
+      }));
     }
 
     set({
@@ -317,39 +531,52 @@ export const useDataIntegrityStore = create<DataIntegrityStore>((set, get) => ({
         totalIssues: issues.length,
         issues,
         isChecking: false,
-      }
+      },
     });
   },
 
-  fixIssue: async (issueId: string) => {
-    const issue = get().healthReport.issues.find(i => i.id === issueId);
-    if (issue && issue.fix) {
-      await issue.fix();
-      set(state => ({
-        healthReport: {
-          ...state.healthReport,
-          issues: state.healthReport.issues.filter(i => i.id !== issueId),
-          totalIssues: state.healthReport.totalIssues - 1,
-        }
-      }));
-    }
+  fixIssue: async (issueId) => {
+    const issue = get().healthReport.issues.find((item) => item.id === issueId);
+    if (!issue?.fix) return;
+
+    await issue.fix();
+    await get().runHealthCheck();
   },
 
   fixAllIssues: async () => {
-    const fixableIssues = get().healthReport.issues.filter(i => i.autoFixable && i.fix);
+    const fixableIssues = get().healthReport.issues.filter((issue) => issue.autoFixable && issue.fix);
     for (const issue of fixableIssues) {
       await issue.fix!();
     }
-    set(state => ({
-      healthReport: {
-        ...state.healthReport,
-        issues: state.healthReport.issues.filter(i => !i.autoFixable),
-        totalIssues: state.healthReport.issues.filter(i => !i.autoFixable).length,
-      }
-    }));
+    await get().runHealthCheck();
+  },
+
+  previewFixableIssues: () => {
+    const fixableIssues = get().healthReport.issues.filter((issue) => issue.autoFixable);
+    if (fixableIssues.length === 0) return null;
+
+    const affectedEntityCount = fixableIssues.reduce((sum, issue) => sum + issue.affectedEntities.length, 0);
+    const mediumOrHighRisk = fixableIssues.filter((issue) => issue.riskLevel !== 'low').length;
+
+    return preview(
+      `将应用 ${fixableIssues.length} 项自动修复，覆盖 ${affectedEntityCount} 个受影响对象。`,
+      [
+        { label: '自动修复项', before: `${fixableIssues.length}`, after: '0' },
+        { label: '受影响对象', before: `${affectedEntityCount}`, after: '清理异常引用' },
+        { label: '中高风险修复', before: `${mediumOrHighRisk}`, after: `${mediumOrHighRisk}` },
+      ],
+    );
   },
 
   exportReport: () => {
-    return JSON.stringify(get().healthReport, null, 2);
-  }
+    const report = get().healthReport;
+    return JSON.stringify(
+      {
+        ...report,
+        exportedAt: toLocaleDateTime(Date.now()),
+      },
+      null,
+      2,
+    );
+  },
 }));
