@@ -16,7 +16,6 @@ import NoteDialog from '@/components/NoteDialog';
 import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
-import { DataIntegrityEngine } from '@/components/DataIntegrityEngine';
 import { IceboxPalette } from '@/components/smartBlock/IceboxPalette';
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -664,9 +663,6 @@ const App: React.FC = () => {
           onClose={() => setContextMenu(null)}
         />
       )}
-
-      {/* 数据一致性守护引擎 (Cascading Rules) */}
-      <DataIntegrityEngine />
 
       {/* 悬浮磁吸面板：冷冻库 (Icebox) - 仅在周矩阵视图中显示 */}
       <AnimatePresence>

@@ -12,6 +12,8 @@ interface IceboxTask extends SmartTaskBlock {
 
 export const IceboxPalette: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [panelSize, setPanelSize] = useState({ width: 320, height: 480 });
+  const [isResizing, setIsResizing] = useState(false);
   const tasks = useTimelineStore(state => state.tasks);
 
   // 获取所有在冷冻库中的任务（未完成，且 date 为空）
@@ -67,6 +69,44 @@ export const IceboxPalette: React.FC = () => {
     }
   };
 
+  // 隐形边框拉伸逻辑
+  const handleResizeStart = (e: React.PointerEvent<HTMLDivElement>, direction: 'left' | 'top' | 'top-left') => {
+    e.stopPropagation(); // 阻止 Framer Motion 的拖拽
+    setIsResizing(true);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startWidth = panelSize.width;
+    const startHeight = panelSize.height;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault();
+      
+      let newWidth = startWidth;
+      let newHeight = startHeight;
+
+      if (direction === 'left' || direction === 'top-left') {
+        const deltaX = startX - moveEvent.clientX;
+        newWidth = Math.min(Math.max(startWidth + deltaX, 280), 800); // 最小 280px，最大 800px
+      }
+      
+      if (direction === 'top' || direction === 'top-left') {
+        const deltaY = startY - moveEvent.clientY;
+        newHeight = Math.min(Math.max(startHeight + deltaY, 320), window.innerHeight * 0.85); // 最小 320px，最大 85vh
+      }
+
+      setPanelSize({ width: newWidth, height: newHeight });
+    };
+
+    const handlePointerUp = () => {
+      setIsResizing(false);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+
   if (count === 0 && !isExpanded) return null;
 
   return (
@@ -79,12 +119,27 @@ export const IceboxPalette: React.FC = () => {
       <AnimatePresence>
         {isExpanded && (
           <motion.div 
-            className={styles.panel}
+            className={`${styles.panel} ${isResizing ? styles.isResizing : ''}`}
+            style={{ width: panelSize.width, height: panelSize.height, maxHeight: '85vh' }}
             initial={{ opacity: 0, scale: 0.9, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 10 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            transition={isResizing ? { duration: 0 } : { type: 'spring', damping: 25, stiffness: 300 }}
           >
+            {/* 隐形拉伸控制手柄 */}
+            <div 
+              className={`${styles.resizeHandle} ${styles.resizeTop}`} 
+              onPointerDown={(e) => handleResizeStart(e, 'top')} 
+            />
+            <div 
+              className={`${styles.resizeHandle} ${styles.resizeLeft}`} 
+              onPointerDown={(e) => handleResizeStart(e, 'left')} 
+            />
+            <div 
+              className={`${styles.resizeHandle} ${styles.resizeTopLeft}`} 
+              onPointerDown={(e) => handleResizeStart(e, 'top-left')} 
+            />
+
             <div className={styles.panelHeader}>
               <div className={styles.panelTitle}>
                 <Archive size={16} />
