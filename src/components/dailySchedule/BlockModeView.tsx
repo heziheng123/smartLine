@@ -302,15 +302,12 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   const todayProjectTasks = useMemo(() => {
     return allTodos.filter((todo) => {
       if (todo.checked) return false;
+      // 只有精确指定了排期日或截止日为当天的任务才会被纳入任务池
       if (todo.scheduled && todo.scheduled === selectedDate) return true;
       if (todo.due && todo.due === selectedDate) return true;
-      const parentTask = tlTasks.find((t) => t.id === todo.parentTaskId);
-      if (parentTask && !todo.scheduled && !todo.due) {
-        if (!isBeforeDay(selectedDate, parentTask.start) && !isAfterDay(selectedDate, parentTask.end)) return true;
-      }
       return false;
     });
-  }, [allTodos, tlTasks, selectedDate]);
+  }, [allTodos, selectedDate]);
 
   const todayReviewTasks = useMemo(() => {
     return ebbReviewTasks.filter((t) => {
