@@ -161,16 +161,12 @@ const DailyScheduleView: React.FC = () => {
   const todayProjectTasks = useMemo(() => {
     return mergedTodos.filter((todo) => {
       if (todo.checked) return false;
+      // 只有精确指定了排期日或截止日为当天的任务才会被纳入任务池
       if (todo.scheduled && todo.scheduled === selectedDate) return true;
       if (todo.due && todo.due === selectedDate) return true;
-      const parentTask = tlTasks.find((t) => t.id === todo.parentTaskId);
-      if (parentTask && !todo.scheduled && !todo.due) {
-        // 用字符串比较替代 dayjs isBetween
-        if (!isBeforeDay(selectedDate, parentTask.start) && !isAfterDay(selectedDate, parentTask.end)) return true;
-      }
       return false;
     });
-  }, [mergedTodos, tlTasks, selectedDate]);
+  }, [mergedTodos, selectedDate]);
 
   // ── 获取今日复习任务 ─────────────────────────────────────
   const todayReviewTasks = useMemo(() => {
