@@ -187,9 +187,6 @@ const App: React.FC = () => {
     return dayjs().year();
   });
 
-  // 挂载冷冻库自动监控
-  useIceboxMonitor();
-
   // 异步加载 IndexedDB 数据
   React.useEffect(() => {
     if (!isHydrated) {
@@ -212,6 +209,9 @@ const App: React.FC = () => {
     window.addEventListener('tl-navigate', handleNav);
     return () => window.removeEventListener('tl-navigate', handleNav);
   }, []);
+
+  // 挂载冷冻库自动监控
+  useIceboxMonitor();
 
   // ── 任务操作 ──────────────────────────────────────────────
 
@@ -664,9 +664,9 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* 悬浮磁吸面板：冷冻库 (Icebox) - 仅在周矩阵视图中显示 */}
+      {/* 悬浮磁吸面板：冷冻库 (Icebox) - 仅在周矩阵和项目规划视图中显示 */}
       <AnimatePresence>
-        {currentView === 'week-matrix' && (
+        {(currentView === 'week-matrix' || currentView === 'timeline') && (
           <IceboxPalette />
         )}
       </AnimatePresence>
