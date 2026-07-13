@@ -3,9 +3,10 @@
 // 一次性连接 Timeline + Ebb + DailySchedule 三个独立房间
 // ============================================================
 
-import React, { useState, useEffect } from 'react';
-import { Cloud, Link, Unlink, Copy, Check } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Cloud, Link, Unlink, Copy, Check, Upload, Download } from 'lucide-react';
 import { useTimelineStore } from '@/store';
+import { todayStr } from '@/utils/dateSafe';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
@@ -16,6 +17,58 @@ interface SyncDialogProps {
 }
 
 const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { replaceData, exportData } = useTimelineStore(
+    useShallow((state) => ({
+      replaceData: state.replaceData,
+      exportData: state.exportData,
+    }))
+  );
+
+  const handleImport = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const content = ev.target?.result as string;
+        const parsed = JSON.parse(content);
+        const confirmed = window.confirm(
+          '恢复备份会直接覆盖当前时间轴数据（任务、分组、笔记、里程碑）。是否继续？'
+        );
+        if (!confirmed) return;
+
+        replaceData({
+          tasks: parsed.tasks ?? [],
+          groups: parsed.groups ?? [],
+          notes: parsed.notes ?? [],
+          milestones: parsed.milestones ?? [],
+        });
+      } catch {
+        alert('恢复失败：备份文件格式无效');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, [replaceData]);
+
+  const handleExport = useCallback(() => {
+    const jsonStr = exportData();
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `timeline-backup-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [exportData]);
   // Timeline store
   const {
     syncEnabled: tlSyncEnabled,
@@ -307,19 +360,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               </span>
             </label>
 
-            <div className="tl-dialog-actions">
-              <button className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>
-                取消
-              </button>
-              <button
-                className="tl-dialog-btn tl-dialog-btn--primary"
-                onClick={handleConnect}
-                disabled={!roomCode.trim()}
-              >
-                <Link size={14} />
-                连接
-              </button>
-            </div>
           </>
         ) : (
           <>
@@ -380,6 +420,31 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               时间轴、复习模块、每日安排使用独立房间，数据物理隔离。
             </p>
 
+            <div className="tl-sync-divider" />
+
+            <div className="tl-sync-backup-section">
+              <h4 className="tl-sync-backup-title">时间轴数据备份与恢复</h4>
+              <div className="tl-sync-backup-actions">
+                <button
+                  className="tl-sync-backup-btn tl-sync-backup-btn--import"
+                  onClick={handleImport}
+                >
+                  <Upload size={14} />
+                  恢复备份
+                </button>
+                <button
+                  className="tl-sync-backup-btn tl-sync-backup-btn--export"
+                  onClick={handleExport}
+                >
+                  <Download size={14} />
+                  导出备份
+                </button>
+              </div>
+              <p className="tl-sync-backup-hint">
+                这里只包含时间轴模块的任务、分组、笔记、里程碑，不包含 Ebb、每日安排、知识大盘。
+              </p>
+            </div>
+
             <div className="tl-dialog-actions">
               <button className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>
                 关闭
@@ -394,6 +459,57 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             </div>
           </>
         )}
+
+        {!anyEnabled && (
+          <>
+            <div className="tl-sync-divider" />
+
+            <div className="tl-sync-backup-section">
+              <h4 className="tl-sync-backup-title">时间轴数据备份与恢复</h4>
+              <div className="tl-sync-backup-actions">
+                <button
+                  className="tl-sync-backup-btn tl-sync-backup-btn--import"
+                  onClick={handleImport}
+                >
+                  <Upload size={14} />
+                  恢复备份
+                </button>
+                <button
+                  className="tl-sync-backup-btn tl-sync-backup-btn--export"
+                  onClick={handleExport}
+                >
+                  <Download size={14} />
+                  导出备份
+                </button>
+              </div>
+              <p className="tl-sync-backup-hint">
+                这里只包含时间轴模块的任务、分组、笔记、里程碑；恢复时会直接覆盖当前时间轴数据。
+              </p>
+            </div>
+
+            <div className="tl-dialog-actions">
+              <button className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>
+                取消
+              </button>
+              <button
+                className="tl-dialog-btn tl-dialog-btn--primary"
+                onClick={handleConnect}
+                disabled={!roomCode.trim()}
+              >
+                <Link size={14} />
+                连接
+              </button>
+            </div>
+          </>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleFileChange}
+          style={{ display: 'none' }}
+        />
       </div>
     </div>
   );

@@ -4,7 +4,7 @@
 
 import React, { Suspense, useState, useCallback, useMemo } from 'react';
 import dayjs from 'dayjs';
-import { todayStr, splitDate } from '@/utils/dateSafe';
+import { splitDate } from '@/utils/dateSafe';
 import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -412,30 +412,30 @@ const App: React.FC = () => {
 
   // ── 导入/导出 ──────────────────────────────────────────────
 
-  const handleImport = useCallback((data: string) => {
-    try {
-      const parsed = JSON.parse(data);
-      store.importData({
-        tasks: parsed.tasks ?? [],
-        groups: parsed.groups ?? [],
-        notes: parsed.notes ?? [],
-        milestones: parsed.milestones ?? [],
-      });
-    } catch {
-      alert('导入失败：JSON 格式无效');
-    }
-  }, [store]);
+  // const handleImport = useCallback((data: string) => {
+  //   try {
+  //     const parsed = JSON.parse(data);
+  //     store.importData({
+  //       tasks: parsed.tasks ?? [],
+  //       groups: parsed.groups ?? [],
+  //       notes: parsed.notes ?? [],
+  //       milestones: parsed.milestones ?? [],
+  //     });
+  //   } catch {
+  //     alert('导入失败：JSON 格式无效');
+  //   }
+  // }, [store]);
 
-  const handleExport = useCallback(() => {
-    const jsonStr = store.exportData();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `smart-timeline-${todayStr()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [store]);
+  // const handleExport = useCallback(() => {
+  //   const jsonStr = store.exportData();
+  //   const blob = new Blob([jsonStr], { type: 'application/json' });
+  //   const url = URL.createObjectURL(blob);
+  //   const a = document.createElement('a');
+  //   a.href = url;
+  //   a.download = `smart-timeline-${todayStr()}.json`;
+  //   a.click();
+  //   URL.revokeObjectURL(url);
+  // }, [store]);
 
   // ── 关闭对话框 ──────────────────────────────────────────────
 
@@ -470,8 +470,6 @@ const App: React.FC = () => {
         onAddGroup={handleAddGroup}
         onAddNote={handleAddNote}
         onAddMilestone={handleAddMilestone}
-        onImport={handleImport}
-        onExport={handleExport}
         onOpenSync={handleOpenSync}
       />
 
@@ -664,7 +662,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* 悬浮磁吸面板：冷冻库 (Icebox) - 仅在周矩阵和项目规划视图中显示 */}
+      {/* 悬浮磁吸面板：冷冻库 (Icebox) - 在周矩阵与项目规划视图中显示 */}
       <AnimatePresence>
         {(currentView === 'week-matrix' || currentView === 'timeline') && (
           <IceboxPalette />

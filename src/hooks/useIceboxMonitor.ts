@@ -40,8 +40,9 @@ export function useIceboxMonitor() {
       if (hasChanges) {
         // 使用 setTimeout 避免在渲染期间触发 store 的更新（React 警告）
         setTimeout(() => {
+          const now = new Date().toISOString();
           updates.forEach(({ taskId, blockId }) => {
-            updateBlockHeader(taskId, blockId, { date: undefined });
+            updateBlockHeader(taskId, blockId, { date: undefined, frozenAt: now });
           });
         }, 0);
       }

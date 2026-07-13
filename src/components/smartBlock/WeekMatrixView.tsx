@@ -359,7 +359,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
       </div>
 
       <div className="wmv-matrix">
-        <div className="wmv-row wmv-row--header">
+        <div className="wmv-row wmv-row--header" style={{ display: 'grid', gridTemplateColumns: `100px repeat(${dateRange.length}, minmax(120px, 1fr))` }}>
           <div className="wmv-cell wmv-cell--tag" />
           {dateRange.map((dateStr) => {
             const isToday = dateStr === todayString;
@@ -380,7 +380,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
         {tags.map((tag) => {
           const tagColor = getTagColor(tag);
           return (
-            <div key={tag} className="wmv-row">
+            <div key={tag} className="wmv-row" style={{ display: 'grid', gridTemplateColumns: `100px repeat(${dateRange.length}, minmax(120px, 1fr))` }}>
               <div className="wmv-cell wmv-cell--tag">
                 <span className="wmv-tag-badge" style={{ backgroundColor: tagColor }}>
                   {tag}

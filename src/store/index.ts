@@ -109,6 +109,78 @@ function getInitialSyncData(): TimelineData {
   return getDefaultData();
 }
 
+function normalizeTask(task: Task): Task {
+  const normalizedTask = { ...task } as Task & { markdown?: string };
+  if (normalizedTask.markdown && (!normalizedTask.blocks || normalizedTask.blocks.length === 0)) {
+    const blocks = migrateMarkdownToBlocks(task);
+    delete normalizedTask.markdown;
+    return { ...normalizedTask, blocks };
+  }
+
+  delete normalizedTask.markdown;
+  return {
+    ...normalizedTask,
+    blocks: Array.isArray(normalizedTask.blocks) ? normalizedTask.blocks : [],
+  };
+}
+
+function isValidTask(task: unknown): task is Task {
+  if (!task || typeof task !== 'object') return false;
+  const record = task as Record<string, unknown>;
+  return typeof record.id === 'string'
+    && typeof record.name === 'string'
+    && typeof record.start === 'string'
+    && typeof record.end === 'string';
+}
+
+function isValidNote(note: unknown): note is Note {
+  if (!note || typeof note !== 'object') return false;
+  const record = note as Record<string, unknown>;
+  return typeof record.id === 'string'
+    && typeof record.name === 'string'
+    && typeof record.date === 'string'
+    && (record.type === 'pin' || record.type === 'range');
+}
+
+function isValidMilestone(milestone: unknown): milestone is Milestone {
+  if (!milestone || typeof milestone !== 'object') return false;
+  const record = milestone as Record<string, unknown>;
+  return typeof record.id === 'string'
+    && typeof record.name === 'string'
+    && typeof record.date === 'string';
+}
+
+function isValidGroup(group: unknown): group is TaskGroup {
+  if (!group || typeof group !== 'object') return false;
+  const record = group as Record<string, unknown>;
+  return typeof record.id === 'string'
+    && typeof record.name === 'string'
+    && typeof record.start === 'string'
+    && typeof record.end === 'string'
+    && Array.isArray(record.children);
+}
+
+function normalizeTimelineData(data: TimelineData): TimelineData {
+  return {
+    tasks: Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask).map(normalizeTask) : [],
+    notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
+    milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
+    groups: Array.isArray(data?.groups)
+      ? data.groups
+        .filter(isValidGroup)
+        .map((group) => ({
+          ...group,
+          children: Array.isArray(group.children)
+            ? group.children.filter(isValidTask).map((child) => ({
+              ...normalizeTask(child),
+              groupId: group.id,
+            }))
+            : [],
+        }))
+      : [],
+  };
+}
+
 async function saveDataAsync(data: TimelineData) {
   try {
     await localforage.setItem(STORAGE_KEY, data);
@@ -184,6 +256,7 @@ interface TimelineStore extends TimelineData {
   deleteMilestone: (milestoneId: string) => void;
 
   importData: (data: TimelineData) => void;
+  replaceData: (data: TimelineData) => void;
   exportData: () => string;
 }
 
@@ -212,27 +285,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             }
 
             if (raw) {
-              const normalizeTask = (t: Task): Task => {
-                const task = { ...t } as Task & { markdown?: string };
-                if (task.markdown && (!task.blocks || task.blocks.length === 0)) {
-                  const blocks = migrateMarkdownToBlocks(t);
-                  delete task.markdown;
-                  return { ...task, blocks };
-                }
-                delete task.markdown;
-                return { ...task, blocks: task.blocks ?? [] };
-              };
-              const tasks = (raw.tasks ?? []).map(normalizeTask);
-              const groups = (raw.groups ?? []).map((g: TaskGroup) => ({
-                ...g,
-                children: Array.isArray(g.children) ? g.children.map(normalizeTask) : [],
-              }));
-              
               set({
-                tasks,
-                groups,
-                notes: raw.notes ?? [],
-                milestones: raw.milestones ?? [],
+                ...normalizeTimelineData(raw),
                 isHydrated: true,
               });
               return;
@@ -679,46 +733,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         importData: (data) => {
-          // Schema 校验：过滤掉字段缺失/类型错误的条目，避免后续渲染崩溃
-          const isValidTask = (t: unknown): t is Task => {
-            if (!t || typeof t !== 'object') return false;
-            const r = t as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.name === 'string'
-              && typeof r.start === 'string'
-              && typeof r.end === 'string';
-          };
-          const isValidNote = (n: unknown): n is Note => {
-            if (!n || typeof n !== 'object') return false;
-            const r = n as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.name === 'string'
-              && typeof r.date === 'string'
-              && (r.type === 'pin' || r.type === 'range');
-          };
-          const isValidMilestone = (m: unknown): m is Milestone => {
-            if (!m || typeof m !== 'object') return false;
-            const r = m as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.name === 'string'
-              && typeof r.date === 'string';
-          };
-          const isValidGroup = (g: unknown): g is TaskGroup => {
-            if (!g || typeof g !== 'object') return false;
-            const r = g as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.name === 'string'
-              && typeof r.start === 'string'
-              && typeof r.end === 'string'
-              && Array.isArray(r.children);
-          };
-
-          const normalized: TimelineData = {
-            tasks: Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask) : [],
-            notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
-            milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
-            groups: Array.isArray(data?.groups) ? data.groups.filter(isValidGroup) : [],
-          };
+          const normalized = normalizeTimelineData(data);
 
           // 按 id 合并：保留本地未在导入数据中的条目，避免多端并发场景下
           // 整体覆盖冲掉他端刚刚更新的字段。同 id 时以导入数据为准。
@@ -735,6 +750,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           };
           saveData(merged);
           set(merged);
+        },
+
+        replaceData: (data) => {
+          const normalized = normalizeTimelineData(data);
+          saveData(normalized);
+          set(normalized);
         },
 
         exportData: () => {

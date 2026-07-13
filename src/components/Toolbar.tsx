@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { Plus, FolderPlus, BookmarkPlus, Flag, Download, Upload, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Search, Archive } from 'lucide-react';
+import React, { useState } from 'react';
+import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Search, Archive } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -16,8 +16,6 @@ interface ToolbarProps {
   onAddGroup: () => void;
   onAddNote: () => void;
   onAddMilestone: () => void;
-  onImport: (data: string) => void;
-  onExport: () => void;
   onOpenSync: () => void;
 }
 
@@ -30,11 +28,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onAddGroup,
   onAddNote,
   onAddMilestone,
-  onImport,
-  onExport,
   onOpenSync,
 }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { syncEnabled, syncStatus, dockContext } = useTimelineStore(
     useShallow((s) => ({ 
       syncEnabled: s.syncEnabled, 
@@ -45,23 +40,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
-
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const content = ev.target?.result as string;
-      onImport(content);
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
 
   const NAV_ITEMS: { module: AppModule; label: string; icon: React.ReactNode }[] = [
     { module: 'timeline', label: '项目规划', icon: <CalendarDays size={18} /> },
@@ -262,33 +240,9 @@ const Toolbar: React.FC<ToolbarProps> = ({
             >
               {syncEnabled && syncStatus === 'connected' ? <Cloud size={18} /> : <CloudOff size={18} />}
             </button>
-            <button
-              className="tl-dock-btn"
-              onClick={handleImportClick}
-              type="button"
-              title="导入 JSON"
-            >
-              <Upload size={18} />
-            </button>
-            <button
-              className="tl-dock-btn"
-              onClick={onExport}
-              type="button"
-              title="导出 JSON"
-            >
-              <Download size={18} />
-            </button>
           </motion.div>
         )}
         </AnimatePresence>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json"
-          onChange={handleFileChange}
-          style={{ display: 'none' }}
-        />
       </motion.div>
 
       <GlobalSearchModal isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />

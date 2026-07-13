@@ -22,6 +22,7 @@ import {
   Maximize,
   Minimize,
   ListTree,
+  MoreHorizontal,
 } from 'lucide-react';
 import {
   todayStr,
@@ -584,8 +585,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         <button type="button" className="pdv-back" onClick={onClose}>
           <ArrowLeft size={18} />
         </button>
-        <h2 className="pdv-title" onClick={() => setMetaExpanded(!metaExpanded)}>
-          {currentTask.name}
+        <h2 className="pdv-title" onClick={() => setMetaExpanded(!metaExpanded)} title={currentTask.name}>
+          <span className="pdv-title-text">{currentTask.name}</span>
           <span className={`pdv-caret ${metaExpanded ? 'pdv-caret--open' : ''}`}>▾</span>
         </h2>
         <div className="pdv-header-actions">
@@ -618,43 +619,6 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
               <span className={`pdv-group-toggle-opt ${groupByWeek ? 'pdv-group-toggle-opt--active' : ''}`}>周</span>
             </div>
           )}
-          {smartBlocks.length > 0 && (
-            <div className="pdv-expand-toggle">
-              <button
-                type="button"
-                className="pdv-btn"
-                onClick={() => setShowExpandMenu(!showExpandMenu)}
-                title="展开/折叠控制"
-              >
-                <ChevronDown size={16} />
-              </button>
-              {showExpandMenu && (
-                <div className="pdv-expand-menu">
-                  <button
-                    type="button"
-                    className={`pdv-expand-option ${expandAll === null ? 'pdv-expand-option--active' : ''}`}
-                    onClick={() => { setExpandAll(null); setShowExpandMenu(false); }}
-                  >
-                    默认
-                  </button>
-                  <button
-                    type="button"
-                    className={`pdv-expand-option ${expandAll === true ? 'pdv-expand-option--active' : ''}`}
-                    onClick={() => { setExpandAll(true); setShowExpandMenu(false); }}
-                  >
-                    全部展开
-                  </button>
-                  <button
-                    type="button"
-                    className={`pdv-expand-option ${expandAll === false ? 'pdv-expand-option--active' : ''}`}
-                    onClick={() => { setExpandAll(false); setShowExpandMenu(false); }}
-                  >
-                    全部折叠
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
           <button
             type="button"
             className="pdv-btn"
@@ -663,25 +627,67 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           >
             {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
           </button>
+
+          <div className="pdv-expand-toggle">
+            <button
+              type="button"
+              className="pdv-btn"
+              onClick={() => setShowExpandMenu(!showExpandMenu)}
+              title="更多操作"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+            {showExpandMenu && (
+              <div className="pdv-expand-menu pdv-more-menu">
+                {smartBlocks.length > 0 && (
+                  <>
+                    <div className="pdv-menu-group-title">展开控制</div>
+                    <button
+                      type="button"
+                      className={`pdv-expand-option ${expandAll === null ? 'pdv-expand-option--active' : ''}`}
+                      onClick={() => { setExpandAll(null); setShowExpandMenu(false); }}
+                    >
+                      默认展开
+                    </button>
+                    <button
+                      type="button"
+                      className={`pdv-expand-option ${expandAll === true ? 'pdv-expand-option--active' : ''}`}
+                      onClick={() => { setExpandAll(true); setShowExpandMenu(false); }}
+                    >
+                      全部展开
+                    </button>
+                    <button
+                      type="button"
+                      className={`pdv-expand-option ${expandAll === false ? 'pdv-expand-option--active' : ''}`}
+                      onClick={() => { setExpandAll(false); setShowExpandMenu(false); }}
+                    >
+                      全部折叠
+                    </button>
+                    <div className="pdv-menu-divider" />
+                  </>
+                )}
+                
+                <button
+                  type="button"
+                  className="pdv-expand-option pdv-expand-option--icon"
+                  onClick={() => { setShowBatchImport(true); setShowExpandMenu(false); }}
+                >
+                  <FileSpreadsheet size={14} /> 批量导入
+                </button>
+                <button
+                  type="button"
+                  className="pdv-expand-option pdv-expand-option--icon"
+                  onClick={() => { setShowBatchEdit(true); setShowExpandMenu(false); }}
+                >
+                  <ListTree size={14} /> 批量编辑
+                </button>
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
-            className="pdv-btn"
-            onClick={() => setShowBatchImport(true)}
-            title="批量导入 Excel/CSV"
-          >
-            <FileSpreadsheet size={16} />
-          </button>
-          <button
-            type="button"
-            className="pdv-btn"
-            onClick={() => setShowBatchEdit(true)}
-            title="批量编辑任务"
-          >
-            <ListTree size={16} />
-          </button>
-          <button
-            type="button"
-            className="pdv-btn"
+            className="pdv-btn pdv-btn--primary"
             onClick={handleAddTaskBlock}
             title="添加任务块"
           >

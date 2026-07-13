@@ -17,7 +17,7 @@
    ============================================================ */
 
 .pdv-container {
-  width: 480px;
+  width: 450px;
   min-width: 360px;
   max-width: 600px;
   height: 100vh;
@@ -51,6 +51,15 @@
   padding: 12px 16px;
   border-bottom: 1px solid #f3f4f6;
   flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+.pdv-header::-webkit-scrollbar {
+  display: none;
+}
+.pdv-header {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }
 
 .pdv-back {
@@ -69,7 +78,8 @@
 .pdv-back:hover { background: #f3f4f6; }
 
 .pdv-title {
-  flex: 1;
+  flex: 1 1 0%;
+  min-width: 0;
   font-size: 16px;
   font-weight: 600;
   color: #111827;
@@ -79,16 +89,25 @@
   gap: 4px;
   user-select: none;
 }
+.pdv-title-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
 .pdv-caret {
   font-size: 12px;
   color: #9ca3af;
   transition: transform var(--stb-transition);
+  flex-shrink: 0;
 }
 .pdv-caret--open { transform: rotate(180deg); }
 
 .pdv-header-actions {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .pdv-btn {
@@ -97,6 +116,7 @@
   justify-content: center;
   width: 32px;
   height: 32px;
+  flex-shrink: 0;
   border-radius: 6px;
   border: none;
   background: transparent;
@@ -129,8 +149,23 @@
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0,0,0,.1);
   z-index: 50;
-  min-width: 100px;
-  padding: 4px;
+  min-width: 120px;
+  padding: 6px;
+}
+.pdv-more-menu {
+  min-width: 160px;
+}
+.pdv-menu-group-title {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+}
+.pdv-menu-divider {
+  height: 1px;
+  background: #f3f4f6;
+  margin: 4px 0;
 }
 .pdv-expand-option {
   display: block;
@@ -149,6 +184,21 @@
   background: #e0e7ff;
   color: #4f46e5;
   font-weight: 500;
+}
+.pdv-expand-option--icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 主操作按钮（添加任务块） */
+.pdv-btn--primary {
+  background: #3b82f6;
+  color: #fff;
+}
+.pdv-btn--primary:hover {
+  background: #2563eb;
+  color: #fff;
 }
 
 /* ── 元信息折叠区 ── */
@@ -1656,6 +1706,8 @@
 .wmv-matrix {
   flex: 1;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ── 跳转提示胶囊（悬停展开） ── */
@@ -1734,8 +1786,8 @@
 }
 
 .wmv-row {
-  display: flex;
   border-bottom: 1px solid #f3f4f6;
+  min-width: min-content;
 }
 .wmv-row--header {
   border-bottom: 2px solid #e5e7eb;
@@ -1746,17 +1798,12 @@
 }
 
 .wmv-cell {
-  flex: 1;
-  min-width: 120px;
   padding: 6px;
   border-right: 1px solid #f9fafb;
   vertical-align: top;
 }
 
 .wmv-cell--tag {
-  min-width: 80px;
-  max-width: 100px;
-  flex: 0 0 80px;
   display: flex;
   align-items: center;
   justify-content: center;

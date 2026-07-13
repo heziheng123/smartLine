@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { todayStr, isBeforeDay, isAfterDay } from '@/utils/dateSafe';
+import { todayStr } from '@/utils/dateSafe';
 import { CircleDashed, Link as LinkIcon } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';

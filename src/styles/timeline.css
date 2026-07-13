@@ -1423,11 +1423,19 @@ html, body, #root {
   padding: 18px 20px 0;
 }
 
-.tl-dialog-header h3 {
+.tl-dialog-header h3,
+.tl-dialog-title {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
   color: #1f2937;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tl-dialog-title {
+  padding: 20px 20px 0;
 }
 
 .tl-dialog-body {
@@ -1449,6 +1457,21 @@ html, body, #root {
   color: #6B7280;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+}
+
+.tl-dialog > .tl-dialog-label {
+  margin: 0 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tl-dialog-hint {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .tl-dialog-input {
@@ -1635,12 +1658,29 @@ html, body, #root {
   margin-left: auto;
 }
 
+.tl-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+  padding: 16px 20px;
+  border-top: 1px solid #F3F4F6;
+  background: #F9FAFB;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+
 .tl-dialog-btn {
-  padding: 7px 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
   border: none;
   border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -1668,6 +1708,16 @@ html, body, #root {
 
 .tl-dialog-btn--secondary:hover {
   background: #E5E7EB;
+}
+
+.tl-dialog-btn--cancel {
+  background: transparent;
+  color: #6B7280;
+}
+
+.tl-dialog-btn--cancel:hover {
+  background: #F3F4F6;
+  color: #374151;
 }
 
 .tl-dialog-btn--danger {
@@ -2191,10 +2241,11 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   background: #F9FAFB;
   border-radius: 8px;
-  margin-bottom: 16px;
+  margin: 16px 20px 20px;
+  border: 1px solid #E5E7EB;
 }
 
 .tl-sync-dot {
@@ -2202,26 +2253,38 @@ html, body, #root {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
 }
 
 .tl-sync-room-tag {
   margin-left: auto;
-  font-size: 11px;
-  color: #6B7280;
-  background: #F3F4F6;
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4B5563;
+  background: #E5E7EB;
+  padding: 4px 10px;
+  border-radius: 6px;
 }
 
 .tl-sync-info {
-  margin-bottom: 16px;
+  margin: 0 20px 20px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .tl-sync-info-row {
   display: flex;
   align-items: center;
-  padding: 8px 0;
+  padding: 12px 16px;
   border-bottom: 1px solid #F3F4F6;
+  transition: background-color 0.2s;
+}
+
+.tl-sync-info-row:hover {
+  background-color: #F9FAFB;
 }
 
 .tl-sync-info-row:last-child {
@@ -2229,19 +2292,22 @@ html, body, #root {
 }
 
 .tl-sync-info-label {
-  width: 60px;
+  width: 90px;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
   color: #6B7280;
 }
 
 .tl-sync-info-value {
   font-size: 13px;
-  color: #374151;
+  font-weight: 500;
+  color: #111827;
   word-break: break-all;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex: 1;
 }
 
 .tl-sync-copy-btn {
@@ -2266,13 +2332,14 @@ html, body, #root {
 
 .tl-sync-tip {
   font-size: 12px;
-  color: #6B7280;
+  color: #78350F;
   line-height: 1.6;
-  margin: 0 0 16px;
-  padding: 10px 12px;
-  background: #FFFBEB;
-  border-radius: 6px;
-  border: 1px solid #FEF3C7;
+  margin: 0 20px 20px;
+  padding: 12px 16px;
+  background: #FEF3C7;
+  border-radius: 8px;
+  border: 1px solid #FDE68A;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .tl-sync-checkbox-row {
@@ -2283,7 +2350,7 @@ html, body, #root {
   background: #F9FAFB;
   border: 1px solid #E5E7EB;
   border-radius: 6px;
-  margin-bottom: 16px;
+  margin: 0 20px 16px;
   cursor: pointer;
   font-size: 12px;
   color: #374151;
@@ -2314,6 +2381,83 @@ html, body, #root {
   border-radius: 3px;
   font-family: ui-monospace, monospace;
   font-size: 10px;
+}
+
+.tl-sync-divider {
+  width: calc(100% - 40px);
+  height: 1px;
+  background: #E5E7EB;
+  margin: 16px 20px;
+}
+
+.tl-sync-backup-section {
+  padding: 4px 20px;
+}
+
+.tl-sync-backup-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 12px 0;
+}
+
+.tl-sync-backup-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.tl-sync-backup-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid #E5E7EB;
+  background: #F9FAFB;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tl-sync-backup-btn:hover {
+  background: #FFFFFF;
+  border-color: #D1D5DB;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+}
+
+.tl-sync-backup-btn--import {
+  border-color: #DDD6FE;
+  background: #F5F3FF;
+  color: #4338CA;
+}
+
+.tl-sync-backup-btn--import:hover {
+  border-color: #A78BFA;
+  background: #EDE9FE;
+}
+
+.tl-sync-backup-btn--export {
+  border-color: #D1FAE5;
+  background: #ECFDF5;
+  color: #047857;
+}
+
+.tl-sync-backup-btn--export:hover {
+  border-color: #6EE7B7;
+  background: #D1FAE5;
+}
+
+.tl-sync-backup-hint {
+  font-size: 11px;
+  color: #6B7280;
+  margin: 0;
+  line-height: 1.5;
 }
 
 .tl-toolbar-btn--synced {

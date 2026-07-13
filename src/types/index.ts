@@ -31,6 +31,9 @@ export interface SmartTaskHeader {
   graphNodeId?: string;   // 🧠 绑定的知识大盘节点 ID
   autoSyncEbb?: boolean;  // 🔄 是否自动同步至 Ebb 复习流
   isArchived?: boolean;   // 🗃️ 是否已归档（冷数据）
+  frozenAt?: string;      // 🧊 进入冷冻仓的时间戳
+  priority?: 'P0' | 'P1' | 'P2'; // 🚨 优先级
+  estimatedTime?: number; // ⏱️ 预估耗时（分钟）
 }
 
 /** 智能任务块（核心：Header + Body 双层结构） */
@@ -102,7 +105,7 @@ export interface TimelineData {
 export interface SmartBlockDragPayload {
   type: 'smart-block';
   /** 拖拽来源标识，用于分析和特殊处理 */
-  source: 'icebox' | 'week-matrix' | 'timeline' | 'unknown';
+  source: 'icebox' | 'week-matrix' | 'timeline' | 'backlog_river' | 'unknown';
   taskId: string;
   blockId: string;
   tag: string;
