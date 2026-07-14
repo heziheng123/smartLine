@@ -12,6 +12,7 @@ import { computeRounds, isOverdue, isDueToday, getDateLabel } from '../scheduler
 import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import type { TaskActions } from './MatrixView';
+import { useGraphStore } from '@/graph/store';
 
 // ── 错误边界（捕获渲染异常，避免白屏）──────────────────────
 class BoardErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -61,13 +62,16 @@ interface TopicCardData {
   /** 主题总积分 */
   totalPoints: number;
   earnedPoints: number;
+  /** 关联的大盘节点 ID（取组内第一个任务的） */
+  graphNodeId?: string;
 }
 
 const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) => {
   const [query, setQuery] = useState('');
-  const [groupByTag, setGroupByTag] = useState(false);
+  const [groupByType, setGroupByType] = useState<'none' | 'tag' | 'rootNode'>('none');
 
   const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
+  const getNodeById = useGraphStore((s) => s.getNodeById);
 
   // 按主题聚合 + 三列拆分
   const columns = useMemo(() => {
@@ -117,6 +121,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
         hasUrgent,
         totalPoints,
         earnedPoints,
+        graphNodeId: firstTask?.graphNodeId,
       });
     }
 
@@ -165,18 +170,33 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
     [query],
   );
 
-  // 标签泳道分组（memo 化：稳定引用）
-  const groupByTagFn = useMemo(
+  // 泳道分组逻辑
+  const groupedTasksFn = useMemo(
     () => (list: TopicCardData[]) => {
       const map = new Map<string, TopicCardData[]>();
       for (const t of list) {
-        const tag = t.tag || '无标签';
-        if (!map.has(tag)) map.set(tag, []);
-        map.get(tag)!.push(t);
+        let groupKey = '无分类';
+        
+        if (groupByType === 'tag') {
+          groupKey = t.tag || '无标签';
+        } else if (groupByType === 'rootNode') {
+          if (t.graphNodeId) {
+            let current = getNodeById(t.graphNodeId);
+            while (current && current.parentId) {
+              current = getNodeById(current.parentId);
+            }
+            groupKey = current ? current.name : '无大盘关联';
+          } else {
+            groupKey = '无大盘关联';
+          }
+        }
+
+        if (!map.has(groupKey)) map.set(groupKey, []);
+        map.get(groupKey)!.push(t);
       }
       return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     },
-    [],
+    [groupByType, getNodeById],
   );
 
   // colConfig 包含已筛选列表，依赖 query 和 columns
@@ -203,9 +223,16 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
           />
         </div>
         <label className="eb-filter-check">
-          <input type="checkbox" checked={groupByTag} onChange={(e) => setGroupByTag(e.target.checked)} />
-          <Tag size={13} />
-          按标签分泳道
+          <select 
+            className="eb-filter-select" 
+            style={{ marginLeft: 8 }}
+            value={groupByType} 
+            onChange={(e) => setGroupByType(e.target.value as 'none' | 'tag' | 'rootNode')}
+          >
+            <option value="none">不分组</option>
+            <option value="tag">按标签分组</option>
+            <option value="rootNode">按大盘根节点分组</option>
+          </select>
         </label>
       </div>
 
@@ -227,9 +254,9 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
                 </div>
 
                 <div className="eb-board-col-body">
-                  {groupByTag ? (
-                    groupByTagFn(col.tasks).map(([tag, tagTasks]) => (
-                      <Droppable droppableId={`${col.id}::${tag}`} key={tag}>
+                  {groupByType !== 'none' ? (
+                    groupedTasksFn(col.tasks).map(([groupKey, tagTasks]) => (
+                      <Droppable droppableId={`${col.id}::${groupKey}`} key={groupKey}>
                         {(laneProvided, laneSnapshot) => (
                           <div
                             ref={laneProvided.innerRef}
@@ -237,8 +264,8 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
                             className={`eb-board-lane ${laneSnapshot.isDraggingOver ? 'eb-board-lane--over' : ''}`}
                           >
                             <div className="eb-board-lane-header">
-                              <span className="eb-board-lane-dot" style={{ backgroundColor: settings.tagColors[tag] || '#9CA3AF' }} />
-                              <span className="eb-board-lane-name">{tag}</span>
+                              <span className="eb-board-lane-dot" style={{ backgroundColor: settings.tagColors[groupKey] || '#9CA3AF' }} />
+                              <span className="eb-board-lane-name">{groupKey}</span>
                               <span className="eb-board-lane-count">{tagTasks.length}</span>
                             </div>
                             {tagTasks.map((t, i) => (
@@ -269,7 +296,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
                       />
                     ))
                   )}
-                  {col.tasks.length === 0 && !groupByTag && (
+                  {col.tasks.length === 0 && groupByType === 'none' && (
                     <div className="eb-board-empty">拖拽任务到此处</div>
                   )}
                   {provided.placeholder}

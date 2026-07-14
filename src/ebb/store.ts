@@ -136,7 +136,9 @@ interface EbbStore extends EbbData {
   exportEbbData: () => string;
 
   // 新增：自动同步任务到 Ebb 复习流
-  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; triggerSchedule?: boolean }) => void;
+  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; tag?: string; triggerSchedule?: boolean }) => void;
+  // 新增：同步大盘节点名称修改
+  updateTopicNameByGraphNodeId: (graphNodeId: string, newTopicName: string) => void;
 }
 
 // ── 创建 Store ──────────────────────────────────────────────
@@ -736,13 +738,49 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           return JSON.stringify({ reviewTasks, inboxItems, outlineNodes, ebbSettings }, null, 2);
         },
 
+        updateTopicNameByGraphNodeId: (graphNodeId, newTopicName) => {
+          set((state) => {
+            let changed = false;
+            const reviewTasks = state.reviewTasks.map((t) => {
+              if (t.graphNodeId === graphNodeId && t.topicName !== newTopicName) {
+                changed = true;
+                return { ...t, topicName: newTopicName };
+              }
+              return t;
+            });
+            if (!changed) return state;
+
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: state.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+        },
+
         // ── 自动同步任务到 Ebb 复习流 ─────────────────────────────────
 
         syncTaskToEbb: (payload) => {
           set((state) => {
-            const { action = 'add', graphNodeId, topicName, triggerSchedule = true } = payload;
+            const { action = 'add', graphNodeId, topicName, tag, triggerSchedule = true } = payload;
             
-            // 找到所有该 graphNodeId 关联的任务
+            // 如果是删除动作
+            if (action === 'remove') {
+              const reviewTasks = state.reviewTasks.filter((t) => t.graphNodeId !== graphNodeId);
+              const newData: EbbData = {
+                reviewTasks,
+                inboxItems: state.inboxItems,
+                outlineNodes: state.outlineNodes,
+                ebbSettings: state.ebbSettings,
+              };
+              saveEbbData(newData);
+              return newData;
+            }
+
+            // 如果是添加动作，找到所有该 graphNodeId 关联的任务
             const existingTasks = state.reviewTasks.filter(t => t.graphNodeId === graphNodeId);
             
             // 如果是取消完成操作
@@ -769,25 +807,8 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             // === 条件执行（是否排期） ===
             if (!triggerSchedule) {
               // 如果用户取消了同步排期，直接结束流程！
-              // 如果是全新节点（existingTasks.length === 0），需要创建一个已完成的空壳任务，实现排期解耦
-              if (existingTasks.length === 0) {
-                newReviewTasks.push({
-                  id: genId('rt'),
-                  topicName,
-                  graphNodeId,
-                  dueDate: nowStr,
-                  isCompleted: true,
-                  complexity: 'normal',
-                  smStatus: 'confirmed',
-                });
-              }
-
-              const newData: EbbData = {
-                ...state,
-                reviewTasks: newReviewTasks,
-              };
-              saveEbbData(newData);
-              return newData;
+              // 移除空壳任务生成逻辑，让该节点在 Ebb 中没有任何任务记录，从而在图谱中呈现蓝色（已激活但无排期）
+              return state;
             }
 
             // === 如果 triggerSchedule 为 true，执行原本的时间线重置与生成逻辑 ===
@@ -805,6 +826,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 generated.push({
                   id: genId('rt'),
                   topicName,
+                  tag,
                   graphNodeId,
                   dueDate: currentDueDate,
                   isCompleted: false,
@@ -853,6 +875,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                   generated.push({
                     id: genId('rt'),
                     topicName,
+                    tag,
                     graphNodeId,
                     dueDate: currentDueDate,
                     isCompleted: false,

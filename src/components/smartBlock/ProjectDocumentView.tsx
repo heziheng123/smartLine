@@ -198,12 +198,15 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
       if (groupDimension === 'node') {
         // 按图谱节点分组
-        const nodeId = sb.header.graphNodeId;
-        if (!nodeId) {
+        const graphNodeIds = sb.header.graphNodeIds || (sb.header.graphNodeId ? [sb.header.graphNodeId] : []);
+        if (graphNodeIds.length === 0) {
           groupKey = '__unlinked__';
           label = '未关联节点';
           icon = '📥';
         } else {
+          // 在 ProjectDocumentView 分组时，如果绑了多个节点，按第一个节点分组展示，或者可以用逗号拼接
+          // 这里为了与原有逻辑尽量保持一致并兼顾多节点，使用第一个节点
+          const nodeId = graphNodeIds[0];
           const node = nodes.find(n => n.id === nodeId);
           groupKey = nodeId;
           label = node ? node.name : '未知节点';
@@ -369,17 +372,16 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       // 跨组：更新日期或图谱节点
       if (sourceGroupKey !== destGroupKey) {
         if (groupDimension === 'node') {
-          let newGraphNodeId: string | undefined;
-          if (destGroupKey === '__unlinked__') {
-            newGraphNodeId = undefined;
-          } else {
-            newGraphNodeId = destGroupKey;
+          let newGraphNodeIds: string[] = [];
+          if (destGroupKey !== '__unlinked__') {
+            newGraphNodeIds = [destGroupKey]; // 拖拽到一个节点组时，覆盖为其单一节点
           }
           (newBlocks[blockIndex] as SmartTaskBlock) = {
             ...newBlocks[blockIndex] as SmartTaskBlock,
             header: {
               ...(newBlocks[blockIndex] as SmartTaskBlock).header,
-              graphNodeId: newGraphNodeId,
+              graphNodeId: newGraphNodeIds[0],
+              graphNodeIds: newGraphNodeIds,
             },
           };
         } else {
@@ -415,7 +417,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           const sb = b as SmartTaskBlock;
           let bGroupKey: string;
           if (groupDimension === 'node') {
-            bGroupKey = sb.header.graphNodeId || '__unlinked__';
+            const ids = sb.header.graphNodeIds || (sb.header.graphNodeId ? [sb.header.graphNodeId] : []);
+            bGroupKey = ids.length > 0 ? ids[0] : '__unlinked__';
           } else {
             const d = sb.header.date || '__none__';
             if (groupByWeek && d !== '__none__') {

@@ -45,6 +45,9 @@ export function useSmartTaskTodos(tasks: Task[]): AggregatedTodo[] {
           _tagColor: h.tagColor,
           _duration: h.duration,
           _complexity: h.complexity,
+          _graphNodeId: h.graphNodeId,
+          _graphNodeIds: h.graphNodeIds,
+          _autoSyncEbb: h.autoSyncEbb,
         });
       }
     }

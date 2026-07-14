@@ -810,6 +810,36 @@
 }
 
 /* ── 标签徽章（极淡底色，极小字号） ── */
+.stb-node-badge-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stb-sync-checkbox {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 0 4px;
+  height: 20px;
+  border-radius: 4px;
+  background-color: transparent;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.stb-sync-checkbox:hover {
+  background-color: #f1f5f9;
+}
+
+.stb-sync-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+  width: 12px;
+  height: 12px;
+  accent-color: #3b82f6;
+}
+
 .stb-tag-badge {
   display: inline-flex;
   align-items: center;

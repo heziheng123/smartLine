@@ -40,6 +40,8 @@ const KnowledgeGraphView = React.lazy(() =>
   import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView })),
 );
 
+import { useGraphStore } from '@/graph/store';
+
 const ViewFallback: React.FC = () => (
   <div className="tl-app-split tl-app-split--ebb">
     <div className="tl-app-main flex items-center justify-center text-sm text-slate-500">
@@ -49,6 +51,8 @@ const ViewFallback: React.FC = () => (
 );
 
 const App: React.FC = () => {
+  const { isHydrated: isGraphHydrated, hydrateStore: hydrateGraphStore } = useGraphStore();
+
   // 选择性订阅：只关心 tasks/groups/notes/milestones 数据切片 + 各 CRUD 方法。
   // CRUD 方法在 zustand 中是 store 创建时一次性定义的稳定引用，
   // 故即便 syncStatus 等其它切片变化，本组件也不会重渲染。
@@ -192,7 +196,10 @@ const App: React.FC = () => {
     if (!isHydrated) {
       hydrateStore();
     }
-  }, [isHydrated, hydrateStore]);
+    if (!isGraphHydrated) {
+      hydrateGraphStore();
+    }
+  }, [isHydrated, hydrateStore, isGraphHydrated, hydrateGraphStore]);
 
   // 全局漫游导航监听
   React.useEffect(() => {
@@ -451,7 +458,7 @@ const App: React.FC = () => {
     setDialogType('sync');
   }, []);
 
-  if (!isHydrated) {
+  if (!isHydrated || !isGraphHydrated) {
     return (
       <div className="tl-app flex items-center justify-center">
         <div className="text-slate-400 text-sm">正在加载数据...</div>

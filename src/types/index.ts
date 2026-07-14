@@ -28,7 +28,8 @@ export interface SmartTaskHeader {
   completedDate?: string;
   recurring?: string;     // 🔁 循环规则
   complexity?: 'easy' | 'normal' | 'hard';
-  graphNodeId?: string;   // 🧠 绑定的知识大盘节点 ID
+  graphNodeId?: string;   // @deprecated 旧版单节点绑定 ID（向下兼容）
+  graphNodeIds?: string[];// 🧠 绑定的多个知识大盘节点 ID
   autoSyncEbb?: boolean;  // 🔄 是否自动同步至 Ebb 复习流
   isArchived?: boolean;   // 🗃️ 是否已归档（冷数据）
   frozenAt?: string;      // 🧊 进入冷冻仓的时间戳
@@ -247,6 +248,8 @@ export interface AggregatedTodo {
   _complexity?: 'easy' | 'normal' | 'hard';
   /** 绑定的知识大盘节点 ID */
   _graphNodeId?: string;
+  /** 绑定的多个知识大盘节点 ID */
+  _graphNodeIds?: string[];
   /** 是否自动同步至 Ebb 复习流 */
   _autoSyncEbb?: boolean;
 }

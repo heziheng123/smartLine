@@ -52,6 +52,7 @@ export interface ParsedRow {
   complexity: 'easy' | 'normal' | 'hard';
   remark: string;
   graphNodeId?: string;
+  graphNodeIds?: string[];
   graphNodeName?: string;
   /** 校验错误信息（空字符串表示通过） */
   _error: string;
@@ -405,9 +406,14 @@ export function blocksToRows(blocks: SmartTaskBlock[]): ParsedRow[] {
     const remark = remarkMatch ? remarkMatch[1] : b.body.replace(/<[^>]*>?/gm, '');
     
     let graphNodeName = '';
-    if (b.header.graphNodeId) {
-      const node = nodes.find(n => n.id === b.header.graphNodeId);
-      if (node) graphNodeName = node.name;
+    const graphNodeIds = b.header.graphNodeIds || (b.header.graphNodeId ? [b.header.graphNodeId] : []);
+    if (graphNodeIds.length > 0) {
+      // 批量编辑时如果绑定了多个节点，用逗号拼接显示名称
+      const nodeNames = graphNodeIds.map(id => {
+        const node = nodes.find(n => n.id === id);
+        return node ? node.name : '';
+      }).filter(Boolean);
+      graphNodeName = nodeNames.join(', ');
     }
 
     return {
@@ -421,7 +427,8 @@ export function blocksToRows(blocks: SmartTaskBlock[]): ParsedRow[] {
       deadline: b.header.deadline || '',
       complexity: b.header.complexity || 'normal',
       remark: remark,
-      graphNodeId: b.header.graphNodeId,
+      graphNodeId: graphNodeIds[0], // 保持向后兼容导出第一条
+      graphNodeIds: graphNodeIds,
       graphNodeName: graphNodeName,
       _error: '',
     };
@@ -438,19 +445,21 @@ export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
     if (!r.title || r._error) continue;
     
     // 如果用户在批量编辑表格里输入了节点名称，尝试匹配或创建
-    let finalNodeId = r.graphNodeId;
+    let finalNodeIds: string[] = [];
     if (r.graphNodeName && r.graphNodeName.trim()) {
-      const trimmedName = r.graphNodeName.trim();
-      const existing = nodes.find(n => n.name.toLowerCase() === trimmedName.toLowerCase());
-      if (existing) {
-        finalNodeId = existing.id;
-      } else {
-        // 创建新节点
-        const newNode = addNode(trimmedName);
-        finalNodeId = newNode.id;
+      // 支持用逗号或顿号分隔的多个节点
+      const names = r.graphNodeName.split(/[,，、]/).map(n => n.trim()).filter(Boolean);
+      for (const name of names) {
+        const existing = nodes.find(n => n.name.toLowerCase() === name.toLowerCase());
+        if (existing) {
+          finalNodeIds.push(existing.id);
+        } else {
+          const newNode = addNode(name);
+          finalNodeIds.push(newNode.id);
+        }
       }
     } else if (!r.graphNodeName) {
-      finalNodeId = undefined; // 用户清空了单元格，解绑节点
+      finalNodeIds = []; // 用户清空了单元格，解绑节点
     }
 
     blocks.push({
@@ -465,7 +474,8 @@ export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
         duration: r.duration,
         isCompleted: false,
         complexity: r.complexity,
-        graphNodeId: finalNodeId,
+        graphNodeId: finalNodeIds[0],
+        graphNodeIds: finalNodeIds,
       },
       body: r.remark ? `<p>${escapeHtml(r.remark)}</p>` : '',
     });

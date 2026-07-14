@@ -241,7 +241,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       if (parsed.blockId) {
         const block = parentTask.blocks.find(b => b.id === parsed.blockId);
         if (block?.type === 'smart-task') {
-          return !block.header.graphNodeId; // 如果没有 graphNodeId，说明未绑定
+          const ids = block.header.graphNodeIds || (block.header.graphNodeId ? [block.header.graphNodeId] : []);
+          return ids.length === 0; // 如果没有 graphNodeIds，说明未绑定
         }
       }
     }
@@ -265,7 +266,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       if (parsed.blockId) {
         const block = parentTask.blocks.find(b => b.id === parsed.blockId);
         if (block?.type === 'smart-task') {
-          return !!block.header.graphNodeId; // 如果有 graphNodeId，说明已绑定
+          const ids = block.header.graphNodeIds || (block.header.graphNodeId ? [block.header.graphNodeId] : []);
+          return ids.length > 0; // 如果有 graphNodeIds，说明已绑定
         }
       }
     }

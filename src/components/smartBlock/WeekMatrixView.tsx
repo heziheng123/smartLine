@@ -438,7 +438,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                           onDragEnd={handleDragEnd}
                           className={`wmv-block-card ${header.isCompleted ? 'wmv-block-card--done' : ''} ${
                             isOverdue ? 'wmv-block-card--overdue' : ''
-                          } ${!header.graphNodeId ? 'wmv-block-card--unlinked' : ''} ${
+                          } ${(() => {
+                            const ids = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
+                            return ids.length === 0 ? 'wmv-block-card--unlinked' : '';
+                          })()} ${
                             isDragging ? 'wmv-block-card--dragging' : ''
                           }`}
                           style={{ backgroundColor: `${tagColor}40`, borderLeftColor: tagColor }}
@@ -457,11 +460,14 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
                             >
                               {header.title}
-                              {!header.graphNodeId && (
-                                <span title="未绑定知识节点" className="inline-flex items-center flex-shrink-0 opacity-40">
-                                  <CircleDashed size={12} />
-                                </span>
-                              )}
+                              {(() => {
+                                const ids = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
+                                return ids.length === 0 ? (
+                                  <span title="未绑定知识节点" className="inline-flex items-center flex-shrink-0 opacity-40">
+                                    <CircleDashed size={12} />
+                                  </span>
+                                ) : null;
+                              })()}
                             </span>
                           </div>
 

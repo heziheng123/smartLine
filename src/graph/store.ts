@@ -6,6 +6,8 @@ import { GraphNode, GraphData } from './types';
 import { genId } from '@/ebb/scheduler';
 import { liveblocksClient } from '@/store/client';
 
+import { useEbbStore } from '@/ebb/store';
+
 localforage.config({
   name: 'smart-timeline',
   storeName: 'graph_data'
@@ -153,6 +155,11 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             saveGraphData(newData);
             return newData;
           });
+          
+          // 如果修改了节点名称，同步更新 Ebb 中关联任务的 topicName
+          if (updates.name) {
+            useEbbStore.getState().updateTopicNameByGraphNodeId(id, updates.name);
+          }
         },
 
         deleteNode: (id: string) => {

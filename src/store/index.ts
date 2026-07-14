@@ -421,8 +421,9 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         updateBlockHeader: (taskId, blockId, headerPatch) => {
           const now = new Date().toISOString();
-          let syncPayload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; triggerSchedule?: boolean } | null = null;
-          let nodeToActivate: string | null = null;
+          let syncPayloads: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; tag?: string; triggerSchedule?: boolean }[] = [];
+          let nodesToActivate: string[] = [];
+          let nodesToDeactivate: string[] = [];
 
           set((state) => {
             const tasks = state.tasks.map((t) => {
@@ -431,35 +432,113 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               const block = t.blocks.find(b => b.type === 'smart-task' && b.id === blockId);
               if (block && block.type === 'smart-task') {
                 const header = { ...block.header, ...headerPatch };
+                const oldGraphNodeIds = block.header.graphNodeIds || (block.header.graphNodeId ? [block.header.graphNodeId] : []);
+                const newGraphNodeIds = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
                 
-                // 检查是否触发了完成
-                if (headerPatch.isCompleted === true && header.graphNodeId && !block.header.isCompleted) {
-                  // 无条件激活节点状态
-                  nodeToActivate = header.graphNodeId;
+                const isNewlyCompleted = headerPatch.isCompleted === true && !block.header.isCompleted;
+                const isNewlyUncompleted = headerPatch.isCompleted === false && block.header.isCompleted;
+                const isAlreadyCompleted = block.header.isCompleted && headerPatch.isCompleted !== false;
 
-                  // 无论是否开启 autoSyncEbb，都准备发送 payload，只是 triggerSchedule 标志不同
-                  // 获取大盘节点的真实名称
-                  const graphNode = useGraphStore.getState().getNodeById(header.graphNodeId);
-                  const actualTopicName = graphNode ? graphNode.name : header.title;
-
-                  syncPayload = {
-                    action: 'add',
-                    graphNodeId: header.graphNodeId,
-                    topicName: actualTopicName,
-                    triggerSchedule: header.autoSyncEbb !== false // 默认 true，如果明确是 false 才传 false
-                  };
+                // 1. 如果触发了完成（从 false 变成 true）
+                if (isNewlyCompleted && newGraphNodeIds.length > 0) {
+                  nodesToActivate.push(...newGraphNodeIds);
+                  newGraphNodeIds.forEach(nodeId => {
+                    const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                    const actualTopicName = graphNode ? graphNode.name : header.title;
+                    syncPayloads.push({
+                      action: 'add',
+                      graphNodeId: nodeId,
+                      topicName: actualTopicName,
+                      tag: header.title,
+                      triggerSchedule: header.autoSyncEbb !== false
+                    });
+                  });
                 } 
-                // 检查是否取消了完成
-                else if (headerPatch.isCompleted === false && header.graphNodeId && block.header.isCompleted) {
-                  // 取消完成时，不论之前是不是自动排期，都发送 remove 让 ebb 去清理可能的时间线和该任务对应的笔记
-                  const graphNode = useGraphStore.getState().getNodeById(header.graphNodeId);
-                  const actualTopicName = graphNode ? graphNode.name : header.title;
+                // 2. 如果取消了完成（从 true 变成 false）
+                else if (isNewlyUncompleted && oldGraphNodeIds.length > 0) {
+                  oldGraphNodeIds.forEach(nodeId => {
+                    // 检查是否还有其他已完成的任务绑定了同一个节点
+                    let hasOtherCompleted = false;
+                    for (const otherTask of state.tasks) {
+                      for (const otherBlock of otherTask.blocks) {
+                        if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
+                        if (!otherBlock.header.isCompleted) continue;
+                        
+                        const otherGraphNodeIds = otherBlock.header.graphNodeIds || (otherBlock.header.graphNodeId ? [otherBlock.header.graphNodeId] : []);
+                        if (otherGraphNodeIds.includes(nodeId)) {
+                          hasOtherCompleted = true;
+                          break;
+                        }
+                      }
+                      if (hasOtherCompleted) break;
+                    }
 
-                  syncPayload = {
-                    action: 'remove',
-                    graphNodeId: header.graphNodeId,
-                    topicName: actualTopicName,
-                  };
+                    if (!hasOtherCompleted) {
+                      nodesToDeactivate.push(nodeId);
+                    }
+
+                    const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                    const actualTopicName = graphNode ? graphNode.name : block.header.title;
+                    syncPayloads.push({
+                      action: 'remove',
+                      graphNodeId: nodeId,
+                      topicName: actualTopicName,
+                      tag: block.header.title,
+                    });
+                  });
+                }
+                // 3. 如果在已完成的状态下，修改了绑定的节点（例如新增或删除了某个节点的绑定）
+                else if (isAlreadyCompleted && headerPatch.graphNodeIds) {
+                  const addedNodes = newGraphNodeIds.filter(id => !oldGraphNodeIds.includes(id));
+                  const removedNodes = oldGraphNodeIds.filter(id => !newGraphNodeIds.includes(id));
+
+                  // 处理新增的绑定
+                  if (addedNodes.length > 0) {
+                    nodesToActivate.push(...addedNodes);
+                    addedNodes.forEach(nodeId => {
+                      const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                      const actualTopicName = graphNode ? graphNode.name : header.title;
+                      syncPayloads.push({
+                        action: 'add',
+                        graphNodeId: nodeId,
+                        topicName: actualTopicName,
+                        tag: header.title,
+                        triggerSchedule: header.autoSyncEbb !== false
+                      });
+                    });
+                  }
+
+                  // 处理移除的绑定
+                  if (removedNodes.length > 0) {
+                    removedNodes.forEach(nodeId => {
+                      let hasOtherCompleted = false;
+                      for (const otherTask of state.tasks) {
+                        for (const otherBlock of otherTask.blocks) {
+                          if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
+                          if (!otherBlock.header.isCompleted) continue;
+                          const otherGraphNodeIds = otherBlock.header.graphNodeIds || (otherBlock.header.graphNodeId ? [otherBlock.header.graphNodeId] : []);
+                          if (otherGraphNodeIds.includes(nodeId)) {
+                            hasOtherCompleted = true;
+                            break;
+                          }
+                        }
+                        if (hasOtherCompleted) break;
+                      }
+
+                      if (!hasOtherCompleted) {
+                        nodesToDeactivate.push(nodeId);
+                      }
+
+                      const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                      const actualTopicName = graphNode ? graphNode.name : block.header.title;
+                      syncPayloads.push({
+                        action: 'remove',
+                        graphNodeId: nodeId,
+                        topicName: actualTopicName,
+                        tag: block.header.title,
+                      });
+                    });
+                  }
                 }
               }
 
@@ -480,13 +559,16 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           });
 
           // 执行 Ebb 拦截同步（在 set 之外调用，避免 store 嵌套更新问题）
-          if (syncPayload) {
-            useEbbStore.getState().syncTaskToEbb(syncPayload);
-          }
+          syncPayloads.forEach(payload => {
+            useEbbStore.getState().syncTaskToEbb(payload);
+          });
 
-          if (nodeToActivate) {
-            useGraphStore.getState().updateNode(nodeToActivate, { status: 'activated' });
-          }
+          nodesToActivate.forEach(nodeId => {
+            useGraphStore.getState().updateNode(nodeId, { status: 'activated' });
+          });
+          nodesToDeactivate.forEach(nodeId => {
+            useGraphStore.getState().updateNode(nodeId, { status: 'unactivated' });
+          });
         },
 
         updateBlockBody: (taskId, blockId, body) => {

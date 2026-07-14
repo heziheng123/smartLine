@@ -15,7 +15,11 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
   
   // 提取智能块中的备注
   const relatedBlocks = tlTasks.flatMap(t => 
-    (t.blocks || []).filter(b => b.type === 'smart-task' && b.header.graphNodeId === nodeId)
+    (t.blocks || []).filter(b => {
+      if (b.type !== 'smart-task') return false;
+      const ids = b.header.graphNodeIds || (b.header.graphNodeId ? [b.header.graphNodeId] : []);
+      return ids.includes(nodeId);
+    })
   );
 
   return createPortal(

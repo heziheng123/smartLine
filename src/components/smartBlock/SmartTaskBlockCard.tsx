@@ -61,7 +61,11 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const titleRef = useRef<HTMLTextAreaElement>(null);
 
   const { nodes, getNodeById } = useGraphStore();
-  const graphNode = header.graphNodeId ? getNodeById(header.graphNodeId) : null;
+  const graphNodeIds = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
+  const graphNodes = useMemo(() => {
+    if (!Array.isArray(graphNodeIds)) return [];
+    return graphNodeIds.map(id => getNodeById(id)).filter(Boolean) as typeof nodes;
+  }, [graphNodeIds, getNodeById, nodes]);
 
   // 计算任务标题的幽灵文本（智能推荐节点名称）
   const titleGhostText = useMemo(() => {
@@ -127,9 +131,12 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   }, [block.id, onUpdateHeader]);
 
   // 知识节点选择
-  const handleGraphNodeSelect = useCallback((nodeId: string) => {
-    onUpdateHeader(block.id, { graphNodeId: nodeId, autoSyncEbb: header.autoSyncEbb ?? true });
-    setShowGraphPicker(false);
+  const handleGraphNodeSelect = useCallback((nodeIds: string[]) => {
+    onUpdateHeader(block.id, { 
+      graphNodeIds: nodeIds, 
+      autoSyncEbb: header.autoSyncEbb ?? false 
+    });
+    // 不自动关闭，支持连续点选
   }, [block.id, header.autoSyncEbb, onUpdateHeader]);
 
   // 时长修改
@@ -156,7 +163,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   // 极淡的标签底色（用于徽章）
   const tagBgStyle = { color: header.tagColor };
-  const nodeBgStyle = header.graphNodeId && header.autoSyncEbb 
+  const nodeBgStyle = graphNodeIds.length > 0 && header.autoSyncEbb 
     ? { color: '#3b82f6' } 
     : { color: '#6b7280' };
 
@@ -344,15 +351,45 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
             <span className="text-slate-300">·</span>
 
-            <button
-              type="button"
-              className={`stb-tag-badge ${header.graphNodeId && header.autoSyncEbb ? 'stb-tag-badge--sync' : ''}`}
-              style={nodeBgStyle}
-              onClick={() => setShowGraphPicker(!showGraphPicker)}
-              title="绑定知识节点"
-            >
-              <span className="stb-node-name">{graphNode ? graphNode.name : '未绑定节点'}</span>
-            </button>
+            <div className="stb-node-badge-group" style={{ display: 'flex', gap: '4px', flexWrap: 'nowrap', overflow: 'hidden' }}>
+              {graphNodes.length === 0 ? (
+                <button
+                  type="button"
+                  className="stb-tag-badge"
+                  style={{ color: '#6b7280', flexShrink: 0 }}
+                  onClick={() => setShowGraphPicker(!showGraphPicker)}
+                  title="绑定知识节点"
+                >
+                  <span className="stb-node-name">未绑定节点</span>
+                </button>
+              ) : (
+                <>
+                  {graphNodes.slice(0, 1).map((n) => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      className={`stb-tag-badge ${header.autoSyncEbb ? 'stb-tag-badge--sync' : ''}`}
+                      style={{ color: '#3b82f6', flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      onClick={() => setShowGraphPicker(!showGraphPicker)}
+                      title={graphNodes.map(node => node.name).join(', ')}
+                    >
+                      <span className="stb-node-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.name}</span>
+                    </button>
+                  ))}
+                  {graphNodes.length > 1 && (
+                    <button
+                      type="button"
+                      className="stb-tag-badge"
+                      style={{ color: '#6b7280', backgroundColor: '#f3f4f6', flexShrink: 0 }}
+                      onClick={() => setShowGraphPicker(!showGraphPicker)}
+                      title={graphNodes.map(node => node.name).join(', ')}
+                    >
+                      +{graphNodes.length - 1}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
 
             {/* Hover 快捷菜单（仅删除） */}
             <div className="stb-actions">
@@ -450,9 +487,22 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             onClick={e => e.stopPropagation()}
           >
             <GraphNodeSelect 
-              value={header.graphNodeId}
+              value={graphNodeIds}
               onChange={handleGraphNodeSelect}
               taskTitle={header.title}
+              footer={
+                <div style={{ padding: '8px 12px', borderTop: '1px solid #f3f4f6', backgroundColor: '#fafaf9', borderBottomLeftRadius: '8px', borderBottomRightRadius: '8px' }}>
+                  <label className="stb-sync-checkbox flex items-center cursor-pointer" title="任务完成后是否自动安排艾宾浩斯复习">
+                    <input
+                      type="checkbox"
+                      checked={header.autoSyncEbb ?? false}
+                      onChange={(e) => onUpdateHeader(block.id, { autoSyncEbb: e.target.checked })}
+                      className="mr-2"
+                    />
+                    <span className="text-[12px] text-slate-600 font-medium">自动同步至复习流</span>
+                  </label>
+                </div>
+              }
             />
           </div>
         </div>,

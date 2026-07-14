@@ -189,22 +189,26 @@ export const KnowledgeGraphView: React.FC = () => {
         return '#10b981';
       });
 
-      if (leafColors.every(c => c === '#eab308')) return '#eab308';
-      if (leafColors.includes('#ef4444')) return '#ef4444';
-      if (leafColors.includes('#84cc16')) return '#84cc16';
+      const activeLeafColors = leafColors.filter(c => c !== '#64748b');
+      if (activeLeafColors.length === 0) return isActivated ? '#3b82f6' : '#64748b';
 
-      const hasActive = leafColors.some((c: string) => c === '#10b981' || c === '#eab308' || c === '#3b82f6' || c === '#86efac');
-      if (hasActive) {
-        const allActiveAreGreen = leafColors.filter(c => c !== '#64748b').every(c => c === '#10b981');
-        if (allActiveAreGreen && !leafColors.includes('#64748b')) return '#10b981';
-        if (leafColors.includes('#3b82f6')) {
-            const allActiveAreBlue = leafColors.filter(c => c !== '#64748b').every(c => c === '#3b82f6');
-            if (allActiveAreBlue && !leafColors.includes('#64748b')) return '#3b82f6';
-            return '#93c5fd';
-        }
-        return '#86efac';
-      }
-      return isActivated ? '#3b82f6' : '#64748b';
+      const hasGray = leafColors.includes('#64748b');
+
+      // 优先级 1: 严重逾期 (红色)
+      if (activeLeafColors.includes('#ef4444')) return '#ef4444';
+      
+      // 优先级 2: 轻度逾期 (青柠色)
+      if (activeLeafColors.includes('#84cc16')) return '#84cc16';
+      
+      // 优先级 3: 进行中 (绿色) - 如果混有未探索的灰色，显示浅绿
+      if (activeLeafColors.includes('#10b981')) return hasGray ? '#86efac' : '#10b981';
+      
+      // 优先级 4: 已圆满 (金色) - 只有当下方所有节点都是金色时，父节点才呈现金色
+      const isAllGold = leafColors.every(c => c === '#eab308');
+      if (isAllGold) return '#eab308';
+      
+      // 优先级 5: 无复习任务 (蓝色) 或者是金蓝混合的情况，退化为蓝色（表示部分知识仅被学习但未排期）
+      return hasGray ? '#93c5fd' : '#3b82f6';
     }
   }, [reviewTasks, nodes, getDescendants]);
 
@@ -296,7 +300,7 @@ export const KnowledgeGraphView: React.FC = () => {
     const cols = Math.ceil(Math.sqrt(rootsToProcess.length));
     const baseRadius = rootsToProcess.length === 1 
       ? Math.max(100, Math.min(dimensions.width, dimensions.height) / 2 - 60)
-      : 300; // Fixed radius for archipelago islands, increased from 180 to 300
+      : 400; // 折中方案：从 500 回调到 400，既保证文字展示量，又不会导致环太宽显得笨重
     
     const cellWidth = baseRadius * 2 + 160;
     const cellHeight = baseRadius * 2 + 160;
@@ -443,8 +447,9 @@ export const KnowledgeGraphView: React.FC = () => {
     if (islandsData.islands.length > 1) {
       const cols = Math.ceil(Math.sqrt(islandsData.islands.length));
       const rows = Math.ceil(islandsData.islands.length / cols);
-      const cellWidth = 300 * 2 + 160;
-      const cellHeight = 300 * 2 + 160;
+      // 这里的网格尺寸需要和上面的 baseRadius 保持同步
+      const cellWidth = 400 * 2 + 160;
+      const cellHeight = 400 * 2 + 160;
       const totalWidth = cols * cellWidth;
       const totalHeight = rows * cellHeight;
       
@@ -748,31 +753,54 @@ export const KnowledgeGraphView: React.FC = () => {
                   const strokeColor = isSelected ? '#0f172a' : (isVirtual ? '#cbd5e1' : '#ffffff');
                   const strokeWidth = isSelected ? 2.5 : (isVirtual ? 2 : 1.5);
 
-                  const angleDiff = node.x1 - node.x0;
-                  const radiusDiff = node.y1 - node.y0;
-                  const showText = angleDiff > 0.05 && radiusDiff > 15;
+              const angleDiff = node.x1 - node.x0;
+               const radiusDiff = node.y1 - node.y0;
+               
+               // 将 x 的计算移到前面，因为我们需要它来计算文字的真实物理高度限制
+               const x = (node.x0 + node.x1) / 2 * 180 / Math.PI;
+               const y = (node.y0 + node.y1) / 2;
+               const absoluteAngle = ((x - 90 + islandRotation) % 360 + 360) % 360;
+               const flipText = absoluteAngle > 90 && absoluteAngle < 270;
 
-                  // 使用圆弧的外侧弧长和径向宽度的较小值来计算可用空间
-                  const arcLength = angleDiff * node.y1;
-                  const availableSpace = Math.max(arcLength, radiusDiff);
-                  const maxChars = Math.max(2, Math.floor((availableSpace - 16) / 12));
-                  
-                  const displayName = node.depth === 0 
-                    ? node.data.name 
-                    : (node.data.name.length > maxChars ? node.data.name.substring(0, maxChars) + '...' : node.data.name);
-
-                  const x = (node.x0 + node.x1) / 2 * 180 / Math.PI;
-                  const y = (node.y0 + node.y1) / 2;
-                  
-                  // Calculate absolute angle to keep text upright despite island rotation
-                  const absoluteAngle = (x - 90 + islandRotation) % 360;
-                  const flipText = absoluteAngle > 90 && absoluteAngle < 270;
+               // 动态可见性过滤：对于切向排布的文字，其实际需要占用的横向空间受弧长限制
+               const innerArcLength = angleDiff * node.y0;
+               
+               // 精确计算可用物理宽度和最大字符数 (每个中文字符约 12px)
+               const availableWidth = radiusDiff - 10;
+               const maxChars = Math.max(0, Math.floor(availableWidth / 12));
+               
+               let displayName = '';
+               if (node.depth === 0) {
+                 // 根节点（中心圆）是水平排布的，它的可用空间是整个圆的直径（2 * radiusDiff）减去两边 padding
+                 const rootAvailableWidth = (radiusDiff * 2) - 20;
+                 const rootMaxChars = Math.max(1, Math.floor(rootAvailableWidth / 14)); // 根节点字体是 14px
+                 if (node.data.name.length <= rootMaxChars) {
+                   displayName = node.data.name;
+                 } else {
+                   displayName = rootMaxChars === 1 
+                     ? node.data.name.substring(0, 1) 
+                     : node.data.name.substring(0, rootMaxChars - 1) + '…';
+                 }
+               } else if (maxChars > 0) {
+                 if (node.data.name.length <= maxChars) {
+                   displayName = node.data.name;
+                 } else {
+                   // 空间不够，截断并加单字符省略号 '…' 而不是 '...'
+                   displayName = maxChars === 1 
+                     ? node.data.name.substring(0, 1) 
+                     : node.data.name.substring(0, maxChars - 1) + '…';
+                 }
+               }
+               
+               // 根节点必须显示，其他子节点：必须有可显示的文字，且内侧弧长足够容纳字体高度
+               const showText = node.depth === 0 || (displayName.length > 0 && innerArcLength > 12 && radiusDiff > 15);
                   
                   const transform = node.depth === 0 
-                    ? `rotate(${-islandRotation})` // Counter-rotate root text
-                    : `rotate(${x - 90}) translate(${y},0) rotate(${flipText ? 180 : 0})`;
+                 ? `rotate(${-islandRotation})` // Counter-rotate root text
+                 : `rotate(${x - 90}) translate(${y},0) rotate(${flipText ? 180 : 0})`;
 
-                  const textFill = node.depth === 0 ? '#1e293b' : getContrastYIQ(fillColor);
+               // 移除根节点硬编码的黑色，所有节点统一使用动态对比度颜色
+               const textFill = getContrastYIQ(fillColor);
 
                   return (
                     <g 
