@@ -4,13 +4,17 @@ import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
-import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network } from 'lucide-react';
-import { forceCollide, forceX, forceY, forceCenter } from 'd3-force';
-import ForceGraph2D from 'react-force-graph-2d';
+import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, Focus, MoveRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { TimeCapsuleModal } from '@/components/GlobalSearch';
 import styles from './GraphConsole.module.css';
+
+import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
+import { zoom, zoomIdentity, ZoomBehavior } from 'd3-zoom';
+import { select } from 'd3-selection';
+import { arc } from 'd3-shape';
+import 'd3-transition';
 
 type NodeRollupStats = {
   totalReviewCount: number;
@@ -24,14 +28,12 @@ type ViewNode = {
   id: string;
   name: string;
   color: string;
-  val: number;
+  status: string;
   depth: number;
   rootId: string;
   isLeaf: boolean;
   activeCount: number;
   totalLeafCount: number;
-  neighbors: string[];
-  links: string[];
   pendingCount: number;
   completedCount: number;
   overdueCount: number;
@@ -39,15 +41,18 @@ type ViewNode = {
   noteCount: number;
   importanceScore: number;
   labelPriority: 'high' | 'medium' | 'low';
-  radius: number;
+  isVirtual?: boolean;
 };
 
-type ViewLink = {
-  id: string;
-  source: string;
-  target: string;
-  kind: 'hierarchy';
-  score: number;
+const getContrastYIQ = (hexcolor: string) => {
+  hexcolor = hexcolor.replace("#", "");
+  if (hexcolor.length === 3) hexcolor = hexcolor.split('').map(c => c + c).join('');
+  if (hexcolor.length !== 6) return '#ffffff';
+  const r = parseInt(hexcolor.substr(0, 2), 16);
+  const g = parseInt(hexcolor.substr(2, 2), 16);
+  const b = parseInt(hexcolor.substr(4, 2), 16);
+  const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+  return (yiq >= 150) ? '#0f172a' : '#ffffff';
 };
 
 export const KnowledgeGraphView: React.FC = () => {
@@ -57,12 +62,11 @@ export const KnowledgeGraphView: React.FC = () => {
   const { tasks } = useTimelineStore();
 
   const [newRootName, setNewRootName] = useState('');
+  const [isMoveMode, setIsMoveMode] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [newChildName, setNewChildName] = useState('');
-  const [isChildInputFocused, setIsChildInputFocused] = useState(false);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
-  const [isAltPressed, setIsAltPressed] = useState(false);
 
   // Filter States
   const [selectedRootFilter, setSelectedRootFilter] = useState<string>('all');
@@ -75,53 +79,68 @@ export const KnowledgeGraphView: React.FC = () => {
   const dockPortalTarget = document.getElementById('tl-dock-portal-target');
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const fgRef = useRef<any>();
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const svgRef = useRef<SVGSVGElement>(null);
+  const gRef = useRef<SVGGElement>(null);
+  const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
 
-  // Hover states for Obsidian-like highlighting
-  const [hoverNode, setHoverNode] = useState<string | null>(null);
-  const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
-  const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
+  // Hover states
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
 
+  const [showHint, setShowHint] = useState(() => {
+    return localStorage.getItem('knowledge-graph-hint-dismissed') !== 'true';
+  });
+
+  // Rotation angles for islands
+  const [islandRotations, setIslandRotations] = useState<Record<string, number>>({});
+
   useEffect(() => {
-    if (!isHydrated) {
-      hydrateStore();
-    }
+    if (!isHydrated) hydrateStore();
   }, [isHydrated, hydrateStore]);
 
-  // Track Alt key for Link Mode
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') setIsAltPressed(true);
-    };
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') setIsAltPressed(false);
-    };
-    const handleBlur = () => setIsAltPressed(false);
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    window.addEventListener('blur', handleBlur);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('blur', handleBlur);
-    };
-  }, []);
+    if (showHint) {
+      const timer = setTimeout(() => {
+        setShowHint(false);
+        localStorage.setItem('knowledge-graph-hint-dismissed', 'true');
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showHint]);
 
   useEffect(() => {
     if (!containerRef.current) return;
+    
+    const updateSize = () => {
+      if (!containerRef.current) return;
+      const { width, height } = containerRef.current.getBoundingClientRect();
+      if (width > 0 && height > 0) {
+        setDimensions({ width, height });
+      } else {
+        // Fallback to approximate window size if container is hidden/0
+        setDimensions(prev => prev.width === 0 ? { width: window.innerWidth - 64, height: window.innerHeight - 100 } : prev);
+      }
+    };
+    
+    updateSize();
+
     const observer = new ResizeObserver(entries => {
       if (entries[0]) {
         const { width, height } = entries[0].contentRect;
-        setDimensions({ width, height });
+        if (width > 0 && height > 0) {
+          setDimensions({ width, height });
+        }
       }
     });
     observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
+    
+    const timer = setTimeout(updateSize, 500); // Check again after animations
+    
+    return () => {
+      observer.disconnect();
+      clearTimeout(timer);
+    };
+  }, [isHydrated]);
 
   const getDescendants = useCallback((id: string, visited = new Set<string>()): string[] => {
     if (visited.has(id)) return [];
@@ -136,87 +155,60 @@ export const KnowledgeGraphView: React.FC = () => {
 
   const getNodeColorHex = useCallback((nodeId: string): string => {
     const descendants = getDescendants(nodeId);
-    // 判断该节点是否为叶子节点（即没有子节点的节点）
     const isLeaf = descendants.length === 0;
 
     const graphNode = nodes.find(n => n.id === nodeId);
     const isActivated = graphNode?.status === 'activated';
 
     if (isLeaf) {
-      // 针对底层（第三级/叶子节点）的计算逻辑：完全取决于该节点关联的任务
       const familyTasks = reviewTasks.filter(t => t.graphNodeId === nodeId);
-      
-      if (familyTasks.length === 0) return isActivated ? '#3b82f6' : '#9ca3af'; // blue-500 (单次激活) or gray-400 (未开始)
-
+      if (familyTasks.length === 0) return isActivated ? '#3b82f6' : '#64748b'; 
       const isAllDone = familyTasks.every(t => t.isCompleted);
-      if (isAllDone) return '#eab308'; // yellow-500 (全部完成，金色)
-
+      if (isAllDone) return '#eab308'; 
       const uncompletedTasks = familyTasks.filter(t => !t.isCompleted).sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
       const nextTask = uncompletedTasks[0];
-      
-      if (!nextTask) return isActivated ? '#3b82f6' : '#9ca3af';
-
+      if (!nextTask) return isActivated ? '#3b82f6' : '#64748b';
       const overdueDays = diffDays(todayStr(), nextTask.dueDate);
-      
-      if (overdueDays > 2) return '#ef4444'; // red-500 (严重逾期)
-      if (overdueDays === 1 || overdueDays === 2) return '#84cc16'; // lime-500 (即将到期，黄色/黄绿色)
-      
-      // 进行中，正常进度
-      return '#10b981'; // emerald-500 (绿色)
+      if (overdueDays > 2) return '#ef4444'; 
+      if (overdueDays === 1 || overdueDays === 2) return '#84cc16'; 
+      return '#10b981'; 
     } else {
-      // 针对上层（第二级/第一级节点）的计算逻辑：由其所有叶子子孙节点决定
-      // 1. 找出所有叶子节点
-      const leafIds = descendants.filter(id => {
-        return !nodes.some(n => n.parentId === id); // 没有人以它为父节点，说明是叶子
-      });
-
-      // 如果一个上层节点下连一个叶子都没有，保持灰色/蓝色
-      if (leafIds.length === 0) return isActivated ? '#3b82f6' : '#9ca3af';
-
-      // 获取每个叶子节点的颜色（递归或重用逻辑，这里直接用叶子的任务判断）
+      const leafIds = descendants.filter(id => !nodes.some(n => n.parentId === id));
+      if (leafIds.length === 0) return isActivated ? '#3b82f6' : '#64748b';
       const leafColors = leafIds.map(leafId => {
         const leafTasks = reviewTasks.filter(t => t.graphNodeId === leafId);
         const childNode = nodes.find(n => n.id === leafId);
         const childIsActivated = childNode?.status === 'activated';
-
-        if (leafTasks.length === 0) return childIsActivated ? '#3b82f6' : '#9ca3af'; // 蓝色/灰色
-        if (leafTasks.every(t => t.isCompleted)) return '#eab308'; // 金色
+        if (leafTasks.length === 0) return childIsActivated ? '#3b82f6' : '#64748b';
+        if (leafTasks.every(t => t.isCompleted)) return '#eab308';
         const nextTask = leafTasks.filter(t => !t.isCompleted).sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''))[0];
-        if (!nextTask) return childIsActivated ? '#3b82f6' : '#9ca3af';
+        if (!nextTask) return childIsActivated ? '#3b82f6' : '#64748b';
         const overdueDays = diffDays(todayStr(), nextTask.dueDate);
-        if (overdueDays > 2) return '#ef4444'; // 红色
-        if (overdueDays === 1 || overdueDays === 2) return '#84cc16'; // 黄色
-        return '#10b981'; // 绿色
+        if (overdueDays > 2) return '#ef4444';
+        if (overdueDays === 1 || overdueDays === 2) return '#84cc16';
+        return '#10b981';
       });
 
-      // 法则三：圆满（全员通关）
-      if (leafColors.every(c => c === '#eab308')) return '#eab308'; // 全部金色 -> 金色
+      if (leafColors.every(c => c === '#eab308')) return '#eab308';
+      if (leafColors.includes('#ef4444')) return '#ef4444';
+      if (leafColors.includes('#84cc16')) return '#84cc16';
 
-      // 法则二：报警（连坐机制）
-      if (leafColors.includes('#ef4444')) return '#ef4444'; // 只要有一个红色 -> 红色报警
-      if (leafColors.includes('#84cc16')) return '#84cc16'; // 只要有一个黄色 -> 黄色报警
-
-      // 法则一：星星之火（只要有一个绿/金/蓝，说明涉足了，但还没全员通关）
       const hasActive = leafColors.some((c: string) => c === '#10b981' || c === '#eab308' || c === '#3b82f6' || c === '#86efac');
       if (hasActive) {
-        // 如果全是绿色，就是纯绿色；如果只有部分激活，就是浅绿色
-        const allActiveAreGreen = leafColors.filter(c => c !== '#9ca3af').every(c => c === '#10b981');
-        if (allActiveAreGreen && !leafColors.includes('#9ca3af')) return '#10b981'; // 全员健康（无灰色）-> 翠绿色
-        
-        // 如果包含蓝色，或者有灰色，呈现浅蓝色/浅绿色
+        const allActiveAreGreen = leafColors.filter(c => c !== '#64748b').every(c => c === '#10b981');
+        if (allActiveAreGreen && !leafColors.includes('#64748b')) return '#10b981';
         if (leafColors.includes('#3b82f6')) {
-            const allActiveAreBlue = leafColors.filter(c => c !== '#9ca3af').every(c => c === '#3b82f6');
-            if (allActiveAreBlue && !leafColors.includes('#9ca3af')) return '#3b82f6';
-            return '#93c5fd'; // blue-300 浅蓝色
+            const allActiveAreBlue = leafColors.filter(c => c !== '#64748b').every(c => c === '#3b82f6');
+            if (allActiveAreBlue && !leafColors.includes('#64748b')) return '#3b82f6';
+            return '#93c5fd';
         }
-        return '#86efac'; // 浅绿色（星星之火，带有一定透明度的绿）
+        return '#86efac';
       }
-
-      return isActivated ? '#3b82f6' : '#9ca3af'; // 全灰/全蓝兜底
+      return isActivated ? '#3b82f6' : '#64748b';
     }
   }, [reviewTasks, nodes, getDescendants]);
 
-  const graphData = useMemo(() => {
+  const islandsData = useMemo(() => {
     const today = todayStr();
     const nodeMap = new Map(nodes.map(node => [node.id, node]));
     const childrenMap = new Map<string | null, string[]>();
@@ -234,40 +226,7 @@ export const KnowledgeGraphView: React.FC = () => {
       noteCount: statsList.reduce((sum, stats) => sum + stats.noteCount, 0),
     });
 
-    const nodeDepthMap = new Map<string, number>();
-    const nodeRootMap = new Map<string, string>();
     const descendantLeafMap = new Map<string, string[]>();
-    
-    const getDepth = (nodeId: string, currentPath = new Set<string>()): number => {
-      if (currentPath.has(nodeId)) return 0; // Prevent cycle infinite loop
-      const node = nodeMap.get(nodeId);
-      if (!node || !node.parentId) return 0; // Root node is depth 0
-      
-      if (nodeDepthMap.has(nodeId)) return nodeDepthMap.get(nodeId)!;
-      
-      currentPath.add(nodeId);
-      const depth = getDepth(node.parentId, currentPath) + 1;
-      currentPath.delete(nodeId);
-      
-      nodeDepthMap.set(nodeId, depth);
-      return depth;
-    };
-
-    const getRootId = (nodeId: string, currentPath = new Set<string>()): string => {
-      if (currentPath.has(nodeId)) return nodeId;
-      const node = nodeMap.get(nodeId);
-      if (!node || !node.parentId) return nodeId; // Itself is root
-      
-      if (nodeRootMap.has(nodeId)) return nodeRootMap.get(nodeId)!;
-      
-      currentPath.add(nodeId);
-      const rootId = getRootId(node.parentId, currentPath);
-      currentPath.delete(nodeId);
-      
-      nodeRootMap.set(nodeId, rootId);
-      return rootId;
-    };
-
     const getLeafDescendants = (nodeId: string, currentPath = new Set<string>()): string[] => {
       if (currentPath.has(nodeId)) return [];
       if (descendantLeafMap.has(nodeId)) return descendantLeafMap.get(nodeId)!;
@@ -290,15 +249,7 @@ export const KnowledgeGraphView: React.FC = () => {
     };
 
     nodes.forEach(n => {
-      if (!nodeDepthMap.has(n.id)) {
-        nodeDepthMap.set(n.id, getDepth(n.id));
-      }
-      if (!nodeRootMap.has(n.id)) {
-        nodeRootMap.set(n.id, getRootId(n.id));
-      }
-      if (!descendantLeafMap.has(n.id)) {
-        descendantLeafMap.set(n.id, getLeafDescendants(n.id));
-      }
+      if (!descendantLeafMap.has(n.id)) descendantLeafMap.set(n.id, getLeafDescendants(n.id));
     });
 
     const reviewTasksByNodeId = new Map<string, typeof reviewTasks>();
@@ -327,117 +278,129 @@ export const KnowledgeGraphView: React.FC = () => {
       nodeStatsMap.set(node.id, directStats);
     });
 
-    const hierarchyLinks: ViewLink[] = nodes
-      .filter(n => n.parentId)
-      .map(n => ({
-        id: `${n.parentId}-${n.id}`,
-        source: n.parentId!,
-        target: n.id,
-        kind: 'hierarchy',
-        score: 1,
-      }));
+    let rootsToProcess: string[] = [];
+    if (selectedRootFilter !== 'all' && nodeMap.has(selectedRootFilter)) {
+      rootsToProcess = [selectedRootFilter];
+    } else {
+      rootsToProcess = nodes.filter(n => !n.parentId).map(n => n.id);
+    }
 
-const gNodes: ViewNode[] = nodes.map(n => {
-      const leafIds = descendantLeafMap.get(n.id) ?? [n.id];
-      const isLeaf = leafIds.length === 1 && leafIds[0] === n.id;
-      const totalLeafCount = isLeaf ? 0 : leafIds.length;
-      const activeCount = isLeaf
-        ? 0
-        : leafIds.filter(leafId => (reviewTasksByNodeId.get(leafId)?.length ?? 0) > 0).length;
-      const stats = nodeStatsMap.get(n.id) ?? {
-        totalReviewCount: 0,
-        pendingCount: 0,
-        completedCount: 0,
-        overdueCount: 0,
-        noteCount: 0,
+    if (dimensions.width === 0 || dimensions.height === 0 || rootsToProcess.length === 0) {
+      return { islands: [], allFlatNodes: [] };
+    }
+
+    const islands: any[] = [];
+    let allFlatNodes: ViewNode[] = [];
+
+    // Calculate grid layout for islands
+    const cols = Math.ceil(Math.sqrt(rootsToProcess.length));
+    const baseRadius = rootsToProcess.length === 1 
+      ? Math.max(100, Math.min(dimensions.width, dimensions.height) / 2 - 60)
+      : 300; // Fixed radius for archipelago islands, increased from 180 to 300
+    
+    const cellWidth = baseRadius * 2 + 160;
+    const cellHeight = baseRadius * 2 + 160;
+    
+    const totalWidth = cols * cellWidth;
+    const rows = Math.ceil(rootsToProcess.length / cols);
+    const totalHeight = rows * cellHeight;
+    
+    const startX = -totalWidth / 2 + cellWidth / 2;
+    const startY = -totalHeight / 2 + cellHeight / 2;
+
+    rootsToProcess.forEach((rootId, index) => {
+      const validIdsForTree = new Set<string>();
+      const addDescendants = (id: string) => {
+        validIdsForTree.add(id);
+        (childrenMap.get(id) || []).forEach(addDescendants);
       };
-      const importanceScore =
-        (nodeDepthMap.get(n.id) === 0 ? 2.8 : nodeDepthMap.get(n.id) === 1 ? 1.2 : 0) +
-        stats.totalReviewCount * 0.8 +
-        stats.pendingCount * 1.3 +
-        stats.overdueCount * 2.1 +
-        stats.noteCount * 0.2 +
-        (activeCount > 0 ? 0.8 : 0);
+      addDescendants(rootId);
 
-      return {
-        id: n.id,
-        name: n.name,
-        color: getNodeColorHex(n.id),
-        val: 1,
-        depth: nodeDepthMap.get(n.id) || 0,
-        rootId: nodeRootMap.get(n.id) || n.id,
-        isLeaf,
-        activeCount,
-        totalLeafCount,
-        neighbors: [],
-        links: [],
-        pendingCount: stats.pendingCount,
-        completedCount: stats.completedCount,
-        overdueCount: stats.overdueCount,
-        totalReviewCount: stats.totalReviewCount,
-        noteCount: stats.noteCount,
-        importanceScore,
-        labelPriority: 'low',
-        radius: 0,
-      };
-    });
+      const flatData = nodes
+        .filter(d => validIdsForTree.has(d.id))
+        .map(n => {
+          const leafIds = descendantLeafMap.get(n.id) ?? [n.id];
+          const isLeaf = leafIds.length === 1 && leafIds[0] === n.id;
+          const stats = nodeStatsMap.get(n.id) ?? {
+            totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0, noteCount: 0,
+          };
 
-    // Calculate degrees and neighbors
-    const allLinks: ViewLink[] = [...hierarchyLinks];
-    allLinks.forEach(link => {
-      const a = gNodes.find(n => n.id === link.source);
-      const b = gNodes.find(n => n.id === link.target);
-      if (a && b) {
-        a.neighbors.push(b.id);
-        b.neighbors.push(a.id);
-        a.links.push(link.id);
-        b.links.push(link.id);
-        a.val += 1;
-        b.val += 1;
+          return {
+            id: n.id,
+            name: n.name,
+            parentId: n.id === rootId ? null : n.parentId,
+            color: getNodeColorHex(n.id),
+            status: n.status,
+            isLeaf,
+            activeCount: isLeaf ? 0 : leafIds.filter(leafId => (reviewTasksByNodeId.get(leafId)?.length ?? 0) > 0).length,
+            totalLeafCount: isLeaf ? 0 : leafIds.length,
+            ...stats,
+            importanceScore: stats.pendingCount + stats.overdueCount * 2,
+            labelPriority: stats.overdueCount > 0 ? 'high' : 'low',
+            isVirtual: false,
+            depth: 0,
+            rootId: rootId
+          } as ViewNode;
+        });
+
+      allFlatNodes = allFlatNodes.concat(flatData);
+
+      try {
+        const root = stratify<ViewNode>()
+          .id(d => d.id)
+          .parentId(d => (d as any).parentId)(flatData);
+
+        root.sum(d => {
+          const hasChildren = allNodes.some(n => n.parentId === d.id);
+          return hasChildren ? 0 : 1;
+        });
+        root.sort((a, b) => (b.value || 0) - (a.value || 0));
+
+        const partitionLayout = partition<ViewNode>().size([2 * Math.PI, baseRadius]);
+        partitionLayout(root);
+
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        const centerX = rootsToProcess.length === 1 ? 0 : startX + col * cellWidth;
+        const centerY = rootsToProcess.length === 1 ? 0 : startY + row * cellHeight;
+
+        islands.push({
+          rootId,
+          root,
+          nodes: root.descendants() as HierarchyRectangularNode<ViewNode>[],
+          flatNodes: flatData,
+          centerX,
+          centerY,
+          radius: baseRadius
+        });
+      } catch (e) {
+        console.error('D3 Stratify error for root', rootId, e);
       }
     });
 
-    gNodes.forEach(node => {
-      node.labelPriority =
-        node.depth === 0 || node.overdueCount > 0 || node.totalReviewCount >= 4
-          ? 'high'
-          : node.pendingCount > 0 || node.depth === 1
-            ? 'medium'
-            : 'low';
-      node.radius = Math.max(
-        2.4,
-        Math.min(
-          node.depth === 0 ? 8.5 : 6.0,
-          3 + node.importanceScore * 0.12 - node.depth * 0.35,
-        ),
-      );
-    });
+    return { islands, allFlatNodes };
+  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, dimensions.width, dimensions.height, allNodes]);
 
-    let finalNodes = gNodes;
-    let finalLinks = allLinks;
+  const arcGenerator = useMemo(() => {
+    return arc<HierarchyRectangularNode<ViewNode>>()
+      .startAngle(d => d.x0)
+      .endAngle(d => d.x1)
+      .innerRadius(d => d.depth === 0 ? 0 : d.y0 + 3)
+      .outerRadius(d => d.depth === 0 ? d.y1 - 5 : Math.max(0, d.y1 - 3))
+      .cornerRadius(4)
+      .padAngle(0.006);
+  }, []);
 
-    if (selectedRootFilter !== 'all') {
-      finalNodes = gNodes.filter(n => n.rootId === selectedRootFilter);
-      const validNodeIds = new Set(finalNodes.map(n => n.id));
-      finalLinks = allLinks.filter(l => validNodeIds.has(l.source) && validNodeIds.has(l.target));
-    }
-
-    return { nodes: finalNodes, links: finalLinks };
-  }, [nodes, getNodeColorHex, reviewTasks, selectedRootFilter]);
-
-  const rootNodes = useMemo(() => {
-    return nodes.filter(n => !n.parentId);
-  }, [nodes]);
+  const rootNodes = useMemo(() => nodes.filter(n => !n.parentId), [nodes]);
 
   const matchingNodeIds = useMemo(() => {
     if (statusFilter === 'all' && !searchQuery.trim()) return null;
-
     const query = searchQuery.trim().toLowerCase();
     const matched = new Set<string>();
 
-    graphData.nodes.forEach((node: ViewNode) => {
+    islandsData.allFlatNodes.forEach((node: ViewNode) => {
+      if (node.isVirtual) return;
       let isMatch = false;
-
       const matchStatus = statusFilter === 'all' 
         || (statusFilter === 'overdue' && (node.overdueCount > 0 || node.color === '#ef4444'))
         || (statusFilter === 'active' && ((node.pendingCount > 0 && node.color !== '#ef4444') || node.color === '#10b981' || node.color === '#86efac'))
@@ -445,9 +408,7 @@ const gNodes: ViewNode[] = nodes.map(n => {
 
       const matchQuery = !query || node.name.toLowerCase().includes(query);
 
-      if (matchStatus && matchQuery) {
-        isMatch = true;
-      }
+      if (matchStatus && matchQuery) isMatch = true;
 
       if (isMatch) {
         matched.add(node.id);
@@ -461,112 +422,94 @@ const gNodes: ViewNode[] = nodes.map(n => {
     });
 
     return matched;
-  }, [graphData.nodes, statusFilter, searchQuery, nodes]);
+  }, [islandsData.allFlatNodes, statusFilter, searchQuery, nodes]);
 
-  const globalArchivedResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const query = searchQuery.trim().toLowerCase();
-    return allNodes.filter(n => n.isArchived && n.name.toLowerCase().includes(query));
-  }, [searchQuery, allNodes]);
-
+  // Setup D3 Zoom
   useEffect(() => {
-    if (fgRef.current) {
-      // 1. 预先计算学科团簇的环形坐标，用于实现星系态多中心引力布局
-      const rootNodes = graphData.nodes.filter((n: any) => n.depth === 0);
-      rootNodes.sort((a: any, b: any) => a.id.localeCompare(b.id));
-
-      const rootRadii = new Map<string, number>();
-      let maxRadius = 0;
-      graphData.nodes.forEach((node: any) => {
-        const rId = node.rootId || node.id;
-        const currentMax = rootRadii.get(rId) || 0;
-        const r = Math.max(currentMax, (node.depth || 0) * 45 + 60);
-        rootRadii.set(rId, r);
-        if (r > maxRadius) maxRadius = r;
+    if (!isHydrated || !svgRef.current || !gRef.current) return;
+    const svg = select(svgRef.current);
+    zoomBehaviorRef.current = zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        select(gRef.current).attr('transform', event.transform);
       });
+    svg.call(zoomBehaviorRef.current);
+  }, [isHydrated]);
 
-      const numClusters = rootNodes.length;
-      const rootCenters = new Map<string, {x: number, y: number}>();
-      const cx = dimensions.width ? dimensions.width / 2 : 500;
-      const cy = dimensions.height ? dimensions.height / 2 : 500;
-
-      if (numClusters <= 1) {
-        if (numClusters === 1) rootCenters.set(rootNodes[0].id, { x: cx, y: cy });
-      } else {
-        // 进一步降低团簇间的强制安全距离
-        // 将系数从 1.1 降至 0.6，允许更大的边缘交融，依靠排斥力(-250)自然隔开
-        const requiredDistance = maxRadius * 0.6 + 20; 
-        const orbitRadius = requiredDistance / (2 * Math.sin(Math.PI / numClusters));
-        
-        rootNodes.forEach((root: any, i: number) => {
-          // 2个学科水平分布；3个及以上呈环形多边形分布
-          const angleOffset = numClusters === 2 ? 0 : -Math.PI / 2;
-          const angle = angleOffset + (i * 2 * Math.PI) / numClusters;
-          rootCenters.set(root.id, {
-            x: cx + Math.cos(angle) * orbitRadius,
-            y: cy + Math.sin(angle) * orbitRadius
-          });
-        });
-      }
-
-      // 2. 移除绝对的强制同心圆，改用多中心 X/Y 轴引力（Multi-foci）
-      fgRef.current.d3Force('radial', null); // 彻底移除生硬的径向力
+  const zoomToFit = useCallback(() => {
+    if (!svgRef.current || !zoomBehaviorRef.current) return;
+    const svg = select(svgRef.current);
+    
+    if (islandsData.islands.length > 1) {
+      const cols = Math.ceil(Math.sqrt(islandsData.islands.length));
+      const rows = Math.ceil(islandsData.islands.length / cols);
+      const cellWidth = 300 * 2 + 160;
+      const cellHeight = 300 * 2 + 160;
+      const totalWidth = cols * cellWidth;
+      const totalHeight = rows * cellHeight;
       
-      // 赋予相等的 X/Y 轴引力（0.06），消除受力不均导致的对角线侧滑
-      fgRef.current.d3Force('cluster-x', forceX((node: any) => {
-        const rId = node.rootId || node.id;
-        return rootCenters.get(rId)?.x ?? cx;
-      }).strength(0.06));
-
-      fgRef.current.d3Force('cluster-y', forceY((node: any) => {
-        const rId = node.rootId || node.id;
-        return rootCenters.get(rId)?.y ?? cy;
-      }).strength(0.06));
-
-      // 3. 控制排斥：增强排斥力，让节点自然散开，形成星云感
-      fgRef.current.d3Force('charge').strength(() => {
-        return -250; // 稍微加大斥力，因为有聚拢力了
-      }).distanceMax(800);
+      const scaleX = dimensions.width / (totalWidth || dimensions.width);
+      const scaleY = dimensions.height / (totalHeight || dimensions.height);
+      const scale = Math.min(scaleX, scaleY, 1) * 0.9;
       
-      // 4. 结构边强约束
-      fgRef.current.d3Force('link')
-        .distance(70)
-        .strength(0.8); 
-
-      // 5. 全局弱居中力（防止极端情况下图谱整体偏移）
-      fgRef.current.d3Force('center', forceCenter(dimensions.width / 2, dimensions.height / 2).strength(0.02));
-      
-      // 6. 碰撞保护：标签与节点之间保留呼吸感，防止重叠
-      fgRef.current.d3Force('collide', forceCollide().radius((node: any) => {
-        const baseR = node.radius ?? Math.max(3, Math.min(10, Math.sqrt(node.val || 1) * 2.5));
-        let padding = node.depth === 0 ? 25 : (node.depth === 1 ? 15 : 8);
-        if (node.labelPriority === 'high') padding += 5;
-        if (node.name && node.name.length > 6) {
-          padding += (node.name.length - 6) * 1.5;
-        }
-        return baseR + padding; 
-      }).iterations(2)); // 降低碰撞迭代次数，防止物理爆炸
+      svg.transition().duration(750).call(zoomBehaviorRef.current.transform, zoomIdentity.scale(scale));
+    } else {
+      svg.transition().duration(750).call(zoomBehaviorRef.current.transform, zoomIdentity);
     }
-  }, [dimensions, graphData]);
+  }, [islandsData.islands.length, dimensions.width, dimensions.height]);
 
-  // 5. 自动缩放自适应 (Zoom to Fit)
-  // 当数据变化导致物理引擎重新计算后，稍微延迟一下让引擎稳定，然后缩放视口
   useEffect(() => {
-    if (fgRef.current && nodes.length > 0) {
-      const timer = setTimeout(() => {
-        if (fgRef.current) {
-          fgRef.current.zoomToFit(400, 80); // 恢复 zoomToFit
-        }
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [nodes.length, selectedRootFilter]);
+    const timer = setTimeout(zoomToFit, 100);
+    return () => clearTimeout(timer);
+  }, [zoomToFit, selectedRootFilter]);
 
   const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId), [nodes, selectedNodeId]);
   const selectedGraphNode = useMemo(
-    () => graphData.nodes.find((node: ViewNode) => node.id === selectedNodeId) ?? null,
-    [graphData, selectedNodeId],
+    () => islandsData.allFlatNodes.find(node => node.id === selectedNodeId) ?? null,
+    [islandsData, selectedNodeId],
   );
+  
+  // Auto-focus rotation logic
+  useEffect(() => {
+    if (!selectedNodeId || !islandsData) return;
+    
+    // Find the node in the d3 hierarchy to get its angles
+    let targetNode: HierarchyRectangularNode<ViewNode> | null = null;
+    let islandRootId: string | null = null;
+    
+    for (const island of islandsData.islands) {
+      const found = island.nodes.find((n: any) => n.id === selectedNodeId);
+      if (found) {
+        targetNode = found;
+        islandRootId = island.rootId;
+        break;
+      }
+    }
+    
+    if (targetNode && islandRootId && targetNode.depth > 0) {
+      // Calculate the middle angle of the selected node
+      const midAngle = (targetNode.x0 + targetNode.x1) / 2;
+      
+      // Convert to degrees. D3 partition starts at 0 (top/12 o'clock) and goes clockwise.
+      // We want to rotate the chart counter-clockwise by midAngle to bring the node to 0.
+      let targetRotation = - (midAngle * 180 / Math.PI);
+      
+      // Normalize to 0-360 range
+      targetRotation = targetRotation % 360;
+      
+      setIslandRotations(prev => ({
+        ...prev,
+        [islandRootId as string]: targetRotation
+      }));
+    } else if (islandRootId && targetNode && targetNode.depth === 0) {
+      // Reset rotation when root is clicked
+      setIslandRotations(prev => ({
+        ...prev,
+        [islandRootId as string]: 0
+      }));
+    }
+  }, [selectedNodeId, islandsData]);
+  
   const selectedNodeReviewPreview = useMemo(() => {
     if (!selectedNodeId) return [];
     const scopedIds = new Set([selectedNodeId, ...getDescendants(selectedNodeId)]);
@@ -609,26 +552,12 @@ const gNodes: ViewNode[] = nodes.map(n => {
     }
   }, [selectedNode]);
 
-  // Check if making `childId` a child of `newParentId` creates a cycle
-  const wouldCreateCycle = useCallback((newParentId: string, childId: string) => {
-    let currentId: string | null = newParentId;
-    while (currentId) {
-      if (currentId === childId) return true;
-      const current = nodes.find(n => n.id === currentId);
-      currentId = current?.parentId || null;
-    }
-    return false;
-  }, [nodes]);
-
-  // Smart Markdown Import Logic
   const handleImport = useCallback((text: string, baseParentId: string | null = null) => {
     if (!text.trim()) return;
     const lines = text.split('\n').map(n => n.trim()).filter(Boolean);
     
     const stack: { level: number, id: string }[] = [];
-    if (baseParentId) {
-      stack.push({ level: 0, id: baseParentId });
-    }
+    if (baseParentId) stack.push({ level: 0, id: baseParentId });
 
     lines.forEach(line => {
       const match = line.match(/^(#+)\s+(.*)/);
@@ -650,34 +579,6 @@ const gNodes: ViewNode[] = nodes.map(n => {
     });
   }, [addNode]);
 
-  const availableNodesToAbsorb = useMemo(() => {
-    if (!selectedNode) return [];
-    return nodes.filter(n => 
-      n.id !== selectedNode.id && 
-      n.parentId !== selectedNode.id && 
-      !wouldCreateCycle(selectedNode.id, n.id)
-    );
-  }, [nodes, selectedNode, wouldCreateCycle]);
-
-  const handleNodeHover = useCallback((node: any) => {
-    setHoverNode(node ? node.id : null);
-    const newHighlightNodes = new Set<string>();
-    const newHighlightLinks = new Set<string>();
-
-    if (node) {
-      newHighlightNodes.add(node.id);
-      if (node.neighbors) {
-        node.neighbors.forEach((neighborId: string) => newHighlightNodes.add(neighborId));
-      }
-      if (node.links) {
-        node.links.forEach((linkId: string) => newHighlightLinks.add(linkId));
-      }
-    }
-
-    setHighlightNodes(newHighlightNodes);
-    setHighlightLinks(newHighlightLinks);
-  }, []);
-
   if (!isHydrated) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-[#FAFAFA]">
@@ -687,16 +588,46 @@ const gNodes: ViewNode[] = nodes.map(n => {
   }
 
   return (
-    <div className="knowledge-graph-view w-full h-full bg-white relative">
-      {/* Global Hint for Alt + Click */}
-      {isAltPressed && selectedNodeId && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-blue-600/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-lg text-sm font-medium transition-all duration-300 pointer-events-none z-20 flex items-center gap-2 animate-in slide-in-from-top-4 fade-in">
-          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-          快捷连线：点击任意高亮节点，将其设为 "{selectedNode?.name}" 的子节点
-        </div>
-      )}
+    <div className="knowledge-graph-view w-full h-full bg-white relative overflow-hidden" ref={containerRef}>
+      {/* Background grid */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        backgroundImage: 'radial-gradient(circle at 1px 1px, #e5e7eb 1px, transparent 0)',
+        backgroundSize: '24px 24px',
+        opacity: 0.6
+      }} />
 
-      {/* 知识大盘的专属控制台已经通过 Portal 注入到底部全局 Dock，故这里不再保留顶部独立的悬浮面板 */}
+      {/* Global Hints */}
+      <AnimatePresence>
+        {isMoveMode ? (
+          <motion.div 
+            key="move-hint"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="absolute top-20 left-1/2 -translate-x-1/2 bg-blue-500/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-lg text-[13px] font-medium z-20 flex items-center gap-2 border border-blue-400"
+          >
+            <MoveRight size={14} className="text-white" />
+            请点击选择要转移到的目标父节点，或点击空白处使其成为根节点。
+            <button onClick={() => setIsMoveMode(false)} className="ml-2 px-2 py-0.5 bg-white/20 rounded text-xs hover:bg-white/30 transition-colors">取消</button>
+          </motion.div>
+        ) : showHint ? (
+          <motion.div 
+            key="normal-hint"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="absolute top-20 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md text-slate-600 px-5 py-2.5 rounded-full shadow-lg text-[13px] font-medium z-20 flex items-center gap-2 border border-slate-200/60"
+          >
+            <Info size={14} className="text-blue-500" />
+            双击节点可向下钻取，双击中心圆盘可返回全局
+            <button onClick={() => { setShowHint(false); localStorage.setItem('knowledge-graph-hint-dismissed', 'true'); }} className="ml-1 p-0.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+              <X size={12} />
+            </button>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {/* Portal Dock Controls */}
       {dockPortalTarget && createPortal(
           <motion.div
             layout
@@ -707,688 +638,328 @@ const gNodes: ViewNode[] = nodes.map(n => {
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
             className="flex items-center gap-2 px-1"
           >
-            {/* 2. Root Filter (Modern Pill Container) */}
-            <div className="relative group flex items-center bg-slate-100/50 hover:bg-slate-200/60 rounded-lg px-2 py-1.5 transition-all cursor-pointer border border-transparent hover:border-slate-200/80 shadow-sm">
+            <div className="relative group flex items-center bg-slate-100/50 hover:bg-slate-200/60 rounded-lg px-2 py-1.5 transition-all cursor-pointer border border-transparent shadow-sm">
               <Command size={14} className="text-slate-500 group-hover:text-blue-500 transition-colors shrink-0" />
               <select 
                 className="appearance-none bg-transparent border-none outline-none focus:ring-0 text-[13px] font-semibold text-slate-700 cursor-pointer pl-1.5 pr-5 min-w-[60px] max-w-[120px] truncate"
                 value={selectedRootFilter}
                 onChange={e => setSelectedRootFilter(e.target.value)}
-                title="全景视角"
               >
                 <option value="all">全景视角</option>
-                {rootNodes.map(n => (
-                  <option key={n.id} value={n.id}>{n.name}</option>
-                ))}
+                {rootNodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
               </select>
-              <ChevronDown size={14} className="text-slate-400 group-hover:text-slate-600 transition-colors absolute right-1.5" pointerEvents="none" />
+              <ChevronDown size={14} className="text-slate-400 absolute right-1.5 pointer-events-none" />
             </div>
+            
+            <div className="tl-dock-divider mx-0.5" />
+            
+            <button 
+              onClick={zoomToFit}
+              className="tl-dock-btn text-slate-500 hover:text-blue-600"
+              title="视角归中"
+            >
+              <Focus size={16} />
+            </button>
 
             <div className="tl-dock-divider mx-0.5" />
 
-            {/* 3. Status Toggles (Modern Traffic Lights in a Pod) */}
-            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-100/50 rounded-full border border-slate-200/50 shadow-sm">
+            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-100/50 rounded-full shadow-sm">
               <button 
                 onClick={() => setStatusFilter(prev => prev === 'overdue' ? 'all' : 'overdue')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 border border-black/5 shadow-inner transition-all duration-300 outline-none focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-rose-200 ${
-                  statusFilter === 'overdue' 
-                    ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)] scale-110' 
-                    : statusFilter !== 'all' 
-                      ? 'bg-slate-300/50 opacity-50' 
-                      : 'bg-rose-400 hover:bg-rose-500 hover:scale-110'
-                }`}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'overdue' ? 'bg-rose-500 scale-110 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-rose-400 hover:scale-110'}`}
                 title="查看严重逾期"
               />
               <button 
                 onClick={() => setStatusFilter(prev => prev === 'active' ? 'all' : 'active')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 border border-black/5 shadow-inner transition-all duration-300 outline-none focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-200 ${
-                  statusFilter === 'active' 
-                    ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)] scale-110' 
-                    : statusFilter !== 'all' 
-                      ? 'bg-slate-300/50 opacity-50' 
-                      : 'bg-emerald-400 hover:bg-emerald-500 hover:scale-110'
-                }`}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'active' ? 'bg-emerald-500 scale-110 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-emerald-400 hover:scale-110'}`}
                 title="查看进行中"
               />
               <button 
                 onClick={() => setStatusFilter(prev => prev === 'completed' ? 'all' : 'completed')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 border border-black/5 shadow-inner transition-all duration-300 outline-none focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-200 ${
-                  statusFilter === 'completed' 
-                    ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)] scale-110' 
-                    : statusFilter !== 'all' 
-                      ? 'bg-slate-300/50 opacity-50' 
-                      : 'bg-amber-400 hover:bg-amber-500 hover:scale-110'
-                }`}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'completed' ? 'bg-amber-500 scale-110 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-amber-400 hover:scale-110'}`}
                 title="查看已圆满"
               />
             </div>
-
             <div className="tl-dock-divider mx-0.5" />
-
-            {/* 4. Search (Collapsible) */}
-          <div className="flex items-center group relative h-[36px]">
-            <button
-              className="tl-dock-btn"
-              onClick={() => {
-                setIsSearchExpanded(true);
-                setTimeout(() => searchInputRef.current?.focus(), 50);
-              }}
-              title="搜索知识"
-            >
-              <Search size={16} className={`transition-colors ${searchQuery ? 'text-blue-600' : 'text-slate-500 group-hover:text-slate-700'}`} />
-            </button>
-            
-            <AnimatePresence>
-              {(isSearchExpanded || searchQuery) && (
-                <motion.div
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: 120, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  className="flex items-center overflow-hidden"
-                >
-                  <input 
-                    ref={searchInputRef}
-                    type="text" 
-                    placeholder="搜索..." 
-                    className="bg-transparent border-none outline-none text-[13px] font-medium w-full text-slate-700 placeholder:text-slate-400 pl-1 pr-6"
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    onBlur={() => {
-                      if (!searchQuery) setIsSearchExpanded(false);
-                    }}
-                  />
-                  {searchQuery && (
-                    <button 
-                      onClick={() => {
-                        setSearchQuery('');
-                        setIsSearchExpanded(false);
-                      }} 
-                      className="absolute right-1 text-slate-400 hover:text-slate-700 p-0.5 z-10"
-                    >
-                      <X size={14} strokeWidth={2.5} />
-                    </button>
-                  )}
-                  {/* 归档搜索结果下拉框 */}
-                  {searchQuery && globalArchivedResults.length > 0 && (
-                    <div className="absolute top-[calc(100%+8px)] right-0 w-64 bg-white/90 backdrop-blur-xl border border-slate-200/50 shadow-xl rounded-xl overflow-hidden flex flex-col z-50">
-                      <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50/50 border-b border-slate-100/80 flex items-center gap-1.5">
-                        <Archive size={12} />
-                        冷数据 (时光胶囊)
-                      </div>
-                      <div className="max-h-64 overflow-y-auto p-1">
-                        {globalArchivedResults.map(node => (
-                          <button
-                            key={node.id}
-                            onClick={() => {
-                              setCapsuleNodeId(node.id);
-                              setSearchQuery('');
-                              setIsSearchExpanded(false);
-                            }}
-                            className="w-full text-left flex items-center gap-2.5 px-2 py-2 hover:bg-blue-50/50 rounded-lg transition-colors group"
-                          >
-                            <div className="p-1.5 bg-slate-100 text-slate-500 rounded-md group-hover:bg-blue-100 group-hover:text-blue-500 transition-colors">
-                              <Archive size={14} />
-                            </div>
-                            <div className="flex-1 truncate">
-                              <div className="text-xs font-semibold text-slate-700 group-hover:text-blue-700">{node.name}</div>
-                              <div className="text-[10px] text-slate-400 mt-0.5 truncate">点击开启时光胶囊</div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </motion.div>,
+            <div className="flex items-center group relative h-[36px]">
+              <button className="tl-dock-btn" onClick={() => { setIsSearchExpanded(true); setTimeout(() => searchInputRef.current?.focus(), 50); }} title="搜索知识">
+                <Search size={16} className={`transition-colors ${searchQuery ? 'text-blue-600' : 'text-slate-500'}`} />
+              </button>
+              <AnimatePresence>
+                {(isSearchExpanded || searchQuery) && (
+                  <motion.div initial={{ width: 0, opacity: 0 }} animate={{ width: 120, opacity: 1 }} exit={{ width: 0, opacity: 0 }} className="flex items-center overflow-hidden">
+                    <input ref={searchInputRef} type="text" placeholder="搜索..." className="bg-transparent border-none outline-none text-[13px] font-medium w-full text-slate-700 pl-1 pr-6" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onBlur={() => { if (!searchQuery) setIsSearchExpanded(false); }} />
+                    {searchQuery && <button onClick={() => { setSearchQuery(''); setIsSearchExpanded(false); }} className="absolute right-1 text-slate-400 p-0.5 z-10"><X size={14} /></button>}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>,
         dockPortalTarget
       )}
 
       {capsuleNodeId && <TimeCapsuleModal nodeId={capsuleNodeId} onClose={() => setCapsuleNodeId(null)} />}
 
-      {/* Dot Grid Background */}
-      <div className="absolute inset-0 pointer-events-none" style={{
-        backgroundImage: 'radial-gradient(circle at 1px 1px, #e5e7eb 1px, transparent 0)',
-        backgroundSize: '24px 24px',
-        opacity: 0.6
-      }} />
-
-      <div className="absolute inset-0 w-full h-full overflow-hidden" ref={containerRef}>
-        {dimensions.width > 0 && dimensions.height > 0 && (
-          <ForceGraph2D
-            ref={fgRef}
-            width={dimensions.width}
-            height={dimensions.height}
-            graphData={graphData}
-            nodeRelSize={6}
-            linkColor={(link: any) => {
-              const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-              const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-              
-              const isXRayActive = matchingNodeIds !== null;
-              const isXRayMatched = isXRayActive && matchingNodeIds.has(sourceId) && matchingNodeIds.has(targetId);
-              
-              const isHoverDimmed = hoverNode !== null && !highlightLinks.has(link.id);
-              const isDimmed = isHoverDimmed || (isXRayActive && !isXRayMatched);
-              
-              if (isDimmed) return isXRayActive ? 'rgba(226, 232, 240, 0.2)' : '#f8fafc';
-              if (isXRayActive && isXRayMatched) return 'rgba(148, 163, 184, 0.7)'; // slate-400 semi-transparent for paths
-              
-              return highlightLinks.has(link.id) ? '#64748b' : '#dbe4ee';
-            }}
-            linkWidth={(link: any) => {
-              return highlightLinks.has(link.id) ? 2.4 : 1.15;
-            }}
-            linkDirectionalParticles={(link: any) => highlightLinks.has(link.id) ? 2 : 0}
-            linkDirectionalParticleWidth={2.5}
-            linkDirectionalParticleSpeed={0.006}
-            onNodeClick={(node: any, event: any) => {
-              // Scheme A: Canvas Alt+Click to link
-              if (event.altKey && selectedNodeId && node.id !== selectedNodeId) {
-                if (!wouldCreateCycle(selectedNodeId, node.id)) {
-                  updateNode(node.id, { parentId: selectedNodeId });
-                } else {
-                  alert('无法连线：该节点是当前节点的父级或祖先节点，会造成循环引用。');
-                }
-                return; // Do not change selection
-              }
-              setSelectedNodeId(node.id as string);
-            }}
-            onNodeRightClick={(node: any) => {
-              // 右击：聚焦/居中该节点，而不是改变其状态
-              if (fgRef.current) {
-                fgRef.current.centerAt(node.x, node.y, 800);
-                fgRef.current.zoom(4, 800);
-              }
-            }}
-            onBackgroundClick={() => setSelectedNodeId(null)}
-            onNodeHover={handleNodeHover}
-            nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-              if (node.x === undefined || node.y === undefined || isNaN(node.x) || isNaN(node.y)) {
-                // Return early instead of logging to prevent console spam
-                return;
-              }
-              const isSelected = node.id === selectedNodeId;
-              const isHovered = node.id === hoverNode;
-              const isHighlighted = highlightNodes.has(node.id);
-              
-              const isXRayActive = matchingNodeIds !== null;
-              const isXRayMatched = isXRayActive && matchingNodeIds.has(node.id);
-              
-              const isDimmed = (hoverNode !== null && !isHighlighted) || (isXRayActive && !isXRayMatched);
-              
-              const canBeAbsorbed = isAltPressed && selectedNodeId && isHovered && !isSelected && !wouldCreateCycle(selectedNodeId, node.id);
-
-              const label = node.name;
-              
-              // === Obsidian 风格的文字缩放逻辑 ===
-              // 取消基于优先级的字号放大 (priorityBoost)，仅保留全局统一的基础字号
-              const rawFontSize = 11.5 / globalScale;
-              const fontSize = Math.min(15, Math.max(3, rawFontSize));
-
-              // 恢复原有的加粗逻辑：仅在悬停或选中时加粗 (600)，常规状态保持 400
-              const isBold = isSelected || isHovered;
-              ctx.font = `${isBold ? '600' : '400'} ${fontSize}px Inter, system-ui, sans-serif`;
-
-              const r = node.radius ?? Math.max(2.4, Math.min(6, node.val));
-              // 动态光晕：大节点光晕小，小节点光晕适中，保持视觉平衡
-              const haloBoost = r > 5 ? 0.5 : (r > 3 ? 0.8 : 1.0);
-              const haloRadius = r + haloBoost / globalScale;
-
-              if (!isDimmed && (node.overdueCount > 0 || node.labelPriority === 'high')) {
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, haloRadius, 0, 2 * Math.PI, false);
-                ctx.fillStyle = node.overdueCount > 0
-                  ? 'rgba(239, 68, 68, 0.14)'
-                  : 'rgba(59, 130, 246, 0.08)';
-                ctx.fill();
-              }
-              
-              // 绘制节点圆形
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-              ctx.fillStyle = isDimmed ? (isXRayActive ? 'rgba(226, 232, 240, 0.3)' : '#f8fafc') : node.color;
-              ctx.fill();
-
-              if (canBeAbsorbed) {
-                ctx.lineWidth = 3 / globalScale;
-                ctx.strokeStyle = '#10b981'; // emerald-500
-                ctx.setLineDash([4 / globalScale, 4 / globalScale]);
-                ctx.stroke();
-                ctx.setLineDash([]);
-              } else if (isSelected) {
-                // 彻底删掉第二层浅蓝大环，仅保留一层稍微加粗的实线边框
-                ctx.lineWidth = 2.0 / globalScale;
-                ctx.strokeStyle = '#3b82f6';
-                ctx.stroke();
-              } else if (isHovered || isHighlighted) {
-                ctx.lineWidth = 1 / globalScale;
-                ctx.strokeStyle = '#64748b';
-                ctx.stroke();
-              }
-
-              // Show text if scale is sufficient, or if highlighted/hovered
-              // 方案A：众生平等。所有节点统一使用 0.85 的阈值，无视优先级。
-              const scaleThreshold = 0.85;
-              // 取消了 isSelected 的强制豁免，保留 isHovered 和 isHighlighted 的豁免
-              const showText = globalScale > scaleThreshold || isHighlighted || isHovered;
-              
-              if (showText && !isDimmed) {
-                const padding = globalScale < 1 ? fontSize * 1.2 : fontSize * 0.8;
-                const textY = node.y + r + padding;
+      {/* SVG Sunburst Canvas */}
+      <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" style={{ touchAction: 'none' }}>
+        <rect width="100%" height="100%" fill="transparent" style={{ pointerEvents: 'all' }} onClick={() => {
+          if (isMoveMode && selectedNodeId) {
+            // Move to root
+            updateNode(selectedNodeId, { parentId: null });
+            setIsMoveMode(false);
+          } else {
+            setSelectedNodeId(null);
+            setIsMoveMode(false);
+          }
+        }} />
+        <g ref={gRef}>
+          <g transform={`translate(${dimensions.width / 2}, ${dimensions.height / 2})`}>
+            {islandsData.islands.map(island => {
+              const islandRotation = islandRotations[island.rootId] || 0;
+              return (
+              <g key={island.rootId} transform={`translate(${island.centerX}, ${island.centerY})`}>
+                {/* 岛屿名称标签（在上帝视角下显示在底部） */}
+                <text
+                  y={island.radius + 30}
+                  textAnchor="middle"
+                  fontSize={16}
+                  fontWeight={700}
+                  fill="#64748b"
+                  className="pointer-events-none select-none opacity-50"
+                >
+                  {island.root?.data.name}
+                </text>
                 
-                // === 绘制进度比例标签 ===
-              // Dynamic Text Truncation: 限制文字宽度，最多不超过 6 个字符
-              // 增加缩放感知：当全局放大比例大于 1.3 时，认为空间充足，不再截断
-              const isZoomedIn = globalScale > 1.3;
-              const MAX_CHARS = 6;
-              let displayLabel = label;
-              const isTruncated = label.length > MAX_CHARS && !isZoomedIn;
-              
-              if (!isHovered && !isHighlighted && isTruncated) {
-                displayLabel = label.substring(0, MAX_CHARS) + '...';
-              }
-              
-              let progressText = '';
-              
-              // 如果不是叶子节点，并且有叶子节点，则显示进度 (激活数/总数)
-              if (!node.isLeaf && node.totalLeafCount > 0) {
-                progressText = ` (${node.activeCount}/${node.totalLeafCount})`;
-                // 在非 hover 且截断的状态下，我们仍然追加进度信息
-                displayLabel += progressText;
-              }
-              
-              const textWidth = ctx.measureText(displayLabel).width;
-              const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4);
-              
-              const shouldDrawBg = isSelected || isHovered || isHighlighted || node.labelPriority === 'high';
-              
-              if (shouldDrawBg) {
-                // 如果是 hover/highlight 状态，绘制气泡 Tooltip 样式
-                if (isHovered || isHighlighted) {
-                   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                   // 增加圆角矩形的效果 (Canvas 原生模拟)
-                   const bgX = node.x - bckgDimensions[0] / 2;
-                   const bgY = textY - bckgDimensions[1] / 2;
-                   const bgW = bckgDimensions[0];
-                   const bgH = bckgDimensions[1];
-                   const radiusCorner = 4 / globalScale;
-                   
-                   ctx.beginPath();
-                   ctx.moveTo(bgX + radiusCorner, bgY);
-                   ctx.lineTo(bgX + bgW - radiusCorner, bgY);
-                   ctx.quadraticCurveTo(bgX + bgW, bgY, bgX + bgW, bgY + radiusCorner);
-                   ctx.lineTo(bgX + bgW, bgY + bgH - radiusCorner);
-                   ctx.quadraticCurveTo(bgX + bgW, bgY + bgH, bgX + bgW - radiusCorner, bgY + bgH);
-                   ctx.lineTo(bgX + radiusCorner, bgY + bgH);
-                   ctx.quadraticCurveTo(bgX, bgY + bgH, bgX, bgY + bgH - radiusCorner);
-                   ctx.lineTo(bgX, bgY + radiusCorner);
-                   ctx.quadraticCurveTo(bgX, bgY, bgX + radiusCorner, bgY);
-                   ctx.closePath();
-                   
-                   ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
-                   ctx.shadowBlur = 8 / globalScale;
-                   ctx.shadowOffsetY = 2 / globalScale;
-                   ctx.fill();
-                   
-                   ctx.shadowColor = 'transparent';
-                   ctx.shadowBlur = 0;
-                   ctx.shadowOffsetY = 0;
-                   
-                   ctx.strokeStyle = 'rgba(203, 213, 225, 0.5)';
-                   ctx.lineWidth = 1 / globalScale;
-                   ctx.stroke();
-                } else {
-                  ctx.fillStyle = isSelected
-                    ? 'rgba(255, 255, 255, 0.95)'
-                    : 'rgba(255, 255, 255, 0.68)';
-                  ctx.fillRect(node.x - bckgDimensions[0] / 2, textY - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
-                }
-              }
+                <g 
+                  style={{ 
+                    transform: `rotate(${islandRotation}deg)`, 
+                    transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' 
+                  }}
+                >
+                {island.nodes.map((node: any) => {
+                  const isVirtual = node.data.isVirtual;
+                  const isSelected = selectedNodeId === node.id;
 
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              
-              ctx.fillStyle = isSelected
-                ? '#0f172a'
-                : isHovered || isHighlighted || node.labelPriority === 'high'
-                  ? '#334155'
-                  : '#64748b';
-              
-              if (progressText) {
-                 const labelText = !isHovered && !isHighlighted && isTruncated ? label.substring(0, MAX_CHARS) + '...' : label;
-                 const labelWidth = ctx.measureText(labelText).width;
-                const progressWidth = ctx.measureText(progressText).width;
-                const startX = node.x - (labelWidth + progressWidth) / 2;
-                
-                ctx.textAlign = 'left';
-                ctx.fillText(labelText, startX, textY);
-                
-                ctx.fillStyle = isSelected ? '#64748b' : '#94a3b8';
-                ctx.font = `${isSelected || isHovered ? '500' : '400'} ${fontSize * 0.9}px Inter, system-ui, sans-serif`;
-                ctx.fillText(progressText, startX + labelWidth, textY);
-              } else {
-                ctx.fillText(displayLabel, node.x, textY);
-              }
-            }
+                  const isXRayActive = matchingNodeIds !== null;
+                  const isXRayMatched = isXRayActive && matchingNodeIds.has(node.id);
+                  const isDimmed = isXRayActive && !isXRayMatched;
 
-            // Restore global alpha
-            ctx.globalAlpha = 1;
-          }}
-          nodeCanvasObjectMode={() => 'replace'}
-        />
-        )}
+                  const fillColor = isVirtual ? '#ffffff' : node.data.color;
+                  const strokeColor = isSelected ? '#0f172a' : (isVirtual ? '#cbd5e1' : '#ffffff');
+                  const strokeWidth = isSelected ? 2.5 : (isVirtual ? 2 : 1.5);
 
-        {/* Floating Control Panel - Mac / Linear Style */}
-        {isPanelOpen ? (
-          <div className={styles.panel}>
-            {selectedNode ? (
-              <div className={styles.panelContainer}>
-                {/* 极简头部与操作区 */}
-                <div className={styles.header}>
-                  <div className="flex-1 pr-3 relative group w-0">
-                    <input
-                      type="text"
-                      className="w-full bg-transparent text-lg font-bold text-slate-800 placeholder-slate-400 focus:outline-none rounded px-1 -ml-1 border border-transparent focus:border-slate-200/60 transition-all truncate"
-                      value={editName}
-                      onChange={e => setEditName(e.target.value)}
-                      onBlur={() => { if(editName.trim()) updateNode(selectedNode.id, { name: editName.trim() }) }}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          e.currentTarget.blur();
-                        }
-                      }}
-                      title={editName}
-                    />
-                    <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-[10px] text-slate-400 pointer-events-none transition-opacity bg-white/80 px-1">
-                      编辑
-                    </div>
-                  </div>
+                  const angleDiff = node.x1 - node.x0;
+                  const radiusDiff = node.y1 - node.y0;
+                  const showText = angleDiff > 0.05 && radiusDiff > 15;
+
+                  // 使用圆弧的外侧弧长和径向宽度的较小值来计算可用空间
+                  const arcLength = angleDiff * node.y1;
+                  const availableSpace = Math.max(arcLength, radiusDiff);
+                  const maxChars = Math.max(2, Math.floor((availableSpace - 16) / 12));
                   
-                  {/* 右上角操作区 - 分段式胶囊控制器 */}
-                  <div className="flex items-center shrink-0">
-                    <div className={styles.actionGroup}>
-                      <button
-                        onClick={() => {
-                          const newStatus = selectedNode.status === 'activated' ? 'unactivated' : 'activated';
-                          updateNode(selectedNode.id, { status: newStatus });
-                        }}
-                        className={`${styles.actionBtn} ${selectedNode.status === 'activated' ? styles.active : ''}`}
-                        title={selectedNode.status === 'activated' ? '已激活' : '激活节点'}
-                      >
-                        <Zap size={13} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
-                      </button>
-                      <div className={styles.actionDivider}></div>
-                      <button
-                        onClick={() => {
-                          if(confirm('归档后，该节点及其所有子节点、复习任务将从主工作区隐藏，但仍可在全局搜索中查看。确定归档吗？')) {
-                            archiveNodeCascade(selectedNode.id, true);
-                            setSelectedNodeId(null);
-                          }
-                        }}
-                        className={styles.actionBtn}
-                        title="归档节点 (封存冷数据)"
-                      >
-                        <Archive size={13} />
-                      </button>
-                      <div className={styles.actionDivider}></div>
-                      <button
-                        onClick={() => {
-                          if(confirm('确定删除该节点吗？')) {
-                            deleteNode(selectedNode.id);
-                            setSelectedNodeId(null);
-                          }
-                        }}
-                        className={`${styles.actionBtn} ${styles.danger}`}
-                        title="删除节点"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                    <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn} title="收起">
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
+                  const displayName = node.depth === 0 
+                    ? node.data.name 
+                    : (node.data.name.length > maxChars ? node.data.name.substring(0, maxChars) + '...' : node.data.name);
 
-                <div className="px-5 pb-5 flex flex-col gap-5">
-                  {/* 无边框状态数据看板 - 单色调降噪 */}
-                  {selectedGraphNode && (
-                    <div className={styles.statsBoard}>
-                      <div className={styles.statItem}>
-                        <span className={styles.statValue}>{selectedGraphNode.pendingCount}</span>
-                        <span className={styles.statLabel}>待复习</span>
-                      </div>
-                      <div className={styles.statDivider}></div>
-                      <div className={styles.statItem}>
-                        <span className={`${styles.statValue} ${selectedGraphNode.overdueCount > 0 ? styles.overdue : ''}`}>
-                          {selectedGraphNode.overdueCount}
-                        </span>
-                        <span className={styles.statLabel}>逾期</span>
-                      </div>
-                      <div className={styles.statDivider}></div>
-                      <div className={styles.statItem}>
-                        <span className={styles.statValue}>{selectedGraphNode.completedCount}</span>
-                        <span className={styles.statLabel}>已完成</span>
-                      </div>
-                      <div className={styles.statDivider}></div>
-                      <div className={styles.statItem}>
-                        <span className={styles.statValue}>{selectedGraphNode.totalReviewCount}</span>
-                        <span className={styles.statLabel}>总计</span>
-                      </div>
-                    </div>
-                  )}
+                  const x = (node.x0 + node.x1) / 2 * 180 / Math.PI;
+                  const y = (node.y0 + node.y1) / 2;
                   
-                  {/* 近期复习预览 (无边框设计 + 日期优化) */}
-                  {selectedNodeReviewPreview.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-bold text-slate-400/80 uppercase tracking-widest flex items-center gap-1.5">
-                        <Zap size={11} className="text-amber-400" />
-                        近期复习
-                      </div>
-                      <div className="space-y-0.5">
-                        {selectedNodeReviewPreview.map(task => (
-                          <div 
-                            key={task.id} 
-                            onClick={() => {
-                              window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'ebb' } }));
-                            }}
-                            className="group flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
-                          >
-                            <div className="flex items-center gap-2 overflow-hidden flex-1">
-                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${task.isCompleted ? 'bg-emerald-400' : 'bg-amber-400'}`}></div>
-                              <span className="truncate text-xs font-medium text-slate-700 group-hover:text-blue-600 transition-colors">{task.topicName}</span>
-                            </div>
-                            <span className={`shrink-0 text-[10px] font-medium ${task.isCompleted ? 'text-emerald-600' : 'text-slate-500 group-hover:text-blue-600 transition-colors'}`}>
-                              {task.isCompleted ? '✓' : task.dueDate}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  // Calculate absolute angle to keep text upright despite island rotation
+                  const absoluteAngle = (x - 90 + islandRotation) % 360;
+                  const flipText = absoluteAngle > 90 && absoluteAngle < 270;
+                  
+                  const transform = node.depth === 0 
+                    ? `rotate(${-islandRotation})` // Counter-rotate root text
+                    : `rotate(${x - 90}) translate(${y},0) rotate(${flipText ? 180 : 0})`;
 
-                  {/* 📝 相关任务块 (无边框幽灵列表 + 徽章化) */}
-                  {relatedTaskBlocks.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-bold text-slate-400/80 uppercase tracking-widest flex items-center gap-1.5">
-                        <Network size={11} className="text-blue-400" />
-                        关联任务记录
-                      </div>
-                      <div className="space-y-1">
-                        {relatedTaskBlocks.map(({ task, block }) => (
-                          <div 
-                            key={`${task.id}-${block.id}`} 
-                            onClick={() => {
-                              window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id } }));
-                            }}
-                            className="group flex flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="text-xs font-semibold text-slate-800 leading-snug group-hover:text-blue-600 transition-colors line-clamp-1 flex-1">
-                                {block.header.title}
-                              </div>
-                              <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                block.header.isCompleted 
-                                  ? 'text-emerald-600 bg-emerald-50' 
-                                  : 'text-amber-600 bg-amber-50'
-                              }`}>
-                                {block.header.isCompleted ? '已完成' : '进行中'}
-                              </span>
-                            </div>
-                            
-                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium">
-                              <span>{block.header.date}</span>
-                              {block.header.tag && (
-                                <>
-                                  <span>·</span>
-                                  <span style={{ color: block.header.tagColor || '#64748b' }}>{block.header.tag}</span>
-                                </>
-                              )}
-                              <span>·</span>
-                              <span className="truncate max-w-[120px]" title={task.name}>{task.name}</span>
-                            </div>
-                            
-                            {block.body && block.body.replace(/<[^>]*>?/gm, '').trim() && (
-                              <div className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">
-                                {block.body.replace(/<[^>]*>?/gm, '').trim()}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  const textFill = node.depth === 0 ? '#1e293b' : getContrastYIQ(fillColor);
 
-                  {/* 显性化添加子节点输入框 */}
-                  <div className="pt-2 border-t border-slate-100/80">
-                    <div className={styles.composer}>
-                      <input
-                        type="text"
-                        placeholder="+ 添加子节点 (Enter 确认)..."
-                        className={styles.textarea}
-                        value={newChildName}
-                        onChange={e => setNewChildName(e.target.value)}
-                        onFocus={() => setIsChildInputFocused(true)}
-                        onBlur={() => {
-                          // 稍微延迟隐藏，让点击吸纳按钮的事件能触发
-                          setTimeout(() => setIsChildInputFocused(false), 200);
-                        }}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter' && newChildName.trim()) {
-                            handleImport(newChildName, selectedNode.id);
-                            setNewChildName('');
+                  return (
+                    <g 
+                      key={node.id}
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        if (isMoveMode && selectedNodeId && selectedNodeId !== node.id) {
+                          // Prevent moving a node to its own descendant
+                          const descendants = getDescendants(selectedNodeId);
+                          if (!descendants.includes(node.id)) {
+                            updateNode(selectedNodeId, { parentId: node.id });
+                            setIsMoveMode(false);
+                          } else {
+                            alert('不能将节点移动到它的子节点下');
                           }
-                        }}
-                        style={{ paddingBottom: '12px' }} // 子节点不需要加号按钮，所以取消底部留白
-                      />
-                    </div>
-                  </div>
-
-                  {/* 吸纳节点 - 只有输入框聚焦时才 Popover 显示 */}
-                  {isChildInputFocused && availableNodesToAbsorb.length > 0 && (
-                    <div className="space-y-1.5 animate-in slide-in-from-top-2 fade-in duration-200">
-                      <div className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
-                        <Info size={10} />
-                        按住 Alt 点击图谱中的节点，或点击下方标签吸纳
-                      </div>
-                      <div className="flex flex-wrap gap-1 max-h-[120px] overflow-y-auto custom-scrollbar p-1">
-                        {availableNodesToAbsorb.map(n => (
-                          <button
-                            key={n.id}
-                            onClick={() => {
-                              updateNode(n.id, { parentId: selectedNode.id });
-                              setIsChildInputFocused(false);
-                            }}
-                            className="group flex items-center gap-1 bg-white border border-slate-200/60 hover:border-emerald-300 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 px-2 py-1 rounded-md text-[10px] transition-all shadow-sm"
-                            title={`吸纳 "${n.name}"`}
-                          >
-                            <span className="truncate max-w-[100px]">{n.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className={styles.panelContainer}>
-                {/* 标题栏 */}
-                <div className={styles.header}>
-                  <div className={styles.headerTitleWrapper}>
-                    <Command size={14} />
-                    <h3 className={styles.headerTitle}>图谱控制台</h3>
-                  </div>
-                  <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn} title="收起">
-                    <X size={14} />
-                  </button>
-                </div>
-                
-                {/* 智能录入区 (Global) */}
-                <div className={styles.section}>
-                  <div className={styles.sectionTitle}>快速构建</div>
-                  <div className={styles.composer}>
-                    <textarea
-                      placeholder="新建根节点 (支持多行 Markdown)"
-                      className={styles.textarea}
-                      value={newRootName}
-                      onChange={e => setNewRootName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && !e.shiftKey && newRootName.trim()) {
-                          e.preventDefault();
-                          handleImport(newRootName);
-                          setNewRootName('');
+                        } else {
+                          setSelectedNodeId(node.id);
+                          setIsMoveMode(false);
                         }
                       }}
-                    />
-                    <button
-                      onClick={() => {
-                        if (newRootName.trim()) {
-                          handleImport(newRootName);
-                          setNewRootName('');
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        if (node.depth > 0 && !node.data.isLeaf) {
+                          setSelectedRootFilter(node.id);
+                        } else if (node.depth === 0 && selectedRootFilter !== 'all') {
+                          setSelectedRootFilter('all');
+                        } else if (node.depth === 0 && selectedRootFilter === 'all') {
+                          setSelectedRootFilter(node.id);
                         }
                       }}
-                      disabled={!newRootName.trim()}
-                      className={styles.submitBtn}
-                      title="生成节点 (Enter)"
+                      className={`cursor-pointer transition-opacity duration-300 ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
                     >
-                      <Plus size={14} strokeWidth={2.5} />
+                      <title>{node.data.name}</title>
+                      <path
+                        d={arcGenerator(node) || ''}
+                        fill={fillColor}
+                        stroke={strokeColor}
+                        strokeWidth={strokeWidth}
+                        className="transition-all duration-300 hover:opacity-85"
+                      />
+                      {showText && (
+                        <text
+                          transform={transform}
+                          textAnchor="middle"
+                          dy="0.35em"
+                          fontSize={node.depth === 0 ? 14 : 11}
+                          fontWeight={node.depth === 0 || isSelected ? 700 : 500}
+                          fill={textFill}
+                          pointerEvents="none"
+                          className="select-none"
+                          style={{ transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
+                        >
+                          {displayName}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+                </g>
+              </g>
+            )})}
+          </g>
+        </g>
+      </svg>
+
+      {/* Floating Control Panel */}
+      {isPanelOpen ? (
+        <div className={styles.panel} style={{ background: 'rgba(255,255,255,0.9)', boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}>
+          {selectedNode ? (
+            <div className={styles.panelContainer}>
+              <div className={styles.header}>
+                <div className="flex-1 pr-3 relative group w-0">
+                  <input
+                    type="text"
+                    className="w-full bg-transparent text-lg font-bold text-slate-800 placeholder-slate-400 focus:outline-none rounded px-1 -ml-1 border border-transparent focus:border-slate-200/60 transition-all truncate"
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    onBlur={() => { if(editName.trim()) updateNode(selectedNode.id, { name: editName.trim() }) }}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    title={editName}
+                  />
+                </div>
+                <div className="flex items-center shrink-0">
+                  <div className={styles.actionGroup}>
+                    <button onClick={() => setIsMoveMode(!isMoveMode)} className={`${styles.actionBtn} ${isMoveMode ? styles.active : ''}`} title="转移节点层级">
+                      <MoveRight size={13} />
                     </button>
+                    <div className={styles.actionDivider}></div>
+                    <button onClick={() => updateNode(selectedNode.id, { status: selectedNode.status === 'activated' ? 'unactivated' : 'activated' })} className={`${styles.actionBtn} ${selectedNode.status === 'activated' ? styles.active : ''}`}>
+                      <Zap size={13} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
+                    </button>
+                    <div className={styles.actionDivider}></div>
+                    <button onClick={() => { if(confirm('确定归档吗？')) { archiveNodeCascade(selectedNode.id, true); setSelectedNodeId(null); } }} className={styles.actionBtn}>
+                      <Archive size={13} />
+                    </button>
+                    <div className={styles.actionDivider}></div>
+                    <button onClick={() => { if(confirm('确定删除吗？')) { deleteNode(selectedNode.id); setSelectedNodeId(null); } }} className={`${styles.actionBtn} ${styles.danger}`}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                  <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn}><X size={13} /></button>
+                </div>
+              </div>
+
+              <div className="px-5 pb-5 flex flex-col gap-5">
+                {selectedGraphNode && (
+                  <div className={styles.statsBoard}>
+                    <div className={styles.statItem}><span className={styles.statValue}>{selectedGraphNode.pendingCount}</span><span className={styles.statLabel}>待复习</span></div>
+                    <div className={styles.statDivider}></div>
+                    <div className={styles.statItem}><span className={`${styles.statValue} ${selectedGraphNode.overdueCount > 0 ? styles.overdue : ''}`}>{selectedGraphNode.overdueCount}</span><span className={styles.statLabel}>逾期</span></div>
+                    <div className={styles.statDivider}></div>
+                    <div className={styles.statItem}><span className={styles.statValue}>{selectedGraphNode.completedCount}</span><span className={styles.statLabel}>已完成</span></div>
+                    <div className={styles.statDivider}></div>
+                    <div className={styles.statItem}><span className={styles.statValue}>{selectedGraphNode.totalReviewCount}</span><span className={styles.statLabel}>总计</span></div>
+                  </div>
+                )}
+                
+                {selectedNodeReviewPreview.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Zap size={11} className="text-amber-400" />近期复习</div>
+                    <div className="space-y-0.5">
+                      {selectedNodeReviewPreview.map(task => (
+                        <div key={task.id} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'ebb' } }))} className="group flex justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer">
+                          <div className="flex items-center gap-2 flex-1 overflow-hidden">
+                            <div className={`w-1.5 h-1.5 rounded-full ${task.isCompleted ? 'bg-emerald-400' : 'bg-amber-400'}`}></div>
+                            <span className="truncate text-xs font-medium text-slate-700">{task.topicName}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-500">{task.isCompleted ? '✓' : task.dueDate}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {relatedTaskBlocks.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Network size={11} className="text-blue-400" />关联任务记录</div>
+                    <div className="space-y-1">
+                      {relatedTaskBlocks.map(({ task, block }) => (
+                        <div key={`${task.id}-${block.id}`} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id } }))} className="group flex flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                          <div className="flex justify-between gap-3">
+                            <div className="text-xs font-semibold text-slate-800 truncate">{block.header.title}</div>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full ${block.header.isCompleted ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'}`}>{block.header.isCompleted ? '已完成' : '进行中'}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                            <span>{block.header.date}</span>·<span className="truncate">{task.name}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-slate-100/80">
+                  <div className={styles.composer}>
+                    <input type="text" placeholder="+ 添加子节点 (Enter 确认)..." className={styles.textarea} value={newChildName} onChange={e => setNewChildName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && newChildName.trim()) { handleImport(newChildName, selectedNode.id); setNewChildName(''); } }} style={{ paddingBottom: '12px' }} />
                   </div>
                 </div>
 
-                <div className={styles.emptyState}>
-                  <div className={styles.emptyStateIcon}>
-                    <Network size={20} />
-                  </div>
-                  <h4 className={styles.emptyStateTitle}>探索知识网络</h4>
-                  <p className={styles.emptyStateDesc}>
-                    点击图谱中的节点查看详情与复习记录，或在上方快速创建新节点
-                  </p>
+              </div>
+            </div>
+          ) : (
+            <div className={styles.panelContainer}>
+              <div className={styles.header}>
+                <div className={styles.headerTitleWrapper}><Command size={14} /><h3 className={styles.headerTitle}>图谱控制台</h3></div>
+                <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn}><X size={14} /></button>
+              </div>
+              <div className={styles.section}>
+                <div className={styles.sectionTitle}>快速构建</div>
+                <div className={styles.composer}>
+                  <textarea placeholder="新建根节点 (支持 Markdown)" className={styles.textarea} value={newRootName} onChange={e => setNewRootName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && newRootName.trim()) { e.preventDefault(); handleImport(newRootName); setNewRootName(''); } }} />
+                  <button onClick={() => { if (newRootName.trim()) { handleImport(newRootName); setNewRootName(''); } }} disabled={!newRootName.trim()} className={styles.submitBtn}><Plus size={14} strokeWidth={2.5} /></button>
                 </div>
               </div>
-            )}
-          </div>
-        ) : (
-          <button 
-            onClick={() => setIsPanelOpen(true)}
-            className={styles.triggerBtn}
-            title="打开节点控制台"
-          >
-            <Settings2 size={20} />
-          </button>
-        )}
-      </div>
-      <style dangerouslySetInnerHTML={{__html: `
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
-      `}} />
+              <div className={styles.emptyState}>
+                <div className={styles.emptyStateIcon}><Network size={20} /></div>
+                <h4 className={styles.emptyStateTitle}>探索知识网络</h4>
+                <p className={styles.emptyStateDesc}>点击节点查看详情，双击可向下钻取，右侧控制台录入</p>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <button onClick={() => setIsPanelOpen(true)} className={styles.triggerBtn} title="打开节点控制台">
+          <Settings2 size={20} />
+        </button>
+      )}
     </div>
   );
 };

@@ -14,22 +14,15 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'framer-motion', 'zustand'],
-          'vendor-charts': ['echarts', 'echarts-for-react'],
-          'vendor-d3': ['d3-force', 'd3-hierarchy', 'd3-selection', 'd3-shape', 'd3-zoom', 'react-force-graph-2d'],
-          'vendor-liveblocks': ['@liveblocks/client', '@liveblocks/react', '@liveblocks/zustand'],
-          'vendor-utils': ['dayjs', 'dompurify', 'marked', 'xlsx', 'lucide-react']
+          'vendor-d3': ['d3-hierarchy', 'd3-selection', 'd3-shape', 'd3-zoom'],
+          'vendor-liveblocks': ['@liveblocks/client', '@liveblocks/zustand'],
+          'vendor-utils': ['dayjs', 'dompurify', 'xlsx', 'lucide-react']
         }
       }
     }
   },
   plugins: [
-    react({
-      babel: {
-        plugins: [
-          'react-dev-locator',
-        ],
-      },
-    }),
+    react(),
     tsconfigPaths(),
     viteCompression({
       algorithm: 'gzip',
