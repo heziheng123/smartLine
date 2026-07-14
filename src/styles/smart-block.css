@@ -45,22 +45,16 @@
 
 /* ── 顶部导航栏 ── */
 .pdv-header {
+  position: relative;
+  z-index: 100;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid #f3f4f6;
   flex-shrink: 0;
-  overflow-x: auto;
-  overflow-y: visible;
 }
-.pdv-header::-webkit-scrollbar {
-  display: none;
-}
-.pdv-header {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
-}
+
 
 .pdv-back {
   display: flex;

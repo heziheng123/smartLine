@@ -1394,7 +1394,7 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10000;
   animation: tl-fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
