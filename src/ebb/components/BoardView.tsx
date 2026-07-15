@@ -8,7 +8,7 @@ import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { Search } from 'lucide-react';
 import type { ReviewTask, EbbSettings, ComplexityLevel } from '../types';
-import { computeRounds, isOverdue, isDueToday, getDateLabel } from '../scheduler';
+import { computeRounds, getReviewTopicKey, isOverdue, isDueToday, getDateLabel } from '../scheduler';
 import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import type { TaskActions } from './MatrixView';
@@ -48,6 +48,7 @@ interface BoardViewProps {
 
 /** 主题聚合后的看板卡片数据 */
 interface TopicCardData {
+  topicKey: string;
   topicName: string;
   tag?: string;
   complexity?: ComplexityLevel;
@@ -78,15 +79,17 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
     // 1. 按 topicName 聚合
     const byTopic = new Map<string, ReviewTask[]>();
     for (const t of tasks) {
-      const g = byTopic.get(t.topicName) ?? [];
+      const topicKey = getReviewTopicKey(t);
+      const g = byTopic.get(topicKey) ?? [];
       g.push(t);
-      byTopic.set(t.topicName, g);
+      byTopic.set(topicKey, g);
     }
 
     // 2. 为每个主题计算聚合数据
     const topicCards: TopicCardData[] = [];
-    for (const [topicName, group] of byTopic) {
-      const totalRounds = totalRoundsMap.get(topicName) ?? group.length;
+    for (const [topicKey, group] of byTopic) {
+      const topicName = group[0]?.topicName ?? '';
+      const totalRounds = totalRoundsMap.get(topicKey) ?? group.length;
       const completedTasks = group.filter((t) => t.isCompleted);
       const completedRounds = completedTasks.length;
       const uncompleted = group
@@ -110,6 +113,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
 
       const firstTask = group[0];
       topicCards.push({
+        topicKey,
         topicName,
         tag: firstTask?.tag,
         complexity: firstTask?.complexity,
@@ -270,7 +274,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
                             </div>
                             {tagTasks.map((t, i) => (
                               <BoardCard
-                                key={t.topicName}
+                                key={t.topicKey}
                                 card={t}
                                 index={i}
                                 settings={settings}
@@ -288,7 +292,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
                   ) : (
                     col.tasks.map((t, i) => (
                       <BoardCard
-                        key={t.topicName}
+                        key={t.topicKey}
                         card={t}
                         index={i}
                         settings={settings}
@@ -319,7 +323,7 @@ interface BoardCardProps {
 }
 
   const BoardCard: React.FC<BoardCardProps> = ({ card, index, settings, taskActions }) => {
-  const { topicName, group, totalRounds, completedRounds, nextTask, nextRound, complexity } = card;
+  const { topicKey, topicName, group, totalRounds, completedRounds, nextTask, nextRound, complexity } = card;
   const isAllDone = completedRounds >= totalRounds;
 
   // 下一轮积分
@@ -359,7 +363,7 @@ interface BoardCardProps {
         <div className="eb-board-card-main">
           <span
             className="eb-board-card-name"
-            onClick={(e) => { e.stopPropagation(); taskActions.onOpenTimeline(topicName); }}
+            onClick={(e) => { e.stopPropagation(); taskActions.onOpenTimeline(topicKey); }}
           >
             {topicName}
           </span>

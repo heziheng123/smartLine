@@ -118,6 +118,7 @@ export interface TagStat {
 
 /** 主题统计（矩阵视图行） */
 export interface TopicStat {
+  topicKey: string;
   topicName: string;
   tag?: string;
   complexity?: ComplexityLevel;

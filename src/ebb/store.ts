@@ -27,8 +27,9 @@ import {
   TAG_COLOR_PALETTE,
 } from './constants';
 import { liveblocksClient } from '@/store/client';
-import { genId, checkCanComplete } from './scheduler';
+import { genId, getReviewTopicKey, checkCanComplete } from './scheduler';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { getReviewSourceId } from '@/components/dailySchedule/sourceIds';
 
 const ebbStorage = createScopedStorage('ebb_data');
 
@@ -111,6 +112,7 @@ interface EbbStore extends EbbData {
   deleteReviewTask: (id: string) => void;
   toggleReviewTask: (id: string) => string | null; // 返回错误消息，null 表示成功
   clearAllTasks: () => void;
+  removeGraphNodeReferences: (graphNodeIds: string[]) => void;
   rescheduleOverdue: (taskIds: string[]) => void;
 
   // 收件箱
@@ -268,7 +270,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         deleteReviewTask: (id) => {
           setTimeout(() => {
-            useDailyScheduleStore.getState().removeBySourceIds([id]);
+            useDailyScheduleStore.getState().removeBySourceIds([getReviewSourceId(id)]);
           }, 0);
           set((state) => {
             const deleted = state.reviewTasks.find((t) => t.id === id);
@@ -350,10 +352,10 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         clearAllTasks: () => {
           const state = get();
-          const allIds = state.reviewTasks.map((t) => t.id);
-          if (allIds.length > 0) {
+          const allSourceIds = state.reviewTasks.map((t) => getReviewSourceId(t.id));
+          if (allSourceIds.length > 0) {
             setTimeout(() => {
-              useDailyScheduleStore.getState().removeBySourceIds(allIds);
+              useDailyScheduleStore.getState().removeBySourceIds(allSourceIds);
             }, 0);
           }
           set((state) => {
@@ -377,6 +379,36 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             };
             saveEbbData(newData);
             return { ...newData, undoStack };
+          });
+        },
+
+        removeGraphNodeReferences: (graphNodeIds) => {
+          const deletedIds = new Set(graphNodeIds.filter(Boolean));
+          if (deletedIds.size === 0) return;
+
+          const scheduledSourceIds = get().reviewTasks
+            .filter((task) => task.graphNodeId && deletedIds.has(task.graphNodeId))
+            .map((task) => getReviewSourceId(task.id));
+          if (scheduledSourceIds.length > 0) {
+            setTimeout(() => {
+              useDailyScheduleStore.getState().removeBySourceIds(scheduledSourceIds);
+            }, 0);
+          }
+
+          set((state) => {
+            const reviewTasks = state.reviewTasks.filter(
+              (task) => !task.graphNodeId || !deletedIds.has(task.graphNodeId),
+            );
+            if (reviewTasks.length === state.reviewTasks.length) return state;
+
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: state.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
           });
         },
 
@@ -566,7 +598,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             );
 
             if (deletedTasks.length > 0) {
-              const ids = deletedTasks.map((t) => t.id);
+              const ids = deletedTasks.map((t) => getReviewSourceId(t.id));
               setTimeout(() => {
                 useDailyScheduleStore.getState().removeBySourceIds(ids);
               }, 0);
@@ -949,8 +981,9 @@ function getTaskRoundSafe(taskId: string, tasks: ReviewTask[]): number {
   // 简化版：按 dueDate 排序查找
   const task = tasks.find((t) => t.id === taskId);
   if (!task) return 0;
+  const topicKey = getReviewTopicKey(task);
   const sameTopic = tasks
-    .filter((t) => t.topicName === task.topicName)
+    .filter((t) => getReviewTopicKey(t) === topicKey)
     .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
   return sameTopic.findIndex((t) => t.id === taskId) + 1;
 }

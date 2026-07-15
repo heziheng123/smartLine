@@ -25,7 +25,7 @@ import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
-import { genId, suggestNextInterval, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
+import { genId, getReviewTopicKey, suggestNextInterval, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
 import { getPointWeight, parseIntervals } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import { normalizeLegacyEbbData } from '../migration';
@@ -157,7 +157,7 @@ const EbbView: React.FC = () => {
   // ── 统计数据 ──────────────────────────────────────────────
   const stats = useMemo(() => {
     const tasks = store.reviewTasks;
-    const topicCount = new Set(tasks.map((t) => t.topicName)).size;
+    const topicCount = new Set(tasks.map(getReviewTopicKey)).size;
     const todayDue = tasks.filter((t) => isDueToday(t) && !t.isCompleted).length;
     const overdueCount = tasks.filter(isOverdue).length;
     const todayPoints = calcTodayPoints(tasks, store.ebbSettings);
@@ -215,8 +215,9 @@ const EbbView: React.FC = () => {
   const handleAddRound = useCallback(
     (task: ReviewTask) => {
       const { totalRoundsMap } = computeRounds(store.reviewTasks);
+      const topicKey = getReviewTopicKey(task);
       const completedRounds = store.reviewTasks
-        .filter((t) => t.topicName === task.topicName && t.isCompleted)
+        .filter((t) => getReviewTopicKey(t) === topicKey && t.isCompleted)
         .length;
       const nextInterval = suggestNextInterval(
         completedRounds,
@@ -224,7 +225,7 @@ const EbbView: React.FC = () => {
         parseIntervals(store.ebbSettings.customIntervals) ?? undefined,
       );
       const sameTopic = store.reviewTasks
-        .filter((t) => t.topicName === task.topicName)
+        .filter((t) => getReviewTopicKey(t) === topicKey)
         .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
       const lastTask = sameTopic[sameTopic.length - 1];
       const baseDateStr = lastTask && lastTask.dueDate ? lastTask.dueDate : todayStr();
@@ -243,17 +244,17 @@ const EbbView: React.FC = () => {
         smStatus: 'scheduled',
         graphNodeId: task.graphNodeId,
       }]);
-      showToast(`已追加第 ${(totalRoundsMap.get(task.topicName) ?? 0) + 1} 轮`);
+      showToast(`已追加第 ${(totalRoundsMap.get(topicKey) ?? 0) + 1} 轮`);
     },
     [store, showToast],
   );
 
   const handleOpenRounds = useCallback((task: ReviewTask) => {
-    setRoundsTopic(task.topicName);
+    setRoundsTopic(getReviewTopicKey(task));
   }, []);
 
-  const handleOpenTimeline = useCallback((topicName: string) => {
-    setTimelineTopic(topicName);
+  const handleOpenTimeline = useCallback((topicKey: string) => {
+    setTimelineTopic(topicKey);
   }, []);
 
   // 拖拽改期（看板视图）
@@ -558,7 +559,7 @@ const EbbView: React.FC = () => {
 
         {/* 轮次管理弹窗 */}
         {roundsTopic && (
-          <RoundsPanel topicName={roundsTopic} onClose={() => setRoundsTopic(null)} />
+          <RoundsPanel topicKey={roundsTopic} onClose={() => setRoundsTopic(null)} />
         )}
 
         {/* 逾期提醒弹窗 */}
@@ -569,8 +570,8 @@ const EbbView: React.FC = () => {
         {/* 时间线浮层 */}
         {timelineTopic && (
           <TimelineStripModal
-            topicName={timelineTopic}
-            tasks={store.reviewTasks.filter((t) => t.topicName === timelineTopic)}
+            topicName={store.reviewTasks.find((t) => getReviewTopicKey(t) === timelineTopic)?.topicName ?? ''}
+            tasks={store.reviewTasks.filter((t) => getReviewTopicKey(t) === timelineTopic)}
             allTasks={store.reviewTasks}
             settings={store.ebbSettings}
             onClose={() => setTimelineTopic(null)}
@@ -595,7 +596,7 @@ interface DayTaskListProps {
     onDelete: (id: string) => void;
     onAddRound: (task: ReviewTask) => void;
     onOpenRounds: (task: ReviewTask) => void;
-    onOpenTimeline: (topicName: string) => void;
+    onOpenTimeline: (topicKey: string) => void;
     onReschedule: (id: string) => void;
   };
 }
@@ -667,7 +668,7 @@ const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate
       <div className="eb-cal-task-cards">
         {dayTasks.map((t) => {
           const round = roundMap.get(t.id) ?? 0;
-          const total = totalRoundsMap.get(t.topicName) ?? 0;
+          const total = totalRoundsMap.get(getReviewTopicKey(t)) ?? 0;
           const points = t.complexity ? getPointWeight(round, t.complexity, settings.complexityConfigs) : 0;
           const accent = getAccentColor(t);
           const ratio = total > 0 ? round / total : 0;
@@ -691,7 +692,7 @@ const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate
                     checked={t.isCompleted}
                     onChange={() => taskActions.onToggle(t.id)}
                   />
-                  <span className="eb-cal-task-card-name" onClick={() => taskActions.onOpenTimeline(t.topicName)}>
+                  <span className="eb-cal-task-card-name" onClick={() => taskActions.onOpenTimeline(getReviewTopicKey(t))}>
                     {t.topicName}
                   </span>
                 </div>

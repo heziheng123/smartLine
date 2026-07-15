@@ -11,9 +11,10 @@ import { useEbbStore } from '@/ebb/store';
 import { getValidGraphNodeIds } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
-import { isOverdue, computeRounds } from '@/ebb/scheduler';
+import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
+import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import TimeGrid from './TimeGrid';
 import type { TimeBlock, TaskSource } from './types';
@@ -332,7 +333,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     for (const todo of todayProjectTasks) {
       // sourceId 格式必须与 DailyScheduleView 保持一致，否则两模式间已安排状态不互通
       const sourceId = todo._blockId
-        ? `project-blk:${todo.parentTaskId}::${todo._blockId}`
+        ? getProjectBlockSourceId(todo.parentTaskId, todo._blockId)
         : `project-md:${todo.id}`;
       if (scheduledSourceIds.has(sourceId)) continue;
       items.push({
@@ -347,16 +348,16 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
     const { roundMap, totalRoundsMap } = computeRounds(ebbReviewTasks);
     for (const task of todayReviewTasks) {
-      if (scheduledSourceIds.has(`review-${task.id}`)) continue;
+      if (scheduledSourceIds.has(getReviewSourceId(task.id))) continue;
       const round = roundMap.get(task.id) ?? 1;
-      const total = totalRoundsMap.get(task.topicName) ?? 1;
+      const total = totalRoundsMap.get(getReviewTopicKey(task)) ?? 1;
       items.push({
         id: `pool-review-${task.id}`,
         name: task.topicName,
         source: 'review',
         color: ebbSettingsData.tagColors[task.tag ?? ''] ?? '#8B9DC3',
         detail: `第${round}/${total}轮`,
-        sourceId: `review-${task.id}`,
+        sourceId: getReviewSourceId(task.id),
         duration: 30,
       });
     }

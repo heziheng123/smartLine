@@ -9,6 +9,7 @@ import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
   computeTagStats,
+  getReviewTopicKey,
   isOverdue,
   isDueToday,
 } from '../scheduler';
@@ -21,7 +22,7 @@ export interface TaskActions {
   onReschedule: (id: string) => void;
   onAddRound: (task: ReviewTask) => void;
   onOpenRounds: (task: ReviewTask) => void;
-  onOpenTimeline: (topicName: string) => void;
+  onOpenTimeline: (topicKey: string) => void;
 }
 
 interface MatrixViewProps {
@@ -74,9 +75,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings }) => {
   const topicTasksMap = useMemo(() => {
     const m = new Map<string, ReviewTask[]>();
     for (const t of enhancedTasks) {
-      const list = m.get(t.topicName);
+      const topicKey = getReviewTopicKey(t);
+      const list = m.get(topicKey);
       if (list) list.push(t);
-      else m.set(t.topicName, [t]);
+      else m.set(topicKey, [t]);
     }
     // 每个主题内部按 dueDate 排序
     for (const list of m.values()) {
@@ -171,10 +173,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings }) => {
         ) : (
           topicStats.map((stat) => (
             <TopicRow
-              key={stat.topicName}
+              key={stat.topicKey}
               stat={stat}
               settings={settings}
-              topicTasks={topicTasksMap.get(stat.topicName) ?? []}
+              topicTasks={topicTasksMap.get(stat.topicKey) ?? []}
             />
           ))
         )}

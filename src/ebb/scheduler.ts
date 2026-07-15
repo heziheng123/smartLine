@@ -31,7 +31,15 @@ export function isDueToday(task: ReviewTask): boolean {
 
 let roundCacheKey = '';
 let roundCache = new Map<string, number>(); // taskId -> round
-let totalRoundsCache = new Map<string, number>(); // topicName -> totalRounds
+let totalRoundsCache = new Map<string, number>(); // topicKey -> totalRounds
+
+/**
+ * Separates graph-backed review chains even when different nodes share a display name.
+ * Legacy tasks without a graph node continue to use their topic name as the key.
+ */
+export function getReviewTopicKey(task: Pick<ReviewTask, 'graphNodeId' | 'topicName'>): string {
+  return task.graphNodeId ? `graph:${task.graphNodeId}` : `topic:${task.topicName}`;
+}
 
 /**
  * 计算所有任务的轮次。
@@ -44,7 +52,7 @@ export function computeRounds(tasks: ReviewTask[]): {
 } {
   // 直接用原文字符串作 cache key，避免哈希碰撞导致返回错误轮次缓存
   const key = tasks
-      .map((t) => `${t.id}|${t.topicName}|${t.dueDate ?? ''}`)
+      .map((t) => `${t.id}|${getReviewTopicKey(t)}|${t.dueDate ?? ''}`)
       .sort()
       .join(';');
 
@@ -55,11 +63,12 @@ export function computeRounds(tasks: ReviewTask[]): {
   const roundMap = new Map<string, number>();
   const totalRoundsMap = new Map<string, number>();
 
-  // 按 topicName 分组
+  // 按稳定主题键分组
   const byTopic = new Map<string, ReviewTask[]>();
   for (const t of tasks) {
-    if (!byTopic.has(t.topicName)) byTopic.set(t.topicName, []);
-    byTopic.get(t.topicName)!.push(t);
+    const topicKey = getReviewTopicKey(t);
+    if (!byTopic.has(topicKey)) byTopic.set(topicKey, []);
+    byTopic.get(topicKey)!.push(t);
   }
 
   for (const [topic, group] of byTopic) {
@@ -206,11 +215,10 @@ export function smartSpreadDate(
   topicDates: Set<string>,
 ): string {
   const { dailyTaskLimit, dailyPointLimit, maxSpreadDays, minTopicGapDays } = settings;
-  let date = initialDate;
-
   for (let offset = 0; offset <= maxSpreadDays; offset++) {
-    const candidate = offset === 0 ? date : addDays(date, offset);
-    date = candidate;
+    // Each candidate is measured from the original planned date. Advancing from
+    // the previous candidate would accumulate offsets (+0, +1, +3, +6, ...).
+    const candidate = offset === 0 ? initialDate : addDays(initialDate, offset);
 
     // 同主题日期冲突
     if (topicDates.has(candidate)) continue;
@@ -259,11 +267,12 @@ export function checkCanComplete(
 
   const { roundMap, totalRoundsMap } = computeRounds(tasks);
   const currentRound = roundMap.get(taskId) ?? 0;
-  const totalRounds = totalRoundsMap.get(task.topicName) ?? 0;
+  const topicKey = getReviewTopicKey(task);
+  const totalRounds = totalRoundsMap.get(topicKey) ?? 0;
 
   // 检查是否有未完成的前序轮次
   for (const t of tasks) {
-    if (t.topicName !== task.topicName) continue;
+    if (getReviewTopicKey(t) !== topicKey) continue;
     const r = roundMap.get(t.id) ?? 0;
     if (r < currentRound && !t.isCompleted) {
       return `需先完成第 ${r} 轮（共 ${totalRounds} 轮）`;
@@ -318,13 +327,15 @@ export function computeTopicStats(
   const { roundMap, totalRoundsMap } = computeRounds(tasks);
   const byTopic = new Map<string, ReviewTask[]>();
   for (const t of tasks) {
-    if (!byTopic.has(t.topicName)) byTopic.set(t.topicName, []);
-    byTopic.get(t.topicName)!.push(t);
+    const topicKey = getReviewTopicKey(t);
+    if (!byTopic.has(topicKey)) byTopic.set(topicKey, []);
+    byTopic.get(topicKey)!.push(t);
   }
 
   const stats: TopicStat[] = [];
-  for (const [topicName, group] of byTopic) {
-    const totalRounds = totalRoundsMap.get(topicName) ?? group.length;
+  for (const [topicKey, group] of byTopic) {
+    const topicName = group[0]?.topicName ?? '';
+    const totalRounds = totalRoundsMap.get(topicKey) ?? group.length;
     const completedRounds = group.filter((t) => t.isCompleted).length;
     const overdueRounds = group.filter(isOverdue).length;
     const pendingRounds = totalRounds - completedRounds;
@@ -348,6 +359,7 @@ export function computeTopicStats(
 
     const firstTask = group[0];
     stats.push({
+      topicKey,
       topicName,
       tag: firstTask?.tag,
       complexity: firstTask?.complexity,

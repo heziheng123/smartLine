@@ -7,6 +7,7 @@ import { liveblocksClient } from '@/store/client';
 import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 
 import { useEbbStore } from '@/ebb/store';
+import { useTimelineStore } from '@/store';
 
 const GRAPH_STORAGE_KEY = 'line-graph-storage';
 const GRAPH_SYNC_SETTINGS_KEY = 'line-graph-liveblocks';
@@ -270,7 +271,16 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
   let lastNodes: unknown = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  useGraphStore.subscribe((state) => {
+  useGraphStore.subscribe((state, previousState) => {
+    const currentNodeIds = new Set(state.nodes.map((node) => node.id));
+    const deletedNodeIds = previousState.nodes
+      .map((node) => node.id)
+      .filter((nodeId) => !currentNodeIds.has(nodeId));
+    if (deletedNodeIds.length > 0) {
+      useTimelineStore.getState().removeGraphNodeReferences(deletedNodeIds);
+      useEbbStore.getState().removeGraphNodeReferences(deletedNodeIds);
+    }
+
     if (state.nodes === lastNodes) return;
     lastNodes = state.nodes;
 

@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import { AlertTriangle, Calendar, SkipForward, X } from 'lucide-react';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
-import { isOverdue, computeRounds } from '../scheduler';
+import { getReviewTopicKey, isOverdue, computeRounds } from '../scheduler';
 import { ROUND_COLORS } from '../constants';
 import { diffDays, todayStr } from '@/utils/dateSafe';
 import type { ReviewTask } from '../types';
@@ -34,9 +34,10 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
   const groupedByTopic = useMemo(() => {
     const map = new Map<string, ReviewTask[]>();
     for (const t of overdueTasks) {
-      const list = map.get(t.topicName) ?? [];
+      const topicKey = getReviewTopicKey(t);
+      const list = map.get(topicKey) ?? [];
       list.push(t);
-      map.set(t.topicName, list);
+      map.set(topicKey, list);
     }
     return map;
   }, [overdueTasks]);
@@ -93,8 +94,8 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
           </p>
 
           <div className="eb-overdue-list">
-            {Array.from(groupedByTopic.entries()).map(([topicName, tasks]) => (
-              <div key={topicName} className="eb-overdue-group">
+            {Array.from(groupedByTopic.entries()).map(([topicKey, tasks]) => (
+              <div key={topicKey} className="eb-overdue-group">
                 <div className="eb-overdue-group-header">
                   <input
                     type="checkbox"
@@ -115,7 +116,7 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
                     }}
                     className="eb-round-check"
                   />
-                  <span className="eb-overdue-group-name">{topicName}</span>
+                  <span className="eb-overdue-group-name">{tasks[0]?.topicName}</span>
                   <span className="eb-overdue-group-count">{tasks.length} 轮逾期</span>
                 </div>
                 {tasks.map((t) => {

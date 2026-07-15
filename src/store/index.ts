@@ -13,6 +13,7 @@ import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, g
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
 
 const STORAGE_KEY = 'smart-timeline-data';
 const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
@@ -177,6 +178,14 @@ function normalizeTimelineData(data: TimelineData): TimelineData {
   };
 }
 
+function getAllGraphNodeIds(header: SmartTaskHeader): string[] {
+  const ids = new Set(getValidGraphNodeIds(header));
+  if (typeof header.graphNodeId === 'string' && header.graphNodeId.trim()) {
+    ids.add(header.graphNodeId);
+  }
+  return [...ids];
+}
+
 async function saveDataAsync(data: TimelineData) {
   try {
     await timelineStorage.setItem(STORAGE_KEY, data);
@@ -220,6 +229,8 @@ interface TimelineStore extends TimelineData {
   toggleTaskComplete: (taskId: string) => void;
   /** 更新任务的 blocks 数组（新数据载体） */
   updateTaskBlocks: (taskId: string, blocks: Block[]) => void;
+  /** Removes references to graph nodes that no longer exist. */
+  removeGraphNodeReferences: (graphNodeIds: string[]) => void;
 
   /** 更新指定 block 的 header 属性 */
   updateBlockHeader: (taskId: string, blockId: string, headerPatch: Partial<SmartTaskHeader>) => void;
@@ -342,10 +353,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const state = get();
           const taskToDelete = state.tasks.find((t) => t.id === taskId);
           if (taskToDelete) {
-            const blockIds = taskToDelete.blocks.filter((b) => b.type === 'smart-task').map((b) => b.id);
-            if (blockIds.length > 0) {
+            const sourceIds = taskToDelete.blocks
+              .filter((b) => b.type === 'smart-task')
+              .map((b) => getProjectBlockSourceId(taskId, b.id));
+            if (sourceIds.length > 0) {
               setTimeout(() => {
-                useDailyScheduleStore.getState().removeBySourceIds(blockIds);
+                useDailyScheduleStore.getState().removeBySourceIds(sourceIds);
               }, 0);
             }
           }
@@ -384,12 +397,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const oldTask = state.tasks.find((t) => t.id === taskId);
           if (oldTask) {
             const newBlockIds = new Set(blocks.map((b) => b.id));
-            const removedIds = oldTask.blocks
+            const removedSourceIds = oldTask.blocks
               .filter((b) => b.type === 'smart-task' && !newBlockIds.has(b.id))
-              .map((b) => b.id);
-            if (removedIds.length > 0) {
+              .map((b) => getProjectBlockSourceId(taskId, b.id));
+            if (removedSourceIds.length > 0) {
               setTimeout(() => {
-                useDailyScheduleStore.getState().removeBySourceIds(removedIds);
+                useDailyScheduleStore.getState().removeBySourceIds(removedSourceIds);
               }, 0);
             }
           }
@@ -409,6 +422,51 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   : c
               ),
             }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        removeGraphNodeReferences: (graphNodeIds) => {
+          const deletedIds = new Set(graphNodeIds.filter(Boolean));
+          if (deletedIds.size === 0) return;
+
+          const now = new Date().toISOString();
+          set((state) => {
+            let changed = false;
+            const stripReferences = (task: Task): Task => {
+              let taskChanged = false;
+              const blocks = task.blocks.map((block) => {
+                if (block.type !== 'smart-task') return block;
+
+                const referencedIds = getAllGraphNodeIds(block.header);
+                if (!referencedIds.some((nodeId) => deletedIds.has(nodeId))) return block;
+
+                taskChanged = true;
+                const remainingIds = referencedIds.filter((nodeId) => !deletedIds.has(nodeId));
+                return {
+                  ...block,
+                  header: {
+                    ...block.header,
+                    graphNodeId: remainingIds[0],
+                    graphNodeIds: remainingIds,
+                  },
+                };
+              });
+
+              if (!taskChanged) return task;
+              changed = true;
+              return { ...task, blocks, blocksUpdatedAt: now };
+            };
+
+            const tasks = state.tasks.map(stripReferences);
+            const groups = state.groups.map((group) => ({
+              ...group,
+              children: group.children.map(stripReferences),
+            }));
+            if (!changed) return state;
+
             const newData = { ...state, tasks, groups };
             saveData(newData);
             return newData;
@@ -625,7 +683,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         removeBlock: (taskId, blockId) => {
           setTimeout(() => {
-            useDailyScheduleStore.getState().removeBySourceIds([blockId]);
+            useDailyScheduleStore.getState().removeBySourceIds([getProjectBlockSourceId(taskId, blockId)]);
           }, 0);
 
           const now = new Date().toISOString();

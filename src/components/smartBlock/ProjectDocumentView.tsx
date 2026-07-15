@@ -48,7 +48,7 @@ function weekdayShort(dateStr: string): string {
   return `周${WEEKDAY_SHORT[getDayOfWeek(dateStr)]}`;
 }
 import { getValidGraphNodeIds } from '@/utils/blocks';
-import type { Task, SmartTaskBlock, SmartTaskHeader, TextBlock } from '@/types';
+import type { Block, Task, SmartTaskBlock, SmartTaskHeader, TextBlock } from '@/types';
 import { useTimelineStore } from '@/store';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -64,6 +64,7 @@ import SlashCommandMenu from './SlashCommandMenu';
 import TaskMetaEditor from '@/components/TaskMetaEditor';
 import BatchImportDialog from '@/components/BatchImportDialog';
 import BatchEditDialog from '@/components/BatchEditDialog';
+import { mergeBatchEditRows, type ParsedRow } from '@/utils/excelImport';
 
 interface ProjectDocumentViewProps {
   task: Task;
@@ -338,13 +339,19 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   // ── 批量编辑确认：将修改后的 blocks 整体合并回 task ──
   const handleBatchEditConfirm = useCallback(
-    (newSmartBlocks: SmartTaskBlock[]) => {
+    (rows: ParsedRow[]) => {
       // 批量编辑目前只处理 smart-task，我们需要保留原来的 text blocks
       const currentBlocks = useTimelineStore.getState().tasks.find(t => t.id === task.id)?.blocks ?? [];
-      const textBlocks = currentBlocks.filter(b => b.type === 'text');
-      
-      // 合并 text 块和新编辑的 smart-task 块
-      const mergedBlocks = [...newSmartBlocks, ...textBlocks];
+      const currentSmartBlocks = currentBlocks.filter((block): block is SmartTaskBlock => block.type === 'smart-task');
+      const editedSmartBlocks = mergeBatchEditRows(rows, currentSmartBlocks);
+      const editedById = new Map(editedSmartBlocks.map((block) => [block.id, block]));
+      const mergedBlocks = currentBlocks.flatMap<Block>((block) => {
+        if (block.type !== 'smart-task') return [block];
+        const edited = editedById.get(block.id);
+        return edited ? [edited] : [];
+      });
+      const existingIds = new Set(currentSmartBlocks.map((block) => block.id));
+      mergedBlocks.push(...editedSmartBlocks.filter((block) => !existingIds.has(block.id)));
       
       updateTaskBlocks(task.id, mergedBlocks);
       setShowBatchEdit(false);

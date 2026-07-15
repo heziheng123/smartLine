@@ -53,6 +53,10 @@ export interface ParsedRow {
   graphNodeId?: string;
   graphNodeIds?: string[];
   graphNodeName?: string;
+  /** Original plain-text remark, used to preserve rich text unless the cell changed. */
+  _originalRemark?: string;
+  /** Original graph-node display value, used to preserve the exact node IDs unless edited. */
+  _originalGraphNodeName?: string;
   /** 校验错误信息（空字符串表示通过） */
   _error: string;
 }
@@ -441,6 +445,8 @@ export function blocksToRows(blocks: SmartTaskBlock[]): ParsedRow[] {
       graphNodeId: graphNodeIds[0], // 保持向后兼容导出第一条
       graphNodeIds: graphNodeIds,
       graphNodeName: graphNodeName,
+      _originalRemark: remark,
+      _originalGraphNodeName: graphNodeName,
       _error: '',
     };
   });
@@ -492,6 +498,76 @@ export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
     });
   }
   return blocks;
+}
+
+/**
+ * Applies the editable batch-table fields while retaining each existing block's
+ * identity, rich-text body, and hidden header metadata.
+ */
+export function mergeBatchEditRows(rows: ParsedRow[], existingBlocks: SmartTaskBlock[]): SmartTaskBlock[] {
+  const existingById = new Map(existingBlocks.map((block) => [block.id, block]));
+  const graphStore = useGraphStore.getState();
+  const availableNodes = [...graphStore.nodes];
+  const merged: SmartTaskBlock[] = [];
+
+  for (const row of rows) {
+    if (!row.title || row._error) continue;
+
+    const existing = existingById.get(row._rowId);
+    if (!existing) {
+      merged.push(...mapRowsToBlocks([row]));
+      continue;
+    }
+
+    const graphNodeIds = row.graphNodeName === row._originalGraphNodeName
+      ? getValidGraphNodeIds(existing.header)
+      : resolveGraphNodeIds(row.graphNodeName, availableNodes, graphStore.addNode);
+    const body = row.remark === row._originalRemark
+      ? existing.body
+      : row.remark ? `<p>${escapeHtml(row.remark)}</p>` : '';
+
+    merged.push({
+      ...existing,
+      header: {
+        ...existing.header,
+        title: row.title,
+        tag: row.tag,
+        tagColor: row.tag === existing.header.tag ? existing.header.tagColor : getTagColor(row.tag),
+        date: row.date || existing.header.date || formatDateLocal(new Date()),
+        deadline: row.deadline || undefined,
+        duration: row.duration,
+        complexity: row.complexity,
+        graphNodeId: graphNodeIds[0],
+        graphNodeIds,
+      },
+      body,
+    });
+  }
+
+  return merged;
+}
+
+function resolveGraphNodeIds(
+  graphNodeName: string | undefined,
+  availableNodes: ReturnType<typeof useGraphStore.getState>['nodes'],
+  addNode: ReturnType<typeof useGraphStore.getState>['addNode'],
+): string[] {
+  const names = (graphNodeName ?? '')
+    .split(/[,，、]/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const nodeIds: string[] = [];
+
+  for (const name of names) {
+    let node = availableNodes.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
+    if (!node) {
+      node = addNode(name);
+      availableNodes.push(node);
+    }
+    if (!nodeIds.includes(node.id)) nodeIds.push(node.id);
+  }
+
+  return nodeIds;
 }
 
 function escapeHtml(text: string): string {

@@ -9,18 +9,18 @@ import { X, Calendar, Trash2, Plus } from 'lucide-react';
 import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
-import { computeRounds, getDateLabel, suggestNextInterval, isOverdue, genId } from '../scheduler';
+import { computeRounds, getDateLabel, getReviewTopicKey, suggestNextInterval, isOverdue, genId } from '../scheduler';
 import { getPointWeight } from '../complexity';
 import { parseIntervals } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import EbbDatePicker from './EbbDatePicker';
 
 interface RoundsPanelProps {
-  topicName: string;
+  topicKey: string;
   onClose: () => void;
 }
 
-const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
+const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const {
     reviewTasks,
     ebbSettings,
@@ -45,9 +45,9 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
   const topicTasks = useMemo(
     () =>
       reviewTasks
-        .filter((t) => t.topicName === topicName)
+        .filter((t) => getReviewTopicKey(t) === topicKey)
         .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')),
-    [reviewTasks, topicName],
+    [reviewTasks, topicKey],
   );
 
   const { roundMap, totalRoundsMap } = useMemo(
@@ -55,7 +55,8 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
     [reviewTasks],
   );
 
-  const totalRounds = totalRoundsMap.get(topicName) ?? topicTasks.length;
+  const totalRounds = totalRoundsMap.get(topicKey) ?? topicTasks.length;
+  const topicName = topicTasks[0]?.topicName ?? '';
   const completedCount = topicTasks.filter((t) => t.isCompleted).length;
   const ratio = topicTasks.length > 0 ? completedCount / topicTasks.length : 0;
 
@@ -126,6 +127,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicName, onClose }) => {
         tag: lastTask.tag,
         complexity: lastTask.complexity,
         smStatus: 'scheduled',
+        graphNodeId: lastTask.graphNodeId,
       },
     ]);
   }, [topicTasks, topicName, ebbSettings.customIntervals, addReviewTasks]);

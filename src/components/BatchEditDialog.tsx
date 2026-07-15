@@ -16,7 +16,6 @@ import type { Task, SmartTaskBlock } from '@/types';
 import {
   cleanseRows,
   applyBatchSchedule,
-  mapRowsToBlocks,
   blocksToRows,
   summarizeRows,
   type ParsedRow,
@@ -40,7 +39,7 @@ interface BatchEditDialogProps {
   /**
    * 确认保存回调。
    */
-  onConfirm: (blocks: ReturnType<typeof mapRowsToBlocks>) => void;
+  onConfirm: (rows: ParsedRow[]) => void;
 }
 
 const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
@@ -139,23 +138,17 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   // ── 确认保存 ──────────────────────────────────────────────
 
   const doConfirm = () => {
-    const blocks = mapRowsToBlocks(rows);
-    if (blocks.length === 0) return;
-    onConfirm(blocks);
+    const validRows = rows.filter((row) => row.title && !row._error);
+    if (validRows.length === 0) return;
+    onConfirm(rows);
   };
 
   const handleConfirm = () => {
-    const blocks = mapRowsToBlocks(rows);
-    if (blocks.length === 0) return;
-
     // 检测历史日期：早于今天的 block
     const today = todayStr();
-    const historicalDates: string[] = [];
-    for (const b of blocks) {
-      if (b.header.date && isBeforeDay(b.header.date, today)) {
-        historicalDates.push(b.header.date);
-      }
-    }
+    const historicalDates = rows
+      .filter((row) => row.title && !row._error && row.date && isBeforeDay(row.date, today))
+      .map((row) => row.date);
     if (historicalDates.length > 0) {
       // 去重取前 3 个作为样本
       const unique = Array.from(new Set(historicalDates)).sort().slice(0, 3);

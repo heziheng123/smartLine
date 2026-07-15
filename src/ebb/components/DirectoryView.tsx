@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
-import { genId, generateTasks, isOverdue, computeRounds } from '../scheduler';
+import { genId, generateTasks, getReviewTopicKey, isOverdue, computeRounds } from '../scheduler';
 import { getIntervalsForComplexity } from '../complexity';
 import type { ReviewTask, EbbSettings, StudyOutlineNode, OutlineNodeType, ComplexityLevel } from '../types';
 import type { TaskActions } from './MatrixView';
@@ -372,7 +372,7 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
         <div className="eb-tree-tasks">
           {linkedTasks.sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')).map((t) => {
             const round = roundMap.get(t.id) ?? 0;
-            const total = totalRoundsMap.get(t.topicName) ?? 0;
+            const total = totalRoundsMap.get(getReviewTopicKey(t)) ?? 0;
             return (
               <div
                 key={t.id}
