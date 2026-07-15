@@ -767,23 +767,10 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           set((state) => {
             const { action = 'add', graphNodeId, topicName, tag, triggerSchedule = true } = payload;
             
-            // 如果是删除动作
-            if (action === 'remove') {
-              const reviewTasks = state.reviewTasks.filter((t) => t.graphNodeId !== graphNodeId);
-              const newData: EbbData = {
-                reviewTasks,
-                inboxItems: state.inboxItems,
-                outlineNodes: state.outlineNodes,
-                ebbSettings: state.ebbSettings,
-              };
-              saveEbbData(newData);
-              return newData;
-            }
-
-            // 如果是添加动作，找到所有该 graphNodeId 关联的任务
+            // 找到所有该 graphNodeId 关联的任务
             const existingTasks = state.reviewTasks.filter(t => t.graphNodeId === graphNodeId);
             
-            // 如果是取消完成操作
+            // 如果是删除动作（例如：取消完成任务）
             if (action === 'remove') {
               // 检查是否有关联的任务，并且它们是否都没有被完成
               // 只有当所有的复习任务都是未完成状态时，我们才安全地删除它们

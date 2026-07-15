@@ -41,6 +41,7 @@ const KnowledgeGraphView = React.lazy(() =>
 );
 
 import { useGraphStore } from '@/graph/store';
+import { useEbbStore } from '@/ebb/store';
 
 const ViewFallback: React.FC = () => (
   <div className="tl-app-split tl-app-split--ebb">
@@ -52,6 +53,7 @@ const ViewFallback: React.FC = () => (
 
 const App: React.FC = () => {
   const { isHydrated: isGraphHydrated, hydrateStore: hydrateGraphStore } = useGraphStore();
+  const { isHydrated: isEbbHydrated, hydrateStore: hydrateEbbStore } = useEbbStore();
 
   // 选择性订阅：只关心 tasks/groups/notes/milestones 数据切片 + 各 CRUD 方法。
   // CRUD 方法在 zustand 中是 store 创建时一次性定义的稳定引用，
@@ -199,7 +201,10 @@ const App: React.FC = () => {
     if (!isGraphHydrated) {
       hydrateGraphStore();
     }
-  }, [isHydrated, hydrateStore, isGraphHydrated, hydrateGraphStore]);
+    if (!isEbbHydrated) {
+      hydrateEbbStore();
+    }
+  }, [isHydrated, hydrateStore, isGraphHydrated, hydrateGraphStore, isEbbHydrated, hydrateEbbStore]);
 
   // 全局漫游导航监听
   React.useEffect(() => {
@@ -458,7 +463,7 @@ const App: React.FC = () => {
     setDialogType('sync');
   }, []);
 
-  if (!isHydrated || !isGraphHydrated) {
+  if (!isHydrated || !isGraphHydrated || !isEbbHydrated) {
     return (
       <div className="tl-app flex items-center justify-center">
         <div className="text-slate-400 text-sm">正在加载数据...</div>

@@ -164,15 +164,21 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
 
         deleteNode: (id: string) => {
           set((state) => {
-            const nodeToDelete = state.nodes.find(n => n.id === id);
-            if (!nodeToDelete) return state;
+            // 找到要删除的节点及其所有子孙节点
+            const toDelete = new Set<string>([id]);
+            let changed = true;
+            while (changed) {
+              changed = false;
+              for (const n of state.nodes) {
+                if (n.parentId && toDelete.has(n.parentId) && !toDelete.has(n.id)) {
+                  toDelete.add(n.id);
+                  changed = true;
+                }
+              }
+            }
 
             const newData = {
-              nodes: state.nodes
-                .filter((node) => node.id !== id)
-                .map((node) => 
-                  node.parentId === id ? { ...node, parentId: nodeToDelete.parentId } : node
-                ),
+              nodes: state.nodes.filter((node) => !toDelete.has(node.id)),
             };
             saveGraphData(newData);
             return newData;
