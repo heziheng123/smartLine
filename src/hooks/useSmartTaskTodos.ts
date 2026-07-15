@@ -6,7 +6,7 @@
 
 import { useMemo } from 'react';
 import type { Task, AggregatedTodo } from '@/types';
-import { getSmartTaskBlocks } from '@/utils/blocks';
+import { getSmartTaskBlocks, getValidGraphNodeIds } from '@/utils/blocks';
 
 /**
  * 接收全局 tasks 数组，解析每个任务的 SmartTaskBlock，
@@ -46,7 +46,7 @@ export function useSmartTaskTodos(tasks: Task[]): AggregatedTodo[] {
           _duration: h.duration,
           _complexity: h.complexity,
           _graphNodeId: h.graphNodeId,
-          _graphNodeIds: h.graphNodeIds,
+          _graphNodeIds: getValidGraphNodeIds(h),
           _autoSyncEbb: h.autoSyncEbb,
         });
       }

@@ -6,7 +6,7 @@
 
 import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
-import { Search, Tag } from 'lucide-react';
+import { Search } from 'lucide-react';
 import type { ReviewTask, EbbSettings, ComplexityLevel } from '../types';
 import { computeRounds, isOverdue, isDueToday, getDateLabel } from '../scheduler';
 import { getPointWeight } from '../complexity';

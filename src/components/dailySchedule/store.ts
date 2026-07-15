@@ -6,17 +6,13 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import localforage from 'localforage';
 import { liveblocksClient } from '@/store/client';
 import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
-
-localforage.config({
-  name: 'smart-timeline',
-  storeName: 'daily_schedule_data'
-});
+import { createScopedStorage, readJsonStorage } from '@/utils/persistence';
 
 const STORAGE_KEY = 'daily-schedule-data';
 const SYNC_SETTINGS_KEY = 'daily-schedule-liveblocks';
+const dailyScheduleStorage = createScopedStorage('daily_schedule_data');
 
 export const DAILY_ROOM_PREFIX = 'daily-';
 
@@ -59,7 +55,7 @@ function getInitialSchedules(): Record<string, DaySchedule> {
 
 async function saveSchedulesAsync(schedules: Record<string, DaySchedule>) {
   try {
-    await localforage.setItem(STORAGE_KEY, schedules);
+    await dailyScheduleStorage.setItem(STORAGE_KEY, schedules);
   } catch (e) {
     console.warn('[daily-schedule] IndexedDB 写入失败：', e);
   }
@@ -140,12 +136,12 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
         isHydrated: false,
         hydrateStore: async () => {
           try {
-            let parsed = await localforage.getItem<unknown>(STORAGE_KEY);
+            let parsed = await dailyScheduleStorage.getItem<unknown>(STORAGE_KEY);
             if (!parsed) {
-              const lsRaw = localStorage.getItem(STORAGE_KEY);
+              const lsRaw = readJsonStorage<unknown>(STORAGE_KEY);
               if (lsRaw) {
-                parsed = JSON.parse(lsRaw);
-                await localforage.setItem(STORAGE_KEY, parsed);
+                parsed = lsRaw;
+                await dailyScheduleStorage.setItem(STORAGE_KEY, parsed);
                 localStorage.removeItem(STORAGE_KEY);
               }
             } else if (typeof parsed === 'string') {
@@ -380,6 +376,22 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
     }
   )
 );
+
+// 远端 Liveblocks 推送同步落盘，避免刷新后回退到旧的本地排期。
+{
+  let lastSchedules: unknown = null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  useDailyScheduleStore.subscribe((state) => {
+    if (state.schedules === lastSchedules) return;
+    lastSchedules = state.schedules;
+
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveSchedules(state.schedules);
+    }, 500);
+  });
+}
 
 /** 内部辅助：按时间段重新编号 order（不可变版本） */
 function reorderSlotItems(schedules: Record<string, DaySchedule>, date: string) {

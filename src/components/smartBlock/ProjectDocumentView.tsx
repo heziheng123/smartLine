@@ -47,6 +47,7 @@ const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
 function weekdayShort(dateStr: string): string {
   return `周${WEEKDAY_SHORT[getDayOfWeek(dateStr)]}`;
 }
+import { getValidGraphNodeIds } from '@/utils/blocks';
 import type { Task, SmartTaskBlock, SmartTaskHeader, TextBlock } from '@/types';
 import { useTimelineStore } from '@/store';
 import { useGraphStore } from '@/graph/store';
@@ -198,7 +199,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
       if (groupDimension === 'node') {
         // 按图谱节点分组
-        const graphNodeIds = sb.header.graphNodeIds || (sb.header.graphNodeId ? [sb.header.graphNodeId] : []);
+        const graphNodeIds = getValidGraphNodeIds(sb.header);
         if (graphNodeIds.length === 0) {
           groupKey = '__unlinked__';
           label = '未关联节点';
@@ -417,7 +418,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           const sb = b as SmartTaskBlock;
           let bGroupKey: string;
           if (groupDimension === 'node') {
-            const ids = sb.header.graphNodeIds || (sb.header.graphNodeId ? [sb.header.graphNodeId] : []);
+            const ids = getValidGraphNodeIds(sb.header);
             bGroupKey = ids.length > 0 ? ids[0] : '__unlinked__';
           } else {
             const d = sb.header.date || '__none__';

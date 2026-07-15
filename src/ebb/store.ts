@@ -7,11 +7,7 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import localforage from 'localforage';
-localforage.config({
-  name: 'smart-timeline',
-  storeName: 'ebb_data'
-});
+import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 
 import { todayStr, addDays } from '@/utils/dateSafe';
 import type {
@@ -33,6 +29,8 @@ import {
 import { liveblocksClient } from '@/store/client';
 import { genId, checkCanComplete } from './scheduler';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+
+const ebbStorage = createScopedStorage('ebb_data');
 
 // ── 同步设置持久化 ──────────────────────────────────────────
 
@@ -59,15 +57,18 @@ function getInitialEbbData(): EbbData {
   return getDefaultEbbData();
 }
 
+const EBB_STORAGE_MIRROR_KEY = `${EBB_STORAGE_KEY}:mirror`;
+
 async function saveEbbDataAsync(data: EbbData) {
   try {
-    await localforage.setItem(EBB_STORAGE_KEY, data);
+    await ebbStorage.setItem(EBB_STORAGE_KEY, data);
   } catch (e) {
     console.warn('[smart-ebb] IndexedDB 写入失败：', e);
   }
 }
 
 function saveEbbData(data: EbbData) {
+  writeJsonStorage(EBB_STORAGE_MIRROR_KEY, data, 'smart-ebb');
   saveEbbDataAsync(data);
 }
 
@@ -155,12 +156,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         isHydrated: false,
         hydrateStore: async () => {
           try {
-            let raw = await localforage.getItem<EbbData>(EBB_STORAGE_KEY);
+            let raw = readJsonStorage<EbbData>(EBB_STORAGE_MIRROR_KEY)
+              ?? await ebbStorage.getItem<EbbData>(EBB_STORAGE_KEY);
             if (!raw) {
-              const lsRaw = localStorage.getItem(EBB_STORAGE_KEY);
+              const lsRaw = readJsonStorage<EbbData>(EBB_STORAGE_KEY);
               if (lsRaw) {
-                raw = JSON.parse(lsRaw) as EbbData;
-                await localforage.setItem(EBB_STORAGE_KEY, raw);
+                raw = lsRaw;
+                await ebbStorage.setItem(EBB_STORAGE_KEY, raw);
                 localStorage.removeItem(EBB_STORAGE_KEY);
               }
             } else if (typeof raw === 'string') {
@@ -168,12 +170,22 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             }
 
             if (raw) {
+              const normalizedSettings = ensureTagColors(
+                raw.reviewTasks ?? [],
+                { ...DEFAULT_EBB_SETTINGS, ...(raw.ebbSettings ?? {}) },
+              );
               set({
                 reviewTasks: raw.reviewTasks ?? [],
                 inboxItems: raw.inboxItems ?? [],
                 outlineNodes: raw.outlineNodes ?? [],
-                ebbSettings: { ...DEFAULT_EBB_SETTINGS, ...(raw.ebbSettings ?? {}) },
+                ebbSettings: normalizedSettings,
                 isHydrated: true,
+              });
+              saveEbbData({
+                reviewTasks: raw.reviewTasks ?? [],
+                inboxItems: raw.inboxItems ?? [],
+                outlineNodes: raw.outlineNodes ?? [],
+                ebbSettings: normalizedSettings,
               });
               return;
             }
@@ -895,6 +907,41 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
     },
   ),
 );
+
+// 远端 Liveblocks 推送同步落盘，同时为刷新前的瞬时写入提供本地镜像兜底。
+{
+  let lastReviewTasks: unknown = null;
+  let lastInboxItems: unknown = null;
+  let lastOutlineNodes: unknown = null;
+  let lastEbbSettings: unknown = null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  useEbbStore.subscribe((state) => {
+    if (
+      state.reviewTasks === lastReviewTasks &&
+      state.inboxItems === lastInboxItems &&
+      state.outlineNodes === lastOutlineNodes &&
+      state.ebbSettings === lastEbbSettings
+    ) {
+      return;
+    }
+
+    lastReviewTasks = state.reviewTasks;
+    lastInboxItems = state.inboxItems;
+    lastOutlineNodes = state.outlineNodes;
+    lastEbbSettings = state.ebbSettings;
+
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveEbbData({
+        reviewTasks: state.reviewTasks,
+        inboxItems: state.inboxItems,
+        outlineNodes: state.outlineNodes,
+        ebbSettings: state.ebbSettings,
+      });
+    }, 500);
+  });
+}
 
 // ── 工具：安全获取轮次（避免循环依赖） ──────────────────────
 

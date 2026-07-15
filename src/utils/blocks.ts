@@ -42,6 +42,23 @@ export function getTagColor(tag: string, existingMap?: Record<string, string>): 
   return TAG_COLOR_PALETTE[Math.abs(hash) % TAG_COLOR_PALETTE.length];
 }
 
+// ── 获取有效的图谱节点 IDs (防脏数据处理) ─────────────────────────────────
+export function getValidGraphNodeIds(header: Partial<SmartTaskHeader> | undefined | null): string[] {
+  if (!header) return [];
+  const ids = header.graphNodeIds as unknown;
+  if (Array.isArray(ids)) {
+    return ids;
+  }
+  if (typeof ids === 'string' && ids.trim() !== '') {
+    return [ids];
+  }
+  const id = header.graphNodeId;
+  if (typeof id === 'string' && id.trim() !== '') {
+    return [id];
+  }
+  return [];
+}
+
 // ── Markdown → Blocks 迁移 ─────────────────────────────────
 
 /**

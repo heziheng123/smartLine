@@ -4,6 +4,7 @@ import { useGraphStore } from '@/graph/store';
 import { useTimelineStore } from '@/store';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getValidGraphNodeIds } from '@/utils/blocks';
 
 // 时光胶囊模态框：展示归档节点的内容
 export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose: () => void }) => {
@@ -17,7 +18,7 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
   const relatedBlocks = tlTasks.flatMap(t => 
     (t.blocks || []).filter(b => {
       if (b.type !== 'smart-task') return false;
-      const ids = b.header.graphNodeIds || (b.header.graphNodeId ? [b.header.graphNodeId] : []);
+      const ids = getValidGraphNodeIds(b.header);
       return ids.includes(nodeId);
     })
   );

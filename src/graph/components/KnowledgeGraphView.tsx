@@ -8,6 +8,7 @@ import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Ar
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { TimeCapsuleModal } from '@/components/GlobalSearch';
+import { getValidGraphNodeIds } from '@/utils/blocks';
 import styles from './GraphConsole.module.css';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
@@ -535,8 +536,11 @@ export const KnowledgeGraphView: React.FC = () => {
     tasks.forEach(task => {
       if (!task.blocks) return;
       task.blocks.forEach(block => {
-        if (block.type === 'smart-task' && block.header.graphNodeId && scopedIds.has(block.header.graphNodeId)) {
-          results.push({ task, block });
+        if (block.type === 'smart-task') {
+          const ids = getValidGraphNodeIds(block.header);
+          if (ids.some((id: string) => scopedIds.has(id))) {
+            results.push({ task, block });
+          }
         }
       });
     });

@@ -19,6 +19,7 @@ import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
 import { useGraphStore } from '@/graph/store';
+import { getValidGraphNodeIds } from '@/utils/blocks';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SmartTaskBlockCardProps {
@@ -61,11 +62,12 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const titleRef = useRef<HTMLTextAreaElement>(null);
 
   const { nodes, getNodeById } = useGraphStore();
-  const graphNodeIds = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
+  const graphNodeIds = useMemo(() => getValidGraphNodeIds(header), [header.graphNodeIds, header.graphNodeId]);
+  const validGraphNodeIds = useMemo(() => graphNodeIds.filter(id => getNodeById(id)), [graphNodeIds, getNodeById]);
   const graphNodes = useMemo(() => {
     if (!Array.isArray(graphNodeIds)) return [];
-    return graphNodeIds.map(id => getNodeById(id)).filter(Boolean) as typeof nodes;
-  }, [graphNodeIds, getNodeById, nodes]);
+    return validGraphNodeIds.map(id => getNodeById(id)) as typeof nodes;
+  }, [validGraphNodeIds, getNodeById, nodes]);
 
   // 计算任务标题的幽灵文本（智能推荐节点名称）
   const titleGhostText = useMemo(() => {
@@ -163,9 +165,6 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   // 极淡的标签底色（用于徽章）
   const tagBgStyle = { color: header.tagColor };
-  const nodeBgStyle = graphNodeIds.length > 0 && header.autoSyncEbb 
-    ? { color: '#3b82f6' } 
-    : { color: '#6b7280' };
 
   if (compact) {
     // 紧凑模式：单行卡条
@@ -487,7 +486,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             onClick={e => e.stopPropagation()}
           >
             <GraphNodeSelect 
-              value={graphNodeIds}
+              value={validGraphNodeIds}
               onChange={handleGraphNodeSelect}
               taskTitle={header.title}
               footer={

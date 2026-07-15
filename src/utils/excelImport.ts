@@ -4,10 +4,9 @@
 // 纯前端本地处理，无后端依赖
 // ============================================================
 
-import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import type { SmartTaskBlock, Task } from '@/types';
-import { genBlockId, getTagColor } from './blocks';
+import { genBlockId, getTagColor, getValidGraphNodeIds } from './blocks';
 import { makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
 
 import { useGraphStore } from '@/graph/store';
@@ -74,7 +73,8 @@ export interface BatchScheduleConfig {
  * 生成标准导入模板 .xlsx 文件并触发下载。
  * 包含表头 + 2 行示例数据 + 列宽优化。
  */
-export function downloadTemplate(): void {
+export async function downloadTemplate(): Promise<void> {
+  const XLSX = await import('xlsx');
   const headers: string[] = [...TEMPLATE_COLUMN_ORDER];
   const sampleRows: (string | number)[][] = [
     ['马原第一章听课', '看课', 60, '2026-07-10', '', 'normal', '重点：唯物论'],
@@ -109,6 +109,7 @@ export function downloadTemplate(): void {
  * 支持的列名容错：任务名称/任务名/名称、任务类型/类型/标签 等。
  */
 export async function parseImportFile(file: File): Promise<ParsedRow[]> {
+  const XLSX = await import('xlsx');
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, { type: 'array' });
 
@@ -200,11 +201,21 @@ function readCell(row: unknown[], colIndex: number): string {
   return String(v);
 }
 
+function parseExcelDateCode(serial: number) {
+  if (serial <= 0) return null;
+  let step = Math.floor(serial);
+  if (step === 60) return { y: 1900, m: 2, d: 29 };
+  if (step > 60) step -= 1;
+  const d = new Date(1900, 0, 1);
+  d.setDate(d.getDate() + step - 1);
+  return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+}
+
 /**
  * 读取日期列的原始值，直接格式化为 YYYY-MM-DD。
  * 绕过 String(Date) → dayjs(string) 链路，避免时区偏移。
  * - Date 对象：SheetJS numdate() 按本地时间创建，取本地分量即可
- * - 数字：Excel 序列号，用 XLSX.SSF.parse_date_code（纯数学，无时区）
+ * - 数字：Excel 序列号，用 parseExcelDateCode（纯数学，无时区）
  * - 字符串：交给 normalizeDate 处理
  */
 function readDateCell(row: unknown[], colIndex: number): string {
@@ -219,7 +230,7 @@ function readDateCell(row: unknown[], colIndex: number): string {
     return `${y}-${m}-${d}`;
   }
   if (typeof v === 'number') {
-    const date = XLSX.SSF.parse_date_code(v);
+    const date = parseExcelDateCode(v);
     if (date && date.y) {
       return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
     }
@@ -294,7 +305,7 @@ export function normalizeDate(raw: string | Date | number): string {
   }
   if (typeof raw === 'number') {
     // Excel 序列号（自 1900-01-01 起的天数）
-    const date = XLSX.SSF.parse_date_code(raw);
+    const date = parseExcelDateCode(raw);
     if (date && date.y) {
       return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
     }
@@ -406,7 +417,7 @@ export function blocksToRows(blocks: SmartTaskBlock[]): ParsedRow[] {
     const remark = remarkMatch ? remarkMatch[1] : b.body.replace(/<[^>]*>?/gm, '');
     
     let graphNodeName = '';
-    const graphNodeIds = b.header.graphNodeIds || (b.header.graphNodeId ? [b.header.graphNodeId] : []);
+    const graphNodeIds = getValidGraphNodeIds(b.header);
     if (graphNodeIds.length > 0) {
       // 批量编辑时如果绑定了多个节点，用逗号拼接显示名称
       const nodeNames = graphNodeIds.map(id => {

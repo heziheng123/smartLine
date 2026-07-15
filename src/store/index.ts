@@ -5,22 +5,18 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import localforage from 'localforage';
 import { liveblocksClient } from './client';
-
-localforage.config({
-  name: 'smart-timeline',
-  storeName: 'timeline_data'
-});
+import { createScopedStorage, readJsonStorage } from '@/utils/persistence';
 
 import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
-import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock } from '@/utils/blocks';
+import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, getValidGraphNodeIds } from '@/utils/blocks';
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 
 const STORAGE_KEY = 'smart-timeline-data';
 const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
+const timelineStorage = createScopedStorage('timeline_data');
 
 interface SyncSettings {
   roomCode: string;
@@ -183,7 +179,7 @@ function normalizeTimelineData(data: TimelineData): TimelineData {
 
 async function saveDataAsync(data: TimelineData) {
   try {
-    await localforage.setItem(STORAGE_KEY, data);
+    await timelineStorage.setItem(STORAGE_KEY, data);
   } catch (e) {
     console.warn('[smart-timeline] IndexedDB 写入失败：', e);
   }
@@ -272,12 +268,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         isHydrated: false,
         hydrateStore: async () => {
           try {
-            let raw = await localforage.getItem<TimelineData>(STORAGE_KEY);
+            let raw = await timelineStorage.getItem<TimelineData>(STORAGE_KEY);
             if (!raw) {
-              const lsRaw = localStorage.getItem(STORAGE_KEY);
+              const lsRaw = readJsonStorage<TimelineData>(STORAGE_KEY);
               if (lsRaw) {
-                raw = JSON.parse(lsRaw) as TimelineData;
-                await localforage.setItem(STORAGE_KEY, raw);
+                raw = lsRaw;
+                await timelineStorage.setItem(STORAGE_KEY, raw);
                 localStorage.removeItem(STORAGE_KEY);
               }
             } else if (typeof raw === 'string') {
@@ -421,9 +417,9 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         updateBlockHeader: (taskId, blockId, headerPatch) => {
           const now = new Date().toISOString();
-          let syncPayloads: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; tag?: string; triggerSchedule?: boolean }[] = [];
-          let nodesToActivate: string[] = [];
-          let nodesToDeactivate: string[] = [];
+          const syncPayloads: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; tag?: string; triggerSchedule?: boolean }[] = [];
+          const nodesToActivate: string[] = [];
+          const nodesToDeactivate: string[] = [];
 
           set((state) => {
             const tasks = state.tasks.map((t) => {
@@ -432,8 +428,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               const block = t.blocks.find(b => b.type === 'smart-task' && b.id === blockId);
               if (block && block.type === 'smart-task') {
                 const header = { ...block.header, ...headerPatch };
-                const oldGraphNodeIds = block.header.graphNodeIds || (block.header.graphNodeId ? [block.header.graphNodeId] : []);
-                const newGraphNodeIds = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
+                const oldGraphNodeIds = getValidGraphNodeIds(block.header);
+                const newGraphNodeIds = getValidGraphNodeIds(header);
                 
                 const isNewlyCompleted = headerPatch.isCompleted === true && !block.header.isCompleted;
                 const isNewlyUncompleted = headerPatch.isCompleted === false && block.header.isCompleted;
@@ -444,7 +440,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   nodesToActivate.push(...newGraphNodeIds);
                   newGraphNodeIds.forEach(nodeId => {
                     const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                    const actualTopicName = graphNode ? graphNode.name : header.title;
+                    if (!graphNode) return; // 如果节点已被删除，不再生成复习任务
+                    const actualTopicName = graphNode.name;
                     syncPayloads.push({
                       action: 'add',
                       graphNodeId: nodeId,
@@ -464,7 +461,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                         if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
                         if (!otherBlock.header.isCompleted) continue;
                         
-                        const otherGraphNodeIds = otherBlock.header.graphNodeIds || (otherBlock.header.graphNodeId ? [otherBlock.header.graphNodeId] : []);
+                        const otherGraphNodeIds = getValidGraphNodeIds(otherBlock.header);
                         if (otherGraphNodeIds.includes(nodeId)) {
                           hasOtherCompleted = true;
                           break;
@@ -478,7 +475,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     }
 
                     const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                    const actualTopicName = graphNode ? graphNode.name : block.header.title;
+                    if (!graphNode) return;
+                    const actualTopicName = graphNode.name;
                     syncPayloads.push({
                       action: 'remove',
                       graphNodeId: nodeId,
@@ -497,7 +495,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     nodesToActivate.push(...addedNodes);
                     addedNodes.forEach(nodeId => {
                       const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                      const actualTopicName = graphNode ? graphNode.name : header.title;
+                      if (!graphNode) return;
+                      const actualTopicName = graphNode.name;
                       syncPayloads.push({
                         action: 'add',
                         graphNodeId: nodeId,
@@ -516,7 +515,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                         for (const otherBlock of otherTask.blocks) {
                           if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
                           if (!otherBlock.header.isCompleted) continue;
-                          const otherGraphNodeIds = otherBlock.header.graphNodeIds || (otherBlock.header.graphNodeId ? [otherBlock.header.graphNodeId] : []);
+                          const otherGraphNodeIds = getValidGraphNodeIds(otherBlock.header);
                           if (otherGraphNodeIds.includes(nodeId)) {
                             hasOtherCompleted = true;
                             break;
@@ -530,7 +529,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       }
 
                       const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                      const actualTopicName = graphNode ? graphNode.name : block.header.title;
+                      if (!graphNode) return;
+                      const actualTopicName = graphNode.name;
                       syncPayloads.push({
                         action: 'remove',
                         graphNodeId: nodeId,

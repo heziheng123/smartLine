@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
-import { getSmartTaskBlocks, getTagColor } from '@/utils/blocks';
+import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import {
   todayStr,
@@ -439,7 +439,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                           className={`wmv-block-card ${header.isCompleted ? 'wmv-block-card--done' : ''} ${
                             isOverdue ? 'wmv-block-card--overdue' : ''
                           } ${(() => {
-                            const ids = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
+                            const ids = getValidGraphNodeIds(header);
                             return ids.length === 0 ? 'wmv-block-card--unlinked' : '';
                           })()} ${
                             isDragging ? 'wmv-block-card--dragging' : ''
@@ -461,7 +461,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                             >
                               {header.title}
                               {(() => {
-                                const ids = header.graphNodeIds || (header.graphNodeId ? [header.graphNodeId] : []);
+                                const ids = getValidGraphNodeIds(header);
                                 return ids.length === 0 ? (
                                   <span title="未绑定知识节点" className="inline-flex items-center flex-shrink-0 opacity-40">
                                     <CircleDashed size={12} />

@@ -16,7 +16,7 @@ export default defineConfig({
           'vendor-react': ['react', 'react-dom', 'framer-motion', 'zustand'],
           'vendor-d3': ['d3-hierarchy', 'd3-selection', 'd3-shape', 'd3-zoom'],
           'vendor-liveblocks': ['@liveblocks/client', '@liveblocks/zustand'],
-          'vendor-utils': ['dayjs', 'dompurify', 'xlsx', 'lucide-react']
+          'vendor-utils': ['dayjs', 'dompurify', 'lucide-react']
         }
       }
     }

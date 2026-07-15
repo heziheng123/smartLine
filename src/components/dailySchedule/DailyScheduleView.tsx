@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
+import { getValidGraphNodeIds } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { isOverdue, computeRounds } from '@/ebb/scheduler';
@@ -73,7 +74,11 @@ const DailyScheduleView: React.FC = () => {
   const archivedNodeIds = useMemo(() => new Set(graphNodes.filter(n => n.isArchived).map(n => n.id)), [graphNodes]);
 
   const ebbReviewTasks = useMemo(() => {
-    return rawEbbReviewTasks.filter(t => !t.isArchived && (!t.graphNodeId || !archivedNodeIds.has(t.graphNodeId)));
+    return rawEbbReviewTasks.filter(t => {
+      if (t.isArchived) return false;
+      const ids = getValidGraphNodeIds(t as any); // t is ReviewTask which shares structure
+      return !ids.some(id => archivedNodeIds.has(id));
+    });
   }, [rawEbbReviewTasks, archivedNodeIds]);
 
   const tlTasks = useMemo(() => {
@@ -81,7 +86,9 @@ const DailyScheduleView: React.FC = () => {
       ...task,
       blocks: task.blocks?.filter(b => {
         if (b.type === 'smart-task') {
-          return !b.header.isArchived && (!b.header.graphNodeId || !archivedNodeIds.has(b.header.graphNodeId));
+          if (b.header.isArchived) return false;
+          const ids = getValidGraphNodeIds(b.header);
+          return !ids.some(id => archivedNodeIds.has(id));
         }
         return true;
       }) ?? []
@@ -193,7 +200,7 @@ const DailyScheduleView: React.FC = () => {
       if (parsed.blockId) {
         const block = parentTask.blocks.find(b => b.id === parsed.blockId);
         if (block?.type === 'smart-task') {
-          const ids = block.header.graphNodeIds || (block.header.graphNodeId ? [block.header.graphNodeId] : []);
+          const ids = getValidGraphNodeIds(block.header);
           return ids.length === 0; // 如果没有 graphNodeIds，说明未绑定
         }
       }
@@ -218,7 +225,7 @@ const DailyScheduleView: React.FC = () => {
       if (parsed.blockId) {
         const block = parentTask.blocks.find(b => b.id === parsed.blockId);
         if (block?.type === 'smart-task') {
-          const ids = block.header.graphNodeIds || (block.header.graphNodeId ? [block.header.graphNodeId] : []);
+          const ids = getValidGraphNodeIds(block.header);
           return ids.length > 0; // 如果有 graphNodeIds，说明已绑定
         }
       }

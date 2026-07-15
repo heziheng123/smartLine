@@ -1,20 +1,17 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import localforage from 'localforage';
 import { GraphNode, GraphData } from './types';
 import { genId } from '@/ebb/scheduler';
 import { liveblocksClient } from '@/store/client';
+import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 
 import { useEbbStore } from '@/ebb/store';
 
-localforage.config({
-  name: 'smart-timeline',
-  storeName: 'graph_data'
-});
-
 const GRAPH_STORAGE_KEY = 'line-graph-storage';
 const GRAPH_SYNC_SETTINGS_KEY = 'line-graph-liveblocks';
+const GRAPH_STORAGE_MIRROR_KEY = `${GRAPH_STORAGE_KEY}:mirror`;
+const graphStorage = createScopedStorage('graph_data');
 
 interface GraphSyncSettings {
   roomCode: string;
@@ -39,13 +36,14 @@ function getInitialGraphData(): GraphData {
 
 async function saveGraphDataAsync(data: GraphData) {
   try {
-    await localforage.setItem(GRAPH_STORAGE_KEY, data);
+    await graphStorage.setItem(GRAPH_STORAGE_KEY, data);
   } catch (e) {
     console.warn('[smart-graph] IndexedDB 写入失败：', e);
   }
 }
 
 function saveGraphData(data: GraphData) {
+  writeJsonStorage(GRAPH_STORAGE_MIRROR_KEY, data, 'smart-graph');
   saveGraphDataAsync(data);
 }
 
@@ -84,12 +82,13 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
         isHydrated: false,
         hydrateStore: async () => {
           try {
-            let raw = await localforage.getItem<GraphData>(GRAPH_STORAGE_KEY);
+            let raw = readJsonStorage<GraphData>(GRAPH_STORAGE_MIRROR_KEY)
+              ?? await graphStorage.getItem<GraphData>(GRAPH_STORAGE_KEY);
             if (!raw) {
-              const lsRaw = localStorage.getItem(GRAPH_STORAGE_KEY);
+              const lsRaw = readJsonStorage<GraphData>(GRAPH_STORAGE_KEY);
               if (lsRaw) {
-                raw = JSON.parse(lsRaw) as GraphData;
-                await localforage.setItem(GRAPH_STORAGE_KEY, raw);
+                raw = lsRaw;
+                await graphStorage.setItem(GRAPH_STORAGE_KEY, raw);
                 localStorage.removeItem(GRAPH_STORAGE_KEY);
               }
             } else if (typeof raw === 'string') {
@@ -101,6 +100,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                 nodes: raw.nodes ?? [],
                 isHydrated: true,
               });
+              saveGraphData({ nodes: raw.nodes ?? [] });
               return;
             }
           } catch (e) {
