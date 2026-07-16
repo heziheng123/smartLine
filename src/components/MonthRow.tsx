@@ -4,23 +4,29 @@
 
 import React, { useMemo, useState, useCallback } from 'react';
 import dayjs from 'dayjs';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { MonthLayout, SmartBlockDragPayload } from '@/types';
-import { isWeekend, MONTH_NAMES, ROW_HEIGHT, getGroupBorderColor, getGroupLabelTextColor } from '@/utils/timeline-utils';
+import type { TimelineDensity } from '@/utils/timeline-utils';
+import { getTimelineMetrics, isWeekend, MONTH_NAMES, getGroupBorderColor, getGroupLabelTextColor, getTaskBorderColor, getTaskTextColor } from '@/utils/timeline-utils';
 import SegmentBar from './SegmentBar';
 
 const MonthRow: React.FC<{
   monthLayout: MonthLayout;
   year: number;
+  density?: TimelineDensity;
+  collapsedGroupIds?: Set<string>;
   onTaskClick?: (taskId: string) => void;
   onTaskContextMenu?: (e: React.MouseEvent, taskId: string) => void;
   onNoteDoubleClick?: (noteId: string) => void;
   onNoteContextMenu?: (e: React.MouseEvent, noteId: string) => void;
   onMilestoneDoubleClick?: (milestoneId: string) => void;
   onMilestoneContextMenu?: (e: React.MouseEvent, milestoneId: string) => void;
+  onGroupClick?: (groupId: string) => void;
   onGroupDoubleClick?: (groupId: string) => void;
   onSmartBlockDrop?: (dragData: import('@/types').SmartBlockDragPayload, targetDate: string) => void;
-}> = ({ monthLayout, year, onTaskClick, onTaskContextMenu, onNoteDoubleClick, onNoteContextMenu, onMilestoneDoubleClick, onMilestoneContextMenu, onGroupDoubleClick, onSmartBlockDrop }) => {
-  const { month, daysInMonth, segments, noteSegments, milestones, groupRanges, totalRows: taskRows } = monthLayout;
+}> = ({ monthLayout, year, density = 'standard', collapsedGroupIds = new Set(), onTaskClick, onTaskContextMenu, onNoteDoubleClick, onNoteContextMenu, onMilestoneDoubleClick, onMilestoneContextMenu, onGroupClick, onGroupDoubleClick, onSmartBlockDrop }) => {
+  const { month, daysInMonth, segments, noteSegments, milestones, groupRanges, groupSummaries = [], totalRows: taskRows } = monthLayout;
+  const metrics = getTimelineMetrics(density);
 
   // 画布总行数：取任务行和分组范围行的最大值（用 reduce 避免 spread 大数组栈溢出）
   const totalRows = groupRanges.reduce(
@@ -29,7 +35,17 @@ const MonthRow: React.FC<{
   );
 
   const hasTasks = totalRows > 0;
-  const canvasHeight = hasTasks ? totalRows * ROW_HEIGHT + 12 : 20;
+  const canvasHeight = hasTasks ? totalRows * metrics.rowHeight + metrics.canvasPadding : 18;
+  const densityStyle = {
+    '--tl-row-height': `${metrics.rowHeight}px`,
+    '--tl-bar-height': `${metrics.barHeight}px`,
+    '--tl-task-font-size': `${metrics.taskFontSize}px`,
+    '--tl-group-label-font-size': `${metrics.groupLabelFontSize}px`,
+    '--tl-group-label-height': `${metrics.groupLabelHeight}px`,
+    '--tl-day-tick-height': `${metrics.dayTickHeight}px`,
+    '--tl-month-min-height': `${metrics.monthMinHeight}px`,
+    '--tl-seg-horizontal-padding': `${metrics.horizontalPadding}px`,
+  } as React.CSSProperties;
 
   const today = dayjs();
   const isCurrentMonth = today.year() === year && today.month() === month;
@@ -94,7 +110,10 @@ const MonthRow: React.FC<{
   }, [getDayFromEvent, onSmartBlockDrop, year, month]);
 
   return (
-    <div className={`tl-month-row ${!hasTasks ? 'tl-month-row--empty' : ''}`}>
+    <div
+      className={`tl-month-row tl-month-row--${density} ${!hasTasks ? 'tl-month-row--empty' : ''}`}
+      style={densityStyle}
+    >
       {/* 左侧月份标签 */}
       <div className="tl-month-label">{MONTH_NAMES[month]}</div>
 
@@ -185,9 +204,8 @@ const MonthRow: React.FC<{
             const leftPct = ((gr.startDay - 1) / daysInMonth) * 100;
             const widthPct = ((gr.endDay - gr.startDay + 1) / daysInMonth) * 100;
             // 虚线框上下各内缩 3px，相邻分组框之间留出 6px 视觉间隔，避免边框重叠
-            const GAP = 3;
-            const topPx = gr.rowStart * ROW_HEIGHT + GAP;
-            const heightPx = (gr.rowEnd - gr.rowStart + 1) * ROW_HEIGHT - GAP * 2;
+            const topPx = gr.rowStart * metrics.rowHeight + metrics.groupGap;
+            const heightPx = (gr.rowEnd - gr.rowStart + 1) * metrics.rowHeight - metrics.groupGap * 2;
             const borderColor = getGroupBorderColor(gr.color);
             return (
               <div
@@ -198,7 +216,7 @@ const MonthRow: React.FC<{
                   width: `${widthPct}%`,
                   top: topPx,
                   height: heightPx,
-                  backgroundColor: `${gr.color}40`,
+                  backgroundColor: `${gr.color}${metrics.groupFillAlpha}`,
                   borderColor,
                 }}
                 title={gr.groupName}
@@ -264,16 +282,50 @@ const MonthRow: React.FC<{
               key={`${seg.taskId}-${seg.month}`}
               segment={seg}
               daysInMonth={daysInMonth}
+              metrics={metrics}
               onClick={() => onTaskClick?.(seg.taskId)}
               onContextMenu={(e) => onTaskContextMenu?.(e, seg.taskId)}
             />
           ))}
 
+          {/* 折叠分组汇总条 */}
+          {groupSummaries.map((summary) => {
+            const leftPct = ((summary.startDay - 1) / daysInMonth) * 100;
+            const widthPct = ((summary.endDay - summary.startDay + 1) / daysInMonth) * 100;
+            const progress = summary.taskCount > 0
+              ? Math.round((summary.completedCount / summary.taskCount) * 100)
+              : 0;
+            const textColor = getTaskTextColor(summary.taskColor);
+            return (
+              <button
+                key={`summary-${summary.groupId}`}
+                className="tl-group-summary"
+                style={{
+                  left: `${leftPct}%`,
+                  width: `${widthPct}%`,
+                  top: summary.row * metrics.rowHeight + (metrics.rowHeight - metrics.barHeight) / 2,
+                  height: metrics.barHeight,
+                  backgroundColor: summary.taskColor,
+                  borderColor: getTaskBorderColor(summary.taskColor),
+                  color: textColor,
+                }}
+                type="button"
+                onClick={() => onGroupClick?.(summary.groupId)}
+                onDoubleClick={(event) => { event.stopPropagation(); onGroupDoubleClick?.(summary.groupId); }}
+                title={`${summary.groupName}：${summary.taskCount} 项任务，完成 ${progress}%\n单击展开，双击编辑分组`}
+              >
+                <ChevronRight size={density === 'compact' ? 11 : 13} />
+                <span className="tl-group-summary-name">{summary.groupName}</span>
+                <span className="tl-group-summary-meta">{summary.taskCount}项 · {progress}%</span>
+                <span className="tl-group-summary-progress"><i style={{ width: `${progress}%`, backgroundColor: summary.color }} /></span>
+              </button>
+            );
+          })}
+
           {/* 分组标签（独立渲染在任务条之上，避免被任务条遮挡） */}
           {groupRanges.map((gr) => {
             const leftPct = ((gr.startDay - 1) / daysInMonth) * 100;
-            const GAP = 3;
-            const topPx = gr.rowStart * ROW_HEIGHT + GAP;
+            const topPx = gr.rowStart * metrics.rowHeight + metrics.groupGap;
             const labelTextColor = getGroupLabelTextColor(gr.color);
             return (
               <span
@@ -281,13 +333,20 @@ const MonthRow: React.FC<{
                 className="tl-group-label"
                 style={{
                   left: `${leftPct}%`,
-                  top: topPx - 10,
+                  top: topPx - metrics.groupLabelHeight / 2,
+                  height: metrics.groupLabelHeight,
+                  lineHeight: `${metrics.groupLabelHeight}px`,
+                  fontSize: metrics.groupLabelFontSize,
                   backgroundColor: gr.color,
                   color: labelTextColor,
                 }}
-                onDoubleClick={() => onGroupDoubleClick?.(gr.groupId)}
-                title={gr.groupName}
+                onClick={() => onGroupClick?.(gr.groupId)}
+                onDoubleClick={(event) => { event.stopPropagation(); onGroupDoubleClick?.(gr.groupId); }}
+                title={`${gr.groupName}\n单击${collapsedGroupIds.has(gr.groupId) ? '展开' : '折叠'}，双击编辑`}
               >
+                {collapsedGroupIds.has(gr.groupId)
+                  ? <ChevronRight size={density === 'compact' ? 10 : 12} />
+                  : <ChevronDown size={density === 'compact' ? 10 : 12} />}
                 {gr.groupName}
               </span>
             );

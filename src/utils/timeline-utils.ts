@@ -17,13 +17,74 @@ import type {
 
 // ── 布局常量 ──────────────────────────────────────────────
 
-/** 任务行高 */
-export const ROW_HEIGHT = 34;
-/** 任务条高度 */
-export const BAR_HEIGHT = 24;
+export type TimelineDensity = 'compact' | 'standard' | 'detailed';
+
+export interface TimelineMetrics {
+  rowHeight: number;
+  barHeight: number;
+  canvasPadding: number;
+  groupGap: number;
+  groupLabelHeight: number;
+  taskFontSize: number;
+  groupLabelFontSize: number;
+  dayTickHeight: number;
+  monthMinHeight: number;
+  horizontalPadding: number;
+  groupFillAlpha: string;
+}
+
+const TIMELINE_METRICS: Record<TimelineDensity, TimelineMetrics> = {
+  compact: {
+    rowHeight: 24,
+    barHeight: 18,
+    canvasPadding: 6,
+    groupGap: 2,
+    groupLabelHeight: 15,
+    taskFontSize: 10,
+    groupLabelFontSize: 10,
+    dayTickHeight: 16,
+    monthMinHeight: 48,
+    horizontalPadding: 10,
+    groupFillAlpha: '18',
+  },
+  standard: {
+    rowHeight: 28,
+    barHeight: 20,
+    canvasPadding: 8,
+    groupGap: 2,
+    groupLabelHeight: 16,
+    taskFontSize: 11,
+    groupLabelFontSize: 10,
+    dayTickHeight: 17,
+    monthMinHeight: 60,
+    horizontalPadding: 12,
+    groupFillAlpha: '28',
+  },
+  detailed: {
+    rowHeight: 34,
+    barHeight: 24,
+    canvasPadding: 12,
+    groupGap: 3,
+    groupLabelHeight: 18,
+    taskFontSize: 12,
+    groupLabelFontSize: 11,
+    dayTickHeight: 18,
+    monthMinHeight: 80,
+    horizontalPadding: 16,
+    groupFillAlpha: '40',
+  },
+};
+
+export function getTimelineMetrics(density: TimelineDensity): TimelineMetrics {
+  return TIMELINE_METRICS[density];
+}
+
+/** 详细模式尺寸，保留给尚未接入密度配置的兼容调用。 */
+export const ROW_HEIGHT = TIMELINE_METRICS.detailed.rowHeight;
+export const BAR_HEIGHT = TIMELINE_METRICS.detailed.barHeight;
 
 /**
- * 时间轴标准主题色（5 套同色系）
+ * 时间轴标准主题色（24 套同色系）
  * 同色系绑定原则：外层"分组"与内部"任务"使用同一套主题。
  * - groupColor:  分组外框 & 分组标签背景色
  * - taskBorder:  内部任务边框颜色（用于任务条箭头/强调色/左右细边框）
@@ -44,8 +105,26 @@ export const TIMELINE_THEMES: TimelineTheme[] = [
   { groupColor: '#A78BFA', taskBorder: '#8B5CF6', taskText: '#5B21B6', taskBg: '#EDE9FE' },
   { groupColor: '#34D399', taskBorder: '#10B981', taskText: '#047857', taskBg: '#D1FAE5' },
   { groupColor: '#FBBF24', taskBorder: '#F59E0B', taskText: '#B45309', taskBg: '#FEF3C7' },
-  // 红色主题（索引 4）：主线任务专用，浅红背景 + 深红文字/边框
   { groupColor: '#F87171', taskBorder: '#EF4444', taskText: '#991B1B', taskBg: '#FEE2E2' },
+  { groupColor: '#38BDF8', taskBorder: '#0EA5E9', taskText: '#0369A1', taskBg: '#E0F2FE' },
+  { groupColor: '#22D3EE', taskBorder: '#06B6D4', taskText: '#0E7490', taskBg: '#CFFAFE' },
+  { groupColor: '#2DD4BF', taskBorder: '#14B8A6', taskText: '#0F766E', taskBg: '#CCFBF1' },
+  { groupColor: '#4ADE80', taskBorder: '#22C55E', taskText: '#15803D', taskBg: '#DCFCE7' },
+  { groupColor: '#A3E635', taskBorder: '#84CC16', taskText: '#4D7C0F', taskBg: '#ECFCCB' },
+  { groupColor: '#FACC15', taskBorder: '#EAB308', taskText: '#854D0E', taskBg: '#FEF9C3' },
+  { groupColor: '#FB923C', taskBorder: '#F97316', taskText: '#C2410C', taskBg: '#FFEDD5' },
+  { groupColor: '#F472B6', taskBorder: '#EC4899', taskText: '#BE185D', taskBg: '#FCE7F3' },
+  { groupColor: '#FB7185', taskBorder: '#F43F5E', taskText: '#BE123C', taskBg: '#FFE4E6' },
+  { groupColor: '#C084FC', taskBorder: '#A855F7', taskText: '#7E22CE', taskBg: '#F3E8FF' },
+  { groupColor: '#818CF8', taskBorder: '#6366F1', taskText: '#4338CA', taskBg: '#E0E7FF' },
+  { groupColor: '#93C5FD', taskBorder: '#2563EB', taskText: '#1E40AF', taskBg: '#EFF6FF' },
+  { groupColor: '#67E8F9', taskBorder: '#0891B2', taskText: '#155E75', taskBg: '#ECFEFF' },
+  { groupColor: '#5EEAD4', taskBorder: '#0D9488', taskText: '#115E59', taskBg: '#F0FDFA' },
+  { groupColor: '#86EFAC', taskBorder: '#16A34A', taskText: '#166534', taskBg: '#F0FDF4' },
+  { groupColor: '#FDE047', taskBorder: '#CA8A04', taskText: '#713F12', taskBg: '#FEFCE8' },
+  { groupColor: '#FDBA74', taskBorder: '#EA580C', taskText: '#9A3412', taskBg: '#FFF7ED' },
+  { groupColor: '#FDA4AF', taskBorder: '#E11D48', taskText: '#9F1239', taskBg: '#FFF1F2' },
+  { groupColor: '#D8B4FE', taskBorder: '#9333EA', taskText: '#6B21A8', taskBg: '#FAF5FF' },
 ];
 
 /** 主线任务红色主题索引（TIMELINE_THEMES[4]） */
@@ -55,6 +134,38 @@ export const MAIN_TASK_THEME_IDX = 4;
 export const TASK_BG_PRESET = TIMELINE_THEMES.map((t) => t.taskBg);
 /** 分组色预设（取自各主题 groupColor，供分组色板使用） */
 export const GROUP_COLOR_PRESET = TIMELINE_THEMES.map((t) => t.groupColor);
+
+const NORMAL_TIMELINE_THEMES = TIMELINE_THEMES.filter((_, index) => index !== MAIN_TASK_THEME_IDX);
+
+function hashString(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+/** 为新分组推荐当前使用次数最少的颜色，相同次数时保持稳定分配。 */
+export function suggestGroupColor(existingColors: Array<string | undefined>, seed = ''): string {
+  const counts = new Map(GROUP_COLOR_PRESET.map((color) => [color.toLowerCase(), 0]));
+  for (const color of existingColors) {
+    const key = color?.toLowerCase();
+    if (key && counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const minCount = Math.min(...counts.values());
+  const leastUsed = GROUP_COLOR_PRESET.filter((color) => counts.get(color.toLowerCase()) === minCount);
+  const adjacentColor = existingColors[existingColors.length - 1]?.toLowerCase();
+  const candidates = leastUsed.length > 1
+    ? leastUsed.filter((color) => color.toLowerCase() !== adjacentColor)
+    : leastUsed;
+  return candidates[hashString(seed || String(existingColors.length)) % candidates.length];
+}
+
+/** 将分组主色映射到同色系的任务浅背景。 */
+export function getTaskBgForGroupColor(groupColor: string): string {
+  return GROUP_COLOR_INDEX.get(groupColor.toLowerCase())?.taskBg ?? TIMELINE_THEMES[0].taskBg;
+}
 
 /** taskBg -> 主题 的反查缓存，O(1) 查表 */
 const TASK_BG_INDEX: Map<string, TimelineTheme> = (() => {
@@ -178,7 +289,8 @@ export function isWeekend(year: number, month: number, day: number): boolean {
 
 export function sliceTasksForYear(
   tasks: TaskWithLayout[],
-  year: number
+  year: number,
+  groupColors: ReadonlyMap<string, string> = new Map(),
 ): MonthLayout[] {
   const months: MonthLayout[] = Array.from({ length: 12 }, (_, m) => ({
     month: m,
@@ -215,11 +327,13 @@ export function sliceTasksForYear(
       // 颜色选择逻辑：
       // 1. 主线任务（isMain）：优先使用红色主题（浅红背景 #FEE2E2），除非用户显式设置了自定义颜色
       // 2. 普通任务：优先使用任务自带颜色，否则按 id 轮询标准主题浅背景（前 4 套）
-      const colorIdx = parseInt(task.id.slice(0, 16), 16) || 0;
-      const safeIdx = colorIdx % (TIMELINE_THEMES.length - 1); // 普通任务只用前 4 套，排除红色主题
+      const safeIdx = hashString(task.id) % NORMAL_TIMELINE_THEMES.length;
+      const inheritedGroupColor = task.groupId && groupColors.has(task.groupId)
+        ? getTaskBgForGroupColor(groupColors.get(task.groupId)!)
+        : undefined;
       const bgColor = task.isMain
         ? task.color ?? TIMELINE_THEMES[MAIN_TASK_THEME_IDX].taskBg
-        : task.color ?? TIMELINE_THEMES[safeIdx].taskBg;
+        : task.color ?? inheritedGroupColor ?? NORMAL_TIMELINE_THEMES[safeIdx].taskBg;
 
       months[m].segments.push({
         taskId: task.id,

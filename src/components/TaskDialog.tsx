@@ -13,7 +13,7 @@ interface TaskDialogProps {
   onCancel: () => void;
 }
 
-// 任务色板：4 套标准主题的浅背景色（与所属分组同色系绑定）
+// 任务色板：24 套标准主题的浅背景色（与所属分组同色系绑定）
 const PRESET_COLORS = TASK_BG_PRESET;
 
 const TaskDialog: React.FC<TaskDialogProps> = ({
@@ -117,15 +117,19 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
           <label className="tl-dialog-field">
             <span className="tl-dialog-label">方块颜色</span>
             <div className="tl-dialog-color-row">
-              {PRESET_COLORS.map((c) => (
-                <button
-                  key={c}
-                  className={`tl-dialog-color-btn ${color === c ? 'tl-dialog-color-btn--active' : ''}`}
-                  style={{ background: c }}
-                  onClick={() => setColor(c)}
-                  type="button"
-                />
-              ))}
+              <div className="tl-dialog-color-grid">
+                {PRESET_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    className={`tl-dialog-color-btn ${color.toLowerCase() === c.toLowerCase() ? 'tl-dialog-color-btn--active' : ''}`}
+                    style={{ background: c }}
+                    onClick={() => setColor(c)}
+                    type="button"
+                    title={c}
+                    aria-label={`选择颜色 ${c}`}
+                  />
+                ))}
+              </div>
               <input
                 className="tl-dialog-input tl-dialog-color-input"
                 type="text"

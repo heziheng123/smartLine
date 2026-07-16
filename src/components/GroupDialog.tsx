@@ -3,8 +3,9 @@
 // ============================================================
 
 import React, { useState } from 'react';
+import { WandSparkles } from 'lucide-react';
 import type { Task, TaskGroup } from '@/types';
-import { GROUP_COLOR_PRESET, TIMELINE_THEMES } from '@/utils/timeline-utils';
+import { GROUP_COLOR_PRESET, TIMELINE_THEMES, suggestGroupColor } from '@/utils/timeline-utils';
 
 interface GroupDialogProps {
   group?: TaskGroup;
@@ -17,7 +18,7 @@ interface GroupDialogProps {
   onCancel: () => void;
 }
 
-// 分组色板：4 套标准主题的分组色（外框 & 标签背景）
+// 分组色板：24 套标准主题的分组色（外框 & 标签背景）
 const PRESET_COLORS = GROUP_COLOR_PRESET;
 
 const GroupDialog: React.FC<GroupDialogProps> = ({
@@ -33,7 +34,9 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
   const [name, setName] = useState(group?.name ?? '');
   const [start, setStart] = useState(group?.start ?? '');
   const [end, setEnd] = useState(group?.end ?? '');
-  const [color, setColor] = useState(group?.color ?? '');
+  const [color, setColor] = useState(
+    group?.color ?? suggestGroupColor(groups.map((item) => item.color), group?.id ?? name),
+  );
   const [autoDate, setAutoDate] = useState(group?.autoDate ?? true);
 
   // 已选中的子任务 ID 集合
@@ -143,15 +146,28 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
           <label className="tl-dialog-field">
             <span className="tl-dialog-label">分组颜色</span>
             <div className="tl-dialog-color-row">
-              {PRESET_COLORS.map((c) => (
-                <button
-                  key={c}
-                  className={`tl-dialog-color-btn ${color === c ? 'tl-dialog-color-btn--active' : ''}`}
-                  style={{ background: c }}
-                  onClick={() => setColor(c)}
-                  type="button"
-                />
-              ))}
+              <div className="tl-dialog-color-grid">
+                {PRESET_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    className={`tl-dialog-color-btn ${color.toLowerCase() === c.toLowerCase() ? 'tl-dialog-color-btn--active' : ''}`}
+                    style={{ background: c }}
+                    onClick={() => setColor(c)}
+                    type="button"
+                    title={c}
+                    aria-label={`选择颜色 ${c}`}
+                  />
+                ))}
+              </div>
+              <button
+                className="tl-dialog-auto-color"
+                type="button"
+                onClick={() => setColor(suggestGroupColor(groups.filter((item) => item.id !== group?.id).map((item) => item.color), name))}
+                title="选择当前使用次数最少的颜色"
+              >
+                <WandSparkles size={14} />
+                自动
+              </button>
               <input
                 className="tl-dialog-input tl-dialog-color-input"
                 type="text"

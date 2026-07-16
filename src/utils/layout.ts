@@ -104,7 +104,7 @@ function packTasks(
  * 由于不同分组的行范围天然不重叠（中间有缓冲空行），
  * 渲染时的虚线边框不会重叠，且框间有明确间隔。
  */
-export function calculateLayout(data: TimelineData): LayoutResult {
+export function calculateLayout(data: TimelineData, groupOrder: string[] = []): LayoutResult {
   const { tasks } = data;
 
   if (tasks.length === 0) {
@@ -136,6 +136,7 @@ export function calculateLayout(data: TimelineData): LayoutResult {
   }
 
   // ── 2. 各分组独立行块（按最早任务开始日期排序） ──────
+  const groupOrderIndex = new Map(groupOrder.map((groupId, index) => [groupId, index]));
   const groupEntries = Array.from(groupedTasks.entries())
     .map(([groupId, gTasks]) => {
       const validStarts = gTasks
@@ -150,7 +151,14 @@ export function calculateLayout(data: TimelineData): LayoutResult {
         earliest: validStarts.length > 0 ? Math.min(...validStarts) : Number.POSITIVE_INFINITY,
       };
     })
-    .sort((a, b) => a.earliest - b.earliest);
+    .sort((a, b) => {
+      const aOrder = groupOrderIndex.get(a.groupId);
+      const bOrder = groupOrderIndex.get(b.groupId);
+      if (aOrder !== undefined || bOrder !== undefined) {
+        return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER);
+      }
+      return a.earliest - b.earliest;
+    });
 
   for (const ge of groupEntries) {
     if (cursor > 0) cursor += GROUP_BUFFER_ROWS; // 组间缓冲空行

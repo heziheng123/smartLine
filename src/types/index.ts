@@ -182,6 +182,19 @@ export interface GroupRange {
   rowEnd: number;
 }
 
+/** 折叠分组在单个月份中的汇总条 */
+export interface GroupSummary {
+  groupId: string;
+  groupName: string;
+  color: string;
+  taskColor: string;
+  startDay: number;
+  endDay: number;
+  row: number;
+  taskCount: number;
+  completedCount: number;
+}
+
 /** 单个月份的布局数据 */
 export interface MonthLayout {
   month: number;
@@ -190,6 +203,7 @@ export interface MonthLayout {
   noteSegments: NoteSegment[];
   milestones: MilestoneInMonth[];
   groupRanges: GroupRange[];
+  groupSummaries?: GroupSummary[];
   /** 该月最大行号 + 1 */
   totalRows: number;
 }

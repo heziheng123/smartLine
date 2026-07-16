@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Search, Archive } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -40,6 +40,29 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const createMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isCreateMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!createMenuRef.current?.contains(event.target as Node)) setIsCreateMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsCreateMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isCreateMenuOpen]);
+
+  const runCreateAction = (action: () => void) => {
+    setIsCreateMenuOpen(false);
+    action();
+  };
 
   const NAV_ITEMS: { module: AppModule; label: string; icon: React.ReactNode }[] = [
     { module: 'timeline', label: '项目规划', icon: <CalendarDays size={18} /> },
@@ -169,40 +192,40 @@ const Toolbar: React.FC<ToolbarProps> = ({
             animate={{ opacity: 1, width: 'auto', scale: 1 }}
             exit={{ opacity: 0, width: 0, scale: 0.8 }}
             transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'visible' }}
           >
-            <button
-              className="tl-dock-btn tl-dock-btn--primary"
-              onClick={onAddTask}
-              type="button"
-              title="添加任务"
-            >
-              <Plus size={18} />
-            </button>
-            <button
-              className="tl-dock-btn"
-              onClick={onAddGroup}
-              type="button"
-              title="添加分组"
-            >
-              <FolderPlus size={18} />
-            </button>
-            <button
-              className="tl-dock-btn"
-              onClick={onAddNote}
-              type="button"
-              title="添加便签"
-            >
-              <BookmarkPlus size={18} />
-            </button>
-            <button
-              className="tl-dock-btn"
-              onClick={onAddMilestone}
-              type="button"
-              title="添加里程碑"
-            >
-              <Flag size={18} />
-            </button>
+            <div className="tl-dock-popover-wrap" ref={createMenuRef}>
+              <button
+                className={`tl-dock-btn tl-dock-btn--primary ${isCreateMenuOpen ? 'tl-dock-btn--menu-open' : ''}`}
+                onClick={() => setIsCreateMenuOpen((open) => !open)}
+                type="button"
+                title="新建"
+                aria-haspopup="menu"
+                aria-expanded={isCreateMenuOpen}
+              >
+                <Plus size={18} />
+              </button>
+              {isCreateMenuOpen && (
+                <div className="tl-dock-popover tl-create-menu" role="menu">
+                  <button type="button" role="menuitem" onClick={() => runCreateAction(onAddTask)}>
+                    <Plus size={16} />
+                    <span>新建任务</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runCreateAction(onAddGroup)}>
+                    <FolderPlus size={16} />
+                    <span>新建项目分组</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runCreateAction(onAddNote)}>
+                    <BookmarkPlus size={16} />
+                    <span>新建便签</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runCreateAction(onAddMilestone)}>
+                    <Flag size={16} />
+                    <span>新建里程碑</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             <div className="tl-dock-divider" />
 
