@@ -315,6 +315,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         date: today,
         duration: 30,
         isCompleted: false,
+        autoSyncEbb: true,
       },
       body: '',
     };
@@ -482,21 +483,6 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     [task.id, groupByWeek, groupDimension, updateTaskBlocks, activeTag, hideCompleted],
   );
 
-  const handleAddTextBlock = useCallback(() => {
-    const newBlock: TextBlock = {
-      type: 'text',
-      id: genBlockId(),
-      content: '',
-    };
-    appendBlock(task.id, newBlock);
-    // 自动聚焦到新文本块
-    setTimeout(() => {
-      const cards = containerRef.current?.querySelectorAll('.tb-content');
-      const last = cards?.[cards.length - 1] as HTMLElement | undefined;
-      last?.focus();
-    }, 100);
-  }, [appendBlock, task.id]);
-
   // ── Slash 命令 ──
 
   const handleSlashSelect = useCallback(
@@ -531,6 +517,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
             date: today,
             duration: 30,
             isCompleted: false,
+            autoSyncEbb: true,
           },
           body: '',
         };
@@ -880,17 +867,6 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
             </div>
           </DragDropContext>
         )}
-        
-        {/* 点击底部空白区域自动添加文本块 */}
-        <div 
-          className="pdv-body-pad" 
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              handleAddTextBlock();
-            }
-          }}
-          style={{ flex: 1, minHeight: '60px', cursor: 'text' }}
-        />
       </div>
 
       {/* ── Slash 命令菜单 ── */}

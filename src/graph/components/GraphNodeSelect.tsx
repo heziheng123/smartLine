@@ -52,6 +52,12 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectableNodes = useMemo(() => {
+    const parentIds = new Set(
+      nodes.filter(node => !node.isArchived && node.parentId).map(node => node.parentId as string),
+    );
+    return nodes.filter(node => !node.isArchived && !parentIds.has(node.id));
+  }, [nodes]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -90,21 +96,21 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
 
   // 最近使用：按 createdAt 降序，取前 5 个
   const recentNodes = useMemo(() => {
-    return [...nodes].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
-  }, [nodes]);
+    return [...selectableNodes].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+  }, [selectableNodes]);
 
   // 智能推荐：计算相似度
   const recommendedNodes = useMemo(() => {
     if (!taskTitle || !taskTitle.trim()) return [];
     
-    const scored = nodes.map(node => ({
+    const scored = selectableNodes.map(node => ({
       node,
       score: calculateSimilarity(taskTitle, node.name)
     })).filter(n => n.score > 0); // 只要有匹配度就尝试推荐，由降序和截取控制数量
     
     // 按分数降序排列，取前 3 个
     return scored.sort((a, b) => b.score - a.score).slice(0, 3).map(s => s.node);
-  }, [nodes, taskTitle]);
+  }, [selectableNodes, taskTitle]);
 
   const filteredNodes = useMemo(() => {
     if (!search) {
@@ -116,11 +122,13 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
       // 如果什么都没有，返回空数组，而不是抛错
       return merged;
     }
-    return nodes.filter(n => n.name.toLowerCase().includes(search.toLowerCase()));
-  }, [nodes, search, recentNodes, recommendedNodes]);
+    return selectableNodes.filter(n => n.name.toLowerCase().includes(search.toLowerCase()));
+  }, [search, recentNodes, recommendedNodes, selectableNodes]);
 
   const exactMatch = useMemo(() => {
-    return nodes.find(n => n.name.toLowerCase() === search.trim().toLowerCase());
+    return nodes.find(
+      n => !n.isArchived && n.name.toLowerCase() === search.trim().toLowerCase(),
+    );
   }, [nodes, search]);
 
   // 计算幽灵文本（Ghost Text）

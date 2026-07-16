@@ -491,10 +491,6 @@
     overflow: hidden;
   }
   
-  .pdv-body-pad {
-    display: none; /* 宽屏下隐藏底部点击区域 */
-  }
-  
   .pdv-text-blocks {
     flex: 0 0 320px; /* 左侧固定宽度 */
     height: 100%;

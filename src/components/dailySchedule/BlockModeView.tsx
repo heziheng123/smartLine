@@ -165,8 +165,9 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   scheduledSourceIds,
 }) => {
   const today = todayStr();
-  const { tasks: rawTlTasks, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
-    useShallow((s) => ({ tasks: s.tasks, updateBlockHeader: s.updateBlockHeader })),
+  const [showCompletedPool, setShowCompletedPool] = useState(false);
+  const { tasks: rawTlTasks, groups: rawTlGroups, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
+    useShallow((s) => ({ tasks: s.tasks, groups: s.groups, updateBlockHeader: s.updateBlockHeader })),
   );
   const {
     reviewTasks: rawEbbReviewTasks,
@@ -187,13 +188,18 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   const ebbReviewTasks = useMemo(() => {
     return rawEbbReviewTasks.filter(t => {
       if (t.isArchived) return false;
-      const ids = getValidGraphNodeIds(t as any); // t is ReviewTask which shares structure
-      return !ids.some(id => archivedNodeIds.has(id));
+      return !t.graphNodeId || !archivedNodeIds.has(t.graphNodeId);
     });
   }, [rawEbbReviewTasks, archivedNodeIds]);
 
   const tlTasks = useMemo(() => {
-    return rawTlTasks.map(task => ({
+    const taskMap = new Map(rawTlTasks.map((task) => [task.id, task]));
+    for (const group of rawTlGroups) {
+      for (const child of group.children) {
+        if (!taskMap.has(child.id)) taskMap.set(child.id, child);
+      }
+    }
+    return [...taskMap.values()].map(task => ({
       ...task,
       blocks: task.blocks?.filter(b => {
         if (b.type === 'smart-task') {
@@ -204,7 +210,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         return true;
       }) ?? []
     }));
-  }, [rawTlTasks, archivedNodeIds]);
+  }, [rawTlTasks, rawTlGroups, archivedNodeIds]);
 
   const {
     addTimeBlock,
@@ -319,12 +325,24 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     });
   }, [allTodos, selectedDate]);
 
+  const completedProjectTasks = useMemo(() => {
+    return allTodos.filter((todo) => {
+      if (!todo.checked) return false;
+      return todo.scheduled === selectedDate || todo.due === selectedDate;
+    });
+  }, [allTodos, selectedDate]);
+
   const todayReviewTasks = useMemo(() => {
     return ebbReviewTasks.filter((t) => {
       if (t.isCompleted) return false;
       return t.dueDate === selectedDate || (isOverdue(t) && selectedDate === today);
     });
   }, [ebbReviewTasks, selectedDate, today]);
+
+  const completedReviewTasks = useMemo(
+    () => ebbReviewTasks.filter((task) => task.isCompleted && task.dueDate === selectedDate),
+    [ebbReviewTasks, selectedDate],
+  );
 
   // ── 任务池列表（sourceId 格式与 DailyScheduleView 完全一致） ──
   const poolItems = useMemo(() => {
@@ -364,6 +382,33 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
     return items;
   }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData]);
+
+  const completedPoolItems = useMemo(() => {
+    const items: PoolItem[] = [];
+    for (const todo of completedProjectTasks) {
+      if (!todo._blockId) continue;
+      const sourceId = getProjectBlockSourceId(todo.parentTaskId, todo._blockId);
+      if (scheduledSourceIds.has(sourceId)) continue;
+      items.push({
+        id: `completed-project-${todo.id}`,
+        name: todo.text,
+        source: 'project',
+        sourceId,
+        detail: todo.parentTaskTitle,
+      });
+    }
+    for (const task of completedReviewTasks) {
+      const sourceId = getReviewSourceId(task.id);
+      if (scheduledSourceIds.has(sourceId)) continue;
+      items.push({
+        id: `completed-review-${task.id}`,
+        name: task.topicName,
+        source: 'review',
+        sourceId,
+      });
+    }
+    return items;
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds]);
 
   // ── 拖拽状态（纯 HTML5 DnD） ──────────────────────────
   const [draggedPoolItemId, setDraggedPoolItemId] = useState<string | null>(null);
@@ -455,6 +500,24 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     },
     [blocks, ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader],
   );
+
+  const handleUndoCompletedPoolItem = useCallback((item: PoolItem) => {
+    if (item.source === 'review') {
+      const parsed = parseSourceId(item.sourceId);
+      if (parsed?.source === 'review') ebbToggleReviewTask(parsed.reviewId);
+      return;
+    }
+    if (item.source !== 'project') return;
+    const parsed = parseSourceId(item.sourceId);
+    if (!parsed || parsed.source !== 'project' || !parsed.blockId) return;
+    const parentTask = tlTasks.find((task) => task.id === parsed.parentTaskId);
+    const currentBlock = parentTask?.blocks.find((block) => block.id === parsed.blockId);
+    if (currentBlock?.type !== 'smart-task' || !currentBlock.header.isCompleted) return;
+    tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
+      isCompleted: false,
+      completedDate: undefined,
+    });
+  }, [ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader]);
 
   const handleRemove = useCallback(
     (blockId: string) => {
@@ -766,6 +829,39 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                   </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {completedPoolItems.length > 0 && (
+          <div className="ds-pool-group ds-pool-group--completed">
+            <button
+              type="button"
+              className="ds-pool-completed-toggle"
+              onClick={() => setShowCompletedPool((value) => !value)}
+            >
+              <span>今日已完成</span>
+              <span className="ds-pool-group-count">{completedPoolItems.length}</span>
+              <span>{showCompletedPool ? '收起' : '展开'}</span>
+            </button>
+            {showCompletedPool && (
+              <div className="ds-pool-list">
+                {completedPoolItems.map((item) => (
+                  <div key={item.id} className="ds-pool-item ds-pool-item--completed">
+                    <div className="ds-pool-item-content">
+                      <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
+                      {item.detail && <span className="ds-pool-item-detail">{item.detail}</span>}
+                    </div>
+                    <button
+                      type="button"
+                      className="ds-pool-undo-btn"
+                      onClick={() => handleUndoCompletedPoolItem(item)}
+                    >
+                      撤销
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

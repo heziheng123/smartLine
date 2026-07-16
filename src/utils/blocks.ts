@@ -59,6 +59,11 @@ export function getValidGraphNodeIds(header: Partial<SmartTaskHeader> | undefine
   return [];
 }
 
+/** Auto-sync is enabled by default and is disabled only by an explicit false. */
+export function shouldAutoSyncEbb(header: Partial<SmartTaskHeader> | undefined | null): boolean {
+  return header?.autoSyncEbb !== false;
+}
+
 // ── Markdown → Blocks 迁移 ─────────────────────────────────
 
 /**
@@ -134,6 +139,7 @@ export function migrateMarkdownToBlocks(task: Task, tagColorMap?: Record<string,
           completedDate: todo.doneDate,
           recurring: todo.recurring,
           complexity: 'normal',
+          autoSyncEbb: true,
         },
         body: '',
       };

@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { TimeCapsuleModal } from '@/components/GlobalSearch';
 import { getValidGraphNodeIds } from '@/utils/blocks';
+import { computeNodeActivationStates } from '../activation';
 import styles from './GraphConsole.module.css';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
@@ -30,6 +31,7 @@ type ViewNode = {
   name: string;
   color: string;
   status: string;
+  isActivated: boolean;
   depth: number;
   rootId: string;
   isLeaf: boolean;
@@ -109,6 +111,11 @@ export const KnowledgeGraphView: React.FC = () => {
     }
   }, [showHint]);
 
+  const activationStates = useMemo(
+    () => computeNodeActivationStates(nodes),
+    [nodes],
+  );
+
   useEffect(() => {
     if (!containerRef.current) return;
     
@@ -157,33 +164,34 @@ export const KnowledgeGraphView: React.FC = () => {
   const getNodeColorHex = useCallback((nodeId: string): string => {
     const descendants = getDescendants(nodeId);
     const isLeaf = descendants.length === 0;
+    const activationState = activationStates.get(nodeId);
+    const isActivated = activationState?.isActivated ?? false;
 
-    const graphNode = nodes.find(n => n.id === nodeId);
-    const isActivated = graphNode?.status === 'activated';
+    if (!isActivated) return '#64748b';
 
     if (isLeaf) {
       const familyTasks = reviewTasks.filter(t => t.graphNodeId === nodeId);
-      if (familyTasks.length === 0) return isActivated ? '#3b82f6' : '#64748b'; 
+      if (familyTasks.length === 0) return '#3b82f6';
       const isAllDone = familyTasks.every(t => t.isCompleted);
       if (isAllDone) return '#eab308'; 
       const uncompletedTasks = familyTasks.filter(t => !t.isCompleted).sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
       const nextTask = uncompletedTasks[0];
-      if (!nextTask) return isActivated ? '#3b82f6' : '#64748b';
+      if (!nextTask) return '#3b82f6';
       const overdueDays = diffDays(todayStr(), nextTask.dueDate);
       if (overdueDays > 2) return '#ef4444'; 
       if (overdueDays === 1 || overdueDays === 2) return '#84cc16'; 
       return '#10b981'; 
     } else {
       const leafIds = descendants.filter(id => !nodes.some(n => n.parentId === id));
-      if (leafIds.length === 0) return isActivated ? '#3b82f6' : '#64748b';
+      if (leafIds.length === 0) return '#3b82f6';
       const leafColors = leafIds.map(leafId => {
         const leafTasks = reviewTasks.filter(t => t.graphNodeId === leafId);
-        const childNode = nodes.find(n => n.id === leafId);
-        const childIsActivated = childNode?.status === 'activated';
-        if (leafTasks.length === 0) return childIsActivated ? '#3b82f6' : '#64748b';
+        const childIsActivated = activationStates.get(leafId)?.isActivated ?? false;
+        if (!childIsActivated) return '#64748b';
+        if (leafTasks.length === 0) return '#3b82f6';
         if (leafTasks.every(t => t.isCompleted)) return '#eab308';
         const nextTask = leafTasks.filter(t => !t.isCompleted).sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''))[0];
-        if (!nextTask) return childIsActivated ? '#3b82f6' : '#64748b';
+        if (!nextTask) return '#3b82f6';
         const overdueDays = diffDays(todayStr(), nextTask.dueDate);
         if (overdueDays > 2) return '#ef4444';
         if (overdueDays === 1 || overdueDays === 2) return '#84cc16';
@@ -191,7 +199,7 @@ export const KnowledgeGraphView: React.FC = () => {
       });
 
       const activeLeafColors = leafColors.filter(c => c !== '#64748b');
-      if (activeLeafColors.length === 0) return isActivated ? '#3b82f6' : '#64748b';
+      if (activeLeafColors.length === 0) return '#3b82f6';
 
       const hasGray = leafColors.includes('#64748b');
 
@@ -211,7 +219,7 @@ export const KnowledgeGraphView: React.FC = () => {
       // 优先级 5: 无复习任务 (蓝色) 或者是金蓝混合的情况，退化为蓝色（表示部分知识仅被学习但未排期）
       return hasGray ? '#93c5fd' : '#3b82f6';
     }
-  }, [reviewTasks, nodes, getDescendants]);
+  }, [reviewTasks, nodes, getDescendants, activationStates]);
 
   const islandsData = useMemo(() => {
     const today = todayStr();
@@ -335,10 +343,11 @@ export const KnowledgeGraphView: React.FC = () => {
             name: n.name,
             parentId: n.id === rootId ? null : n.parentId,
             color: getNodeColorHex(n.id),
-            status: n.status,
+            status: activationStates.get(n.id)?.isActivated ? 'activated' : 'unactivated',
+            isActivated: activationStates.get(n.id)?.isActivated ?? false,
             isLeaf,
-            activeCount: isLeaf ? 0 : leafIds.filter(leafId => (reviewTasksByNodeId.get(leafId)?.length ?? 0) > 0).length,
-            totalLeafCount: isLeaf ? 0 : leafIds.length,
+            activeCount: isLeaf ? 0 : activationStates.get(n.id)?.activatedLeafCount ?? 0,
+            totalLeafCount: isLeaf ? 0 : activationStates.get(n.id)?.totalLeafCount ?? leafIds.length,
             ...stats,
             importanceScore: stats.pendingCount + stats.overdueCount * 2,
             labelPriority: stats.overdueCount > 0 ? 'high' : 'low',
@@ -384,7 +393,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     return { islands, allFlatNodes };
-  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, dimensions.width, dimensions.height, allNodes]);
+  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, dimensions.width, dimensions.height, allNodes, activationStates]);
 
   const arcGenerator = useMemo(() => {
     return arc<HierarchyRectangularNode<ViewNode>>()
@@ -407,9 +416,9 @@ export const KnowledgeGraphView: React.FC = () => {
       if (node.isVirtual) return;
       let isMatch = false;
       const matchStatus = statusFilter === 'all' 
-        || (statusFilter === 'overdue' && (node.overdueCount > 0 || node.color === '#ef4444'))
-        || (statusFilter === 'active' && ((node.pendingCount > 0 && node.color !== '#ef4444') || node.color === '#10b981' || node.color === '#86efac'))
-        || (statusFilter === 'completed' && node.color === '#eab308');
+        || (statusFilter === 'overdue' && node.isActivated && (node.overdueCount > 0 || node.color === '#ef4444'))
+        || (statusFilter === 'active' && node.isActivated && ((node.pendingCount > 0 && node.color !== '#ef4444') || node.color === '#10b981'))
+        || (statusFilter === 'completed' && node.isActivated && node.color === '#eab308');
 
       const matchQuery = !query || node.name.toLowerCase().includes(query);
 
@@ -474,6 +483,9 @@ export const KnowledgeGraphView: React.FC = () => {
     () => islandsData.allFlatNodes.find(node => node.id === selectedNodeId) ?? null,
     [islandsData, selectedNodeId],
   );
+  const selectedActivationState = selectedNodeId
+    ? activationStates.get(selectedNodeId) ?? null
+    : null;
   
   // Auto-focus rotation logic
   useEffect(() => {
@@ -893,8 +905,19 @@ export const KnowledgeGraphView: React.FC = () => {
                       <MoveRight size={13} />
                     </button>
                     <div className={styles.actionDivider}></div>
-                    <button onClick={() => updateNode(selectedNode.id, { status: selectedNode.status === 'activated' ? 'unactivated' : 'activated' })} className={`${styles.actionBtn} ${selectedNode.status === 'activated' ? styles.active : ''}`}>
-                      <Zap size={13} className={selectedNode.status === 'activated' ? 'fill-blue-500' : ''} />
+                    <button
+                      onClick={() => {
+                        if (!selectedActivationState?.isLeaf) return;
+                        updateNode(selectedNode.id, {
+                          status: selectedActivationState.isActivated ? 'unactivated' : 'activated',
+                        });
+                      }}
+                      disabled={!selectedActivationState?.isLeaf}
+                      title={selectedActivationState?.isLeaf ? '切换节点激活状态' : '父节点状态由所有子节点自动计算'}
+                      className={`${styles.actionBtn} ${selectedActivationState?.isActivated ? styles.active : ''}`}
+                      style={!selectedActivationState?.isLeaf ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+                    >
+                      <Zap size={13} className={selectedActivationState?.isActivated ? 'fill-blue-500' : ''} />
                     </button>
                     <div className={styles.actionDivider}></div>
                     <button onClick={() => { if(confirm('确定归档吗？')) { archiveNodeCascade(selectedNode.id, true); setSelectedNodeId(null); } }} className={styles.actionBtn}>
@@ -910,6 +933,18 @@ export const KnowledgeGraphView: React.FC = () => {
               </div>
 
               <div className="px-5 pb-5 flex flex-col gap-5">
+                {selectedActivationState && (
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                    <span className="font-medium text-slate-600">
+                      {selectedActivationState.isLeaf ? '节点状态' : '子节点激活进度'}
+                    </span>
+                    <span className={selectedActivationState.isActivated ? 'font-semibold text-blue-600' : 'font-semibold text-slate-500'}>
+                      {selectedActivationState.isLeaf
+                        ? selectedActivationState.isActivated ? '已激活' : '未激活'
+                        : `${selectedActivationState.activatedLeafCount}/${selectedActivationState.totalLeafCount}`}
+                    </span>
+                  </div>
+                )}
                 {selectedGraphNode && (
                   <div className={styles.statsBoard}>
                     <div className={styles.statItem}><span className={styles.statValue}>{selectedGraphNode.pendingCount}</span><span className={styles.statLabel}>待复习</span></div>

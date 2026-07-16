@@ -662,6 +662,56 @@
   border: 1px dashed #D1D5DB;
 }
 
+.ds-pool-group--completed {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #E5E7EB;
+}
+
+.ds-pool-completed-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: #6B7280;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ds-pool-completed-toggle:hover {
+  color: #374151;
+}
+
+.ds-pool-item--completed {
+  cursor: default;
+  opacity: 0.72;
+  background: #F9FAFB;
+}
+
+.ds-pool-item--completed .ds-pool-item-name {
+  color: #6B7280;
+  text-decoration: line-through;
+}
+
+.ds-pool-undo-btn {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid #D1D5DB;
+  border-radius: 5px;
+  background: #FFFFFF;
+  color: #4F46E5;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ds-pool-undo-btn:hover {
+  border-color: #818CF8;
+  background: #EEF2FF;
+}
+
 .ds-pool-item-accent {
   position: absolute;
   left: 0;

@@ -1,12 +1,24 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { parseSourceId } from './conversion';
 import type { TaskSource } from './types';
+import { useShallow } from 'zustand/react/shallow';
 
 export function useTaskCompletionStatus() {
-  const tlTasks = useTimelineStore((s) => s.tasks);
+  const { tasks, groups } = useTimelineStore(
+    useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
+  );
   const ebbReviewTasks = useEbbStore((s) => s.reviewTasks);
+  const tlTasks = useMemo(() => {
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    for (const group of groups) {
+      for (const child of group.children) {
+        if (!byId.has(child.id)) byId.set(child.id, child);
+      }
+    }
+    return [...byId.values()];
+  }, [tasks, groups]);
 
   const checkIsCompleted = useCallback((source: TaskSource, sourceId: string) => {
     if (source === 'free') return false;

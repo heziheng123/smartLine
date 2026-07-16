@@ -19,7 +19,7 @@ import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
 import { useGraphStore } from '@/graph/store';
-import { getValidGraphNodeIds } from '@/utils/blocks';
+import { getValidGraphNodeIds, shouldAutoSyncEbb } from '@/utils/blocks';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SmartTaskBlockCardProps {
@@ -62,12 +62,12 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const titleRef = useRef<HTMLTextAreaElement>(null);
 
   const { nodes, getNodeById } = useGraphStore();
-  const graphNodeIds = useMemo(() => getValidGraphNodeIds(header), [header.graphNodeIds, header.graphNodeId]);
+  const graphNodeIds = useMemo(() => getValidGraphNodeIds(header), [header]);
   const validGraphNodeIds = useMemo(() => graphNodeIds.filter(id => getNodeById(id)), [graphNodeIds, getNodeById]);
   const graphNodes = useMemo(() => {
     if (!Array.isArray(graphNodeIds)) return [];
     return validGraphNodeIds.map(id => getNodeById(id)) as typeof nodes;
-  }, [validGraphNodeIds, getNodeById, nodes]);
+  }, [graphNodeIds, validGraphNodeIds, getNodeById]);
 
   // 计算任务标题的幽灵文本（智能推荐节点名称）
   const titleGhostText = useMemo(() => {
@@ -136,10 +136,10 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const handleGraphNodeSelect = useCallback((nodeIds: string[]) => {
     onUpdateHeader(block.id, { 
       graphNodeIds: nodeIds, 
-      autoSyncEbb: header.autoSyncEbb ?? false 
+      autoSyncEbb: shouldAutoSyncEbb(header),
     });
     // 不自动关闭，支持连续点选
-  }, [block.id, header.autoSyncEbb, onUpdateHeader]);
+  }, [block.id, header, onUpdateHeader]);
 
   // 时长修改
   const handleDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -494,7 +494,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                   <label className="stb-sync-checkbox flex items-center cursor-pointer" title="任务完成后是否自动安排艾宾浩斯复习">
                     <input
                       type="checkbox"
-                      checked={header.autoSyncEbb ?? false}
+                      checked={shouldAutoSyncEbb(header)}
                       onChange={(e) => onUpdateHeader(block.id, { autoSyncEbb: e.target.checked })}
                       className="mr-2"
                     />

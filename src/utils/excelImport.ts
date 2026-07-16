@@ -493,6 +493,7 @@ export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
         complexity: r.complexity,
         graphNodeId: finalNodeIds[0],
         graphNodeIds: finalNodeIds,
+        autoSyncEbb: true,
       },
       body: r.remark ? `<p>${escapeHtml(r.remark)}</p>` : '',
     });

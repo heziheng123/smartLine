@@ -9,9 +9,10 @@ import { liveblocksClient } from './client';
 import { createScopedStorage, readJsonStorage } from '@/utils/persistence';
 
 import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
-import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, getValidGraphNodeIds } from '@/utils/blocks';
+import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, getValidGraphNodeIds, shouldAutoSyncEbb } from '@/utils/blocks';
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
+import { isLeafGraphNode } from '@/graph/activation';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
 
@@ -117,7 +118,19 @@ function normalizeTask(task: Task): Task {
   delete normalizedTask.markdown;
   return {
     ...normalizedTask,
-    blocks: Array.isArray(normalizedTask.blocks) ? normalizedTask.blocks : [],
+    blocks: Array.isArray(normalizedTask.blocks)
+      ? normalizedTask.blocks.map((block) => (
+        block.type === 'smart-task'
+          ? {
+            ...block,
+            header: {
+              ...block.header,
+              autoSyncEbb: shouldAutoSyncEbb(block.header),
+            },
+          }
+          : block
+      ))
+      : [],
   };
 }
 
@@ -184,6 +197,17 @@ function getAllGraphNodeIds(header: SmartTaskHeader): string[] {
     ids.add(header.graphNodeId);
   }
   return [...ids];
+}
+
+function getUniqueTasks(tasks: Task[], groups: TaskGroup[]): Task[] {
+  const byId = new Map<string, Task>();
+  for (const task of tasks) byId.set(task.id, task);
+  for (const group of groups) {
+    for (const child of group.children) {
+      if (!byId.has(child.id)) byId.set(child.id, child);
+    }
+  }
+  return [...byId.values()];
 }
 
 async function saveDataAsync(data: TimelineData) {
@@ -480,6 +504,94 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const nodesToDeactivate: string[] = [];
 
           set((state) => {
+            const allTasks = getUniqueTasks(state.tasks, state.groups);
+            const topLevelTargetBlock = state.tasks
+              .find((task) => task.id === taskId)
+              ?.blocks.find(
+                (candidate) => candidate.type === 'smart-task' && candidate.id === blockId,
+              );
+            const groupedTargetBlock = state.groups
+              .flatMap((group) => group.children)
+              .find((task) => task.id === taskId)
+              ?.blocks.find(
+                (candidate) => candidate.type === 'smart-task' && candidate.id === blockId,
+              );
+            const targetBlock = topLevelTargetBlock ?? groupedTargetBlock;
+            const targetExistsOnlyInGroup = !topLevelTargetBlock && !!groupedTargetBlock;
+
+            if (targetExistsOnlyInGroup && targetBlock?.type === 'smart-task') {
+              const header = { ...targetBlock.header, ...headerPatch };
+              const oldGraphNodeIds = getValidGraphNodeIds(targetBlock.header);
+              const newGraphNodeIds = getValidGraphNodeIds(header);
+              const isNewlyCompleted = headerPatch.isCompleted === true && !targetBlock.header.isCompleted;
+              const isNewlyUncompleted = headerPatch.isCompleted === false && targetBlock.header.isCompleted;
+              const isAlreadyCompleted = targetBlock.header.isCompleted && headerPatch.isCompleted !== false;
+              const hasOtherCompleted = (nodeId: string) => allTasks.some((otherTask) =>
+                otherTask.blocks.some((otherBlock) =>
+                  otherBlock.type === 'smart-task'
+                  && otherBlock.id !== blockId
+                  && otherBlock.header.isCompleted
+                  && getValidGraphNodeIds(otherBlock.header).includes(nodeId),
+                ),
+              );
+
+              if (isNewlyCompleted) {
+                nodesToActivate.push(...newGraphNodeIds);
+                newGraphNodeIds.forEach((nodeId) => {
+                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                  if (!graphNode) return;
+                  syncPayloads.push({
+                    action: 'add',
+                    graphNodeId: nodeId,
+                    topicName: graphNode.name,
+                    tag: header.title,
+                    triggerSchedule: shouldAutoSyncEbb(header),
+                  });
+                });
+              } else if (isNewlyUncompleted) {
+                oldGraphNodeIds.forEach((nodeId) => {
+                  if (!hasOtherCompleted(nodeId)) nodesToDeactivate.push(nodeId);
+                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                  if (!graphNode) return;
+                  syncPayloads.push({
+                    action: 'remove',
+                    graphNodeId: nodeId,
+                    topicName: graphNode.name,
+                    tag: targetBlock.header.title,
+                  });
+                });
+              } else if (
+                isAlreadyCompleted
+                && (headerPatch.graphNodeIds !== undefined || headerPatch.graphNodeId !== undefined)
+              ) {
+                const addedNodes = newGraphNodeIds.filter((id) => !oldGraphNodeIds.includes(id));
+                const removedNodes = oldGraphNodeIds.filter((id) => !newGraphNodeIds.includes(id));
+                addedNodes.forEach((nodeId) => {
+                  nodesToActivate.push(nodeId);
+                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                  if (!graphNode) return;
+                  syncPayloads.push({
+                    action: 'add',
+                    graphNodeId: nodeId,
+                    topicName: graphNode.name,
+                    tag: header.title,
+                    triggerSchedule: shouldAutoSyncEbb(header),
+                  });
+                });
+                removedNodes.forEach((nodeId) => {
+                  if (!hasOtherCompleted(nodeId)) nodesToDeactivate.push(nodeId);
+                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                  if (!graphNode) return;
+                  syncPayloads.push({
+                    action: 'remove',
+                    graphNodeId: nodeId,
+                    topicName: graphNode.name,
+                    tag: targetBlock.header.title,
+                  });
+                });
+              }
+            }
+
             const tasks = state.tasks.map((t) => {
               if (t.id !== taskId) return t;
               
@@ -505,7 +617,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       graphNodeId: nodeId,
                       topicName: actualTopicName,
                       tag: header.title,
-                      triggerSchedule: header.autoSyncEbb !== false
+                      triggerSchedule: shouldAutoSyncEbb(header)
                     });
                   });
                 } 
@@ -514,7 +626,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   oldGraphNodeIds.forEach(nodeId => {
                     // 检查是否还有其他已完成的任务绑定了同一个节点
                     let hasOtherCompleted = false;
-                    for (const otherTask of state.tasks) {
+                    for (const otherTask of allTasks) {
                       for (const otherBlock of otherTask.blocks) {
                         if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
                         if (!otherBlock.header.isCompleted) continue;
@@ -560,7 +672,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                         graphNodeId: nodeId,
                         topicName: actualTopicName,
                         tag: header.title,
-                        triggerSchedule: header.autoSyncEbb !== false
+                        triggerSchedule: shouldAutoSyncEbb(header)
                       });
                     });
                   }
@@ -569,7 +681,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   if (removedNodes.length > 0) {
                     removedNodes.forEach(nodeId => {
                       let hasOtherCompleted = false;
-                      for (const otherTask of state.tasks) {
+                      for (const otherTask of allTasks) {
                         for (const otherBlock of otherTask.blocks) {
                           if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
                           if (!otherBlock.header.isCompleted) continue;
@@ -622,10 +734,16 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           });
 
           nodesToActivate.forEach(nodeId => {
-            useGraphStore.getState().updateNode(nodeId, { status: 'activated' });
+            const graphState = useGraphStore.getState();
+            if (isLeafGraphNode(graphState.nodes, nodeId)) {
+              graphState.updateNode(nodeId, { status: 'activated' });
+            }
           });
           nodesToDeactivate.forEach(nodeId => {
-            useGraphStore.getState().updateNode(nodeId, { status: 'unactivated' });
+            const graphState = useGraphStore.getState();
+            if (isLeafGraphNode(graphState.nodes, nodeId)) {
+              graphState.updateNode(nodeId, { status: 'unactivated' });
+            }
           });
         },
 
