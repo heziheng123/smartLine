@@ -55,6 +55,7 @@ const DailyScheduleView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(today);
   const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
   const [showCompletedPool, setShowCompletedPool] = useState(false);
+  const [operationError, setOperationError] = useState<string | null>(null);
 
   const openProjectTaskFromSource = useCallback((sourceId: string) => {
     const parsed = parseSourceId(sourceId);
@@ -453,6 +454,12 @@ const DailyScheduleView: React.FC = () => {
     return false;
   }, [tlTasks, tlUpdateBlockHeader]);
 
+  const toggleReviewWithFeedback = useCallback((reviewId: string) => {
+    const error = ebbToggleReviewTask(reviewId);
+    setOperationError(error);
+    return error === null;
+  }, [ebbToggleReviewTask]);
+
   const handleUndoCompletedPoolItem = useCallback((source: TaskSource, sourceId: string) => {
     if (source === 'project') {
       syncProjectTaskCompletion(sourceId);
@@ -460,9 +467,9 @@ const DailyScheduleView: React.FC = () => {
     }
     if (source === 'review') {
       const parsed = parseSourceId(sourceId);
-      if (parsed?.source === 'review') ebbToggleReviewTask(parsed.reviewId);
+      if (parsed?.source === 'review') toggleReviewWithFeedback(parsed.reviewId);
     }
-  }, [syncProjectTaskCompletion, ebbToggleReviewTask]);
+  }, [syncProjectTaskCompletion, toggleReviewWithFeedback]);
 
   // 先校验并写入源 store（ebb/timeline），成功后再同步 schedule，
   // 避免"先写 schedule 后校验失败"导致的 UI 闪烁与短暂不一致。
@@ -475,7 +482,7 @@ const DailyScheduleView: React.FC = () => {
 
         if (block.source === 'review') {
           const reviewId = block.sourceId.replace('review-', '');
-          ebbToggleReviewTask(reviewId);
+          toggleReviewWithFeedback(reviewId);
         } else if (block.source === 'project') {
           syncProjectTaskCompletion(block.sourceId);
         }
@@ -488,13 +495,13 @@ const DailyScheduleView: React.FC = () => {
 
       if (item.source === 'review') {
         const reviewId = item.sourceId.replace('review-', '');
-        ebbToggleReviewTask(reviewId);
+        toggleReviewWithFeedback(reviewId);
       } else if (item.source === 'project') {
         syncProjectTaskCompletion(item.sourceId);
       }
       // toggleScheduledItem 已经被移除，底层数据变化后 getSlotItems 自动重新计算
     },
-    [daySchedule.items, daySchedule.blocks, ebbToggleReviewTask, syncProjectTaskCompletion],
+    [daySchedule.items, daySchedule.blocks, toggleReviewWithFeedback, syncProjectTaskCompletion],
   );
 
   const handleRemoveItem = useCallback(
@@ -585,6 +592,20 @@ const DailyScheduleView: React.FC = () => {
             )}
           </div>
         </header>
+
+        {operationError && (
+          <div className="mx-5 mt-3 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">
+            <span>{operationError}</span>
+            <button
+              type="button"
+              className="ml-4 text-amber-700 hover:text-amber-900"
+              onClick={() => setOperationError(null)}
+              aria-label="关闭提示"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {/* ── 时间段设置面板（仅时段模式） ──────────────── */}
         {viewMode === 'slots' && showSlotSettings && (
@@ -996,6 +1017,7 @@ const DailyScheduleView: React.FC = () => {
           <BlockModeView
             selectedDate={selectedDate}
             scheduledSourceIds={scheduledSourceIds}
+            onReviewToggleError={setOperationError}
           />
         )}
       </div>

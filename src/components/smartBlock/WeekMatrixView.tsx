@@ -464,6 +464,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                               type="button"
                               className={`wmv-check ${header.isCompleted ? 'wmv-check--done' : ''}`}
                               onClick={(event) => { event.stopPropagation(); handleToggle(block._taskId, block.id, header.isCompleted); }}
+                              title={header.isCompleted ? '取消完成' : '标记完成'}
+                              aria-label={header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
                             >
                               {header.isCompleted && '✓'}
                             </button>

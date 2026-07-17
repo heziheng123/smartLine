@@ -941,6 +941,9 @@
 .stb-card:hover .stb-actions {
   opacity: 1;
 }
+.stb-card--done .stb-actions {
+  opacity: 1;
+}
 
 .stb-action-btn {
   display: flex;

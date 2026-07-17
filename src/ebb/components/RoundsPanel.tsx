@@ -168,7 +168,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     setPendingChange({
       kind: 'restart',
       title: '确认重新开始复习计划',
-      description: `当前 ${topicTasks.length} 个轮次将保留为历史记录并归档，从 ${startDate} 起重新生成 ${intervalCount} 个未完成轮次。知识节点会回到灰色，完成首轮后变为绿色。`,
+      description: `当前 ${topicTasks.length} 个轮次将保留为历史记录并归档，从 ${startDate} 起重新生成 ${intervalCount} 个未完成轮次。已激活的知识节点会由金色回到绿色，节点激活状态本身不会改变。`,
       startDate,
     });
   }, [ebbSettings, topicTasks]);
@@ -189,7 +189,8 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   // 勾选
   const handleToggle = useCallback(
     (id: string) => {
-      toggleReviewTask(id);
+      const error = toggleReviewTask(id);
+      setActionError(error ?? '');
     },
     [toggleReviewTask],
   );

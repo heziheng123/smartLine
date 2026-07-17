@@ -84,14 +84,30 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, [timeline, ebb, daily, graph]);
 
   const handleConnectAll = useCallback(() => {
-    const code = roomCode.trim()
+    const enteredCode = roomCode.trim();
+    const fallbackCode = enteredCode
       || timeline.syncRoomCode
       || ebb.syncRoomCode
       || daily.syncRoomCode
       || graph.syncRoomCode;
-    if (!code) return;
-    (['timeline', 'ebb', 'daily', 'graph'] as ModuleKey[]).forEach((key) => connectModule(key, code));
-  }, [roomCode, timeline.syncRoomCode, ebb.syncRoomCode, daily.syncRoomCode, graph.syncRoomCode, connectModule]);
+    if (!fallbackCode) return;
+
+    // Existing workspaces may still use four historical room codes. Reconnect
+    // each module to its saved room instead of silently moving it to the first
+    // code shown in the dialog. A brand-new connection still uses one code for
+    // all four modules.
+    const savedCodes: Record<ModuleKey, string> = {
+      timeline: timeline.syncRoomCode,
+      ebb: ebb.syncRoomCode,
+      daily: daily.syncRoomCode,
+      graph: graph.syncRoomCode,
+    };
+    const reconnectingExisting = timeline.syncEnabled || ebb.syncEnabled || daily.syncEnabled || graph.syncEnabled;
+    (['timeline', 'ebb', 'daily', 'graph'] as ModuleKey[]).forEach((key) => {
+      const moduleCode = reconnectingExisting ? (savedCodes[key] || fallbackCode) : fallbackCode;
+      connectModule(key, moduleCode);
+    });
+  }, [roomCode, timeline.syncRoomCode, timeline.syncEnabled, ebb.syncRoomCode, ebb.syncEnabled, daily.syncRoomCode, daily.syncEnabled, graph.syncRoomCode, graph.syncEnabled, connectModule]);
 
   const handleDisconnectAll = useCallback(() => {
     timeline.liveblocks?.leaveRoom?.(); timeline.disableSync();

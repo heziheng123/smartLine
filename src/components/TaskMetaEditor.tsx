@@ -74,9 +74,17 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
     if (notePath === lastRemoteRef.current.notePath && (task.notePath ?? '') !== notePath) {
       setNotePath(task.notePath ?? '');
     }
+    // These controls save immediately, so they have no unsaved draft to
+    // protect. Always follow store/remote updates; otherwise completing a task
+    // in another view leaves a stale checked value in this drawer.
+    if (task.start !== start) setStart(task.start);
+    if (task.end !== end) setEnd(task.end);
+    if ((task.color ?? '') !== color) setColor(task.color ?? '');
+    if (!!task.isMain !== isMain) setIsMain(!!task.isMain);
+    if (!!task.completed !== completed) setCompleted(!!task.completed);
     lastRemoteRef.current = { name: task.name, notePath: task.notePath ?? '' };
     // 依赖列表列全 task 相关字段，但通过 ref 保证仅 task.id 变化时执行重置
-  }, [task.id, task.name, task.start, task.end, task.color, task.isMain, task.completed, task.notePath, name, notePath]);
+  }, [task.id, task.name, task.start, task.end, task.color, task.isMain, task.completed, task.notePath, name, notePath, start, end, color, isMain, completed]);
 
   // ── 即时保存：字段失焦或变化时写入 store ───────────────────
   // 名称：失焦时保存（避免输入过程频繁触发）

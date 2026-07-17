@@ -6,7 +6,7 @@
 
 import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
-import { ListChecks, Plus, Search } from 'lucide-react';
+import { ListChecks, Plus, RotateCcw, Search } from 'lucide-react';
 import type { ReviewTask, EbbSettings, ComplexityLevel } from '../types';
 import { computeRounds, getReviewTopicKey, isOverdue, isDueToday, getDateLabel } from '../scheduler';
 import { getPointWeight } from '../complexity';
@@ -356,6 +356,13 @@ interface BoardCardProps {
   // 拖拽 ID：使用下一轮任务 ID（已完成主题使用首个任务 ID 作为占位）
   const draggableId = nextTask?.id || group[0]?.id || topicName;
   const managementTask = nextTask ?? group[group.length - 1];
+  const latestCompletedTask = [...group]
+    .filter((task) => task.isCompleted)
+    .sort((a, b) =>
+      (b.roundOrder ?? 0) - (a.roundOrder ?? 0)
+      || (b.completedDate || '').localeCompare(a.completedDate || '')
+      || (b.dueDate || '').localeCompare(a.dueDate || ''),
+    )[0];
 
   const cardContent = (
     <div onClick={() => {}}>
@@ -389,6 +396,17 @@ interface BoardCardProps {
           </div>
         </div>
         <div className="eb-board-card-actions">
+          {latestCompletedTask && (
+            <button
+              type="button"
+              className="eb-icon-btn"
+              onClick={(e) => { e.stopPropagation(); taskActions.onToggle(latestCompletedTask.id); }}
+              title="取消最近一轮完成"
+              aria-label={`取消${topicName}最近一轮完成`}
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
           {nextTask && (
             <>
               <button

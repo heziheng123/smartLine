@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, memo } from 'react';
-import { Search, ChevronRight, CircleDashed, ListChecks, Plus } from 'lucide-react';
+import { Search, ChevronRight, CircleDashed, ListChecks, Plus, RotateCcw } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
@@ -214,6 +214,13 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks, ta
   // 检查是否未绑定节点（优先检查待复习任务，若无则检查最新的任务，避免历史包袱干扰）
   const taskToCheck = nextTask || topicTasks[topicTasks.length - 1];
   const isUnlinked = taskToCheck ? !taskToCheck.graphNodeId : false;
+  const latestCompletedTask = [...topicTasks]
+    .filter((task) => task.isCompleted)
+    .sort((a, b) =>
+      (b.roundOrder ?? 0) - (a.roundOrder ?? 0)
+      || (b.completedDate || '').localeCompare(a.completedDate || '')
+      || (b.dueDate || '').localeCompare(a.dueDate || ''),
+    )[0];
 
   return (
     <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''}`} style={{ '--accent': accentColor } as React.CSSProperties}>
@@ -273,6 +280,17 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks, ta
           style={{ opacity: 1 }}
           onClick={(event) => event.stopPropagation()}
         >
+          {latestCompletedTask && (
+            <button
+              type="button"
+              className="eb-icon-btn"
+              onClick={() => taskActions.onToggle(latestCompletedTask.id)}
+              title="取消最近一轮完成"
+              aria-label={`取消${stat.topicName}最近一轮完成`}
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
           {taskToCheck && (
             <>
               <button
@@ -329,15 +347,19 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks, ta
                 }
 
                 return (
-                  <div 
+                  <button
+                    type="button"
                     key={t.id}
                     className={`flex flex-col items-center justify-center w-14 h-14 rounded-full border-[1.5px] ${ringColor} ${bgColor} transition-all`}
+                    onClick={() => taskActions.onToggle(t.id)}
+                    title={t.isCompleted ? `取消第 ${idx + 1} 轮完成` : `标记第 ${idx + 1} 轮完成`}
+                    aria-label={t.isCompleted ? `取消第 ${idx + 1} 轮完成` : `标记第 ${idx + 1} 轮完成`}
                   >
                     <span className="text-[10px] font-medium leading-none mb-0.5">R{idx + 1}</span>
                     <span className="text-[8px] opacity-70 leading-none">
                       {t.dueDate.slice(5).replace('-', '.')}
                     </span>
-                  </div>
+                  </button>
                 );
               })}
             </div>

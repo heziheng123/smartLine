@@ -6,6 +6,8 @@ import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { parseSourceId } from '@/components/dailySchedule/conversion';
+import { getReviewTopicKey } from '@/ebb/scheduler';
 import { createScopedStorage } from '@/utils/persistence';
 
 export const WORKSPACE_SCHEMA_VERSION = 1;
@@ -121,6 +123,11 @@ function isDate(value: unknown): value is string {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+function isTime(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return false;
+  return true;
+}
+
 export function validateWorkspaceBackup(value: unknown): {
   backup?: WorkspaceBackup;
   summary?: WorkspaceBackupSummary;
@@ -157,7 +164,10 @@ export function validateWorkspaceBackup(value: unknown): {
   }
   if (!backup.timeline.groups.every((group) => isRecord(group)
     && typeof group.id === 'string' && typeof group.name === 'string'
-    && isDate(group.start) && isDate(group.end) && Array.isArray(group.children))) {
+    && isDate(group.start) && isDate(group.end) && Array.isArray(group.children)
+    && group.children.every((task) => isRecord(task)
+      && typeof task.id === 'string' && typeof task.name === 'string'
+      && isDate(task.start) && isDate(task.end) && Array.isArray(task.blocks)))) {
     errors.push('项目分组包含缺失字段或无效日期。');
   }
   if (!backup.timeline.notes.every((note) => isRecord(note)
@@ -213,7 +223,10 @@ export function validateWorkspaceBackup(value: unknown): {
   const collections: Array<[string, unknown[]]> = [
     ['时间轴任务', backup.timeline.tasks],
     ['项目分组', backup.timeline.groups],
+    ['便签', backup.timeline.notes],
+    ['里程碑', backup.timeline.milestones],
     ['EBB 轮次', backup.ebb.reviewTasks],
+    ['EBB 收件箱', backup.ebb.inboxItems],
     ['EBB 大纲', backup.ebb.outlineNodes],
     ['知识节点', backup.graph.nodes],
   ];
@@ -240,9 +253,126 @@ export function validateWorkspaceBackup(value: unknown): {
     if (!isDate(task.dueDate)) issues.push(`EBB 轮次“${task.topicName}”日期无效`);
     if (task.graphNodeId && !graphIds.has(task.graphNodeId)) issues.push(`EBB 轮次“${task.topicName}”绑定节点不存在`);
   }
+  const timelineTaskMap = new Map<string, TimelineData['tasks'][number]>();
+  for (const task of backup.timeline.tasks) timelineTaskMap.set(task.id, task);
+  for (const group of backup.timeline.groups) {
+    if (group.start > group.end) issues.push(`项目分组“${group.name}”的开始日期晚于结束日期`);
+    if (new Set(group.children.map((task) => task.id)).size !== group.children.length) issues.push(`项目分组“${group.name}”存在重复子任务`);
+    for (const task of group.children) {
+      if (!timelineTaskMap.has(task.id)) timelineTaskMap.set(task.id, task);
+    }
+  }
+  const taskGroupOwners = new Map<string, string>();
+  for (const group of backup.timeline.groups) {
+    for (const task of group.children) {
+      const previousGroup = taskGroupOwners.get(task.id);
+      if (previousGroup && previousGroup !== group.id) issues.push(`任务“${task.name}”同时属于多个项目分组`);
+      taskGroupOwners.set(task.id, group.id);
+    }
+  }
+  for (const note of backup.timeline.notes) {
+    if (note.endDate !== undefined && !isDate(note.endDate)) issues.push(`便签“${note.name}”的结束日期无效`);
+    if (note.endDate && note.date > note.endDate) issues.push(`便签“${note.name}”的开始日期晚于结束日期`);
+  }
+  for (const task of timelineTaskMap.values()) {
+    if (task.start > task.end) issues.push(`项目“${task.name}”的开始日期晚于结束日期`);
+    const blockIds = new Set<string>();
+    for (const block of task.blocks) {
+      if (!isRecord(block) || typeof block.id !== 'string' || (block.type !== 'text' && block.type !== 'smart-task')) {
+        issues.push(`项目“${task.name}”包含无效任务块`);
+        continue;
+      }
+      if (blockIds.has(block.id)) issues.push(`项目“${task.name}”存在重复任务块 ID`);
+      blockIds.add(block.id);
+      if (block.type !== 'smart-task') continue;
+      if (!isRecord(block.header)) {
+        issues.push(`项目“${task.name}”包含无效智能任务块`);
+        continue;
+      }
+      const title = typeof block.header.title === 'string' ? block.header.title : block.id;
+      if (typeof block.header.isCompleted !== 'boolean') issues.push(`任务“${title}”的完成状态无效`);
+      if (typeof block.header.duration !== 'number' || !Number.isFinite(block.header.duration) || block.header.duration <= 0) issues.push(`任务“${title}”的时长无效`);
+      if (!isDate(block.header.date)) issues.push(`任务“${title}”的计划日期无效`);
+      if (block.header.deadline !== undefined && !isDate(block.header.deadline)) issues.push(`任务“${title}”的截止日期无效`);
+      if (block.header.completedDate !== undefined && !isDate(block.header.completedDate)) issues.push(`任务“${title}”的完成日期无效`);
+      if (block.header.isCompleted === true && !block.header.completedDate) issues.push(`任务“${title}”已完成但缺少完成日期`);
+      const boundIds = new Set<string>();
+      if (typeof block.header.graphNodeId === 'string' && block.header.graphNodeId) boundIds.add(block.header.graphNodeId);
+      if (Array.isArray(block.header.graphNodeIds)) {
+        block.header.graphNodeIds.forEach((id) => { if (typeof id === 'string' && id) boundIds.add(id); });
+      }
+      boundIds.forEach((nodeId) => {
+        if (!graphIds.has(nodeId)) issues.push(`任务“${title}”绑定的知识节点不存在`);
+      });
+    }
+  }
+
+  const outlineIds = new Set(backup.ebb.outlineNodes.map((node) => node.id));
+  for (const node of backup.ebb.outlineNodes) {
+    if (node.parentId && !outlineIds.has(node.parentId)) issues.push(`EBB 大纲节点“${node.name}”的父节点不存在`);
+    const uniqueChildren = new Set(node.childrenIds);
+    if (uniqueChildren.size !== node.childrenIds.length) issues.push(`EBB 大纲节点“${node.name}”存在重复子节点`);
+    for (const childId of node.childrenIds) {
+      const child = backup.ebb.outlineNodes.find((candidate) => candidate.id === childId);
+      if (!child) issues.push(`EBB 大纲节点“${node.name}”引用的子节点不存在`);
+      else if (child.parentId !== node.id) issues.push(`EBB 大纲节点“${node.name}”的父子关系不一致`);
+    }
+    const visited = new Set<string>([node.id]);
+    let parentId = node.parentId;
+    while (parentId) {
+      if (visited.has(parentId)) {
+        issues.push(`EBB 大纲节点“${node.name}”存在父子循环`);
+        break;
+      }
+      visited.add(parentId);
+      parentId = backup.ebb.outlineNodes.find((candidate) => candidate.id === parentId)?.parentId ?? null;
+    }
+  }
+
+  const roundOrdersByTopic = new Map<string, Set<number>>();
+  for (const task of backup.ebb.reviewTasks.filter((reviewTask) => !reviewTask.isArchived)) {
+    if (task.outlineNodeId && !outlineIds.has(task.outlineNodeId)) issues.push(`EBB 轮次“${task.topicName}”绑定的大纲节点不存在`);
+    if (task.completedDate !== undefined && !isDate(task.completedDate)) issues.push(`EBB 轮次“${task.topicName}”的完成日期无效`);
+    if (task.isCompleted && !task.completedDate) issues.push(`EBB 轮次“${task.topicName}”已完成但缺少完成日期`);
+    if (task.roundOrder !== undefined) {
+      if (!Number.isInteger(task.roundOrder) || task.roundOrder <= 0) {
+        issues.push(`EBB 轮次“${task.topicName}”的轮次编号无效`);
+        continue;
+      }
+      const topicKey = getReviewTopicKey(task);
+      const orders = roundOrdersByTopic.get(topicKey) ?? new Set<number>();
+      if (orders.has(task.roundOrder)) issues.push(`EBB 主题“${task.topicName}”存在重复轮次编号`);
+      orders.add(task.roundOrder);
+      roundOrdersByTopic.set(topicKey, orders);
+    }
+  }
+
+  const reviewIds = new Set(backup.ebb.reviewTasks.map((task) => task.id));
   for (const [date, schedule] of Object.entries(backup.daily.schedules)) {
     if (!isDate(date) || !isRecord(schedule) || !Array.isArray(schedule.items) || !Array.isArray(schedule.blocks)) {
       issues.push(`每日安排 ${date} 格式无效`);
+      continue;
+    }
+    const scheduleIds = new Set<string>();
+    for (const entry of [...schedule.items, ...schedule.blocks]) {
+      if (scheduleIds.has(entry.id)) issues.push(`每日安排 ${date} 存在重复条目 ID`);
+      scheduleIds.add(entry.id);
+      if (entry.source === 'free') continue;
+      const parsed = parseSourceId(entry.sourceId);
+      if (!parsed) {
+        issues.push(`每日安排 ${date} 包含无效来源`);
+      } else if (parsed.source === 'review' && (!parsed.reviewId || !reviewIds.has(parsed.reviewId))) {
+        issues.push(`每日安排 ${date} 引用的 EBB 轮次不存在`);
+      } else if (parsed.source === 'project') {
+        const project = parsed.parentTaskId ? timelineTaskMap.get(parsed.parentTaskId) : undefined;
+        const blockExists = project && (!parsed.blockId || project.blocks.some((block) => block.id === parsed.blockId));
+        if (!blockExists) issues.push(`每日安排 ${date} 引用的项目任务不存在`);
+      }
+    }
+    for (const block of schedule.blocks) {
+      if (!isTime(block.startTime) || !isTime(block.endTime) || block.startTime >= block.endTime) {
+        issues.push(`每日安排 ${date} 包含无效时间块`);
+      }
     }
   }
 

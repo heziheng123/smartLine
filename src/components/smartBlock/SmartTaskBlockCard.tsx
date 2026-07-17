@@ -13,6 +13,7 @@ import {
   Clock,
   Trash2,
   ChevronDown,
+  RotateCcw,
 } from 'lucide-react';
 import type { SmartTaskBlock, SmartTaskHeader } from '@/types';
 import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
@@ -236,6 +237,8 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           type="button"
           className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleToggle(); }}
+          title={header.isCompleted ? '取消完成' : '标记完成'}
+          aria-label={header.isCompleted ? '取消完成' : '标记完成'}
         >
           {header.isCompleted && <Check size={12} strokeWidth={3} />}
         </motion.button>
@@ -299,6 +302,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
           onClick={handleToggle}
           title={header.isCompleted ? '标记未完成' : '标记完成'}
+          aria-label={header.isCompleted ? '取消完成' : '标记完成'}
         >
           {header.isCompleted && <Check size={11} strokeWidth={3} />}
         </motion.button>
@@ -446,6 +450,17 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
             {/* Hover 快捷菜单（仅删除） */}
             <div className="stb-actions">
+              {header.isCompleted && (
+                <button
+                  type="button"
+                  className="stb-action-btn"
+                  onClick={handleToggle}
+                  title="取消完成"
+                  aria-label="取消完成"
+                >
+                  <RotateCcw size={12} />
+                </button>
+              )}
               <button
                 type="button"
                 className="stb-action-btn stb-action-btn--danger"

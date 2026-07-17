@@ -157,6 +157,7 @@ interface BlockModeViewProps {
   selectedDate: string;
   /** 已安排的 sourceId 集合（来自 items + blocks，由父组件计算） */
   scheduledSourceIds: Set<string>;
+  onReviewToggleError: (error: string | null) => void;
 }
 
 // ── 主组件 ──────────────────────────────────────────────────
@@ -164,6 +165,7 @@ interface BlockModeViewProps {
 const BlockModeView: React.FC<BlockModeViewProps> = ({
   selectedDate,
   scheduledSourceIds,
+  onReviewToggleError,
 }) => {
   const today = todayStr();
   const [showCompletedPool, setShowCompletedPool] = useState(false);
@@ -482,7 +484,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
       if (block.source === 'review') {
         const reviewId = block.sourceId.replace('review-', '');
-        ebbToggleReviewTask(reviewId);
+        onReviewToggleError(ebbToggleReviewTask(reviewId));
       } else if (block.source === 'project') {
         const parsed = parseSourceId(block.sourceId);
         if (!parsed || parsed.source !== 'project') return;
@@ -501,13 +503,13 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         }
       }
     },
-    [blocks, ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader],
+    [blocks, ebbToggleReviewTask, onReviewToggleError, tlTasks, tlUpdateBlockHeader],
   );
 
   const handleUndoCompletedPoolItem = useCallback((item: PoolItem) => {
     if (item.source === 'review') {
       const parsed = parseSourceId(item.sourceId);
-      if (parsed?.source === 'review') ebbToggleReviewTask(parsed.reviewId);
+      if (parsed?.source === 'review') onReviewToggleError(ebbToggleReviewTask(parsed.reviewId));
       return;
     }
     if (item.source !== 'project') return;
@@ -520,7 +522,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       isCompleted: false,
       completedDate: undefined,
     });
-  }, [ebbToggleReviewTask, tlTasks, tlUpdateBlockHeader]);
+  }, [ebbToggleReviewTask, onReviewToggleError, tlTasks, tlUpdateBlockHeader]);
 
   const handleRemove = useCallback(
     (blockId: string) => {

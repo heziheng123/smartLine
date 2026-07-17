@@ -171,11 +171,8 @@ function isValidGroup(group: unknown): group is TaskGroup {
 }
 
 function normalizeTimelineData(data: TimelineData): TimelineData {
-  return {
-    tasks: Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask).map(normalizeTask) : [],
-    notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
-    milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
-    groups: Array.isArray(data?.groups)
+  const tasks = Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask).map(normalizeTask) : [];
+  const groups = Array.isArray(data?.groups)
       ? data.groups
         .filter(isValidGroup)
         .map((group) => ({
@@ -187,7 +184,28 @@ function normalizeTimelineData(data: TimelineData): TimelineData {
             }))
             : [],
         }))
-      : [],
+      : [];
+  const canonicalTasks = new Map(tasks.map((task) => [task.id, task]));
+  for (const group of groups) {
+    for (const child of group.children) {
+      canonicalTasks.set(child.id, {
+        ...(canonicalTasks.get(child.id) ?? child),
+        groupId: group.id,
+      });
+    }
+  }
+  const reconciledGroups = groups.map((group) => ({
+    ...group,
+    children: group.children.map((child) => ({
+      ...(canonicalTasks.get(child.id) ?? child),
+      groupId: group.id,
+    })),
+  }));
+  return {
+    tasks: [...canonicalTasks.values()],
+    notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
+    milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
+    groups: reconciledGroups,
   };
 }
 
@@ -375,7 +393,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         deleteTask: (taskId) => {
           const state = get();
-          const taskToDelete = state.tasks.find((t) => t.id === taskId);
+          const taskToDelete = state.tasks.find((t) => t.id === taskId)
+            ?? state.groups.flatMap((group) => group.children).find((task) => task.id === taskId);
           if (taskToDelete) {
             const sourceIds = taskToDelete.blocks
               .filter((b) => b.type === 'smart-task')
@@ -418,7 +437,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         updateTaskBlocks: (taskId, blocks) => {
           const state = get();
-          const oldTask = state.tasks.find((t) => t.id === taskId);
+          const oldTask = state.tasks.find((t) => t.id === taskId)
+            ?? state.groups.flatMap((group) => group.children).find((task) => task.id === taskId);
           if (oldTask) {
             const newBlockIds = new Set(blocks.map((b) => b.id));
             const removedSourceIds = oldTask.blocks
