@@ -35,6 +35,23 @@ function getInitialGraphData(): GraphData {
   return { nodes: [] };
 }
 
+function isValidGraphNode(node: unknown): node is GraphNode {
+  if (!node || typeof node !== 'object') return false;
+  const record = node as Record<string, unknown>;
+  return typeof record.id === 'string'
+    && record.id.trim().length > 0
+    && typeof record.name === 'string'
+    && (typeof record.parentId === 'string' || record.parentId === null)
+    && typeof record.createdAt === 'number'
+    && Number.isFinite(record.createdAt)
+    && (typeof record.isArchived === 'boolean' || record.isArchived === undefined)
+    && (
+      record.status === 'activated'
+      || record.status === 'unactivated'
+      || record.status === undefined
+    );
+}
+
 function clearPersistedParentStatuses(nodes: GraphNode[]): GraphNode[] {
   const parentIds = new Set(
     nodes.filter((node) => !node.isArchived && node.parentId).map((node) => node.parentId as string),
@@ -44,6 +61,48 @@ function clearPersistedParentStatuses(nodes: GraphNode[]): GraphNode[] {
       ? { ...node, status: undefined }
       : node
   );
+}
+
+function normalizeGraphNodes(nodes: GraphNode[]): GraphNode[] {
+  const deduplicated = new Map<string, GraphNode>();
+  nodes.forEach((node) => deduplicated.set(node.id, node));
+
+  const validIds = new Set(deduplicated.keys());
+  const normalized = [...deduplicated.values()].map((node) => ({
+    ...node,
+    parentId:
+      node.parentId
+      && node.parentId !== node.id
+      && validIds.has(node.parentId)
+        ? node.parentId
+        : null,
+    status:
+      node.status === 'activated' || node.status === 'unactivated'
+        ? node.status
+        : undefined,
+  }));
+  const nodeById = new Map(normalized.map((node) => [node.id, node]));
+  const visitState = new Map<string, 'visiting' | 'visited'>();
+
+  const breakCycles = (nodeId: string) => {
+    const node = nodeById.get(nodeId);
+    if (!node || visitState.get(nodeId) === 'visited') return;
+    visitState.set(nodeId, 'visiting');
+
+    if (node.parentId) {
+      const parentState = visitState.get(node.parentId);
+      if (parentState === 'visiting') {
+        node.parentId = null;
+      } else {
+        breakCycles(node.parentId);
+      }
+    }
+
+    visitState.set(nodeId, 'visited');
+  };
+
+  normalized.forEach((node) => breakCycles(node.id));
+  return clearPersistedParentStatuses(normalized);
 }
 
 async function saveGraphDataAsync(data: GraphData) {
@@ -108,7 +167,9 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             }
 
             if (raw) {
-              const nodes = clearPersistedParentStatuses(raw.nodes ?? []);
+              const nodes = normalizeGraphNodes(
+                Array.isArray(raw.nodes) ? raw.nodes.filter(isValidGraphNode) : [],
+              );
               set({
                 nodes,
                 isHydrated: true,
@@ -280,25 +341,13 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
         },
 
         importGraphData: (data: GraphData) => {
-          const isValidGraphNode = (n: unknown): n is GraphNode => {
-            if (!n || typeof n !== 'object') return false;
-            const r = n as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.name === 'string'
-              && (typeof r.parentId === 'string' || r.parentId === null)
-              && typeof r.createdAt === 'number'
-              && (typeof r.isArchived === 'boolean' || r.isArchived === undefined);
-          };
-
           const normalized: GraphData = {
-            nodes: clearPersistedParentStatuses(
-              Array.isArray(data?.nodes) ? data.nodes.filter(isValidGraphNode) : [],
-            ),
+            nodes: Array.isArray(data?.nodes) ? data.nodes.filter(isValidGraphNode) : [],
           };
 
           const current = get();
           const importedIds = new Set(normalized.nodes.map((x) => x.id));
-          const mergedNodes = clearPersistedParentStatuses([
+          const mergedNodes = normalizeGraphNodes([
             ...current.nodes.filter((x) => !importedIds.has(x.id)),
             ...normalized.nodes,
           ]);

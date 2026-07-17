@@ -505,6 +505,17 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
           set((state) => {
             const allTasks = getUniqueTasks(state.tasks, state.groups);
+            const hasOtherCompletedBinding = (nodeId: string, requireEbbSync = false) =>
+              allTasks.some((otherTask) =>
+                otherTask.blocks.some(
+                  (otherBlock) =>
+                    otherBlock.type === 'smart-task'
+                    && !(otherTask.id === taskId && otherBlock.id === blockId)
+                    && otherBlock.header.isCompleted
+                    && (!requireEbbSync || shouldAutoSyncEbb(otherBlock.header))
+                    && getValidGraphNodeIds(otherBlock.header).includes(nodeId),
+                ),
+              );
             const topLevelTargetBlock = state.tasks
               .find((task) => task.id === taskId)
               ?.blocks.find(
@@ -526,15 +537,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               const isNewlyCompleted = headerPatch.isCompleted === true && !targetBlock.header.isCompleted;
               const isNewlyUncompleted = headerPatch.isCompleted === false && targetBlock.header.isCompleted;
               const isAlreadyCompleted = targetBlock.header.isCompleted && headerPatch.isCompleted !== false;
-              const hasOtherCompleted = (nodeId: string) => allTasks.some((otherTask) =>
-                otherTask.blocks.some((otherBlock) =>
-                  otherBlock.type === 'smart-task'
-                  && otherBlock.id !== blockId
-                  && otherBlock.header.isCompleted
-                  && getValidGraphNodeIds(otherBlock.header).includes(nodeId),
-                ),
-              );
-
               if (isNewlyCompleted) {
                 nodesToActivate.push(...newGraphNodeIds);
                 newGraphNodeIds.forEach((nodeId) => {
@@ -550,15 +552,21 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 });
               } else if (isNewlyUncompleted) {
                 oldGraphNodeIds.forEach((nodeId) => {
-                  if (!hasOtherCompleted(nodeId)) nodesToDeactivate.push(nodeId);
+                  const shouldReleaseNode = !hasOtherCompletedBinding(nodeId);
+                  if (shouldReleaseNode) nodesToDeactivate.push(nodeId);
                   const graphNode = useGraphStore.getState().getNodeById(nodeId);
                   if (!graphNode) return;
-                  syncPayloads.push({
-                    action: 'remove',
-                    graphNodeId: nodeId,
-                    topicName: graphNode.name,
-                    tag: targetBlock.header.title,
-                  });
+                  const shouldRemoveEbb =
+                    shouldAutoSyncEbb(targetBlock.header)
+                    && !hasOtherCompletedBinding(nodeId, true);
+                  if (shouldRemoveEbb) {
+                    syncPayloads.push({
+                      action: 'remove',
+                      graphNodeId: nodeId,
+                      topicName: graphNode.name,
+                      tag: targetBlock.header.title,
+                    });
+                  }
                 });
               } else if (
                 isAlreadyCompleted
@@ -579,15 +587,49 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   });
                 });
                 removedNodes.forEach((nodeId) => {
-                  if (!hasOtherCompleted(nodeId)) nodesToDeactivate.push(nodeId);
+                  const shouldReleaseNode = !hasOtherCompletedBinding(nodeId);
+                  if (shouldReleaseNode) nodesToDeactivate.push(nodeId);
                   const graphNode = useGraphStore.getState().getNodeById(nodeId);
                   if (!graphNode) return;
-                  syncPayloads.push({
-                    action: 'remove',
-                    graphNodeId: nodeId,
-                    topicName: graphNode.name,
-                    tag: targetBlock.header.title,
-                  });
+                  const shouldRemoveEbb =
+                    shouldAutoSyncEbb(targetBlock.header)
+                    && !hasOtherCompletedBinding(nodeId, true);
+                  if (shouldRemoveEbb) {
+                    syncPayloads.push({
+                      action: 'remove',
+                      graphNodeId: nodeId,
+                      topicName: graphNode.name,
+                      tag: targetBlock.header.title,
+                    });
+                  }
+                });
+              }
+
+              if (
+                isAlreadyCompleted
+                && headerPatch.autoSyncEbb !== undefined
+                && shouldAutoSyncEbb(targetBlock.header) !== shouldAutoSyncEbb(header)
+              ) {
+                const unchangedNodeIds = newGraphNodeIds.filter((id) => oldGraphNodeIds.includes(id));
+                unchangedNodeIds.forEach((nodeId) => {
+                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                  if (!graphNode) return;
+                  if (shouldAutoSyncEbb(header)) {
+                    syncPayloads.push({
+                      action: 'add',
+                      graphNodeId: nodeId,
+                      topicName: graphNode.name,
+                      tag: header.title,
+                      triggerSchedule: true,
+                    });
+                  } else if (!hasOtherCompletedBinding(nodeId, true)) {
+                    syncPayloads.push({
+                      action: 'remove',
+                      graphNodeId: nodeId,
+                      topicName: graphNode.name,
+                      tag: targetBlock.header.title,
+                    });
+                  }
                 });
               }
             }
@@ -625,20 +667,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 else if (isNewlyUncompleted && oldGraphNodeIds.length > 0) {
                   oldGraphNodeIds.forEach(nodeId => {
                     // 检查是否还有其他已完成的任务绑定了同一个节点
-                    let hasOtherCompleted = false;
-                    for (const otherTask of allTasks) {
-                      for (const otherBlock of otherTask.blocks) {
-                        if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
-                        if (!otherBlock.header.isCompleted) continue;
-                        
-                        const otherGraphNodeIds = getValidGraphNodeIds(otherBlock.header);
-                        if (otherGraphNodeIds.includes(nodeId)) {
-                          hasOtherCompleted = true;
-                          break;
-                        }
-                      }
-                      if (hasOtherCompleted) break;
-                    }
+                    const hasOtherCompleted = hasOtherCompletedBinding(nodeId);
 
                     if (!hasOtherCompleted) {
                       nodesToDeactivate.push(nodeId);
@@ -647,16 +676,24 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     const graphNode = useGraphStore.getState().getNodeById(nodeId);
                     if (!graphNode) return;
                     const actualTopicName = graphNode.name;
-                    syncPayloads.push({
-                      action: 'remove',
-                      graphNodeId: nodeId,
-                      topicName: actualTopicName,
-                      tag: block.header.title,
-                    });
+                    const shouldRemoveEbb =
+                      shouldAutoSyncEbb(block.header)
+                      && !hasOtherCompletedBinding(nodeId, true);
+                    if (shouldRemoveEbb) {
+                      syncPayloads.push({
+                        action: 'remove',
+                        graphNodeId: nodeId,
+                        topicName: actualTopicName,
+                        tag: block.header.title,
+                      });
+                    }
                   });
                 }
                 // 3. 如果在已完成的状态下，修改了绑定的节点（例如新增或删除了某个节点的绑定）
-                else if (isAlreadyCompleted && headerPatch.graphNodeIds) {
+                else if (
+                  isAlreadyCompleted
+                  && (headerPatch.graphNodeIds !== undefined || headerPatch.graphNodeId !== undefined)
+                ) {
                   const addedNodes = newGraphNodeIds.filter(id => !oldGraphNodeIds.includes(id));
                   const removedNodes = oldGraphNodeIds.filter(id => !newGraphNodeIds.includes(id));
 
@@ -680,19 +717,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   // 处理移除的绑定
                   if (removedNodes.length > 0) {
                     removedNodes.forEach(nodeId => {
-                      let hasOtherCompleted = false;
-                      for (const otherTask of allTasks) {
-                        for (const otherBlock of otherTask.blocks) {
-                          if (otherBlock.type !== 'smart-task' || otherBlock.id === blockId) continue;
-                          if (!otherBlock.header.isCompleted) continue;
-                          const otherGraphNodeIds = getValidGraphNodeIds(otherBlock.header);
-                          if (otherGraphNodeIds.includes(nodeId)) {
-                            hasOtherCompleted = true;
-                            break;
-                          }
-                        }
-                        if (hasOtherCompleted) break;
-                      }
+                      const hasOtherCompleted = hasOtherCompletedBinding(nodeId);
 
                       if (!hasOtherCompleted) {
                         nodesToDeactivate.push(nodeId);
@@ -701,14 +726,47 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       const graphNode = useGraphStore.getState().getNodeById(nodeId);
                       if (!graphNode) return;
                       const actualTopicName = graphNode.name;
+                      const shouldRemoveEbb =
+                        shouldAutoSyncEbb(block.header)
+                        && !hasOtherCompletedBinding(nodeId, true);
+                      if (shouldRemoveEbb) {
+                        syncPayloads.push({
+                          action: 'remove',
+                          graphNodeId: nodeId,
+                          topicName: actualTopicName,
+                          tag: block.header.title,
+                        });
+                      }
+                    });
+                  }
+                }
+
+                if (
+                  isAlreadyCompleted
+                  && headerPatch.autoSyncEbb !== undefined
+                  && shouldAutoSyncEbb(block.header) !== shouldAutoSyncEbb(header)
+                ) {
+                  const unchangedNodeIds = newGraphNodeIds.filter((id) => oldGraphNodeIds.includes(id));
+                  unchangedNodeIds.forEach((nodeId) => {
+                    const graphNode = useGraphStore.getState().getNodeById(nodeId);
+                    if (!graphNode) return;
+                    if (shouldAutoSyncEbb(header)) {
+                      syncPayloads.push({
+                        action: 'add',
+                        graphNodeId: nodeId,
+                        topicName: graphNode.name,
+                        tag: header.title,
+                        triggerSchedule: true,
+                      });
+                    } else if (!hasOtherCompletedBinding(nodeId, true)) {
                       syncPayloads.push({
                         action: 'remove',
                         graphNodeId: nodeId,
-                        topicName: actualTopicName,
+                        topicName: graphNode.name,
                         tag: block.header.title,
                       });
-                    });
-                  }
+                    }
+                  });
                 }
               }
 

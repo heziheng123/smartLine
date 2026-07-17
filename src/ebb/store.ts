@@ -73,6 +73,16 @@ function saveEbbData(data: EbbData) {
   saveEbbDataAsync(data);
 }
 
+function buildAbsoluteScheduleDates(baseDate: string, intervals: number[], count = intervals.length): string[] {
+  if (intervals.length === 0 || count <= 0) return [];
+  const lastIndex = intervals.length - 1;
+  return Array.from({ length: count }, (_, index) => {
+    const overflowDays = Math.max(0, index - lastIndex);
+    const interval = intervals[Math.min(index, lastIndex)] + overflowDays;
+    return addDays(baseDate, interval);
+  });
+}
+
 // ── 标签颜色自动分配 ────────────────────────────────────────
 
 function ensureTagColors(tasks: ReviewTask[], settings: EbbSettings): EbbSettings {
@@ -833,7 +843,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
             let newReviewTasks = [...state.reviewTasks];
             const nowStr = todayStr();
-            const tomorrowStr = addDays(nowStr, 1);
             
             // === 条件执行（是否排期） ===
             if (!triggerSchedule) {
@@ -846,20 +855,16 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             if (existingTasks.length === 0) {
               // 分支 1：完全新学 -> 创建全新的 ReviewTask 序列
               const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
-              let currentDueDate = tomorrowStr;
+              const dueDates = buildAbsoluteScheduleDates(nowStr, intervals);
               const generated: ReviewTask[] = [];
               
               for (let i = 0; i < intervals.length; i++) {
-                const interval = intervals[i];
-                if (i > 0) {
-                  currentDueDate = addDays(currentDueDate, interval);
-                }
                 generated.push({
                   id: genId('rt'),
                   topicName,
                   tag,
                   graphNodeId,
-                  dueDate: currentDueDate,
+                  dueDate: dueDates[i],
                   isCompleted: false,
                   complexity: 'normal',
                   smStatus: 'scheduled',
@@ -875,15 +880,14 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               if (uncompletedTasks.length > 0) {
                 // 将尚未完成的轮次重置，强制拉回到明天
                 const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
-                let currentDueDate = tomorrowStr;
+                const dueDates = buildAbsoluteScheduleDates(nowStr, intervals, uncompletedTasks.length);
                 
                 const updatedIds = new Set(uncompletedTasks.map(t => t.id));
                 
                 let i = 0;
                 newReviewTasks = newReviewTasks.map(t => {
                   if (updatedIds.has(t.id)) {
-                    const newDueDate = i === 0 ? tomorrowStr : addDays(currentDueDate, intervals[Math.min(i, intervals.length - 1)]);
-                    currentDueDate = newDueDate;
+                    const newDueDate = dueDates[i];
                     i++;
                     return {
                       ...t,
@@ -896,19 +900,16 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               } else {
                 // 全部完成了？说明是彻底的重新学习，开启一轮新循环！
                 const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
-                let currentDueDate = tomorrowStr;
+                const dueDates = buildAbsoluteScheduleDates(nowStr, intervals);
                 const generated: ReviewTask[] = [];
                 
                 for (let i = 0; i < intervals.length; i++) {
-                  if (i > 0) {
-                    currentDueDate = addDays(currentDueDate, intervals[i]);
-                  }
                   generated.push({
                     id: genId('rt'),
                     topicName,
                     tag,
                     graphNodeId,
-                    dueDate: currentDueDate,
+                    dueDate: dueDates[i],
                     isCompleted: false,
                     complexity: 'normal',
                     smStatus: 'scheduled',

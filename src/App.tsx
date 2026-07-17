@@ -31,6 +31,13 @@ type TimelineNavigateDetail = {
   taskId?: string;
 };
 
+function mapLiveblocksStatus(status: string | undefined) {
+  if (status === 'connected') return 'connected' as const;
+  if (status === 'connecting' || status === 'reconnecting') return 'connecting' as const;
+  if (status === 'disconnected' || status === 'initial') return 'disconnected' as const;
+  return 'error' as const;
+}
+
 const TimelineView = React.lazy(() => import('@/components/TimelineView'));
 const EbbView = React.lazy(() => import('@/ebb/components/EbbView'));
 const DailyScheduleView = React.lazy(() => import('@/components/dailySchedule/DailyScheduleView'));
@@ -41,7 +48,8 @@ const KnowledgeGraphView = React.lazy(() =>
 );
 
 import { useGraphStore } from '@/graph/store';
-import { useEbbStore } from '@/ebb/store';
+import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
+import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 
 const ViewFallback: React.FC = () => (
   <div className="tl-app-split tl-app-split--ebb">
@@ -54,6 +62,14 @@ const ViewFallback: React.FC = () => (
 const App: React.FC = () => {
   const { isHydrated: isGraphHydrated, hydrateStore: hydrateGraphStore } = useGraphStore();
   const { isHydrated: isEbbHydrated, hydrateStore: hydrateEbbStore } = useEbbStore();
+  const {
+    isHydrated: isDailyHydrated,
+    hydrateStore: hydrateDailyStore,
+  } = useDailyScheduleStore();
+  const timelineLiveStatus = useTimelineStore((state) => state.liveblocks?.status);
+  const ebbLiveStatus = useEbbStore((state) => state.liveblocks?.status);
+  const dailyLiveStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
+  const graphLiveStatus = useGraphStore((state) => state.liveblocks?.status);
 
   // 选择性订阅：只关心 tasks/groups/notes/milestones 数据切片 + 各 CRUD 方法。
   // CRUD 方法在 zustand 中是 store 创建时一次性定义的稳定引用，
@@ -192,9 +208,14 @@ const App: React.FC = () => {
     }
     return dayjs().year();
   });
+  const hasAlignedDisplayYear = React.useRef(false);
+  const hasAttemptedAutoReconnect = React.useRef(false);
+  const hasStartedHydration = React.useRef(false);
 
   // 异步加载 IndexedDB 数据
   React.useEffect(() => {
+    if (hasStartedHydration.current) return;
+    hasStartedHydration.current = true;
     if (!isHydrated) {
       hydrateStore();
     }
@@ -204,7 +225,87 @@ const App: React.FC = () => {
     if (!isEbbHydrated) {
       hydrateEbbStore();
     }
-  }, [isHydrated, hydrateStore, isGraphHydrated, hydrateGraphStore, isEbbHydrated, hydrateEbbStore]);
+    if (!isDailyHydrated) {
+      hydrateDailyStore();
+    }
+  }, [
+    isHydrated,
+    hydrateStore,
+    isGraphHydrated,
+    hydrateGraphStore,
+    isEbbHydrated,
+    hydrateEbbStore,
+    isDailyHydrated,
+    hydrateDailyStore,
+  ]);
+
+  React.useEffect(() => {
+    if (!isHydrated || hasAlignedDisplayYear.current) return;
+    const years = tasks
+      .map((task) => splitDate(task.start).year)
+      .filter(Number.isFinite);
+    if (years.length === 0) return;
+    hasAlignedDisplayYear.current = true;
+    setDisplayYear(Math.min(...years));
+  }, [isHydrated, tasks]);
+
+  React.useEffect(() => {
+    if (
+      !isHydrated
+      || !isGraphHydrated
+      || !isEbbHydrated
+      || !isDailyHydrated
+      || hasAttemptedAutoReconnect.current
+    ) {
+      return;
+    }
+
+    hasAttemptedAutoReconnect.current = true;
+
+    const timelineState = useTimelineStore.getState();
+    if (timelineState.syncEnabled && timelineState.syncRoomCode) {
+      timelineState.liveblocks?.enterRoom?.(timelineState.syncRoomCode);
+    }
+
+    const ebbState = useEbbStore.getState();
+    if (ebbState.syncEnabled && ebbState.syncRoomCode) {
+      ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebbState.syncRoomCode}`);
+    }
+
+    const dailyState = useDailyScheduleStore.getState();
+    if (dailyState.syncEnabled && dailyState.syncRoomCode) {
+      dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${dailyState.syncRoomCode}`);
+    }
+
+    const graphState = useGraphStore.getState();
+    if (graphState.syncEnabled && graphState.syncRoomCode) {
+      graphState.liveblocks?.enterRoom?.(`graph-${graphState.syncRoomCode}`);
+    }
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated]);
+
+  React.useEffect(() => {
+    if (timelineLiveStatus) {
+      useTimelineStore.getState().setSyncStatus(mapLiveblocksStatus(timelineLiveStatus));
+    }
+  }, [timelineLiveStatus]);
+
+  React.useEffect(() => {
+    if (ebbLiveStatus) {
+      useEbbStore.getState().setSyncStatus(mapLiveblocksStatus(ebbLiveStatus));
+    }
+  }, [ebbLiveStatus]);
+
+  React.useEffect(() => {
+    if (dailyLiveStatus) {
+      useDailyScheduleStore.getState().setSyncStatus(mapLiveblocksStatus(dailyLiveStatus));
+    }
+  }, [dailyLiveStatus]);
+
+  React.useEffect(() => {
+    if (graphLiveStatus) {
+      useGraphStore.getState().setSyncStatus(mapLiveblocksStatus(graphLiveStatus));
+    }
+  }, [graphLiveStatus]);
 
   // 全局漫游导航监听
   React.useEffect(() => {
@@ -463,7 +564,7 @@ const App: React.FC = () => {
     setDialogType('sync');
   }, []);
 
-  if (!isHydrated || !isGraphHydrated || !isEbbHydrated) {
+  if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated) {
     return (
       <div className="tl-app flex items-center justify-center">
         <div className="text-slate-400 text-sm">正在加载数据...</div>

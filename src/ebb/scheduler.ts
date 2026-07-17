@@ -401,8 +401,10 @@ export function calcTodayPoints(tasks: ReviewTask[], settings?: EbbSettings): nu
 export function calcWeekPoints(tasks: ReviewTask[], settings?: EbbSettings): number {
   const { roundMap } = computeRounds(tasks);
   const now = dayjs();
-  // 用本地分量拼接周一和周日的日期字符串，避免 dayjs('YYYY-MM-DD') 偏移
-  const weekStart = now.startOf('week').add(1, 'day');
+  // Keep Sunday in the week that is ending. startOf('week') is Sunday,
+  // so calculate the distance from the current day back to Monday.
+  const daysSinceMonday = (now.day() + 6) % 7;
+  const weekStart = now.subtract(daysSinceMonday, 'day').startOf('day');
   const weekEnd = weekStart.add(6, 'day');
   const weekStartStr = `${weekStart.year()}-${String(weekStart.month() + 1).padStart(2, '0')}-${String(weekStart.date()).padStart(2, '0')}`;
   const weekEndStr = `${weekEnd.year()}-${String(weekEnd.month() + 1).padStart(2, '0')}-${String(weekEnd.date()).padStart(2, '0')}`;

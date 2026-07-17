@@ -122,6 +122,9 @@ interface DailyScheduleStore {
 }
 
 let _idCounter = 0;
+const pendingSourceIdsToRemove = new Set<string>();
+let dailyHydrationPromise: Promise<void> | null = null;
+
 function genScheduleId(): string {
   return `sch-${Date.now().toString(36)}-${(++_idCounter).toString(36)}`;
 }
@@ -134,7 +137,11 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
       return {
         schedules: getInitialSchedules(),
         isHydrated: false,
-        hydrateStore: async () => {
+        hydrateStore: () => {
+          if (get().isHydrated) return Promise.resolve();
+          if (dailyHydrationPromise) return dailyHydrationPromise;
+
+          dailyHydrationPromise = (async () => {
           try {
             let parsed = await dailyScheduleStorage.getItem<unknown>(STORAGE_KEY);
             if (!parsed) {
@@ -160,12 +167,27 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
                 };
               }
               set({ schedules: result, isHydrated: true });
+              if (pendingSourceIdsToRemove.size > 0) {
+                const pendingIds = [...pendingSourceIdsToRemove];
+                pendingSourceIdsToRemove.clear();
+                get().removeBySourceIds(pendingIds);
+              }
               return;
             }
           } catch (e) {
             console.warn('[daily-schedule] IndexedDB数据加载失败：', e);
           }
-          set({ isHydrated: true });
+            set({ isHydrated: true });
+            if (pendingSourceIdsToRemove.size > 0) {
+              const pendingIds = [...pendingSourceIdsToRemove];
+              pendingSourceIdsToRemove.clear();
+              get().removeBySourceIds(pendingIds);
+            }
+          })().finally(() => {
+            dailyHydrationPromise = null;
+          });
+
+          return dailyHydrationPromise;
         },
         syncEnabled: initialSyncSettings.enabled,
         syncRoomCode: initialSyncSettings.roomCode,
@@ -337,6 +359,10 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
 
         removeBySourceIds: (sourceIds) => {
           if (!sourceIds || sourceIds.length === 0) return;
+          if (!get().isHydrated) {
+            sourceIds.forEach((sourceId) => pendingSourceIdsToRemove.add(sourceId));
+            return;
+          }
           const ids = new Set(sourceIds);
           set((state) => {
             const schedules = { ...state.schedules };
