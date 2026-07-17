@@ -194,35 +194,24 @@ export const KnowledgeGraphView: React.FC = () => {
     const gray = '#64748b';
     const green = '#10b981';
     const gold = '#eab308';
-    const childrenByParentId = new Map<string, string[]>();
-    nodes.forEach((node) => {
-      if (node.isArchived || !node.parentId) return;
-      const children = childrenByParentId.get(node.parentId) ?? [];
-      children.push(node.id);
-      childrenByParentId.set(node.parentId, children);
-    });
-
     const getColor = (id: string, path = new Set<string>()): string => {
       if (path.has(id)) return gray;
-      const childIds = childrenByParentId.get(id) ?? [];
-      if (childIds.length === 0) {
-        const ownRounds = reviewTasks.filter(
-          (task) => !task.isArchived && task.graphNodeId === id,
-        );
-        const completedCount = ownRounds.filter((task) => task.isCompleted).length;
-        if (completedCount === 0) return gray;
-        return completedCount === ownRounds.length ? gold : green;
-      }
+      // 激活状态决定灰/非灰；EBB 轮次只决定已激活节点是绿色还是金色。
+      // 父节点的激活状态由 activationStates 按“所有子节点激活”计算，
+      // 因此不会因为刚生成了 0/7 的 EBB 轮次而错误回到灰色。
+      if (!(activationStates.get(id)?.isActivated ?? false)) return gray;
 
-      const nextPath = new Set(path).add(id);
-      const childColors = childIds.map((childId) => getColor(childId, nextPath));
-      if (childColors.every((color) => color === gold)) return gold;
-      if (childColors.every((color) => color === green || color === gold)) return green;
-      return gray;
+      const descendantIds = getDescendants(id);
+      const scopedIds = new Set([id, ...descendantIds]);
+      const rounds = reviewTasks.filter(
+        (task) => !task.isArchived && !!task.graphNodeId && scopedIds.has(task.graphNodeId),
+      );
+      if (rounds.length > 0 && rounds.every((task) => task.isCompleted)) return gold;
+      return green;
     };
 
     return getColor(nodeId);
-  }, [nodes, reviewTasks]);
+  }, [activationStates, getDescendants, reviewTasks]);
 
   const islandsData = useMemo(() => {
     const today = todayStr();
