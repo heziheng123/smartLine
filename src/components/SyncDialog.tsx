@@ -1,515 +1,276 @@
-// ============================================================
-// Smart Timeline - 同步设置对话框（三房间一键连接）
-// 一次性连接 Timeline + Ebb + DailySchedule 三个独立房间
-// ============================================================
-
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Cloud, Link, Unlink, Copy, Check, Upload, Download } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Cloud, Copy, Download, Eye, EyeOff, Link, RefreshCw, Unlink, Upload } from 'lucide-react';
 import { useTimelineStore } from '@/store';
-import { todayStr } from '@/utils/dateSafe';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
-import { useShallow } from 'zustand/react/shallow';
+import {
+  downloadWorkspaceBackup,
+  createWorkspaceBackup,
+  listLocalSnapshots,
+  restoreWorkspaceBackup,
+  validateWorkspaceBackup,
+  type WorkspaceBackupSummary,
+  type WorkspaceSnapshot,
+} from '@/services/workspaceBackup';
 
-interface SyncDialogProps {
-  onClose: () => void;
+interface SyncDialogProps { onClose: () => void }
+type ModuleKey = 'timeline' | 'ebb' | 'daily' | 'graph';
+type DisplayStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
+const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
+
+function readLastConnected(): Partial<Record<ModuleKey, string>> {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}') as Partial<Record<ModuleKey, string>>;
+  } catch {
+    return {};
+  }
+}
+
+function formatTime(value?: string): string {
+  if (!value) return '暂无记录';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '暂无记录' : date.toLocaleString('zh-CN');
 }
 
 const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { replaceData, exportData } = useTimelineStore(
-    useShallow((state) => ({
-      replaceData: state.replaceData,
-      exportData: state.exportData,
-    }))
-  );
+  const timeline = useTimelineStore();
+  const ebb = useEbbStore();
+  const daily = useDailyScheduleStore();
+  const graph = useGraphStore();
+  const [roomCode, setRoomCode] = useState(timeline.syncRoomCode || '');
+  const [showRoomCode, setShowRoomCode] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [lastConnected, setLastConnected] = useState(readLastConnected);
+  const [restoreSummary, setRestoreSummary] = useState<WorkspaceBackupSummary | null>(null);
+  const [restoreMessage, setRestoreMessage] = useState('');
+  const [snapshots, setSnapshots] = useState<WorkspaceSnapshot[]>([]);
 
-  const handleImport = useCallback(() => {
-    fileInputRef.current?.click();
+  useEffect(() => {
+    listLocalSnapshots().then(setSnapshots).catch(() => setSnapshots([]));
+  }, [restoreMessage]);
+
+  useEffect(() => {
+    const refresh = () => setLastConnected(readLastConnected());
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(timer);
   }, []);
 
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const modules = useMemo(() => [
+    { key: 'timeline' as const, label: '时间轴与项目文档', enabled: timeline.syncEnabled, status: timeline.syncStatus as DisplayStatus },
+    { key: 'ebb' as const, label: 'EBB 复习', enabled: ebb.syncEnabled, status: ebb.syncStatus as DisplayStatus },
+    { key: 'daily' as const, label: '每日安排', enabled: daily.syncEnabled, status: daily.syncStatus as DisplayStatus },
+    { key: 'graph' as const, label: '知识大盘', enabled: graph.syncEnabled, status: graph.syncStatus as DisplayStatus },
+  ], [timeline.syncEnabled, timeline.syncStatus, ebb.syncEnabled, ebb.syncStatus, daily.syncEnabled, daily.syncStatus, graph.syncEnabled, graph.syncStatus]);
 
+  const connectModule = useCallback((key: ModuleKey, code: string) => {
+    if (!code) return;
+    if (key === 'timeline') {
+      timeline.enableSync(code);
+      timeline.liveblocks?.enterRoom?.(code);
+    } else if (key === 'ebb') {
+      ebb.enableSync(code);
+      ebb.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${code}`);
+    } else if (key === 'daily') {
+      daily.enableSync(code);
+      daily.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${code}`);
+    } else {
+      graph.enableSync(code);
+      graph.liveblocks?.enterRoom?.(`graph-${code}`);
+    }
+  }, [timeline, ebb, daily, graph]);
+
+  const handleConnectAll = useCallback(() => {
+    const code = roomCode.trim()
+      || timeline.syncRoomCode
+      || ebb.syncRoomCode
+      || daily.syncRoomCode
+      || graph.syncRoomCode;
+    if (!code) return;
+    (['timeline', 'ebb', 'daily', 'graph'] as ModuleKey[]).forEach((key) => connectModule(key, code));
+  }, [roomCode, timeline.syncRoomCode, ebb.syncRoomCode, daily.syncRoomCode, graph.syncRoomCode, connectModule]);
+
+  const handleDisconnectAll = useCallback(() => {
+    timeline.liveblocks?.leaveRoom?.(); timeline.disableSync();
+    ebb.liveblocks?.leaveRoom?.(); ebb.disableSync();
+    daily.liveblocks?.leaveRoom?.(); daily.disableSync();
+    graph.liveblocks?.leaveRoom?.(); graph.disableSync();
+  }, [timeline, ebb, daily, graph]);
+
+  const activeCode = timeline.syncRoomCode || ebb.syncRoomCode || daily.syncRoomCode || graph.syncRoomCode || roomCode;
+  const enabledCount = modules.filter((module) => module.enabled).length;
+  const connectedCount = modules.filter((module) => module.enabled && module.status === 'connected').length;
+  const allConnected = enabledCount === 4 && connectedCount === 4;
+
+  const handleCopy = useCallback(async () => {
+    if (!activeCode) return;
+    await navigator.clipboard.writeText(activeCode);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }, [activeCode]);
+
+  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async () => {
       try {
-        const content = ev.target?.result as string;
-        const parsed = JSON.parse(content);
+        const result = validateWorkspaceBackup(JSON.parse(String(reader.result)));
+        if (!result.backup || !result.summary || result.errors.length > 0) {
+          setRestoreMessage(result.errors.join('\n') || '备份文件无效。');
+          return;
+        }
+        setRestoreSummary(result.summary);
+        const issueText = result.summary.issues.length > 0
+          ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
+          : '';
         const confirmed = window.confirm(
-          '恢复备份会直接覆盖当前时间轴数据（任务、分组、笔记、里程碑）。是否继续？'
+          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
         );
         if (!confirmed) return;
-
-        replaceData({
-          tasks: parsed.tasks ?? [],
-          groups: parsed.groups ?? [],
-          notes: parsed.notes ?? [],
-          milestones: parsed.milestones ?? [],
-        });
+        await restoreWorkspaceBackup(result.backup);
+        setRestoreMessage('完整工作区恢复成功。已自动保存恢复前快照。');
       } catch {
-        alert('恢复失败：备份文件格式无效');
+        setRestoreMessage('恢复失败：文件不是有效的 JSON 备份。');
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
-  }, [replaceData]);
+  }, []);
 
   const handleExport = useCallback(() => {
-    const jsonStr = exportData();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `timeline-backup-${todayStr()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, [exportData]);
-  // Timeline store
-  const {
-    syncEnabled: tlSyncEnabled,
-    syncRoomCode: tlSyncRoomCode,
-    syncStatus: tlSyncStatus,
-    enableSync: tlEnableSync,
-    disableSync: tlDisableSync,
-    setSyncStatus: tlSetSyncStatus,
-  } = useTimelineStore(
-    useShallow((s) => ({
-      syncEnabled: s.syncEnabled,
-      syncRoomCode: s.syncRoomCode,
-      syncStatus: s.syncStatus,
-      enableSync: s.enableSync,
-      disableSync: s.disableSync,
-      setSyncStatus: s.setSyncStatus,
-    })),
-  );
-
-  const tlEnterRoom = useTimelineStore((state) => state.liveblocks?.enterRoom);
-  const tlLeaveRoom = useTimelineStore((state) => state.liveblocks?.leaveRoom);
-  const tlStatus = useTimelineStore((state) => state.liveblocks?.status);
-
-  // Ebb store
-  const {
-    syncEnabled: ebbSyncEnabled,
-    syncStatus: ebbSyncStatus,
-    enableSync: ebbEnableSync,
-    disableSync: ebbDisableSync,
-    setSyncStatus: ebbSetSyncStatus,
-  } = useEbbStore(
-    useShallow((s) => ({
-      syncEnabled: s.syncEnabled,
-      syncStatus: s.syncStatus,
-      enableSync: s.enableSync,
-      disableSync: s.disableSync,
-      setSyncStatus: s.setSyncStatus,
-    })),
-  );
-
-  const ebbEnterRoom = useEbbStore((state) => state.liveblocks?.enterRoom);
-  const ebbLeaveRoom = useEbbStore((state) => state.liveblocks?.leaveRoom);
-  const ebbStatus = useEbbStore((state) => state.liveblocks?.status);
-
-  // DailySchedule store
-  const {
-    syncEnabled: dailySyncEnabled,
-    syncStatus: dailySyncStatus,
-    enableSync: dailyEnableSync,
-    disableSync: dailyDisableSync,
-    setSyncStatus: dailySetSyncStatus,
-  } = useDailyScheduleStore(
-    useShallow((s) => ({
-      syncEnabled: s.syncEnabled,
-      syncStatus: s.syncStatus,
-      enableSync: s.enableSync,
-      disableSync: s.disableSync,
-      setSyncStatus: s.setSyncStatus,
-    })),
-  );
-
-  const dailyEnterRoom = useDailyScheduleStore((state) => state.liveblocks?.enterRoom);
-  const dailyLeaveRoom = useDailyScheduleStore((state) => state.liveblocks?.leaveRoom);
-  const dailyStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
-
-  // Graph store
-  const {
-    syncEnabled: graphSyncEnabled,
-    syncStatus: graphSyncStatus,
-    enableSync: graphEnableSync,
-    disableSync: graphDisableSync,
-    setSyncStatus: graphSetSyncStatus,
-  } = useGraphStore(
-    useShallow((s) => ({
-      syncEnabled: s.syncEnabled,
-      syncStatus: s.syncStatus,
-      enableSync: s.enableSync,
-      disableSync: s.disableSync,
-      setSyncStatus: s.setSyncStatus,
-    })),
-  );
-
-  const graphEnterRoom = useGraphStore((state) => state.liveblocks?.enterRoom);
-  const graphLeaveRoom = useGraphStore((state) => state.liveblocks?.leaveRoom);
-  const graphStatus = useGraphStore((state) => state.liveblocks?.status);
-
-  const [roomCode, setRoomCode] = useState(tlSyncRoomCode || '');
-  const [copied, setCopied] = useState(false);
-  const [linkEbb, setLinkEbb] = useState(true);
-  const [linkDaily, setLinkDaily] = useState(true);
-  const [linkGraph, setLinkGraph] = useState(true);
-
-  // 监听 Timeline 连接状态变化
-  useEffect(() => {
-    if (!tlStatus) return;
-    const mappedStatus =
-      tlStatus === 'connected' ? 'connected' :
-      tlStatus === 'connecting' || tlStatus === 'reconnecting' ? 'connecting' :
-      tlStatus === 'disconnected' || tlStatus === 'initial' ? 'disconnected' : 'error';
-    tlSetSyncStatus(mappedStatus);
-  }, [tlStatus, tlSetSyncStatus]);
-
-  // 监听 Ebb 连接状态变化
-  useEffect(() => {
-    if (!ebbStatus) return;
-    const mappedStatus =
-      ebbStatus === 'connected' ? 'connected' :
-      ebbStatus === 'connecting' || ebbStatus === 'reconnecting' ? 'connecting' :
-      ebbStatus === 'disconnected' || ebbStatus === 'initial' ? 'disconnected' : 'error';
-    ebbSetSyncStatus(mappedStatus);
-  }, [ebbStatus, ebbSetSyncStatus]);
-
-  // 监听 DailySchedule 连接状态变化
-  useEffect(() => {
-    if (!dailyStatus) return;
-    const mappedStatus =
-      dailyStatus === 'connected' ? 'connected' :
-      dailyStatus === 'connecting' || dailyStatus === 'reconnecting' ? 'connecting' :
-      dailyStatus === 'disconnected' || dailyStatus === 'initial' ? 'disconnected' : 'error';
-    dailySetSyncStatus(mappedStatus);
-  }, [dailyStatus, dailySetSyncStatus]);
-
-  // 监听 Graph 连接状态变化
-  useEffect(() => {
-    if (!graphStatus) return;
-    const mappedStatus =
-      graphStatus === 'connected' ? 'connected' :
-      graphStatus === 'connecting' || graphStatus === 'reconnecting' ? 'connecting' :
-      graphStatus === 'disconnected' || graphStatus === 'initial' ? 'disconnected' : 'error';
-    graphSetSyncStatus(mappedStatus);
-  }, [graphStatus, graphSetSyncStatus]);
-
-  // 综合状态
-  const anyEnabled = tlSyncEnabled || ebbSyncEnabled || dailySyncEnabled || graphSyncEnabled;
-
-  const overallStatus =
-    tlSyncStatus === 'error' || ebbSyncStatus === 'error' || dailySyncStatus === 'error' || graphSyncStatus === 'error'
-      ? 'error'
-      : tlSyncStatus === 'connected' 
-        && (!ebbSyncEnabled || ebbSyncStatus === 'connected')
-        && (!dailySyncEnabled || dailySyncStatus === 'connected')
-        && (!graphSyncEnabled || graphSyncStatus === 'connected')
-        ? 'connected'
-      : tlSyncStatus === 'connecting' || ebbSyncStatus === 'connecting' || dailySyncStatus === 'connecting' || graphSyncStatus === 'connecting'
-        ? 'connecting'
-        : 'disconnected';
-
-  const statusInfo = {
-    label: overallStatus === 'connected' ? '已连接' :
-           overallStatus === 'connecting' ? '连接中...' : '未连接',
-    color: overallStatus === 'connected' ? '#059669' :
-           overallStatus === 'connecting' ? '#D97706' : '#9CA3AF',
-  };
-
-  const handleConnect = () => {
-    const code = roomCode.trim();
-    if (!code) return;
-
-    // Timeline 房间
-    if (tlEnterRoom) {
-      tlEnableSync(code);
-      tlEnterRoom(code);
+    try {
+      downloadWorkspaceBackup();
+      setRestoreMessage('完整工作区备份已导出。');
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '完整备份导出失败。');
     }
+  }, []);
 
-    // Ebb 房间（前缀 ebb-）
-    if (linkEbb && ebbEnterRoom) {
-      ebbEnableSync(code);
-      ebbEnterRoom(`${EBB_ROOM_PREFIX}${code}`);
+  const handleHealthCheck = useCallback(() => {
+    try {
+      const result = validateWorkspaceBackup(createWorkspaceBackup());
+      setRestoreSummary(result.summary ?? null);
+      const issues = result.summary?.issues ?? [];
+      setRestoreMessage(issues.length === 0 ? '数据健康检查通过，未发现孤儿绑定、重复 ID 或无效日期。' : `数据健康检查发现 ${issues.length} 个问题：${issues.slice(0, 3).join('；')}`);
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '数据健康检查失败。');
     }
+  }, []);
 
-    // DailySchedule 房间（前缀 daily-）
-    if (linkDaily && dailyEnterRoom) {
-      dailyEnableSync(code);
-      dailyEnterRoom(`${DAILY_ROOM_PREFIX}${code}`);
+  const handleRestoreSnapshot = useCallback(async (snapshot: WorkspaceSnapshot) => {
+    if (!window.confirm(`确定恢复 ${new Date(snapshot.createdAt).toLocaleString('zh-CN')} 的本地快照吗？当前工作区会先自动保存快照。`)) return;
+    try {
+      await restoreWorkspaceBackup(snapshot.backup);
+      setRestoreMessage('本地快照恢复成功。');
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '本地快照恢复失败。');
     }
-
-    // Graph 房间（前缀 graph-）
-    if (linkGraph && graphEnterRoom) {
-      graphEnableSync(code);
-      graphEnterRoom(`graph-${code}`);
-    }
-  };
-
-  const handleDisconnect = () => {
-    if (tlLeaveRoom) {
-      tlLeaveRoom();
-      tlDisableSync();
-    }
-    if (ebbLeaveRoom && ebbSyncEnabled) {
-      ebbLeaveRoom();
-      ebbDisableSync();
-    }
-    if (dailyLeaveRoom && dailySyncEnabled) {
-      dailyLeaveRoom();
-      dailyDisableSync();
-    }
-    if (graphLeaveRoom && graphSyncEnabled) {
-      graphLeaveRoom();
-      graphDisableSync();
-    }
-  };
-
-  const handleCopyRoomCode = () => {
-    navigator.clipboard.writeText(tlSyncRoomCode).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
+  }, []);
 
   return (
     <div className="tl-dialog-overlay" onClick={onClose}>
-      <div className="tl-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
-        <h3 className="tl-dialog-title">
-          <Cloud size={18} />
-          云端同步
-        </h3>
+      <div className="tl-dialog" role="dialog" aria-modal="true" aria-label="云同步与完整备份" onClick={(event) => event.stopPropagation()} style={{ maxWidth: 520 }}>
+        <h3 className="tl-dialog-title"><Cloud size={18} />云同步与完整备份</h3>
 
         <div className="tl-sync-status">
-          <span
-            className="tl-sync-dot"
-            style={{ backgroundColor: statusInfo.color }}
-          />
-          <span style={{ color: statusInfo.color, fontWeight: 500 }}>
-            {statusInfo.label}
-          </span>
-          {anyEnabled && (
-            <span className="tl-sync-room-tag">
-              房间: {tlSyncRoomCode}
-            </span>
+          <span className="tl-sync-dot" style={{ backgroundColor: allConnected ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
+          <strong>{allConnected ? '全部同步 4/4' : enabledCount > 0 ? `部分同步 ${connectedCount}/4` : '尚未连接'}</strong>
+        </div>
+
+        <label className="tl-dialog-label">
+          房间号（仍然只输入一个）
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="tl-dialog-input"
+              type={showRoomCode ? 'text' : 'password'}
+              value={enabledCount > 0 ? activeCode : roomCode}
+              readOnly={enabledCount > 0}
+              onChange={(event) => setRoomCode(event.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+              maxLength={64}
+              autoComplete="off"
+            />
+            <button type="button" className="tl-sync-copy-btn" onClick={() => setShowRoomCode((value) => !value)} title={showRoomCode ? '隐藏房间号' : '显示房间号'}>
+              {showRoomCode ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+            <button type="button" className="tl-sync-copy-btn" onClick={handleCopy} title="复制房间号">
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+            </button>
+          </div>
+          <span className="tl-dialog-hint">使用你现在的原房间号；后台继续连接原有四个模块房间，不迁移数据。</span>
+        </label>
+
+        <div className="tl-sync-info">
+          {modules.map((module) => (
+            <div className="tl-sync-info-row" key={module.key}>
+              <span className="tl-sync-info-label">{module.label}</span>
+              <span className="tl-sync-info-value">
+                <span style={{ color: module.status === 'connected' ? '#059669' : module.status === 'connecting' ? '#D97706' : '#9CA3AF' }}>
+                  {module.status === 'connected' ? '已连接' : module.status === 'connecting' ? '连接中' : module.status === 'error' ? '连接异常' : '未连接'}
+                </span>
+                <small style={{ marginLeft: 8 }}>上次：{formatTime(lastConnected[module.key])}</small>
+                {enabledCount > 0 && module.status !== 'connected' && (
+                  <button type="button" className="tl-sync-copy-btn" onClick={() => connectModule(module.key, activeCode)} title={`重新连接${module.label}`}>
+                    <RefreshCw size={13} />
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {enabledCount > 0 && (
+          <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} style={{ marginBottom: 12 }}>
+            <RefreshCw size={14} />全部重新连接
+          </button>
+        )}
+
+        <div className="tl-sync-divider" />
+        <div className="tl-sync-backup-section">
+          <h4 className="tl-sync-backup-title">完整工作区备份与恢复</h4>
+          <div className="tl-sync-backup-actions">
+            <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => fileInputRef.current?.click()}>
+              <Upload size={14} />恢复完整备份
+            </button>
+            <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={handleExport}>
+              <Download size={14} />导出完整备份
+            </button>
+            <button type="button" className="tl-sync-backup-btn" onClick={handleHealthCheck}>
+              <Check size={14} />数据健康检查
+            </button>
+          </div>
+          <p className="tl-sync-backup-hint">包含时间轴、项目文档、EBB、每日安排、知识大盘和应用设置。恢复前会校验数据并自动创建本地快照。</p>
+          {restoreSummary && <p className="tl-sync-backup-hint">最近检查：{restoreSummary.tasks} 个任务、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.graphNodes} 个节点。</p>}
+          {restoreMessage && <p className="tl-sync-backup-hint" role="status">{restoreMessage}</p>}
+          {snapshots.length > 0 && (
+            <div className="tl-sync-info" style={{ marginTop: 10 }}>
+              {snapshots.slice(0, 5).map((snapshot) => (
+                <div className="tl-sync-info-row" key={snapshot.id}>
+                  <span className="tl-sync-info-label">{snapshot.reason}</span>
+                  <span className="tl-sync-info-value">
+                    {new Date(snapshot.createdAt).toLocaleString('zh-CN')}
+                    <button type="button" className="tl-sync-copy-btn" onClick={() => handleRestoreSnapshot(snapshot)} title="恢复此快照">
+                      <RefreshCw size={13} />
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
-        {!anyEnabled ? (
-          <>
-            <label className="tl-dialog-label">
-              房间代码
-              <input
-                className="tl-dialog-input"
-                type="text"
-                value={roomCode}
-                onChange={(e) => setRoomCode(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-                placeholder="输入一个唯一的房间代码（如 my-timeline-2026）"
-                maxLength={64}
-              />
-              <span className="tl-dialog-hint">
-                相同房间代码的设备将自动实时同步数据，无需服务器配置
-              </span>
-            </label>
-
-            <label className="tl-sync-checkbox-row">
-              <input
-                type="checkbox"
-                checked={linkEbb}
-                onChange={(e) => setLinkEbb(e.target.checked)}
-              />
-              <span>
-                同时连接复习模块（Ebb）房间
-                <span className="tl-sync-checkbox-hint">
-                  使用前缀 <code>{EBB_ROOM_PREFIX}</code> 隔离数据
-                </span>
-              </span>
-            </label>
-
-            <label className="tl-sync-checkbox-row">
-              <input
-                type="checkbox"
-                checked={linkDaily}
-                onChange={(e) => setLinkDaily(e.target.checked)}
-              />
-              <span>
-                同时连接每日安排（Daily）房间
-                <span className="tl-sync-checkbox-hint">
-                  使用前缀 <code>{DAILY_ROOM_PREFIX}</code> 隔离数据
-                </span>
-              </span>
-            </label>
-
-            <label className="tl-sync-checkbox-row">
-              <input
-                type="checkbox"
-                checked={linkGraph}
-                onChange={(e) => setLinkGraph(e.target.checked)}
-              />
-              <span>
-                同时连接知识大盘（Graph）房间
-                <span className="tl-sync-checkbox-hint">
-                  使用前缀 <code>graph-</code> 隔离数据
-                </span>
-              </span>
-            </label>
-
-          </>
-        ) : (
-          <>
-            <div className="tl-sync-info">
-              <div className="tl-sync-info-row">
-                <span className="tl-sync-info-label">房间</span>
-                <span className="tl-sync-info-value">
-                  {tlSyncRoomCode}
-                  <button
-                    className="tl-sync-copy-btn"
-                    onClick={handleCopyRoomCode}
-                    title="复制房间代码"
-                  >
-                    {copied ? <Check size={12} /> : <Copy size={12} />}
-                  </button>
-                </span>
-              </div>
-              <div className="tl-sync-info-row">
-                <span className="tl-sync-info-label">时间轴</span>
-                <span className="tl-sync-info-value" style={{ color: tlSyncStatus === 'connected' ? '#059669' : '#D97706' }}>
-                  {tlSyncStatus === 'connected' ? '已连接' : tlSyncStatus === 'connecting' ? '连接中' : '未连接'}
-                </span>
-              </div>
-              <div className="tl-sync-info-row">
-                <span className="tl-sync-info-label">复习（Ebb）</span>
-                <span className="tl-sync-info-value" style={{ color: ebbSyncEnabled ? (ebbSyncStatus === 'connected' ? '#059669' : '#D97706') : '#9CA3AF' }}>
-                  {ebbSyncEnabled
-                    ? (ebbSyncStatus === 'connected' ? '已连接' : ebbSyncStatus === 'connecting' ? '连接中' : '未连接')
-                    : '未启用'}
-                </span>
-              </div>
-              <div className="tl-sync-info-row">
-                <span className="tl-sync-info-label">每日安排</span>
-                <span className="tl-sync-info-value" style={{ color: dailySyncEnabled ? (dailySyncStatus === 'connected' ? '#059669' : '#D97706') : '#9CA3AF' }}>
-                  {dailySyncEnabled
-                    ? (dailySyncStatus === 'connected' ? '已连接' : dailySyncStatus === 'connecting' ? '连接中' : '未连接')
-                    : '未启用'}
-                </span>
-              </div>
-              <div className="tl-sync-info-row">
-                <span className="tl-sync-info-label">知识大盘</span>
-                <span className="tl-sync-info-value" style={{ color: graphSyncEnabled ? (graphSyncStatus === 'connected' ? '#059669' : '#D97706') : '#9CA3AF' }}>
-                  {graphSyncEnabled
-                    ? (graphSyncStatus === 'connected' ? '已连接' : graphSyncStatus === 'connecting' ? '连接中' : '未连接')
-                    : '未启用'}
-                </span>
-              </div>
-              <div className="tl-sync-info-row">
-                <span className="tl-sync-info-label">服务</span>
-                <span className="tl-sync-info-value" style={{ color: '#059669' }}>
-                  Liveblocks 实时协作
-                </span>
-              </div>
-            </div>
-
-            <p className="tl-sync-tip">
-              在其他设备上打开此网页，输入相同的房间代码即可开始实时同步。
-              时间轴、复习模块、每日安排使用独立房间，数据物理隔离。
-            </p>
-
-            <div className="tl-sync-divider" />
-
-            <div className="tl-sync-backup-section">
-              <h4 className="tl-sync-backup-title">时间轴数据备份与恢复</h4>
-              <div className="tl-sync-backup-actions">
-                <button
-                  className="tl-sync-backup-btn tl-sync-backup-btn--import"
-                  onClick={handleImport}
-                >
-                  <Upload size={14} />
-                  恢复备份
-                </button>
-                <button
-                  className="tl-sync-backup-btn tl-sync-backup-btn--export"
-                  onClick={handleExport}
-                >
-                  <Download size={14} />
-                  导出备份
-                </button>
-              </div>
-              <p className="tl-sync-backup-hint">
-                这里只包含时间轴模块的任务、分组、笔记、里程碑，不包含 Ebb、每日安排、知识大盘。
-              </p>
-            </div>
-
-            <div className="tl-dialog-actions">
-              <button className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>
-                关闭
-              </button>
-              <button
-                className="tl-dialog-btn tl-dialog-btn--danger"
-                onClick={handleDisconnect}
-              >
-                <Unlink size={14} />
-                断开同步
-              </button>
-            </div>
-          </>
-        )}
-
-        {!anyEnabled && (
-          <>
-            <div className="tl-sync-divider" />
-
-            <div className="tl-sync-backup-section">
-              <h4 className="tl-sync-backup-title">时间轴数据备份与恢复</h4>
-              <div className="tl-sync-backup-actions">
-                <button
-                  className="tl-sync-backup-btn tl-sync-backup-btn--import"
-                  onClick={handleImport}
-                >
-                  <Upload size={14} />
-                  恢复备份
-                </button>
-                <button
-                  className="tl-sync-backup-btn tl-sync-backup-btn--export"
-                  onClick={handleExport}
-                >
-                  <Download size={14} />
-                  导出备份
-                </button>
-              </div>
-              <p className="tl-sync-backup-hint">
-                这里只包含时间轴模块的任务、分组、笔记、里程碑；恢复时会直接覆盖当前时间轴数据。
-              </p>
-            </div>
-
-            <div className="tl-dialog-actions">
-              <button className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>
-                取消
-              </button>
-              <button
-                className="tl-dialog-btn tl-dialog-btn--primary"
-                onClick={handleConnect}
-                disabled={!roomCode.trim()}
-              >
-                <Link size={14} />
-                连接
-              </button>
-            </div>
-          </>
-        )}
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json"
-          onChange={handleFileChange}
-          style={{ display: 'none' }}
-        />
+        <div className="tl-dialog-actions">
+          <button type="button" className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>关闭</button>
+          {enabledCount === 0 ? (
+            <button type="button" className="tl-dialog-btn tl-dialog-btn--primary" onClick={handleConnectAll} disabled={!roomCode.trim()}><Link size={14} />一键连接四个模块</button>
+          ) : (
+            <button type="button" className="tl-dialog-btn tl-dialog-btn--danger" onClick={handleDisconnectAll}><Unlink size={14} />断开全部同步</button>
+          )}
+        </div>
+        <input ref={fileInputRef} type="file" accept="application/json,.json" hidden onChange={handleFileChange} />
       </div>
     </div>
   );

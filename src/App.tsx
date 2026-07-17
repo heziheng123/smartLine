@@ -50,6 +50,7 @@ const KnowledgeGraphView = React.lazy(() =>
 import { useGraphStore } from '@/graph/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
+import { createLocalSnapshot } from '@/services/workspaceBackup';
 
 const ViewFallback: React.FC = () => (
   <div className="tl-app-split tl-app-split--ebb">
@@ -211,6 +212,7 @@ const App: React.FC = () => {
   const hasAlignedDisplayYear = React.useRef(false);
   const hasAttemptedAutoReconnect = React.useRef(false);
   const hasStartedHydration = React.useRef(false);
+  const previousLiveStatuses = React.useRef<Record<string, string | undefined>>({});
 
   // 异步加载 IndexedDB 数据
   React.useEffect(() => {
@@ -262,26 +264,76 @@ const App: React.FC = () => {
 
     hasAttemptedAutoReconnect.current = true;
 
-    const timelineState = useTimelineStore.getState();
-    if (timelineState.syncEnabled && timelineState.syncRoomCode) {
-      timelineState.liveblocks?.enterRoom?.(timelineState.syncRoomCode);
-    }
+    const connectWorkspace = () => {
+      const timelineState = useTimelineStore.getState();
+      const ebbState = useEbbStore.getState();
+      const dailyState = useDailyScheduleStore.getState();
+      const graphState = useGraphStore.getState();
+      const configuredCodes = [timelineState, ebbState, dailyState, graphState]
+        .filter((state) => state.syncEnabled && state.syncRoomCode)
+        .map((state) => state.syncRoomCode);
+      const code = timelineState.syncRoomCode || configuredCodes[0] || '';
+      const wasEnabled = timelineState.syncEnabled || ebbState.syncEnabled || dailyState.syncEnabled || graphState.syncEnabled;
+      if (!code || !wasEnabled) return;
 
-    const ebbState = useEbbStore.getState();
-    if (ebbState.syncEnabled && ebbState.syncRoomCode) {
-      ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebbState.syncRoomCode}`);
-    }
+      const distinctCodes = new Set(configuredCodes);
+      if (distinctCodes.size > 1) {
+        console.warn('[sync] 检测到历史模块使用不同房间号，已保留各模块原房间，不进行静默改写。');
+        if (timelineState.syncEnabled && timelineState.syncRoomCode) timelineState.liveblocks?.enterRoom?.(timelineState.syncRoomCode);
+        if (ebbState.syncEnabled && ebbState.syncRoomCode) ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebbState.syncRoomCode}`);
+        if (dailyState.syncEnabled && dailyState.syncRoomCode) dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${dailyState.syncRoomCode}`);
+        if (graphState.syncEnabled && graphState.syncRoomCode) graphState.liveblocks?.enterRoom?.(`graph-${graphState.syncRoomCode}`);
+        return;
+      }
 
-    const dailyState = useDailyScheduleStore.getState();
-    if (dailyState.syncEnabled && dailyState.syncRoomCode) {
-      dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${dailyState.syncRoomCode}`);
-    }
+      timelineState.enableSync(code);
+      ebbState.enableSync(code);
+      dailyState.enableSync(code);
+      graphState.enableSync(code);
+      timelineState.liveblocks?.enterRoom?.(code);
+      ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${code}`);
+      dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${code}`);
+      graphState.liveblocks?.enterRoom?.(`graph-${code}`);
+    };
 
-    const graphState = useGraphStore.getState();
-    if (graphState.syncEnabled && graphState.syncRoomCode) {
-      graphState.liveblocks?.enterRoom?.(`graph-${graphState.syncRoomCode}`);
-    }
+    connectWorkspace();
   }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated]);
+
+  React.useEffect(() => {
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated) return;
+    const reconnect = () => {
+      const timelineState = useTimelineStore.getState();
+      const ebbState = useEbbStore.getState();
+      const dailyState = useDailyScheduleStore.getState();
+      const graphState = useGraphStore.getState();
+      if (timelineState.syncEnabled && timelineState.syncRoomCode) timelineState.liveblocks?.enterRoom?.(timelineState.syncRoomCode);
+      if (ebbState.syncEnabled && ebbState.syncRoomCode) ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebbState.syncRoomCode}`);
+      if (dailyState.syncEnabled && dailyState.syncRoomCode) dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${dailyState.syncRoomCode}`);
+      if (graphState.syncEnabled && graphState.syncRoomCode) graphState.liveblocks?.enterRoom?.(`graph-${graphState.syncRoomCode}`);
+    };
+    window.addEventListener('online', reconnect);
+    return () => window.removeEventListener('online', reconnect);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated]);
+
+  React.useEffect(() => {
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated) return;
+    const stores = [
+      useTimelineStore.getState(),
+      useEbbStore.getState(),
+      useDailyScheduleStore.getState(),
+      useGraphStore.getState(),
+    ];
+    const syncEnabled = stores.some((state) => state.syncEnabled);
+    const allConnected = [timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus]
+      .every((status) => status === 'connected');
+    if (syncEnabled && !allConnected) return;
+    const today = dayjs().format('YYYY-MM-DD');
+    const key = 'smart-line-last-auto-snapshot-date';
+    if (localStorage.getItem(key) === today) return;
+    createLocalSnapshot('每日自动快照')
+      .then(() => localStorage.setItem(key, today))
+      .catch((error) => console.warn('[workspace] 自动快照失败：', error));
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus]);
 
   React.useEffect(() => {
     if (timelineLiveStatus) {
@@ -306,6 +358,28 @@ const App: React.FC = () => {
       useGraphStore.getState().setSyncStatus(mapLiveblocksStatus(graphLiveStatus));
     }
   }, [graphLiveStatus]);
+
+  React.useEffect(() => {
+    const statuses = {
+      timeline: timelineLiveStatus,
+      ebb: ebbLiveStatus,
+      daily: dailyLiveStatus,
+      graph: graphLiveStatus,
+    };
+    let current: Record<string, string> = {};
+    try { current = JSON.parse(localStorage.getItem('smart-line-sync-last-connected') ?? '{}') as Record<string, string>; }
+    catch { current = {}; }
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const [key, status] of Object.entries(statuses)) {
+      if (status === 'connected' && previousLiveStatuses.current[key] !== 'connected') {
+        current[key] = now;
+        changed = true;
+      }
+      previousLiveStatuses.current[key] = status;
+    }
+    if (changed) localStorage.setItem('smart-line-sync-last-connected', JSON.stringify(current));
+  }, [timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus]);
 
   // 全局漫游导航监听
   React.useEffect(() => {
