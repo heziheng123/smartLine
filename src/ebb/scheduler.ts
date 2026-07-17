@@ -5,7 +5,7 @@
 
 import dayjs from 'dayjs';
 import type { ReviewTask, ComplexityLevel, TagStat, TopicStat, EbbSettings } from './types';
-import { getPointWeight, getIntervalsForComplexity } from './complexity';
+import { getPointWeight, getIntervalsForComplexity, parseIntervals } from './complexity';
 import { todayStr, addDays, isBeforeDay, isAfterDay, diffDays, formatDate } from '@/utils/dateSafe';
 
 // ── 工具函数 ────────────────────────────────────────────────
@@ -92,6 +92,50 @@ export function computeRounds(tasks: ReviewTask[]): {
 export function getTaskRound(taskId: string, tasks: ReviewTask[]): number {
   const { roundMap } = computeRounds(tasks);
   return roundMap.get(taskId) ?? 0;
+}
+
+/**
+ * Build one additional round for an existing review chain.
+ * The new round always inherits the chain identity (including graphNodeId),
+ * and is scheduled after both today and the current last round.
+ */
+export function buildNextRoundTask(
+  topicTasks: ReviewTask[],
+  settings: EbbSettings,
+): ReviewTask | null {
+  const sortedTasks = [...topicTasks].sort((a, b) =>
+    (a.dueDate ?? '').localeCompare(b.dueDate ?? ''),
+  );
+  const lastTask = sortedTasks[sortedTasks.length - 1];
+  if (!lastTask) return null;
+
+  const customIntervals = parseIntervals(settings.customIntervals) ?? undefined;
+  const nextInterval = suggestNextInterval(
+    sortedTasks.length,
+    lastTask.complexity,
+    customIntervals,
+    settings.complexityConfigs,
+  );
+
+  const today = todayStr();
+  const baseDate = isAfterDay(lastTask.dueDate, today) ? lastTask.dueDate : today;
+  let dueDate = addDays(baseDate, nextInterval);
+  const occupiedDates = new Set(sortedTasks.map((task) => task.dueDate));
+  while (occupiedDates.has(dueDate)) {
+    dueDate = addDays(dueDate, 1);
+  }
+
+  return {
+    id: genId('rt'),
+    topicName: lastTask.topicName,
+    dueDate,
+    isCompleted: false,
+    tag: lastTask.tag,
+    outlineNodeId: lastTask.outlineNodeId,
+    graphNodeId: lastTask.graphNodeId,
+    complexity: lastTask.complexity,
+    smStatus: 'scheduled',
+  };
 }
 
 // ── 任务生成 ────────────────────────────────────────────────
@@ -448,20 +492,21 @@ export function getDateLabel(
  * 简单策略：取最近完成轮次与上一轮的差值 + 1。
  */
 export function suggestNextInterval(
-  completedRounds: number,
+  existingRounds: number,
   complexity?: ComplexityLevel,
   customIntervals?: number[],
+  customConfigs?: EbbSettings['complexityConfigs'],
 ): number {
-  // 优先使用复杂度预设的下一个间隔
-  if (complexity) {
-    const preset = getIntervalsForComplexity(complexity);
-    const idx = Math.min(completedRounds, preset.length - 1);
-    if (idx >= 0) return preset[idx];
-  }
-  // 其次使用自定义间隔
+  // 手动追加轮次优先使用设置页中的“默认复习间隔”。
   if (customIntervals && customIntervals.length > 0) {
-    const idx = Math.min(completedRounds, customIntervals.length - 1);
+    const idx = Math.min(existingRounds, customIntervals.length - 1);
     return customIntervals[idx];
+  }
+  // 兼容没有默认间隔配置的旧数据：回退到复杂度预设。
+  if (complexity) {
+    const preset = getIntervalsForComplexity(complexity, customConfigs);
+    const idx = Math.min(existingRounds, preset.length - 1);
+    if (idx >= 0) return preset[idx];
   }
   // 兜底：默认 7 天
   return 7;

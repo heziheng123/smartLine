@@ -6,12 +6,11 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, Trash2, Plus } from 'lucide-react';
-import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
+import { formatDate } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
-import { computeRounds, getDateLabel, getReviewTopicKey, suggestNextInterval, isOverdue, genId } from '../scheduler';
+import { buildNextRoundTask, computeRounds, getDateLabel, getReviewTopicKey, isOverdue } from '../scheduler';
 import { getPointWeight } from '../complexity';
-import { parseIntervals } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import EbbDatePicker from './EbbDatePicker';
 
@@ -40,6 +39,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   );
   const [datePickerTaskId, setDatePickerTaskId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState('');
 
   // 该主题所有任务，按 dueDate 升序
   const topicTasks = useMemo(
@@ -83,54 +83,41 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const handleDateSelect = useCallback(
     (newDate: string | undefined) => {
       if (datePickerTaskId && newDate) {
+        const hasConflict = topicTasks.some(
+          (task) => task.id !== datePickerTaskId && task.dueDate === newDate,
+        );
+        if (hasConflict) {
+          setActionError('同一主题在该日期已经有复习轮次，请选择其他日期。');
+          setDatePickerTaskId(null);
+          return;
+        }
         updateReviewTask(datePickerTaskId, { dueDate: newDate });
+        setActionError('');
       }
       setDatePickerTaskId(null);
     },
-    [datePickerTaskId, updateReviewTask],
+    [datePickerTaskId, topicTasks, updateReviewTask],
   );
 
   // 删除单轮
   const handleDeleteRound = useCallback(
     (id: string) => {
+      const deletingLastRound = topicTasks.length === 1;
       deleteReviewTask(id);
       setConfirmDeleteId(null);
+      if (deletingLastRound) onClose();
     },
-    [deleteReviewTask],
+    [deleteReviewTask, onClose, topicTasks.length],
   );
 
   // 追加一轮
   const handleAddRound = useCallback(() => {
-    const lastTask = topicTasks[topicTasks.length - 1];
-    if (!lastTask) return;
-    const completedRounds = topicTasks.filter((t) => t.isCompleted).length;
-    const nextInterval = suggestNextInterval(
-      completedRounds,
-      lastTask.complexity,
-      parseIntervals(ebbSettings.customIntervals) ?? undefined,
-    );
-    const baseDate = lastTask ? lastTask.dueDate : undefined;
-    let newDate = baseDate ? addDays(baseDate, nextInterval) : addDays(todayStr(), nextInterval);
+    const nextRound = buildNextRoundTask(topicTasks, ebbSettings);
+    if (!nextRound) return;
 
-    // 去重
-    const topicDates = new Set(topicTasks.map((t) => t.dueDate));
-    while (topicDates.has(newDate)) {
-      newDate = addDays(newDate, 1);
-    }
-
-    addReviewTasks([
-      {
-        id: genId('rt'),
-        topicName,
-        dueDate: newDate,
-        isCompleted: false,
-        tag: lastTask.tag,
-        complexity: lastTask.complexity,
-        smStatus: 'scheduled',
-        graphNodeId: lastTask.graphNodeId,
-      },
-    ]);
-  }, [topicTasks, topicName, ebbSettings.customIntervals, addReviewTasks]);
+    addReviewTasks([nextRound]);
+    setActionError('');
+  }, [topicTasks, ebbSettings, addReviewTasks]);
 
   // 勾选
   const handleToggle = useCallback(
@@ -157,6 +144,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
         </div>
 
         <div className="eb-panel-body">
+          {actionError && <div className="eb-field-error">{actionError}</div>}
           {/* 进度概览 */}
           <div className="eb-rounds-summary">
             <div className="eb-rounds-stats">

@@ -6,7 +6,7 @@
 
 import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
-import { Search } from 'lucide-react';
+import { ListChecks, Plus, Search } from 'lucide-react';
 import type { ReviewTask, EbbSettings, ComplexityLevel } from '../types';
 import { computeRounds, getReviewTopicKey, isOverdue, isDueToday, getDateLabel } from '../scheduler';
 import { getPointWeight } from '../complexity';
@@ -355,6 +355,7 @@ interface BoardCardProps {
 
   // 拖拽 ID：使用下一轮任务 ID（已完成主题使用首个任务 ID 作为占位）
   const draggableId = nextTask?.id || group[0]?.id || topicName;
+  const managementTask = nextTask ?? group[group.length - 1];
 
   const cardContent = (
     <div onClick={() => {}}>
@@ -405,6 +406,34 @@ interface BoardCardProps {
                 title="改期"
               >
                 📅
+              </button>
+            </>
+          )}
+          {managementTask && (
+            <>
+              <button
+                type="button"
+                className="eb-icon-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  taskActions.onAddRound(managementTask);
+                }}
+                title="追加一轮"
+                aria-label={`为${topicName}追加一轮`}
+              >
+                <Plus size={14} />
+              </button>
+              <button
+                type="button"
+                className="eb-icon-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  taskActions.onOpenRounds(managementTask);
+                }}
+                title="管理全部轮次"
+                aria-label={`管理${topicName}的全部轮次`}
+              >
+                <ListChecks size={14} />
               </button>
             </>
           )}

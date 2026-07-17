@@ -25,8 +25,8 @@ import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
-import { genId, getReviewTopicKey, suggestNextInterval, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
-import { getPointWeight, parseIntervals } from '../complexity';
+import { buildNextRoundTask, getReviewTopicKey, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
+import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import { normalizeLegacyEbbData } from '../migration';
 import { getDateLabel } from '../scheduler';
@@ -204,6 +204,21 @@ const EbbView: React.FC = () => {
     (newDate: string | undefined) => {
       if (!datePicker) return;
       if (newDate) {
+        const selectedTask = store.reviewTasks.find((task) => task.id === datePicker.taskId);
+        if (selectedTask) {
+          const topicKey = getReviewTopicKey(selectedTask);
+          const hasConflict = store.reviewTasks.some(
+            (task) =>
+              task.id !== selectedTask.id
+              && getReviewTopicKey(task) === topicKey
+              && task.dueDate === newDate,
+          );
+          if (hasConflict) {
+            showToast('同一主题在该日期已经有复习轮次');
+            setDatePicker(null);
+            return;
+          }
+        }
         store.updateReviewTask(datePicker.taskId, { dueDate: newDate });
         showToast('已改期');
       }
@@ -216,34 +231,12 @@ const EbbView: React.FC = () => {
     (task: ReviewTask) => {
       const { totalRoundsMap } = computeRounds(store.reviewTasks);
       const topicKey = getReviewTopicKey(task);
-      const completedRounds = store.reviewTasks
-        .filter((t) => getReviewTopicKey(t) === topicKey && t.isCompleted)
-        .length;
-      const nextInterval = suggestNextInterval(
-        completedRounds,
-        task.complexity,
-        parseIntervals(store.ebbSettings.customIntervals) ?? undefined,
-      );
       const sameTopic = store.reviewTasks
         .filter((t) => getReviewTopicKey(t) === topicKey)
         .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
-      const lastTask = sameTopic[sameTopic.length - 1];
-      const baseDateStr = lastTask && lastTask.dueDate ? lastTask.dueDate : todayStr();
-      let newDate = addDays(baseDateStr, nextInterval);
-      const topicDates = new Set(sameTopic.map((t) => t.dueDate ?? ''));
-      while (topicDates.has(newDate)) {
-        newDate = addDays(newDate, 1);
-      }
-      store.addReviewTasks([{
-        id: genId('rt'),
-        topicName: task.topicName,
-        dueDate: newDate,
-        isCompleted: false,
-        tag: task.tag,
-        complexity: task.complexity,
-        smStatus: 'scheduled',
-        graphNodeId: task.graphNodeId,
-      }]);
+      const nextRound = buildNextRoundTask(sameTopic, store.ebbSettings);
+      if (!nextRound) return;
+      store.addReviewTasks([nextRound]);
       showToast(`已追加第 ${(totalRoundsMap.get(topicKey) ?? 0) + 1} 轮`);
     },
     [store, showToast],
@@ -256,6 +249,27 @@ const EbbView: React.FC = () => {
   const handleOpenTimeline = useCallback((topicKey: string) => {
     setTimelineTopic(topicKey);
   }, []);
+
+  const rescheduleTask = useCallback(
+    (taskId: string, dueDate: string, patch: Partial<ReviewTask> = {}) => {
+      const selectedTask = store.reviewTasks.find((task) => task.id === taskId);
+      if (!selectedTask) return false;
+      const topicKey = getReviewTopicKey(selectedTask);
+      const hasConflict = store.reviewTasks.some(
+        (task) =>
+          task.id !== taskId
+          && getReviewTopicKey(task) === topicKey
+          && task.dueDate === dueDate,
+      );
+      if (hasConflict) {
+        showToast('同一主题在该日期已经有复习轮次');
+        return false;
+      }
+      store.updateReviewTask(taskId, { ...patch, dueDate });
+      return true;
+    },
+    [store, showToast],
+  );
 
   // 拖拽改期（看板视图）
   const handleDndEnd = useCallback(
@@ -278,21 +292,19 @@ const EbbView: React.FC = () => {
           showToast('已标记完成');
         }
       } else if (colId === 'board-col-today') {
-        store.updateReviewTask(draggableId, { dueDate: todayStr(), isCompleted: false });
-        showToast('已改期到今天');
+        if (rescheduleTask(draggableId, todayStr(), { isCompleted: false })) {
+          showToast('已改期到今天');
+        }
       } else if (colId === 'board-col-future') {
-        store.updateReviewTask(draggableId, {
-          dueDate: addDays(todayStr(), 7),
-          isCompleted: false,
-        });
-        showToast('已改期到下周');
+        if (rescheduleTask(draggableId, addDays(todayStr(), 7), { isCompleted: false })) {
+          showToast('已改期到下周');
+        }
       } else if (colId.startsWith('ebb-day-')) {
         const newDate = colId.replace('ebb-day-', '');
-        store.updateReviewTask(draggableId, { dueDate: newDate });
-        showToast('已改期');
+        if (rescheduleTask(draggableId, newDate)) showToast('已改期');
       }
     },
-    [store, showToast],
+    [store, showToast, rescheduleTask],
   );
 
   // 导出/导入

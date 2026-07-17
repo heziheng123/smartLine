@@ -245,6 +245,12 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         },
 
         updateReviewTask: (id, patch) => {
+          const existingTask = get().reviewTasks.find((task) => task.id === id);
+          if (patch.dueDate !== undefined && existingTask?.dueDate !== patch.dueDate) {
+            setTimeout(() => {
+              useDailyScheduleStore.getState().removeBySourceIds([getReviewSourceId(id)]);
+            }, 0);
+          }
           set((state) => {
             const reviewTasks = state.reviewTasks.map((t) =>
               t.id === id ? { ...t, ...patch } : t,
@@ -263,6 +269,11 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         rescheduleOverdue: (taskIds) => {
           const _today = todayStr();
           const idSet = new Set(taskIds);
+          setTimeout(() => {
+            useDailyScheduleStore.getState().removeBySourceIds(
+              taskIds.map((id) => getReviewSourceId(id)),
+            );
+          }, 0);
           set((state) => {
             const reviewTasks = state.reviewTasks.map((t) =>
               idSet.has(t.id) ? { ...t, dueDate: _today, smStatus: 'scheduled' as const } : t,

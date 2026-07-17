@@ -82,11 +82,6 @@ const EbbDatePicker: React.FC<EbbDatePickerProps> = ({ anchorEl, value, onSelect
   const currentMonth = cursor.month();
   const todayStr = todayStrSafe();
 
-  const handleClear = useCallback(() => {
-    onSelect(undefined);
-    onClose();
-  }, [onSelect, onClose]);
-
   const handleSelect = useCallback((date: string) => {
     onSelect(date);
     onClose();
@@ -137,9 +132,6 @@ const EbbDatePicker: React.FC<EbbDatePickerProps> = ({ anchorEl, value, onSelect
           })}
         </div>
         <div className="eb-datepicker-footer">
-          <button type="button" className="eb-datepicker-clear" onClick={handleClear}>
-            清除日期
-          </button>
           <button type="button" className="eb-datepicker-today" onClick={() => handleSelect(todayStr)}>
             今天
           </button>

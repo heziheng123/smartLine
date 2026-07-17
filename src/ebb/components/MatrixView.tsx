@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, memo } from 'react';
-import { Search, ChevronRight, CircleDashed } from 'lucide-react';
+import { Search, ChevronRight, CircleDashed, ListChecks, Plus } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
@@ -35,7 +35,7 @@ interface MatrixViewProps {
 type FilterStatus = 'all' | 'pending' | 'completed';
 type SortBy = 'date' | 'ratio';
 
-const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings }) => {
+const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions }) => {
   const [filterTag, setFilterTag] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('date');
@@ -177,6 +177,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings }) => {
               stat={stat}
               settings={settings}
               topicTasks={topicTasksMap.get(stat.topicKey) ?? []}
+              taskActions={taskActions}
             />
           ))
         )}
@@ -190,9 +191,10 @@ interface TopicRowProps {
   stat: TopicStat;
   settings: EbbSettings;
   topicTasks: ReviewTask[];
+  taskActions: TaskActions;
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks, taskActions }) => {
   const [expanded, setExpanded] = useState(false);
 
   const tagColor = stat.tag ? settings.tagColors[stat.tag] : undefined;
@@ -266,6 +268,34 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks }) 
         </div>
 
         {/* 展开/收起 */}
+        <div
+          className="eb-round-actions"
+          style={{ opacity: 1 }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {taskToCheck && (
+            <>
+              <button
+                type="button"
+                className="eb-icon-btn"
+                onClick={() => taskActions.onAddRound(taskToCheck)}
+                title="追加一轮"
+                aria-label={`为${stat.topicName}追加一轮`}
+              >
+                <Plus size={14} />
+              </button>
+              <button
+                type="button"
+                className="eb-icon-btn"
+                onClick={() => taskActions.onOpenRounds(taskToCheck)}
+                title="管理全部轮次"
+                aria-label={`管理${stat.topicName}的全部轮次`}
+              >
+                <ListChecks size={14} />
+              </button>
+            </>
+          )}
+        </div>
         <ChevronRight size={16} className={`eb-topic-row-chevron ${expanded ? 'eb-topic-row-chevron--open' : ''}`} />
       </div>
 
