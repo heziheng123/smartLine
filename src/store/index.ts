@@ -502,6 +502,10 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const syncPayloads: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; tag?: string; triggerSchedule?: boolean }[] = [];
           const nodesToActivate: string[] = [];
           const nodesToDeactivate: string[] = [];
+          const currentTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
+          const currentBlock = currentTask?.blocks.find(
+            (candidate) => candidate.type === 'smart-task' && candidate.id === blockId,
+          );
 
           set((state) => {
             const allTasks = getUniqueTasks(state.tasks, state.groups);
@@ -785,6 +789,20 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             saveData(newData);
             return newData;
           });
+
+          // Daily Schedule stores references to the project block. Keep that
+          // projection consistent no matter which UI invoked this store action.
+          if (currentBlock?.type === 'smart-task') {
+            const sourceId = getProjectBlockSourceId(taskId, blockId);
+            if (headerPatch.date !== undefined && headerPatch.date !== currentBlock.header.date) {
+              useDailyScheduleStore.getState().removeBySourceIds([sourceId]);
+            } else if (headerPatch.title !== undefined || headerPatch.duration !== undefined) {
+              useDailyScheduleStore.getState().updateBySourceId(sourceId, {
+                ...(headerPatch.title !== undefined ? { name: headerPatch.title } : {}),
+                ...(headerPatch.duration !== undefined ? { duration: headerPatch.duration } : {}),
+              });
+            }
+          }
 
           // 执行 Ebb 拦截同步（在 set 之外调用，避免 store 嵌套更新问题）
           syncPayloads.forEach(payload => {

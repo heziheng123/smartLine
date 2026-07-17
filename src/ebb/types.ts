@@ -19,6 +19,13 @@ export interface ReviewTask {
   id: string;
   topicName: string;
   dueDate: string; // YYYY-MM-DD
+  /** 首次生成时的计划日期；改期时保留，用于追溯原计划。旧数据缺失时回退到 dueDate。 */
+  originalDueDate?: string;
+  /**
+   * Stable identity of this round within its current review chain.  Unlike
+   * dueDate, this value never changes when a round is rescheduled.
+   */
+  roundOrder?: number;
   isCompleted: boolean;
   completedDate?: string;
   tag?: string;

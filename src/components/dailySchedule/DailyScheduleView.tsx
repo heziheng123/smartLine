@@ -41,6 +41,7 @@ import {
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { parseSourceId } from './conversion';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
+import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
 
 // ── Droppable IDs ────────────────────────────────────────────
 
@@ -54,6 +55,13 @@ const DailyScheduleView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(today);
   const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
   const [showCompletedPool, setShowCompletedPool] = useState(false);
+
+  const openProjectTaskFromSource = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (parsed?.source === 'project' && parsed.blockId) {
+      openProjectTaskModal(parsed.parentTaskId, parsed.blockId);
+    }
+  }, []);
 
   const { tasks: rawTlTasks, groups: rawTlGroups, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, groups: s.groups, updateBlockHeader: s.updateBlockHeader })),
@@ -667,6 +675,7 @@ const DailyScheduleView: React.FC = () => {
                                   } ${item.id.startsWith('virtual-block-') ? 'ds-item--virtual' : ''} ${
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-item--unlinked' : ''
                                   } ${item.source === 'free' ? 'ds-item--free' : ''}`}
+                                  onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}
                                 >
                                   {item.source !== 'free' && (
                                     <div
@@ -728,7 +737,7 @@ const DailyScheduleView: React.FC = () => {
                                     <button
                                       type="button"
                                       className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`}
-                                      onClick={() => handleToggleItem(item.id)}
+                                      onClick={(event) => { event.stopPropagation(); handleToggleItem(item.id); }}
                                     >
                                       <Check size={13} />
                                     </button>
@@ -737,7 +746,7 @@ const DailyScheduleView: React.FC = () => {
                                   <button
                                     type="button"
                                     className="ds-item-delete"
-                                    onClick={() => handleRemoveItem(item.id)}
+                                    onClick={(event) => { event.stopPropagation(); handleRemoveItem(item.id); }}
                                   >
                                     <X size={13} />
                                   </button>
@@ -841,6 +850,7 @@ const DailyScheduleView: React.FC = () => {
                                   className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''} ${
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
                                   }`}
+                                  onClick={() => openProjectTaskFromSource(item.sourceId)}
                                 >
                                   <div
                                     className="ds-pool-item-accent"
@@ -955,7 +965,7 @@ const DailyScheduleView: React.FC = () => {
                   {showCompletedPool && (
                     <div className="ds-pool-list">
                       {completedPoolItems.map((item) => (
-                        <div key={item.id} className="ds-pool-item ds-pool-item--completed">
+                        <div key={item.id} className="ds-pool-item ds-pool-item--completed" onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}>
                           <div className="ds-pool-item-content">
                             <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
                             {item.detail && <span className="ds-pool-item-detail">{item.detail}</span>}
@@ -963,7 +973,7 @@ const DailyScheduleView: React.FC = () => {
                           <button
                             type="button"
                             className="ds-pool-undo-btn"
-                            onClick={() => handleUndoCompletedPoolItem(item.source, item.sourceId)}
+                            onClick={(event) => { event.stopPropagation(); handleUndoCompletedPoolItem(item.source, item.sourceId); }}
                           >
                             撤销
                           </button>

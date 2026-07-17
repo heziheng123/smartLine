@@ -42,6 +42,39 @@ export function getReviewTopicKey(task: Pick<ReviewTask, 'graphNodeId' | 'topicN
 }
 
 /**
+ * Adds stable round identities to legacy tasks that predate roundOrder.
+ * Missing values are assigned deterministically from the original schedule,
+ * so every later reschedule keeps the same round identity.
+ */
+export function normalizeReviewRoundOrders(tasks: ReviewTask[]): ReviewTask[] {
+  const byTopic = new Map<string, ReviewTask[]>();
+  for (const task of tasks) {
+    if (task.isArchived) continue;
+    const topicKey = getReviewTopicKey(task);
+    const group = byTopic.get(topicKey) ?? [];
+    group.push(task);
+    byTopic.set(topicKey, group);
+  }
+
+  const assigned = new Map<string, number>();
+  for (const group of byTopic.values()) {
+    let nextOrder = Math.max(0, ...group.map((task) => task.roundOrder ?? 0)) + 1;
+    const missing = group
+      .filter((task) => !Number.isInteger(task.roundOrder) || task.roundOrder! <= 0)
+      .sort((a, b) =>
+        (a.originalDueDate ?? a.dueDate ?? '').localeCompare(b.originalDueDate ?? b.dueDate ?? '')
+        || a.id.localeCompare(b.id),
+      );
+    missing.forEach((task) => assigned.set(task.id, nextOrder++));
+  }
+
+  if (assigned.size === 0) return tasks;
+  return tasks.map((task) => assigned.has(task.id)
+    ? { ...task, roundOrder: assigned.get(task.id)! }
+    : task);
+}
+
+/**
  * 计算所有任务的轮次。
  * 同一 topicName 的任务按 dueDate 升序，第 i 个为第 i+1 轮。
  * 基于任务内容原文缓存，避免重复计算（不再使用哈希，避免碰撞）。
@@ -51,8 +84,9 @@ export function computeRounds(tasks: ReviewTask[]): {
   totalRoundsMap: Map<string, number>;
 } {
   // 直接用原文字符串作 cache key，避免哈希碰撞导致返回错误轮次缓存
-  const key = tasks
-      .map((t) => `${t.id}|${getReviewTopicKey(t)}|${t.dueDate ?? ''}`)
+  const activeTasks = tasks.filter((task) => !task.isArchived);
+  const key = activeTasks
+      .map((t) => `${t.id}|${getReviewTopicKey(t)}|${t.roundOrder ?? 0}`)
       .sort()
       .join(';');
 
@@ -65,18 +99,21 @@ export function computeRounds(tasks: ReviewTask[]): {
 
   // 按稳定主题键分组
   const byTopic = new Map<string, ReviewTask[]>();
-  for (const t of tasks) {
+  for (const t of activeTasks) {
     const topicKey = getReviewTopicKey(t);
     if (!byTopic.has(topicKey)) byTopic.set(topicKey, []);
     byTopic.get(topicKey)!.push(t);
   }
 
   for (const [topic, group] of byTopic) {
-    // 兜底：dueDate 可能为 undefined（脏数据），用空串占位避免 localeCompare 崩溃
+    // roundOrder is stable across reschedules. The date/id fallback only serves
+    // un-migrated data while it is being normalized by the store.
     const sorted = [...group].sort((a, b) =>
-      (a.dueDate ?? '').localeCompare(b.dueDate ?? ''),
+      (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER)
+      || (a.originalDueDate ?? a.dueDate ?? '').localeCompare(b.originalDueDate ?? b.dueDate ?? '')
+      || a.id.localeCompare(b.id),
     );
-    sorted.forEach((t, i) => roundMap.set(t.id, i + 1));
+    sorted.forEach((t, i) => roundMap.set(t.id, t.roundOrder ?? i + 1));
     totalRoundsMap.set(topic, sorted.length);
   }
 
@@ -103,8 +140,9 @@ export function buildNextRoundTask(
   topicTasks: ReviewTask[],
   settings: EbbSettings,
 ): ReviewTask | null {
-  const sortedTasks = [...topicTasks].sort((a, b) =>
-    (a.dueDate ?? '').localeCompare(b.dueDate ?? ''),
+  const activeTasks = topicTasks.filter((task) => !task.isArchived);
+  const sortedTasks = [...activeTasks].sort((a, b) =>
+    (a.dueDate ?? '').localeCompare(b.dueDate ?? '') || a.id.localeCompare(b.id),
   );
   const lastTask = sortedTasks[sortedTasks.length - 1];
   if (!lastTask) return null;
@@ -129,6 +167,8 @@ export function buildNextRoundTask(
     id: genId('rt'),
     topicName: lastTask.topicName,
     dueDate,
+    originalDueDate: dueDate,
+    roundOrder: Math.max(0, ...activeTasks.map((task) => task.roundOrder ?? 0)) + 1,
     isCompleted: false,
     tag: lastTask.tag,
     outlineNodeId: lastTask.outlineNodeId,
@@ -206,6 +246,13 @@ export function generateTasks(
       id: genId('rt'),
       topicName: input.topicName,
       dueDate,
+      originalDueDate: dueDate,
+      roundOrder: Math.max(
+        0,
+        ...existingTasks
+          .filter((task) => task.topicName === input.topicName && !task.isArchived)
+          .map((task) => task.roundOrder ?? 0),
+      ) + tasks.length + 1,
       isCompleted: false,
       tag: input.tag,
       outlineNodeId: input.outlineNodeId,
@@ -305,7 +352,7 @@ export function checkCanComplete(
   taskId: string,
   tasks: ReviewTask[],
 ): string | null {
-  const task = tasks.find((t) => t.id === taskId);
+  const task = tasks.find((t) => t.id === taskId && !t.isArchived);
   if (!task) return '任务不存在';
   if (task.isCompleted) return null; // 已完成，允许取消
 
@@ -316,6 +363,7 @@ export function checkCanComplete(
 
   // 检查是否有未完成的前序轮次
   for (const t of tasks) {
+    if (t.isArchived) continue;
     if (getReviewTopicKey(t) !== topicKey) continue;
     const r = roundMap.get(t.id) ?? 0;
     if (r < currentRound && !t.isCompleted) {

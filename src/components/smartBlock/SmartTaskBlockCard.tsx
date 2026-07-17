@@ -64,6 +64,39 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const [dateAnchor, setDateAnchor] = useState<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
+  const titleSaveTimerRef = useRef<number | null>(null);
+  const titleDraftRef = useRef(header.title);
+  const [titleDraft, setTitleDraft] = useState(header.title);
+
+  const commitTitle = useCallback(() => {
+    if (titleSaveTimerRef.current) {
+      window.clearTimeout(titleSaveTimerRef.current);
+      titleSaveTimerRef.current = null;
+    }
+    const nextTitle = titleDraftRef.current;
+    if (nextTitle !== header.title) onUpdateHeader(block.id, { title: nextTitle });
+  }, [block.id, header.title, onUpdateHeader]);
+
+  const handleTitleChange = useCallback((nextTitle: string) => {
+    titleDraftRef.current = nextTitle;
+    setTitleDraft(nextTitle);
+    if (titleSaveTimerRef.current) window.clearTimeout(titleSaveTimerRef.current);
+    titleSaveTimerRef.current = window.setTimeout(() => {
+      titleSaveTimerRef.current = null;
+      if (nextTitle !== header.title) onUpdateHeader(block.id, { title: nextTitle });
+    }, 500);
+  }, [block.id, header.title, onUpdateHeader]);
+
+  useEffect(() => {
+    if (header.title !== titleDraftRef.current) {
+      titleDraftRef.current = header.title;
+      setTitleDraft(header.title);
+    }
+  }, [header.title]);
+
+  useEffect(() => () => {
+    if (titleSaveTimerRef.current) window.clearTimeout(titleSaveTimerRef.current);
+  }, []);
 
   const { nodes, getNodeById } = useGraphStore();
   const graphNodeIds = useMemo(() => getValidGraphNodeIds(header), [header]);
@@ -75,20 +108,25 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   // 计算任务标题的幽灵文本（智能推荐节点名称）
   const titleGhostText = useMemo(() => {
-    if (!header.title || header.isCompleted) return '';
-    const match = nodes.find(n => n.name.toLowerCase().startsWith(header.title.toLowerCase()));
+    if (!titleDraft || header.isCompleted) return '';
+    const match = nodes.find(n => n.name.toLowerCase().startsWith(titleDraft.toLowerCase()));
     if (match) {
-      return header.title + match.name.slice(header.title.length);
+      return titleDraft + match.name.slice(titleDraft.length);
     }
     return '';
-  }, [header.title, header.isCompleted, nodes]);
+  }, [titleDraft, header.isCompleted, nodes]);
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab' && titleGhostText && titleGhostText !== header.title) {
+    if (e.key === 'Tab' && titleGhostText && titleGhostText !== titleDraft) {
       e.preventDefault();
+      titleDraftRef.current = titleGhostText;
+      setTitleDraft(titleGhostText);
       onUpdateHeader(block.id, { title: titleGhostText });
     }
-  }, [block.id, header.title, titleGhostText, onUpdateHeader]);
+    if (e.key === 'Enter' && !e.shiftKey) {
+      commitTitle();
+    }
+  }, [block.id, titleGhostText, titleDraft, onUpdateHeader, commitTitle]);
 
   // textarea 自动撑高
   useEffect(() => {
@@ -96,7 +134,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-  }, [header.title]);
+  }, [titleDraft]);
 
   // 完成切换
   const handleToggle = useCallback(() => {
@@ -207,8 +245,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
         <input
           type="text"
           className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
-          value={header.title}
-          onChange={(e) => onUpdateHeader(block.id, { title: e.target.value })}
+          value={titleDraft}
+          onChange={(e) => handleTitleChange(e.target.value)}
+          onBlur={commitTitle}
         />
         <span className="stb-meta">
           <Clock size={12} /> {header.duration}min
@@ -268,7 +307,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
         <div className="stb-header-content">
           {/* 第一层：标题（横向占满，允许折行） */}
           <div style={{ position: 'relative', width: '100%' }}>
-            {titleGhostText && titleGhostText !== header.title && (
+            {titleGhostText && titleGhostText !== titleDraft && (
               <div
                 style={{
                   position: 'absolute',
@@ -289,8 +328,8 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                   alignItems: 'flex-start'
                 }}
               >
-                <span style={{ opacity: 0 }}>{header.title}</span>
-                <span>{titleGhostText.slice(header.title.length)}</span>
+                <span style={{ opacity: 0 }}>{titleDraft}</span>
+                <span>{titleGhostText.slice(titleDraft.length)}</span>
                 <span style={{ 
                   marginLeft: 8, 
                   fontSize: 10, 
@@ -308,8 +347,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             <textarea
               ref={titleRef}
               className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
-              value={header.title}
-              onChange={(e) => onUpdateHeader(block.id, { title: e.target.value })}
+              value={titleDraft}
+              onChange={(e) => handleTitleChange(e.target.value)}
+              onBlur={commitTitle}
               onKeyDown={handleTitleKeyDown}
               rows={1}
               style={{ position: 'relative', zIndex: 2, background: 'transparent' }}

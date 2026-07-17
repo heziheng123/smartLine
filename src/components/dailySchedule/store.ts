@@ -119,6 +119,8 @@ interface DailyScheduleStore {
 
   /** 根据源任务 ID 批量清理失效的排期项和时间块 */
   removeBySourceIds: (sourceIds: string[]) => void;
+  /** 同步来源任务的展示信息，不改变其已安排的时间段。 */
+  updateBySourceId: (sourceId: string, patch: { name?: string; duration?: number }) => void;
 }
 
 let _idCounter = 0;
@@ -390,6 +392,31 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
               return { schedules };
             }
             return state;
+          });
+        },
+
+        updateBySourceId: (sourceId, patch) => {
+          set((state) => {
+            let changed = false;
+            const schedules = Object.fromEntries(Object.entries(state.schedules).map(([date, day]) => {
+              let dayChanged = false;
+              const items = (day.items || []).map((item) => {
+                if (item.sourceId !== sourceId) return item;
+                changed = true;
+                dayChanged = true;
+                return { ...item, ...patch };
+              });
+              const blocks = (day.blocks || []).map((block) => {
+                if (block.sourceId !== sourceId || patch.name === undefined) return block;
+                changed = true;
+                dayChanged = true;
+                return { ...block, name: patch.name! };
+              });
+              return [date, dayChanged ? { ...day, items, blocks } : day];
+            }));
+            if (!changed) return state;
+            saveSchedules(schedules);
+            return { schedules };
           });
         },
       };

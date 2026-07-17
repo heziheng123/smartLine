@@ -1038,7 +1038,7 @@
 .stb-tag-picker-overlay {
   position: fixed;
   inset: 0;
-  z-index: 10000;
+  z-index: 13000;
   background: rgba(0,0,0,.15);
   display: flex;
   align-items: center;
@@ -1222,7 +1222,7 @@
 .stb-date-picker-overlay {
   position: fixed;
   inset: 0;
-  z-index: 10000;
+  z-index: 13000;
   background: rgba(0,0,0,.15);
   display: flex;
   align-items: flex-start;
@@ -2020,3 +2020,74 @@
 }
 .wmv-empty p { margin-top: 8px; font-size: 14px; }
 .wmv-empty-hint { font-size: 12px; color: #d1d5db; }
+/* Central project task editor, shared by schedule and week matrix views. */
+.ptm-overlay {
+  position: fixed;
+  z-index: 12000;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(3px);
+}
+
+.ptm-dialog {
+  width: min(720px, 100%);
+  max-height: min(82vh, 820px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.24);
+}
+
+.ptm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.ptm-heading { min-width: 0; }
+.ptm-title { color: #0f172a; font-size: 17px; font-weight: 750; }
+.ptm-project { display: flex; align-items: center; gap: 5px; margin-top: 4px; color: #64748b; font-size: 12px; }
+.ptm-close { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 9px; background: transparent; color: #64748b; cursor: pointer; }
+.ptm-close:hover { background: #f1f5f9; color: #0f172a; }
+.ptm-body { min-height: 0; overflow-y: auto; padding: 18px 20px; background: #f8fafc; }
+.ptm-body .stb-card { box-shadow: 0 4px 20px rgba(15, 23, 42, 0.07); }
+.ptm-date-change-hint { margin: 12px 4px 0; color: #64748b; font-size: 12px; line-height: 1.55; }
+
+.ptm-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-top: 1px solid #eef2f7;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.ptm-footer button {
+  flex-shrink: 0;
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 9px;
+  background: #4f46e5;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .ptm-overlay { padding: 10px; align-items: flex-end; }
+  .ptm-dialog { width: 100%; max-height: 92vh; border-radius: 16px 16px 0 0; }
+  .ptm-footer { align-items: flex-end; }
+}

@@ -192,63 +192,17 @@ export const KnowledgeGraphView: React.FC = () => {
 
   const getNodeColorHex = useCallback((nodeId: string): string => {
     const descendants = getDescendants(nodeId);
-    const isLeaf = descendants.length === 0;
-    const activationState = activationStates.get(nodeId);
-    const isActivated = activationState?.isActivated ?? false;
+    const relevantNodeIds = [nodeId, ...descendants];
+    const familyTasks = reviewTasks.filter(task =>
+      !task.isArchived && task.graphNodeId && relevantNodeIds.includes(task.graphNodeId),
+    );
+    const completedCount = familyTasks.filter(task => task.isCompleted).length;
 
-    if (!isActivated) return '#64748b';
-
-    if (isLeaf) {
-      const familyTasks = reviewTasks.filter(t => t.graphNodeId === nodeId);
-      if (familyTasks.length === 0) return '#3b82f6';
-      const isAllDone = familyTasks.every(t => t.isCompleted);
-      if (isAllDone) return '#eab308'; 
-      const uncompletedTasks = familyTasks.filter(t => !t.isCompleted).sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
-      const nextTask = uncompletedTasks[0];
-      if (!nextTask) return '#3b82f6';
-      const overdueDays = diffDays(todayStr(), nextTask.dueDate);
-      if (overdueDays > 2) return '#ef4444'; 
-      if (overdueDays === 1 || overdueDays === 2) return '#84cc16'; 
-      return '#10b981'; 
-    } else {
-      const leafIds = descendants.filter(id => !nodes.some(n => n.parentId === id));
-      if (leafIds.length === 0) return '#3b82f6';
-      const leafColors = leafIds.map(leafId => {
-        const leafTasks = reviewTasks.filter(t => t.graphNodeId === leafId);
-        const childIsActivated = activationStates.get(leafId)?.isActivated ?? false;
-        if (!childIsActivated) return '#64748b';
-        if (leafTasks.length === 0) return '#3b82f6';
-        if (leafTasks.every(t => t.isCompleted)) return '#eab308';
-        const nextTask = leafTasks.filter(t => !t.isCompleted).sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''))[0];
-        if (!nextTask) return '#3b82f6';
-        const overdueDays = diffDays(todayStr(), nextTask.dueDate);
-        if (overdueDays > 2) return '#ef4444';
-        if (overdueDays === 1 || overdueDays === 2) return '#84cc16';
-        return '#10b981';
-      });
-
-      const activeLeafColors = leafColors.filter(c => c !== '#64748b');
-      if (activeLeafColors.length === 0) return '#3b82f6';
-
-      const hasGray = leafColors.includes('#64748b');
-
-      // 优先级 1: 严重逾期 (红色)
-      if (activeLeafColors.includes('#ef4444')) return '#ef4444';
-      
-      // 优先级 2: 轻度逾期 (青柠色)
-      if (activeLeafColors.includes('#84cc16')) return '#84cc16';
-      
-      // 优先级 3: 进行中 (绿色) - 如果混有未探索的灰色，显示浅绿
-      if (activeLeafColors.includes('#10b981')) return hasGray ? '#86efac' : '#10b981';
-      
-      // 优先级 4: 已圆满 (金色) - 只有当下方所有节点都是金色时，父节点才呈现金色
-      const isAllGold = leafColors.every(c => c === '#eab308');
-      if (isAllGold) return '#eab308';
-      
-      // 优先级 5: 无复习任务 (蓝色) 或者是金蓝混合的情况，退化为蓝色（表示部分知识仅被学习但未排期）
-      return hasGray ? '#93c5fd' : '#3b82f6';
-    }
-  }, [reviewTasks, nodes, getDescendants, activationStates]);
+    // 主色只表达轮次完成进度；逾期改用独立红色描边，不覆盖灰/绿/金状态。
+    if (completedCount === 0) return '#64748b';
+    if (familyTasks.length > 0 && completedCount === familyTasks.length) return '#eab308';
+    return '#10b981';
+  }, [reviewTasks, getDescendants]);
 
   const islandsData = useMemo(() => {
     const today = todayStr();
@@ -294,9 +248,23 @@ export const KnowledgeGraphView: React.FC = () => {
       if (!descendantLeafMap.has(n.id)) descendantLeafMap.set(n.id, getLeafDescendants(n.id));
     });
 
+    const descendantNodeMap = new Map<string, string[]>();
+    const getAllDescendants = (nodeId: string, currentPath = new Set<string>()): string[] => {
+      if (currentPath.has(nodeId)) return [];
+      if (descendantNodeMap.has(nodeId)) return descendantNodeMap.get(nodeId)!;
+      currentPath.add(nodeId);
+      const descendants = (childrenMap.get(nodeId) ?? []).flatMap((childId) => [
+        childId,
+        ...getAllDescendants(childId, currentPath),
+      ]);
+      currentPath.delete(nodeId);
+      descendantNodeMap.set(nodeId, descendants);
+      return descendants;
+    };
+
     const reviewTasksByNodeId = new Map<string, typeof reviewTasks>();
     reviewTasks.forEach(task => {
-      if (!task.graphNodeId) return;
+      if (!task.graphNodeId || task.isArchived) return;
       const bucket = reviewTasksByNodeId.get(task.graphNodeId) ?? [];
       bucket.push(task);
       reviewTasksByNodeId.set(task.graphNodeId, bucket);
@@ -304,10 +272,12 @@ export const KnowledgeGraphView: React.FC = () => {
 
     const nodeStatsMap = new Map<string, NodeRollupStats>();
     nodes.forEach(node => {
-      const leafIds = descendantLeafMap.get(node.id) ?? [node.id];
+      // A task may be bound directly to any level of the knowledge tree.
+      // Aggregate the complete subtree rather than only the leaf descendants.
+      const statisticNodeIds = [node.id, ...getAllDescendants(node.id)];
       const directStats = mergeStats(
-        leafIds.map(leafId => {
-          const leafTasks = reviewTasksByNodeId.get(leafId) ?? [];
+        statisticNodeIds.map(statisticNodeId => {
+          const leafTasks = reviewTasksByNodeId.get(statisticNodeId) ?? [];
           return {
             totalReviewCount: leafTasks.length,
             pendingCount: leafTasks.filter(task => !task.isCompleted).length,
@@ -561,7 +531,7 @@ export const KnowledgeGraphView: React.FC = () => {
     if (!selectedNodeId) return [];
     const scopedIds = new Set([selectedNodeId, ...getDescendants(selectedNodeId)]);
     return reviewTasks
-      .filter(task => task.graphNodeId && scopedIds.has(task.graphNodeId))
+      .filter(task => !task.isArchived && task.graphNodeId && scopedIds.has(task.graphNodeId))
       .sort((a, b) => {
         if (a.isCompleted !== b.isCompleted) return Number(a.isCompleted) - Number(b.isCompleted);
         return (a.dueDate || '').localeCompare(b.dueDate || '');
@@ -819,8 +789,9 @@ export const KnowledgeGraphView: React.FC = () => {
                   const isDimmed = isXRayActive && !isXRayMatched;
 
                   const fillColor = isVirtual ? '#ffffff' : node.data.color;
-                  const strokeColor = isBindingSelected ? '#4f46e5' : (isSelected ? '#0f172a' : (isVirtual ? '#cbd5e1' : '#ffffff'));
-                  const strokeWidth = isBindingSelected ? 4 : (isSelected ? 2.5 : (isVirtual ? 2 : 1.5));
+                  const hasOverdueRounds = node.data.overdueCount > 0;
+                  const strokeColor = isBindingSelected ? '#4f46e5' : (isSelected ? '#0f172a' : (hasOverdueRounds ? '#ef4444' : (isVirtual ? '#cbd5e1' : '#ffffff')));
+                  const strokeWidth = isBindingSelected ? 4 : (isSelected ? 2.5 : (hasOverdueRounds ? 3 : (isVirtual ? 2 : 1.5)));
 
               const angleDiff = node.x1 - node.x0;
                const radiusDiff = node.y1 - node.y0;
@@ -911,7 +882,7 @@ export const KnowledgeGraphView: React.FC = () => {
                       }}
                       className={`cursor-pointer transition-opacity duration-300 ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
                     >
-                      <title>{bindingSession.active ? `${node.data.name}${node.data.isLeaf ? (isBindingSelected ? '（已选择）' : '（点击选择）') : '（点击浏览）'}` : node.data.name}</title>
+                      <title>{bindingSession.active ? `${node.data.name}${node.data.isLeaf ? (isBindingSelected ? '（已选择）' : '（点击选择）') : '（点击浏览）'}` : `${node.data.name} · 轮次 ${node.data.completedCount}/${node.data.totalReviewCount}${hasOverdueRounds ? ` · ${node.data.overdueCount} 个逾期` : ''}`}</title>
                       <path
                         d={arcGenerator(node) || ''}
                         fill={fillColor}
@@ -1004,6 +975,15 @@ export const KnowledgeGraphView: React.FC = () => {
                       {selectedActivationState.isLeaf
                         ? selectedActivationState.isActivated ? '已激活' : '未激活'
                         : `${selectedActivationState.activatedLeafCount}/${selectedActivationState.totalLeafCount}`}
+                    </span>
+                  </div>
+                )}
+                {selectedGraphNode && (
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                    <span className="font-medium text-slate-600">EBB 轮次</span>
+                    <span className={`font-semibold ${selectedGraphNode.overdueCount > 0 ? 'text-rose-600' : selectedGraphNode.totalReviewCount > 0 && selectedGraphNode.completedCount === selectedGraphNode.totalReviewCount ? 'text-amber-600' : selectedGraphNode.completedCount > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                      {selectedGraphNode.completedCount}/{selectedGraphNode.totalReviewCount}
+                      {selectedGraphNode.overdueCount > 0 ? ` · ${selectedGraphNode.overdueCount} 个逾期` : ''}
                     </span>
                   </div>
                 )}

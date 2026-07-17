@@ -27,7 +27,7 @@ import {
   TAG_COLOR_PALETTE,
 } from './constants';
 import { liveblocksClient } from '@/store/client';
-import { genId, getReviewTopicKey, checkCanComplete } from './scheduler';
+import { genId, getReviewTopicKey, checkCanComplete, normalizeReviewRoundOrders } from './scheduler';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { getReviewSourceId } from '@/components/dailySchedule/sourceIds';
 
@@ -119,6 +119,8 @@ interface EbbStore extends EbbData {
   // 复习任务
   addReviewTasks: (tasks: ReviewTask[]) => void;
   updateReviewTask: (id: string, patch: Partial<ReviewTask>) => void;
+  rescheduleReviewRounds: (updates: Array<{ id: string; dueDate: string }>) => void;
+  restartReviewCycle: (topicKey: string, startDate: string) => boolean;
   deleteReviewTask: (id: string) => void;
   toggleReviewTask: (id: string) => string | null; // 返回错误消息，null 表示成功
   clearAllTasks: () => void;
@@ -182,19 +184,20 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             }
 
             if (raw) {
+              const reviewTasks = normalizeReviewRoundOrders(raw.reviewTasks ?? []);
               const normalizedSettings = ensureTagColors(
-                raw.reviewTasks ?? [],
+                reviewTasks,
                 { ...DEFAULT_EBB_SETTINGS, ...(raw.ebbSettings ?? {}) },
               );
               set({
-                reviewTasks: raw.reviewTasks ?? [],
+                reviewTasks,
                 inboxItems: raw.inboxItems ?? [],
                 outlineNodes: raw.outlineNodes ?? [],
                 ebbSettings: normalizedSettings,
                 isHydrated: true,
               });
               saveEbbData({
-                reviewTasks: raw.reviewTasks ?? [],
+                reviewTasks,
                 inboxItems: raw.inboxItems ?? [],
                 outlineNodes: raw.outlineNodes ?? [],
                 ebbSettings: normalizedSettings,
@@ -231,7 +234,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         addReviewTasks: (tasks) => {
           set((state) => {
-            const reviewTasks = [...state.reviewTasks, ...tasks];
+            const reviewTasks = normalizeReviewRoundOrders([...state.reviewTasks, ...tasks]);
             const ebbSettings = ensureTagColors(reviewTasks, state.ebbSettings);
             const newData: EbbData = {
               reviewTasks,
@@ -253,7 +256,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           }
           set((state) => {
             const reviewTasks = state.reviewTasks.map((t) =>
-              t.id === id ? { ...t, ...patch } : t,
+              t.id === id ? {
+                ...t,
+                ...patch,
+                ...(patch.dueDate !== undefined && patch.dueDate !== t.dueDate
+                  ? { originalDueDate: t.originalDueDate ?? t.dueDate }
+                  : {}),
+              } : t,
             );
             const newData: EbbData = {
               reviewTasks,
@@ -266,6 +275,86 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           });
         },
 
+        rescheduleReviewRounds: (updates) => {
+          if (updates.length === 0) return;
+          const updateMap = new Map(updates.map((item) => [item.id, item.dueDate]));
+          setTimeout(() => {
+            useDailyScheduleStore.getState().removeBySourceIds(
+              updates.map((item) => getReviewSourceId(item.id)),
+            );
+          }, 0);
+          set((state) => {
+            const reviewTasks = state.reviewTasks.map((task) => {
+              const dueDate = updateMap.get(task.id);
+              if (!dueDate || dueDate === task.dueDate) return task;
+              return {
+                ...task,
+                dueDate,
+                originalDueDate: task.originalDueDate ?? task.dueDate,
+                smStatus: 'scheduled' as const,
+              };
+            });
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: state.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+        },
+
+        restartReviewCycle: (topicKey, startDate) => {
+          const state = get();
+          const activeTasks = state.reviewTasks
+            .filter((task) => !task.isArchived && getReviewTopicKey(task) === topicKey)
+            .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
+          const template = activeTasks[activeTasks.length - 1];
+          if (!template) return false;
+
+          const intervals = template.complexity
+            ? state.ebbSettings.complexityConfigs[template.complexity].intervals
+            : (state.ebbSettings.customIntervals.split(',').map(Number).filter((value) => Number.isInteger(value) && value > 0));
+          if (intervals.length === 0) return false;
+          const dates = buildAbsoluteScheduleDates(startDate, intervals);
+          const replacementTasks: ReviewTask[] = dates.map((dueDate, index) => ({
+            id: genId('rt'),
+            topicName: template.topicName,
+            dueDate,
+            originalDueDate: dueDate,
+            roundOrder: index + 1,
+            isCompleted: false,
+            tag: template.tag,
+            outlineNodeId: template.outlineNodeId,
+            graphNodeId: template.graphNodeId,
+            complexity: template.complexity,
+            smStatus: 'scheduled',
+          }));
+
+          setTimeout(() => {
+            useDailyScheduleStore.getState().removeBySourceIds(
+              activeTasks.map((task) => getReviewSourceId(task.id)),
+            );
+          }, 0);
+          set((current) => {
+            const activeIds = new Set(activeTasks.map((task) => task.id));
+            const reviewTasks = [
+              ...current.reviewTasks.map((task) => activeIds.has(task.id) ? { ...task, isArchived: true } : task),
+              ...replacementTasks,
+            ];
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: current.inboxItems,
+              outlineNodes: current.outlineNodes,
+              ebbSettings: current.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          return true;
+        },
+
         rescheduleOverdue: (taskIds) => {
           const _today = todayStr();
           const idSet = new Set(taskIds);
@@ -276,7 +365,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           }, 0);
           set((state) => {
             const reviewTasks = state.reviewTasks.map((t) =>
-              idSet.has(t.id) ? { ...t, dueDate: _today, smStatus: 'scheduled' as const } : t,
+              idSet.has(t.id) ? { ...t, dueDate: _today, originalDueDate: t.originalDueDate ?? t.dueDate, smStatus: 'scheduled' as const } : t,
             );
             const newData: EbbData = {
               reviewTasks,
@@ -499,10 +588,15 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 dueDate = addDays(dueDate, 1);
               }
               topicDates.add(dueDate);
+              const existingTopicTasks = [...state.reviewTasks, ...allGenerated]
+                .filter((task) => !task.isArchived && task.topicName === item.topicName);
+              const nextRoundOrder = Math.max(0, ...existingTopicTasks.map((task) => task.roundOrder ?? 0)) + 1;
               generated.push({
                 id: genId('rt'),
                 topicName: item.topicName,
                 dueDate,
+                originalDueDate: dueDate,
+                roundOrder: nextRoundOrder,
                 isCompleted: false,
                 tag: item.tag,
                 complexity: item.complexity,
@@ -833,7 +927,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             const { action = 'add', graphNodeId, topicName, tag, triggerSchedule = true } = payload;
             
             // 找到所有该 graphNodeId 关联的任务
-            const existingTasks = state.reviewTasks.filter(t => t.graphNodeId === graphNodeId);
+            const existingTasks = state.reviewTasks.filter(t => !t.isArchived && t.graphNodeId === graphNodeId);
             
             // 如果是删除动作（例如：取消完成任务）
             if (action === 'remove') {
@@ -876,6 +970,8 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                   tag,
                   graphNodeId,
                   dueDate: dueDates[i],
+                  originalDueDate: dueDates[i],
+                  roundOrder: i + 1,
                   isCompleted: false,
                   complexity: 'normal',
                   smStatus: 'scheduled',
@@ -886,7 +982,9 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               // 分支 2：找到了 -> 更新现有的 ReviewTask 序列
 
               // 筛选出尚未完成的任务（即未来的复习轮次）
-              const uncompletedTasks = existingTasks.filter(t => !t.isCompleted).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+              const uncompletedTasks = existingTasks
+                .filter((task) => !task.isCompleted)
+                .sort((a, b) => (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER));
               
               if (uncompletedTasks.length > 0) {
                 // 将尚未完成的轮次重置，强制拉回到明天
@@ -903,6 +1001,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                     return {
                       ...t,
                       dueDate: newDueDate,
+                      originalDueDate: t.originalDueDate ?? t.dueDate,
                       smStatus: 'scheduled' as const,
                     };
                   }
@@ -914,6 +1013,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 const dueDates = buildAbsoluteScheduleDates(nowStr, intervals);
                 const generated: ReviewTask[] = [];
                 
+                const nextRoundOrder = Math.max(0, ...existingTasks.map((task) => task.roundOrder ?? 0)) + 1;
                 for (let i = 0; i < intervals.length; i++) {
                   generated.push({
                     id: genId('rt'),
@@ -921,6 +1021,8 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                     tag,
                     graphNodeId,
                     dueDate: dueDates[i],
+                  originalDueDate: dueDates[i],
+                  roundOrder: nextRoundOrder + i,
                     isCompleted: false,
                     complexity: 'normal',
                     smStatus: 'scheduled',
@@ -990,14 +1092,19 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 // ── 工具：安全获取轮次（避免循环依赖） ──────────────────────
 
 function getTaskRoundSafe(taskId: string, tasks: ReviewTask[]): number {
-  // 简化版：按 dueDate 排序查找
+  // roundOrder is immutable for a chain; due dates are intentionally mutable.
   const task = tasks.find((t) => t.id === taskId);
   if (!task) return 0;
   const topicKey = getReviewTopicKey(task);
   const sameTopic = tasks
-    .filter((t) => getReviewTopicKey(t) === topicKey)
-    .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
-  return sameTopic.findIndex((t) => t.id === taskId) + 1;
+    .filter((t) => !t.isArchived && getReviewTopicKey(t) === topicKey)
+    .sort((a, b) =>
+      (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER)
+      || (a.originalDueDate ?? a.dueDate ?? '').localeCompare(b.originalDueDate ?? b.dueDate ?? '')
+      || a.id.localeCompare(b.id),
+    );
+  const stableRound = sameTopic.find((item) => item.id === taskId)?.roundOrder;
+  return stableRound ?? sameTopic.findIndex((t) => t.id === taskId) + 1;
 }
 
 // ── 派生数据 Hooks（轻量工具函数，避免引入复杂依赖） ─────────

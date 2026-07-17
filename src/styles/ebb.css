@@ -2077,7 +2077,21 @@
 
 .eb-round-completed-date {
   font-size: 10px;
+  color: #059669;
+}
+
+.eb-round-dates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 150px;
+}
+
+.eb-round-original-date {
+  font-size: 10px;
   color: #9CA3AF;
+  text-decoration: line-through;
 }
 
 .eb-round-points {
@@ -2107,6 +2121,88 @@
 .eb-rounds-empty-text {
   color: #9CA3AF;
   font-size: 13px;
+}
+
+.eb-reschedule-mode {
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 100%);
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.14);
+}
+
+.eb-reschedule-mode-title {
+  width: 100%;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748B;
+}
+
+.eb-reschedule-mode button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #F8FAFC;
+  color: #475569;
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.eb-reschedule-mode button.is-active {
+  border-color: #A5B4FC;
+  background: #EEF2FF;
+  color: #4F46E5;
+}
+
+.eb-change-preview-overlay {
+  position: fixed;
+  z-index: 10005;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.eb-change-preview {
+  width: min(420px, 100%);
+  padding: 20px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
+}
+
+.eb-change-preview-title {
+  margin-bottom: 8px;
+  color: #1E293B;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.eb-change-preview p {
+  margin: 0;
+  color: #64748B;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.eb-change-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 /* ============================================================

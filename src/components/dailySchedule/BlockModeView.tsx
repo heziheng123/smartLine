@@ -16,6 +16,7 @@ import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
+import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
 import TimeGrid from './TimeGrid';
 import type { TimeBlock, TaskSource } from './types';
 import {
@@ -290,6 +291,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   // ── 快速创建状态 ───────────────────────────────────────
   const [quickCreateTime, setQuickCreateTime] = useState<string | null>(null);
+  const suppressPoolOpenRef = useRef(false);
 
   // ── 编辑浮层状态 ───────────────────────────────────────
   const [editingBlock, setEditingBlock] = useState<{ block: TimeBlock; rect: DOMRect } | null>(null);
@@ -428,6 +430,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
       e.dataTransfer.setData('application/x-pool-item', poolItemId);
       e.dataTransfer.effectAllowed = 'copy';
+      suppressPoolOpenRef.current = true;
       setDraggedPoolItemId(poolItemId);
     },
     [poolItems],
@@ -528,10 +531,24 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const handleBlockClick = useCallback(
     (block: TimeBlock, rect: DOMRect) => {
+      if (block.source === 'project') {
+        const parsed = parseSourceId(block.sourceId);
+        if (parsed?.source === 'project' && parsed.blockId) {
+          openProjectTaskModal(parsed.parentTaskId, parsed.blockId);
+          return;
+        }
+      }
       setEditingBlock({ block, rect });
     },
     [],
   );
+
+  const handleProjectPoolClick = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (parsed?.source === 'project' && parsed.blockId) {
+      openProjectTaskModal(parsed.parentTaskId, parsed.blockId);
+    }
+  }, []);
 
   // ── 时间块开始被拖拽（准备拖回任务池） ────────────────
   const handleBlockDragStart = useCallback(
@@ -650,6 +667,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     setDraggedPoolItemId(null);
     setDraggingBlockId(null);
     setGhostBlock(null);
+    window.setTimeout(() => { suppressPoolOpenRef.current = false; }, 120);
   }, []);
 
   // ── 统计 ───────────────────────────────────────────────
@@ -761,6 +779,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                   className={`ds-pool-item ${draggedPoolItemId === item.id ? 'ds-pool-item--dragging' : ''}`}
                   draggable
                   onDragStart={(e) => handlePoolDragStart(e, item.id)}
+                  onClick={() => { if (!suppressPoolOpenRef.current) handleProjectPoolClick(item.sourceId); }}
                 >
                   <div
                     className="ds-pool-item-accent"
@@ -846,7 +865,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
             {showCompletedPool && (
               <div className="ds-pool-list">
                 {completedPoolItems.map((item) => (
-                  <div key={item.id} className="ds-pool-item ds-pool-item--completed">
+                  <div key={item.id} className="ds-pool-item ds-pool-item--completed" onClick={() => { if (item.source === 'project') handleProjectPoolClick(item.sourceId); }}>
                     <div className="ds-pool-item-content">
                       <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
                       {item.detail && <span className="ds-pool-item-detail">{item.detail}</span>}
@@ -854,7 +873,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                     <button
                       type="button"
                       className="ds-pool-undo-btn"
-                      onClick={() => handleUndoCompletedPoolItem(item)}
+                      onClick={(event) => { event.stopPropagation(); handleUndoCompletedPoolItem(item); }}
                     >
                       撤销
                     </button>

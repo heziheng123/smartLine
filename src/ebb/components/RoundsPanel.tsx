@@ -5,8 +5,8 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, Trash2, Plus } from 'lucide-react';
-import { formatDate } from '@/utils/dateSafe';
+import { X, Calendar, Trash2, Plus, CalendarRange, RotateCcw } from 'lucide-react';
+import { addDays, diffDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { buildNextRoundTask, computeRounds, getDateLabel, getReviewTopicKey, isOverdue } from '../scheduler';
@@ -19,34 +19,49 @@ interface RoundsPanelProps {
   onClose: () => void;
 }
 
+type PendingChange =
+  | { kind: 'reschedule'; title: string; description: string; updates: Array<{ id: string; dueDate: string }> }
+  | { kind: 'delete'; title: string; description: string; taskId: string }
+  | { kind: 'add'; title: string; description: string; task: ReturnType<typeof buildNextRoundTask> }
+  | { kind: 'restart'; title: string; description: string; startDate: string };
+
 const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const {
     reviewTasks,
     ebbSettings,
-    updateReviewTask,
     deleteReviewTask,
     addReviewTasks,
     toggleReviewTask,
+    rescheduleReviewRounds,
+    restartReviewCycle,
   } = useEbbStore(
     useShallow((s) => ({
       reviewTasks: s.reviewTasks,
       ebbSettings: s.ebbSettings,
-      updateReviewTask: s.updateReviewTask,
       deleteReviewTask: s.deleteReviewTask,
       addReviewTasks: s.addReviewTasks,
       toggleReviewTask: s.toggleReviewTask,
+      rescheduleReviewRounds: s.rescheduleReviewRounds,
+      restartReviewCycle: s.restartReviewCycle,
     })),
   );
   const [datePickerTaskId, setDatePickerTaskId] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [rescheduleChoiceTaskId, setRescheduleChoiceTaskId] = useState<string | null>(null);
+  const [rescheduleMode, setRescheduleMode] = useState<'single' | 'following'>('single');
+  const [isRestartDatePickerOpen, setIsRestartDatePickerOpen] = useState(false);
+  const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
   const [actionError, setActionError] = useState('');
 
   // 该主题所有任务，按 dueDate 升序
   const topicTasks = useMemo(
     () =>
       reviewTasks
-        .filter((t) => getReviewTopicKey(t) === topicKey)
-        .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')),
+        .filter((t) => !t.isArchived && getReviewTopicKey(t) === topicKey)
+        .sort((a, b) =>
+          (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER)
+          || (a.originalDueDate ?? a.dueDate ?? '').localeCompare(b.originalDueDate ?? b.dueDate ?? '')
+          || a.id.localeCompare(b.id),
+        ),
     [reviewTasks, topicKey],
   );
 
@@ -77,37 +92,58 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
 
   // 改期
   const handleReschedule = useCallback((taskId: string) => {
-    setDatePickerTaskId(taskId);
+    setRescheduleChoiceTaskId(taskId);
   }, []);
 
   const handleDateSelect = useCallback(
     (newDate: string | undefined) => {
       if (datePickerTaskId && newDate) {
-        const hasConflict = topicTasks.some(
-          (task) => task.id !== datePickerTaskId && task.dueDate === newDate,
-        );
-        if (hasConflict) {
+        const targetIndex = topicTasks.findIndex((task) => task.id === datePickerTaskId);
+        const target = topicTasks[targetIndex];
+        if (!target) return;
+        const delta = diffDays(newDate, target.dueDate);
+        const affected = rescheduleMode === 'following'
+          ? topicTasks.slice(targetIndex).filter((task) => !task.isCompleted)
+          : [target];
+        const updates = affected.map((task) => ({
+          id: task.id,
+          dueDate: task.id === target.id ? newDate : addDays(task.dueDate, delta),
+        }));
+        const updateMap = new Map(updates.map((item) => [item.id, item.dueDate]));
+        const resultingDates = topicTasks.map((task) => updateMap.get(task.id) ?? task.dueDate);
+        if (new Set(resultingDates).size !== resultingDates.length) {
           setActionError('同一主题在该日期已经有复习轮次，请选择其他日期。');
           setDatePickerTaskId(null);
           return;
         }
-        updateReviewTask(datePickerTaskId, { dueDate: newDate });
+        setPendingChange({
+          kind: 'reschedule',
+          title: rescheduleMode === 'following' ? '确认整体顺延' : '确认单轮改期',
+          description: rescheduleMode === 'following'
+            ? `将第 ${targetIndex + 1} 轮及之后 ${updates.length} 个未完成轮次整体移动 ${Math.abs(delta)} 天${delta < 0 ? '（提前）' : delta > 0 ? '（顺延）' : ''}。已完成轮次不会改变。`
+            : `第 ${targetIndex + 1} 轮将从 ${target.dueDate} 改为 ${newDate}，其他轮次不变。`,
+          updates,
+        });
         setActionError('');
       }
       setDatePickerTaskId(null);
     },
-    [datePickerTaskId, topicTasks, updateReviewTask],
+    [datePickerTaskId, rescheduleMode, topicTasks],
   );
 
   // 删除单轮
   const handleDeleteRound = useCallback(
     (id: string) => {
-      const deletingLastRound = topicTasks.length === 1;
-      deleteReviewTask(id);
-      setConfirmDeleteId(null);
-      if (deletingLastRound) onClose();
+      const target = topicTasks.find((task) => task.id === id);
+      if (!target || target.isCompleted) return;
+      setPendingChange({
+        kind: 'delete',
+        title: '确认删除未完成轮次',
+        description: `删除后当前计划将从 ${topicTasks.length} 轮变为 ${topicTasks.length - 1} 轮，后续轮次编号会自动重排。`,
+        taskId: id,
+      });
     },
-    [deleteReviewTask, onClose, topicTasks.length],
+    [topicTasks],
   );
 
   // 追加一轮
@@ -115,9 +151,40 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     const nextRound = buildNextRoundTask(topicTasks, ebbSettings);
     if (!nextRound) return;
 
-    addReviewTasks([nextRound]);
+    setPendingChange({
+      kind: 'add',
+      title: '确认增加补充复习',
+      description: `将在 ${nextRound.dueDate} 增加第 ${topicTasks.length + 1} 轮。若节点当前为金色，增加后会恢复为绿色，直至新轮次完成。`,
+      task: nextRound,
+    });
+  }, [topicTasks, ebbSettings]);
+
+  const handleRestartDateSelect = useCallback((startDate: string | undefined) => {
+    setIsRestartDatePickerOpen(false);
+    if (!startDate) return;
+    const intervalCount = topicTasks[0]?.complexity
+      ? ebbSettings.complexityConfigs[topicTasks[0].complexity!].intervals.length
+      : ebbSettings.customIntervals.split(',').map(Number).filter((value) => Number.isInteger(value) && value > 0).length;
+    setPendingChange({
+      kind: 'restart',
+      title: '确认重新开始复习计划',
+      description: `当前 ${topicTasks.length} 个轮次将保留为历史记录并归档，从 ${startDate} 起重新生成 ${intervalCount} 个未完成轮次。知识节点会回到灰色，完成首轮后变为绿色。`,
+      startDate,
+    });
+  }, [ebbSettings, topicTasks]);
+
+  const applyPendingChange = useCallback(() => {
+    if (!pendingChange) return;
+    if (pendingChange.kind === 'reschedule') rescheduleReviewRounds(pendingChange.updates);
+    if (pendingChange.kind === 'delete') {
+      deleteReviewTask(pendingChange.taskId);
+      if (topicTasks.length === 1) onClose();
+    }
+    if (pendingChange.kind === 'add' && pendingChange.task) addReviewTasks([pendingChange.task]);
+    if (pendingChange.kind === 'restart') restartReviewCycle(topicKey, pendingChange.startDate);
+    setPendingChange(null);
     setActionError('');
-  }, [topicTasks, ebbSettings, addReviewTasks]);
+  }, [addReviewTasks, deleteReviewTask, onClose, pendingChange, rescheduleReviewRounds, restartReviewCycle, topicKey, topicTasks.length]);
 
   // 勾选
   const handleToggle = useCallback(
@@ -178,7 +245,6 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
                 ? getPointWeight(round, t.complexity, ebbSettings.complexityConfigs)
                 : 0;
               const overdue = isOverdue(t);
-              const isConfirming = confirmDeleteId === t.id;
 
               return (
                 <div
@@ -208,17 +274,18 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
                     onChange={() => handleToggle(t.id)}
                   />
 
-                  {/* 日期 */}
-                  <span className={`eb-date-pill eb-date-pill--${dateLabel.variant}`}>
-                    {dateLabel.text}
-                  </span>
-
-                  {/* 完成日期 */}
-                  {t.completedDate && (
-                    <span className="eb-round-completed-date">
-                      {formatDate(t.completedDate, 'M.D')}
+                  {/* 计划日期与执行日期 */}
+                  <div className="eb-round-dates">
+                    <span className={`eb-date-pill eb-date-pill--${dateLabel.variant}`}>
+                      计划 {dateLabel.text}
                     </span>
-                  )}
+                    {t.originalDueDate && t.originalDueDate !== t.dueDate && (
+                      <span className="eb-round-original-date">原计划 {formatDate(t.originalDueDate, 'M.D')}</span>
+                    )}
+                    {t.completedDate && (
+                      <span className="eb-round-completed-date">实际 {formatDate(t.completedDate, 'M.D')}</span>
+                    )}
+                  </div>
 
                   {/* 积分 */}
                   {points > 0 && (
@@ -237,21 +304,11 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
                         <Calendar size={13} />
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className={`eb-icon-btn eb-icon-btn--danger ${isConfirming ? 'eb-icon-btn--confirm' : ''}`}
-                      onClick={() => {
-                        if (isConfirming) {
-                          handleDeleteRound(t.id);
-                        } else {
-                          setConfirmDeleteId(t.id);
-                          setTimeout(() => setConfirmDeleteId(null), 2500);
-                        }
-                      }}
-                      title={isConfirming ? '再次点击确认删除' : '删除此轮'}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    {!t.isCompleted && (
+                      <button type="button" className="eb-icon-btn eb-icon-btn--danger" onClick={() => handleDeleteRound(t.id)} title="删除此未完成轮次">
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -268,6 +325,10 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
 
         {/* 底部操作 */}
         <div className="eb-panel-footer">
+          <button type="button" className="eb-btn eb-btn--ghost eb-btn--sm" onClick={() => setIsRestartDatePickerOpen(true)}>
+            <RotateCcw size={14} />
+            重新开始
+          </button>
           <button
             type="button"
             className="eb-btn eb-btn--secondary eb-btn--sm"
@@ -283,12 +344,31 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
 
         {/* 日期选择器 */}
         {datePickerTaskId && (
-          <EbbDatePicker
-            anchorEl={null}
-            value={datePickerValue}
-            onSelect={handleDateSelect}
-            onClose={() => setDatePickerTaskId(null)}
-          />
+          <EbbDatePicker anchorEl={null} value={datePickerValue} onSelect={handleDateSelect} onClose={() => setDatePickerTaskId(null)} />
+        )}
+        {rescheduleChoiceTaskId && (
+          <div className="eb-change-preview-overlay" onClick={() => setRescheduleChoiceTaskId(null)}>
+            <div className="eb-reschedule-mode" onClick={(event) => event.stopPropagation()}>
+              <div className="eb-reschedule-mode-title">选择改期方式</div>
+              <button type="button" onClick={() => { setRescheduleMode('single'); setDatePickerTaskId(rescheduleChoiceTaskId); setRescheduleChoiceTaskId(null); }}><Calendar size={14} />仅修改本轮</button>
+              <button type="button" onClick={() => { setRescheduleMode('following'); setDatePickerTaskId(rescheduleChoiceTaskId); setRescheduleChoiceTaskId(null); }}><CalendarRange size={14} />本轮及后续整体顺延</button>
+            </div>
+          </div>
+        )}
+        {isRestartDatePickerOpen && (
+          <EbbDatePicker anchorEl={null} value={todayStr()} onSelect={handleRestartDateSelect} onClose={() => setIsRestartDatePickerOpen(false)} />
+        )}
+        {pendingChange && (
+          <div className="eb-change-preview-overlay" onClick={() => setPendingChange(null)}>
+            <div className="eb-change-preview" onClick={(event) => event.stopPropagation()}>
+              <div className="eb-change-preview-title">{pendingChange.title}</div>
+              <p>{pendingChange.description}</p>
+              <div className="eb-change-preview-actions">
+                <button type="button" className="eb-btn eb-btn--ghost eb-btn--sm" onClick={() => setPendingChange(null)}>取消</button>
+                <button type="button" className="eb-btn eb-btn--primary eb-btn--sm" onClick={applyPendingChange}>确认执行</button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>,

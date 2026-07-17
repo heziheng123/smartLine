@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed } from 'lucide-re
 import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
 import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
+import { openProjectTaskModal } from './projectTaskModal';
 import {
   todayStr,
   addDays,
@@ -56,6 +57,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
   const [lastMove, setLastMove] = useState<MoveHistory | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const suppressCardOpenRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -176,11 +178,14 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
   );
 
   const handleDragStart = useCallback((block: ViewBlock) => {
+    suppressCardOpenRef.current = false;
     setDraggingId(block.id);
   }, []);
 
   const handleDragEnd = useCallback(() => {
+    suppressCardOpenRef.current = true;
     clearDragState();
+    window.setTimeout(() => { suppressCardOpenRef.current = false; }, 120);
   }, [clearDragState]);
 
   const handleCellDragOver = useCallback(
@@ -445,13 +450,20 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                             isDragging ? 'wmv-block-card--dragging' : ''
                           }`}
                           style={{ backgroundColor: `${tagColor}40`, borderLeftColor: tagColor }}
+                          onClick={() => { if (!suppressCardOpenRef.current) openProjectTaskModal(block._taskId, block.id); }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              openProjectTaskModal(block._taskId, block.id);
+                            }
+                          }}
                           title="拖动到同标签的其他日期列即可直接改期"
                         >
                           <div className="wmv-block-header">
                             <button
                               type="button"
                               className={`wmv-check ${header.isCompleted ? 'wmv-check--done' : ''}`}
-                              onClick={() => handleToggle(block._taskId, block.id, header.isCompleted)}
+                              onClick={(event) => { event.stopPropagation(); handleToggle(block._taskId, block.id, header.isCompleted); }}
                             >
                               {header.isCompleted && '✓'}
                             </button>

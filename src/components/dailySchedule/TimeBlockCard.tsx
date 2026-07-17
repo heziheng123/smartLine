@@ -58,6 +58,7 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
     originalStartMin: number;
     originalEndMin: number;
   } | null>(null);
+  const didPointerDragRef = useRef(false);
 
   const startMin = timeToMinutes(block.startTime);
   const endMin = timeToMinutes(block.endTime);
@@ -75,6 +76,7 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
         originalStartMin: startMin,
         originalEndMin: endMin,
       };
+      didPointerDragRef.current = false;
       setDragMode(mode);
     },
     [startMin, endMin],
@@ -89,6 +91,7 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
       if (!state) return;
 
       const deltaY = e.clientY - state.startY;
+      if (Math.abs(deltaY) > 3) didPointerDragRef.current = true;
       const deltaMin = (deltaY / GRID_CONFIG.hourHeight) * 60;
 
       let newStartMin: number;
@@ -210,9 +213,10 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
         background: bgColor,
       }}
       onClick={() => {
-        if (dragMode === 'none' && cardRef.current) {
+        if (dragMode === 'none' && cardRef.current && !didPointerDragRef.current) {
           onClick(block, cardRef.current.getBoundingClientRect());
         }
+        didPointerDragRef.current = false;
       }}
     >
       {/* 上边缘拉伸手柄 */}

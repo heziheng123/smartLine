@@ -17,6 +17,7 @@ import MilestoneDialog from '@/components/MilestoneDialog';
 import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
 import { IceboxPalette } from '@/components/smartBlock/IceboxPalette';
+import ProjectTaskBlockModal from '@/components/smartBlock/ProjectTaskBlockModal';
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
 import { AnimatePresence, motion } from 'framer-motion';
 
@@ -174,6 +175,17 @@ const App: React.FC = () => {
       updateBlockHeader,
     ],
   );
+
+  // The week matrix is a task-block view, so it must receive both standalone
+  // projects and projects nested inside groups. IDs are unique in Timeline;
+  // de-duplicate defensively to avoid rendering a block twice on imported data.
+  const weekMatrixTasks = useMemo(() => {
+    const uniqueTasks = new Map<string, Task>();
+    [...store.tasks, ...store.groups.flatMap((group) => group.children)].forEach((task) => {
+      uniqueTasks.set(task.id, task);
+    });
+    return [...uniqueTasks.values()];
+  }, [store.groups, store.tasks]);
 
   // 对话框状态
   const [dialogType, setDialogType] = useState<DialogType>(null);
@@ -719,7 +731,7 @@ const App: React.FC = () => {
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
                 <WeekMatrixView
-                  tasks={store.tasks}
+                  tasks={weekMatrixTasks}
                   onUpdateBlockHeader={store.updateBlockHeader}
                 />
               </Suspense>
@@ -862,6 +874,7 @@ const App: React.FC = () => {
           <IceboxPalette />
         )}
       </AnimatePresence>
+      <ProjectTaskBlockModal />
     </div>
   );
 };
