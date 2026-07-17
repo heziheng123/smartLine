@@ -4,13 +4,14 @@ import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
-import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, Focus, MoveRight } from 'lucide-react';
+import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, Focus, MoveRight, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { TimeCapsuleModal } from '@/components/GlobalSearch';
 import { getValidGraphNodeIds } from '@/utils/blocks';
 import { computeNodeActivationStates } from '../activation';
 import styles from './GraphConsole.module.css';
+import { useGraphBindingStore } from '../bindingStore';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
 import { zoom, zoomIdentity, ZoomBehavior } from 'd3-zoom';
@@ -63,6 +64,8 @@ export const KnowledgeGraphView: React.FC = () => {
   const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
   const { reviewTasks } = useEbbStore();
   const { tasks } = useTimelineStore();
+  const bindingSession = useGraphBindingStore();
+  const [bindingError, setBindingError] = useState('');
 
   const [newRootName, setNewRootName] = useState('');
   const [isMoveMode, setIsMoveMode] = useState(false);
@@ -100,6 +103,32 @@ export const KnowledgeGraphView: React.FC = () => {
   useEffect(() => {
     if (!isHydrated) hydrateStore();
   }, [isHydrated, hydrateStore]);
+
+  useEffect(() => {
+    if (!bindingSession.active) return;
+    setSelectedNodeId(null);
+    setIsPanelOpen(false);
+    setIsMoveMode(false);
+    setBindingError('');
+  }, [bindingSession.active]);
+
+  useEffect(() => {
+    if (!bindingSession.active || !isHydrated) return;
+    const validLeafIds = new Set(nodes.filter((node) => !nodes.some((candidate) => candidate.parentId === node.id)).map((node) => node.id));
+    const validSelection = bindingSession.selectedNodeIds.filter((id) => validLeafIds.has(id));
+    if (validSelection.length !== bindingSession.selectedNodeIds.length) {
+      bindingSession.setSelectedNodeIds(validSelection);
+    }
+  }, [bindingSession, isHydrated, nodes]);
+
+  useEffect(() => {
+    if (!bindingSession.active) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') bindingSession.cancel();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [bindingSession]);
 
   useEffect(() => {
     if (showHint) {
@@ -617,9 +646,31 @@ export const KnowledgeGraphView: React.FC = () => {
         opacity: 0.6
       }} />
 
+      {bindingSession.active && (
+        <div className="absolute top-4 left-1/2 z-30 w-[min(680px,calc(100%-32px))] -translate-x-1/2 rounded-2xl border border-indigo-100 bg-white/95 px-4 py-3 shadow-xl backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-slate-800">为“{bindingSession.taskTitle || '当前任务'}”选择知识节点</div>
+              <div className="mt-0.5 text-xs text-slate-500">点击父节点继续浏览，点击最外层叶子节点勾选；已选择 {bindingSession.selectedNodeIds.length} 个</div>
+              {bindingError && <div className="mt-1 text-xs font-medium text-rose-600">{bindingError}</div>}
+            </div>
+            <button onClick={bindingSession.cancel} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">取消</button>
+            <button
+              onClick={() => {
+                setBindingError('');
+                if (!bindingSession.confirm()) setBindingError('原任务已不存在或任务块已被删除，无法保存；你可以取消返回。');
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
+            >
+              <Check size={14} /> 完成选择
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Global Hints */}
       <AnimatePresence>
-        {isMoveMode ? (
+        {!bindingSession.active && isMoveMode ? (
           <motion.div 
             key="move-hint"
             initial={{ opacity: 0, y: -20 }}
@@ -631,7 +682,7 @@ export const KnowledgeGraphView: React.FC = () => {
             请点击选择要转移到的目标父节点，或点击空白处使其成为根节点。
             <button onClick={() => setIsMoveMode(false)} className="ml-2 px-2 py-0.5 bg-white/20 rounded text-xs hover:bg-white/30 transition-colors">取消</button>
           </motion.div>
-        ) : showHint ? (
+        ) : !bindingSession.active && showHint ? (
           <motion.div 
             key="normal-hint"
             initial={{ opacity: 0, y: -20 }}
@@ -724,6 +775,7 @@ export const KnowledgeGraphView: React.FC = () => {
       {/* SVG Sunburst Canvas */}
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" style={{ touchAction: 'none' }}>
         <rect width="100%" height="100%" fill="transparent" style={{ pointerEvents: 'all' }} onClick={() => {
+          if (bindingSession.active) return;
           if (isMoveMode && selectedNodeId) {
             // Move to root
             updateNode(selectedNodeId, { parentId: null });
@@ -760,14 +812,15 @@ export const KnowledgeGraphView: React.FC = () => {
                 {island.nodes.map((node: any) => {
                   const isVirtual = node.data.isVirtual;
                   const isSelected = selectedNodeId === node.id;
+                  const isBindingSelected = bindingSession.active && bindingSession.selectedNodeIds.includes(node.id);
 
                   const isXRayActive = matchingNodeIds !== null;
                   const isXRayMatched = isXRayActive && matchingNodeIds.has(node.id);
                   const isDimmed = isXRayActive && !isXRayMatched;
 
                   const fillColor = isVirtual ? '#ffffff' : node.data.color;
-                  const strokeColor = isSelected ? '#0f172a' : (isVirtual ? '#cbd5e1' : '#ffffff');
-                  const strokeWidth = isSelected ? 2.5 : (isVirtual ? 2 : 1.5);
+                  const strokeColor = isBindingSelected ? '#4f46e5' : (isSelected ? '#0f172a' : (isVirtual ? '#cbd5e1' : '#ffffff'));
+                  const strokeWidth = isBindingSelected ? 4 : (isSelected ? 2.5 : (isVirtual ? 2 : 1.5));
 
               const angleDiff = node.x1 - node.x0;
                const radiusDiff = node.y1 - node.y0;
@@ -823,6 +876,11 @@ export const KnowledgeGraphView: React.FC = () => {
                       key={node.id}
                       onClick={(e) => { 
                         e.stopPropagation(); 
+                        if (bindingSession.active) {
+                          if (node.data.isLeaf) bindingSession.toggleNode(node.id);
+                          else setSelectedRootFilter(node.id);
+                          return;
+                        }
                         if (isMoveMode && selectedNodeId && selectedNodeId !== node.id) {
                           // Prevent moving a node to its own descendant
                           const descendants = getDescendants(selectedNodeId);
@@ -839,6 +897,10 @@ export const KnowledgeGraphView: React.FC = () => {
                       }}
                       onDoubleClick={(e) => {
                         e.stopPropagation();
+                        if (bindingSession.active) {
+                          if (!node.data.isLeaf) setSelectedRootFilter(node.id);
+                          return;
+                        }
                         if (node.depth > 0 && !node.data.isLeaf) {
                           setSelectedRootFilter(node.id);
                         } else if (node.depth === 0 && selectedRootFilter !== 'all') {
@@ -849,7 +911,7 @@ export const KnowledgeGraphView: React.FC = () => {
                       }}
                       className={`cursor-pointer transition-opacity duration-300 ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
                     >
-                      <title>{node.data.name}</title>
+                      <title>{bindingSession.active ? `${node.data.name}${node.data.isLeaf ? (isBindingSelected ? '（已选择）' : '（点击选择）') : '（点击浏览）'}` : node.data.name}</title>
                       <path
                         d={arcGenerator(node) || ''}
                         fill={fillColor}
@@ -883,7 +945,7 @@ export const KnowledgeGraphView: React.FC = () => {
       </svg>
 
       {/* Floating Control Panel */}
-      {isPanelOpen ? (
+      {!bindingSession.active && (isPanelOpen ? (
         <div className={styles.panel} style={{ background: 'rgba(255,255,255,0.9)', boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}>
           {selectedNode ? (
             <div className={styles.panelContainer}>
@@ -1026,7 +1088,7 @@ export const KnowledgeGraphView: React.FC = () => {
         <button onClick={() => setIsPanelOpen(true)} className={styles.triggerBtn} title="打开节点控制台">
           <Settings2 size={20} />
         </button>
-      )}
+      ))}
     </div>
   );
 };

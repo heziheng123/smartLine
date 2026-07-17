@@ -68,6 +68,8 @@ import { mergeBatchEditRows, type ParsedRow } from '@/utils/excelImport';
 
 interface ProjectDocumentViewProps {
   task: Task;
+  focusBlockId?: string | null;
+  focusRequest?: number;
   onClose: () => void;
   onUpdateTask?: (taskId: string, patch: Partial<Task>) => void;
   onDeleteTask?: (taskId: string) => void;
@@ -75,6 +77,8 @@ interface ProjectDocumentViewProps {
 
 const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   task,
+  focusBlockId,
+  focusRequest,
   onClose,
   onUpdateTask,
   onDeleteTask,
@@ -113,6 +117,27 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [todayOnly, setTodayOnly] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [highlightedBlockId, setHighlightedBlockId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!focusBlockId) return;
+    setHideCompleted(false);
+    setTodayOnly(false);
+    setActiveTag(null);
+    setCollapsedDates(new Set());
+    setExpandAll(true);
+    setHighlightedBlockId(focusBlockId);
+    const focusTimer = window.setTimeout(() => {
+      const target = Array.from(document.querySelectorAll<HTMLElement>('[data-smart-block-id]'))
+        .find((element) => element.dataset.smartBlockId === focusBlockId);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 450);
+    const clearTimer = window.setTimeout(() => setHighlightedBlockId(null), 2200);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [focusBlockId, focusRequest]);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // 实时从 store 读取最新 blocks（防止 stale data）
@@ -838,12 +863,14 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                                   >
                                     {(provided, snapshot) => (
                                       <div
+                                        data-smart-block-id={block.id}
                                         ref={provided.innerRef}
                                         {...provided.draggableProps}
                                         {...provided.dragHandleProps}
-                                        className={snapshot.isDragging ? 'pdv-drag-item--dragging' : ''}
+                                        className={`${snapshot.isDragging ? 'pdv-drag-item--dragging' : ''} ${highlightedBlockId === block.id ? 'ring-2 ring-indigo-400 ring-offset-2 rounded-xl' : ''}`}
                                       >
                                         <SmartTaskBlockCard
+                                          parentTaskId={task.id}
                                           block={block}
                                           onUpdateHeader={handleUpdateHeader}
                                           onUpdateBody={handleUpdateBody}

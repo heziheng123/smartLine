@@ -29,6 +29,7 @@ type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 type TimelineNavigateDetail = {
   view?: AppModule;
   taskId?: string;
+  blockId?: string;
 };
 
 function mapLiveblocksStatus(status: string | undefined) {
@@ -193,6 +194,8 @@ const App: React.FC = () => {
 
   // 任务详情抽屉状态：只存 id，task 对象从 store 派生（自动跟随远端更新 + 任务删除自动关闭）
   const [drawerTaskId, setDrawerTaskId] = useState<string | null>(null);
+  const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null);
+  const [drawerFocusRequest, setDrawerFocusRequest] = useState(0);
   const drawerTask = useMemo(
     () => (drawerTaskId ? store.tasks.find((t) => t.id === drawerTaskId) ?? null : null),
     [drawerTaskId, store.tasks],
@@ -392,6 +395,8 @@ const App: React.FC = () => {
       if (detail?.taskId) {
         setDrawerTaskId(detail.taskId);
       }
+      setDrawerBlockId(detail?.blockId ?? null);
+      if (detail?.blockId) setDrawerFocusRequest((value) => value + 1);
     };
     window.addEventListener('tl-navigate', handleNav);
     return () => window.removeEventListener('tl-navigate', handleNav);
@@ -788,6 +793,8 @@ const App: React.FC = () => {
                   <Suspense fallback={<ViewFallback />}>
                     <ProjectDocumentView
                       task={drawerTask}
+                      focusBlockId={drawerBlockId}
+                      focusRequest={drawerFocusRequest}
                       onClose={handleCloseDrawer}
                       onUpdateTask={handleUpdateTaskMeta}
                       onDeleteTask={handleDeleteTaskFromDrawer}

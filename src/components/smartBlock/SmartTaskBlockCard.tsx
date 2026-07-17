@@ -20,9 +20,11 @@ import { sanitizeHtml } from '@/utils/sanitize';
 import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
 import { useGraphStore } from '@/graph/store';
 import { getValidGraphNodeIds, shouldAutoSyncEbb } from '@/utils/blocks';
+import { useGraphBindingStore } from '@/graph/bindingStore';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SmartTaskBlockCardProps {
+  parentTaskId: string;
   block: SmartTaskBlock;
   onUpdateHeader: (blockId: string, patch: Partial<SmartTaskHeader>) => void;
   onUpdateBody: (blockId: string, body: string) => void;
@@ -36,6 +38,7 @@ interface SmartTaskBlockCardProps {
 const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
 
 export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
+  parentTaskId,
   block,
   onUpdateHeader,
   onUpdateBody,
@@ -56,6 +59,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const [editingBody, setEditingBody] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showGraphPicker, setShowGraphPicker] = useState(false);
+  const startGraphBinding = useGraphBindingStore((state) => state.start);
   const [showTagPicker, setShowTagPicker] = useState(false);
   const [dateAnchor, setDateAnchor] = useState<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -140,6 +144,16 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     });
     // 不自动关闭，支持连续点选
   }, [block.id, header, onUpdateHeader]);
+
+  const handleOpenGraphBinding = useCallback(() => {
+    setShowGraphPicker(false);
+    startGraphBinding({
+      taskId: parentTaskId,
+      blockId: block.id,
+      taskTitle: header.title,
+      nodeIds: validGraphNodeIds,
+    });
+  }, [startGraphBinding, parentTaskId, block.id, header.title, validGraphNodeIds]);
 
   // 时长修改
   const handleDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -490,7 +504,10 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               onChange={handleGraphNodeSelect}
               taskTitle={header.title}
               footer={
-                <div style={{ padding: '8px 12px', borderTop: '1px solid #f3f4f6', backgroundColor: '#fafaf9', borderBottomLeftRadius: '8px', borderBottomRightRadius: '8px' }}>
+                <div style={{ padding: '8px 12px', borderTop: '1px solid #f3f4f6', backgroundColor: '#fafaf9', borderBottomLeftRadius: '8px', borderBottomRightRadius: '8px', display: 'grid', gap: 8 }}>
+                  <button type="button" className="stb-graph-option" onClick={handleOpenGraphBinding} style={{ justifyContent: 'center', color: '#4f46e5', fontWeight: 600 }}>
+                    去知识大盘选择
+                  </button>
                   <label className="stb-sync-checkbox flex items-center cursor-pointer" title="任务完成后是否自动安排艾宾浩斯复习">
                     <input
                       type="checkbox"
