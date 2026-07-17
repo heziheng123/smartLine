@@ -935,7 +935,12 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               // 只有当所有的复习任务都是未完成状态时，我们才安全地删除它们
               const hasCompletedReview = existingTasks.some(t => t.isCompleted);
               if (!hasCompletedReview) {
-                const newReviewTasks = state.reviewTasks.filter(t => t.graphNodeId !== graphNodeId);
+                // Only discard the current, uncompleted schedule. Archived
+                // cycles are immutable learning history and must survive a
+                // later cancellation of the originating project task.
+                const newReviewTasks = state.reviewTasks.filter(
+                  (task) => task.isArchived || task.graphNodeId !== graphNodeId,
+                );
                 const newData: EbbData = {
                   ...state,
                   reviewTasks: newReviewTasks,

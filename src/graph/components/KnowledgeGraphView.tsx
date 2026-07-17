@@ -191,18 +191,38 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [nodes]);
 
   const getNodeColorHex = useCallback((nodeId: string): string => {
-    const descendants = getDescendants(nodeId);
-    const relevantNodeIds = [nodeId, ...descendants];
-    const familyTasks = reviewTasks.filter(task =>
-      !task.isArchived && task.graphNodeId && relevantNodeIds.includes(task.graphNodeId),
-    );
-    const completedCount = familyTasks.filter(task => task.isCompleted).length;
+    const gray = '#64748b';
+    const green = '#10b981';
+    const gold = '#eab308';
+    const childrenByParentId = new Map<string, string[]>();
+    nodes.forEach((node) => {
+      if (node.isArchived || !node.parentId) return;
+      const children = childrenByParentId.get(node.parentId) ?? [];
+      children.push(node.id);
+      childrenByParentId.set(node.parentId, children);
+    });
 
-    // 主色只表达轮次完成进度；逾期改用独立红色描边，不覆盖灰/绿/金状态。
-    if (completedCount === 0) return '#64748b';
-    if (familyTasks.length > 0 && completedCount === familyTasks.length) return '#eab308';
-    return '#10b981';
-  }, [reviewTasks, getDescendants]);
+    const getColor = (id: string, path = new Set<string>()): string => {
+      if (path.has(id)) return gray;
+      const childIds = childrenByParentId.get(id) ?? [];
+      if (childIds.length === 0) {
+        const ownRounds = reviewTasks.filter(
+          (task) => !task.isArchived && task.graphNodeId === id,
+        );
+        const completedCount = ownRounds.filter((task) => task.isCompleted).length;
+        if (completedCount === 0) return gray;
+        return completedCount === ownRounds.length ? gold : green;
+      }
+
+      const nextPath = new Set(path).add(id);
+      const childColors = childIds.map((childId) => getColor(childId, nextPath));
+      if (childColors.every((color) => color === gold)) return gold;
+      if (childColors.every((color) => color === green || color === gold)) return green;
+      return gray;
+    };
+
+    return getColor(nodeId);
+  }, [nodes, reviewTasks]);
 
   const islandsData = useMemo(() => {
     const today = todayStr();
