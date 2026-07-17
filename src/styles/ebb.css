@@ -3228,6 +3228,18 @@
   padding: 12px 20px;
 }
 
+/* The tab panel must participate in the flex height chain. A plain height:100%
+   child can expand with its content inside .eb-main, leaving the inner list
+   without a constrained height and therefore without a scroll range. */
+.eb-main > [role='tabpanel'] {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 /* ── 通用筛选栏 ──────────────────────────────────────── */
 .eb-filter-bar {
   display: flex;
@@ -3384,6 +3396,8 @@
   flex-direction: column;
   gap: 6px;
   padding-right: 4px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 /* 主题行 */
