@@ -26,6 +26,7 @@ import {
   yToMinutes,
   checkCollision,
   parseSourceId,
+  GRID_CONFIG,
 } from './conversion';
 
 // ── 快速创建输入框 ──────────────────────────────────────────
@@ -365,6 +366,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         color: todo.parentTaskColor,
         detail: todo.parentTaskTitle,
         sourceId,
+        duration: todo._duration,
       });
     }
 
@@ -444,8 +446,11 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       const poolItem = poolItems.find((i) => i.id === poolItemId);
       if (!poolItem) return;
 
-      const startMin = snapToQuarter(targetMinutes);
-      const duration = poolItem.duration ?? 30;
+      const duration = Math.max(15, poolItem.duration ?? 30);
+      const latestStart = 23 * 60 + 45 - duration;
+      const earliestStart = GRID_CONFIG.startHour * 60;
+      if (latestStart < earliestStart) return;
+      const startMin = Math.max(earliestStart, Math.min(snapToQuarter(targetMinutes), latestStart));
       const endMin = startMin + duration;
 
       const startTime = minutesToTime(startMin);
@@ -583,7 +588,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const handleQuickCreate = useCallback(
     (name: string, startTime: string) => {
-      const startMin = timeToMinutes(startTime);
+      const startMin = Math.min(timeToMinutes(startTime), 23 * 60 + 15);
       const endMin = startMin + 30; // 默认 30 分钟
       const endTime = minutesToTime(endMin);
 
@@ -591,7 +596,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         sourceId: `free-${Date.now().toString(36)}`,
         name,
         source: 'free',
-        startTime,
+        startTime: minutesToTime(startMin),
         endTime,
         completed: false,
       });
@@ -621,10 +626,15 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       if (draggedPoolItemId) {
         const poolItem = poolItems.find((i) => i.id === draggedPoolItemId);
         if (poolItem) {
-          const duration = poolItem.duration ?? 30;
+          const duration = Math.max(15, poolItem.duration ?? 30);
+          const previewStartMin = Math.min(startMin, 23 * 60 + 45 - duration);
+          if (previewStartMin < GRID_CONFIG.startHour * 60) {
+            setGhostBlock(null);
+            return;
+          }
           setGhostBlock({
-            startTime: minutesToTime(startMin),
-            endTime: minutesToTime(startMin + duration),
+            startTime: minutesToTime(previewStartMin),
+            endTime: minutesToTime(previewStartMin + duration),
             name: poolItem.name,
             color: poolItem.color,
           });

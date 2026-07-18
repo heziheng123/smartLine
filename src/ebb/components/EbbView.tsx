@@ -156,7 +156,7 @@ const EbbView: React.FC = () => {
 
   // ── 统计数据 ──────────────────────────────────────────────
   const stats = useMemo(() => {
-    const tasks = store.reviewTasks;
+    const tasks = store.reviewTasks.filter((task) => !task.isArchived);
     const topicCount = new Set(tasks.map(getReviewTopicKey)).size;
     const todayDue = tasks.filter((t) => isDueToday(t) && !t.isCompleted).length;
     const overdueCount = tasks.filter(isOverdue).length;

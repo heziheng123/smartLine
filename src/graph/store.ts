@@ -63,7 +63,7 @@ function clearPersistedParentStatuses(nodes: GraphNode[]): GraphNode[] {
   );
 }
 
-function normalizeGraphNodes(nodes: GraphNode[]): GraphNode[] {
+export function normalizeGraphNodes(nodes: GraphNode[]): GraphNode[] {
   const deduplicated = new Map<string, GraphNode>();
   nodes.forEach((node) => deduplicated.set(node.id, node));
 
@@ -140,6 +140,7 @@ interface GraphStore extends GraphData {
   archiveNodeCascade: (id: string, isArchived: boolean) => void;
   getNodeById: (id: string) => GraphNode | undefined;
   importGraphData: (data: GraphData) => void;
+  replaceGraphData: (data: GraphData) => void;
 }
 
 export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
@@ -359,6 +360,16 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
           saveGraphData(merged);
           set(merged);
         },
+
+        replaceGraphData: (data: GraphData) => {
+          const normalized: GraphData = {
+            nodes: normalizeGraphNodes(
+              Array.isArray(data?.nodes) ? data.nodes.filter(isValidGraphNode) : [],
+            ),
+          };
+          saveGraphData(normalized);
+          set(normalized);
+        },
       };
     },
     {
@@ -390,7 +401,13 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
 
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      saveGraphData({ nodes: state.nodes });
+      const latest = useGraphStore.getState().nodes;
+      const normalized = normalizeGraphNodes(latest);
+      if (JSON.stringify(latest) !== JSON.stringify(normalized)) {
+        useGraphStore.setState({ nodes: normalized });
+        return;
+      }
+      saveGraphData({ nodes: latest });
     }, 500);
   });
 }

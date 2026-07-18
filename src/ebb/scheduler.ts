@@ -58,14 +58,29 @@ export function normalizeReviewRoundOrders(tasks: ReviewTask[]): ReviewTask[] {
 
   const assigned = new Map<string, number>();
   for (const group of byTopic.values()) {
-    let nextOrder = Math.max(0, ...group.map((task) => task.roundOrder ?? 0)) + 1;
-    const missing = group
-      .filter((task) => !Number.isInteger(task.roundOrder) || task.roundOrder! <= 0)
+    const ordered = [...group]
       .sort((a, b) =>
+        (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER)
+        ||
         (a.originalDueDate ?? a.dueDate ?? '').localeCompare(b.originalDueDate ?? b.dueDate ?? '')
         || a.id.localeCompare(b.id),
       );
-    missing.forEach((task) => assigned.set(task.id, nextOrder++));
+    const used = new Set<number>();
+    const needsOrder: ReviewTask[] = [];
+    for (const task of ordered) {
+      const order = task.roundOrder;
+      if (Number.isInteger(order) && order! > 0 && !used.has(order!)) {
+        used.add(order!);
+      } else {
+        needsOrder.push(task);
+      }
+    }
+    let nextOrder = 1;
+    for (const task of needsOrder) {
+      while (used.has(nextOrder)) nextOrder += 1;
+      assigned.set(task.id, nextOrder);
+      used.add(nextOrder);
+    }
   }
 
   if (assigned.size === 0) return tasks;
@@ -477,7 +492,7 @@ export function calcTodayPoints(tasks: ReviewTask[], settings?: EbbSettings): nu
   const { roundMap } = computeRounds(tasks);
   let sum = 0;
   for (const t of tasks) {
-    if (t.dueDate !== today) continue;
+    if (t.completedDate !== today) continue;
     if (!t.isCompleted || !t.complexity) continue;
     const round = roundMap.get(t.id) ?? 0;
     sum += settings
@@ -503,7 +518,7 @@ export function calcWeekPoints(tasks: ReviewTask[], settings?: EbbSettings): num
   let sum = 0;
   for (const t of tasks) {
     if (!t.isCompleted || !t.complexity) continue;
-    if (isBeforeDay(t.dueDate, weekStartStr) || isAfterDay(t.dueDate, weekEndStr)) continue;
+    if (!t.completedDate || isBeforeDay(t.completedDate, weekStartStr) || isAfterDay(t.completedDate, weekEndStr)) continue;
     const round = roundMap.get(t.id) ?? 0;
     sum += settings
       ? getPointWeight(round, t.complexity, settings.complexityConfigs)

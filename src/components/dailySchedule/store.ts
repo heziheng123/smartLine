@@ -8,9 +8,10 @@ import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from '@/store/client';
 import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
-import { createScopedStorage, readJsonStorage } from '@/utils/persistence';
+import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 
 const STORAGE_KEY = 'daily-schedule-data';
+const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
 const SYNC_SETTINGS_KEY = 'daily-schedule-liveblocks';
 const dailyScheduleStorage = createScopedStorage('daily_schedule_data');
 
@@ -53,6 +54,38 @@ function getInitialSchedules(): Record<string, DaySchedule> {
   return {};
 }
 
+function isValidClockTime(value: unknown): value is string {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function isValidTimeRange(startTime: unknown, endTime: unknown): boolean {
+  return isValidClockTime(startTime) && isValidClockTime(endTime) && startTime < endTime;
+}
+
+export function normalizeDailySchedules(
+  input: Record<string, DaySchedule> | null | undefined,
+): Record<string, DaySchedule> {
+  const normalized: Record<string, DaySchedule> = {};
+  for (const [date, day] of Object.entries(input ?? {})) {
+    if (!day || typeof day !== 'object') continue;
+    const usedIds = new Set<string>();
+    const items = (Array.isArray(day.items) ? day.items : []).filter((item) => {
+      if (!item || typeof item.id !== 'string' || usedIds.has(item.id)) return false;
+      usedIds.add(item.id);
+      return true;
+    });
+    const blocks = (Array.isArray(day.blocks) ? day.blocks : []).filter((block) => {
+      if (!block || typeof block.id !== 'string' || usedIds.has(block.id)) return false;
+      if (!isValidClockTime(block.startTime) || !isValidClockTime(block.endTime)) return false;
+      if (block.startTime >= block.endTime) return false;
+      usedIds.add(block.id);
+      return true;
+    });
+    normalized[date] = { date, items, blocks };
+  }
+  return normalized;
+}
+
 async function saveSchedulesAsync(schedules: Record<string, DaySchedule>) {
   try {
     await dailyScheduleStorage.setItem(STORAGE_KEY, schedules);
@@ -61,8 +94,13 @@ async function saveSchedulesAsync(schedules: Record<string, DaySchedule>) {
   }
 }
 
+export async function persistDailySchedules(schedules: Record<string, DaySchedule>): Promise<void> {
+  writeJsonStorage(STORAGE_MIRROR_KEY, schedules, 'daily-schedule');
+  await saveSchedulesAsync(schedules);
+}
+
 function saveSchedules(schedules: Record<string, DaySchedule>) {
-  saveSchedulesAsync(schedules);
+  void persistDailySchedules(schedules);
 }
 
 // ── Store 接口 ──────────────────────────────────────────────
@@ -121,6 +159,7 @@ interface DailyScheduleStore {
   removeBySourceIds: (sourceIds: string[]) => void;
   /** 同步来源任务的展示信息，不改变其已安排的时间段。 */
   updateBySourceId: (sourceId: string, patch: { name?: string; duration?: number }) => void;
+  replaceSchedules: (schedules: Record<string, DaySchedule>) => void;
 }
 
 let _idCounter = 0;
@@ -145,12 +184,14 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
 
           dailyHydrationPromise = (async () => {
           try {
-            let parsed = await dailyScheduleStorage.getItem<unknown>(STORAGE_KEY);
+            const mirror = readJsonStorage<unknown>(STORAGE_MIRROR_KEY);
+            let parsed = mirror ?? await dailyScheduleStorage.getItem<unknown>(STORAGE_KEY);
             if (!parsed) {
               const lsRaw = readJsonStorage<unknown>(STORAGE_KEY);
               if (lsRaw) {
                 parsed = lsRaw;
                 await dailyScheduleStorage.setItem(STORAGE_KEY, parsed);
+                writeJsonStorage(STORAGE_MIRROR_KEY, parsed, 'daily-schedule');
                 localStorage.removeItem(STORAGE_KEY);
               }
             } else if (typeof parsed === 'string') {
@@ -168,7 +209,9 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
                   blocks: Array.isArray(v.blocks) ? v.blocks : [],
                 };
               }
-              set({ schedules: result, isHydrated: true });
+              const normalized = normalizeDailySchedules(result);
+              set({ schedules: normalized, isHydrated: true });
+              saveSchedules(normalized);
               if (pendingSourceIdsToRemove.size > 0) {
                 const pendingIds = [...pendingSourceIdsToRemove];
                 pendingSourceIdsToRemove.clear();
@@ -310,6 +353,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
 
         addTimeBlock: (date, block) => {
           set((state) => {
+            if (!isValidTimeRange(block.startTime, block.endTime)) return state;
             const schedules = { ...state.schedules };
             const day = schedules[date] ?? { date, items: [], blocks: [] };
             const newBlock: TimeBlock = { ...block, id: genScheduleId() };
@@ -325,7 +369,12 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             const day = schedules[date];
             if (!day) return state;
             const blocks = (day.blocks ?? []).map((b) =>
-              b.id === blockId ? { ...b, ...patch } : b,
+              b.id === blockId
+                ? (() => {
+                    const candidate = { ...b, ...patch };
+                    return isValidTimeRange(candidate.startTime, candidate.endTime) ? candidate : b;
+                  })()
+                : b,
             );
             schedules[date] = { ...day, blocks };
             saveSchedules(schedules);
@@ -347,6 +396,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
 
         resizeTimeBlock: (date, blockId, startTime, endTime) => {
           set((state) => {
+            if (!isValidTimeRange(startTime, endTime)) return state;
             const schedules = { ...state.schedules };
             const day = schedules[date];
             if (!day) return state;
@@ -418,6 +468,12 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             saveSchedules(schedules);
             return { schedules };
           });
+        },
+
+        replaceSchedules: (schedules) => {
+          const normalized = normalizeDailySchedules(schedules);
+          saveSchedules(normalized);
+          set({ schedules: normalized });
         },
       };
     },

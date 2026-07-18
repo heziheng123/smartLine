@@ -34,6 +34,27 @@ export interface ReviewTask {
   complexity?: ComplexityLevel;
   smStatus?: SmStatus;
   isArchived?: boolean;   // 是否已归档（冷数据区）
+  /** 项目任务完成所触发的计划创建日期，用于避免同节点同日连续消耗轮次。 */
+  scheduleCreatedDate?: string;
+  scheduleSourceTaskId?: string;
+  scheduleSourceBlockId?: string;
+  /** 自动完成来源；旧数据或手动完成无需填写。 */
+  completionSource?: 'manual' | 'project-task';
+  completionSourceTaskId?: string;
+  completionSourceBlockId?: string;
+  /** 自动完成逾期轮次前，后续轮次的日期快照，用于安全取消完成。 */
+  previousSchedule?: Array<{ reviewTaskId: string; dueDate: string }>;
+  isSupplemental?: boolean;
+}
+
+export interface SyncTaskToEbbPayload {
+  action?: 'add' | 'remove' | 'revert-source';
+  graphNodeId: string;
+  topicName: string;
+  tag?: string;
+  triggerSchedule?: boolean;
+  sourceTaskId?: string;
+  sourceBlockId?: string;
 }
 
 /** 收件箱项 */

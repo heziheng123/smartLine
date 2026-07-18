@@ -9,7 +9,7 @@ import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 
-import { todayStr, addDays } from '@/utils/dateSafe';
+import { todayStr, addDays, diffDays } from '@/utils/dateSafe';
 import type {
   ReviewTask,
   InboxItem,
@@ -17,6 +17,7 @@ import type {
   UndoEntry,
   EbbSettings,
   EbbData,
+  SyncTaskToEbbPayload,
 } from './types';
 import {
   EBB_STORAGE_KEY,
@@ -99,6 +100,143 @@ function ensureTagColors(tasks: ReviewTask[], settings: EbbSettings): EbbSetting
   return { ...settings, tagColors: newColors };
 }
 
+function isValidDateString(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isValidReviewTask(value: unknown): value is ReviewTask {
+  if (!value || typeof value !== 'object') return false;
+  const task = value as Record<string, unknown>;
+  return typeof task.id === 'string' && task.id.trim().length > 0
+    && typeof task.topicName === 'string'
+    && isValidDateString(task.dueDate)
+    && typeof task.isCompleted === 'boolean';
+}
+
+function isValidInboxItem(value: unknown): value is InboxItem {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.id === 'string' && item.id.trim().length > 0
+    && typeof item.topicName === 'string'
+    && typeof item.createdAt === 'string'
+    && (item.status === 'draft' || item.status === 'staged');
+}
+
+function isValidOutlineNode(value: unknown): value is StudyOutlineNode {
+  if (!value || typeof value !== 'object') return false;
+  const node = value as Record<string, unknown>;
+  return typeof node.id === 'string' && node.id.trim().length > 0
+    && typeof node.name === 'string'
+    && (node.type === 'book' || node.type === 'chapter' || node.type === 'section')
+    && (node.parentId === null || typeof node.parentId === 'string')
+    && Number.isFinite(node.orderIndex);
+}
+
+function deduplicateById<T extends { id: string }>(values: T[]): T[] {
+  const byId = new Map<string, T>();
+  values.forEach((value) => byId.set(value.id, value));
+  return [...byId.values()];
+}
+
+function normalizeOutlineNodes(values: unknown[]): StudyOutlineNode[] {
+  const nodes = deduplicateById(values.filter(isValidOutlineNode).map((node) => ({ ...node })));
+  const ids = new Set(nodes.map((node) => node.id));
+  nodes.forEach((node) => {
+    if (!node.parentId || node.parentId === node.id || !ids.has(node.parentId)) node.parentId = null;
+  });
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const state = new Map<string, 'visiting' | 'visited'>();
+  const breakCycles = (id: string) => {
+    const node = byId.get(id);
+    if (!node || state.get(id) === 'visited') return;
+    state.set(id, 'visiting');
+    if (node.parentId) {
+      if (state.get(node.parentId) === 'visiting') node.parentId = null;
+      else breakCycles(node.parentId);
+    }
+    state.set(id, 'visited');
+  };
+  nodes.forEach((node) => breakCycles(node.id));
+  nodes.forEach((node) => { node.childrenIds = []; });
+  nodes.forEach((node) => {
+    if (node.parentId) byId.get(node.parentId)?.childrenIds.push(node.id);
+  });
+  nodes.forEach((node) => {
+    node.childrenIds.sort((a, b) => (byId.get(a)?.orderIndex ?? 0) - (byId.get(b)?.orderIndex ?? 0));
+  });
+  return nodes.sort((a, b) => a.orderIndex - b.orderIndex);
+}
+
+export function normalizeEbbData(data: Partial<EbbData> | null | undefined): EbbData {
+  const rawTasks = Array.isArray(data?.reviewTasks) ? data.reviewTasks : [];
+  let reviewTasks = normalizeReviewRoundOrders(
+    deduplicateById(rawTasks.filter(isValidReviewTask).map((task) => ({
+      ...task,
+      originalDueDate: isValidDateString(task.originalDueDate) ? task.originalDueDate : task.dueDate,
+      completedDate: isValidDateString(task.completedDate)
+        ? task.completedDate
+        : task.isCompleted ? task.dueDate : undefined,
+      isCompleted: task.isCompleted,
+      scheduleCreatedDate: isValidDateString(task.scheduleCreatedDate) ? task.scheduleCreatedDate : undefined,
+      scheduleSourceTaskId: typeof task.scheduleSourceTaskId === 'string' ? task.scheduleSourceTaskId : undefined,
+      scheduleSourceBlockId: typeof task.scheduleSourceBlockId === 'string' ? task.scheduleSourceBlockId : undefined,
+      completionSource: task.isCompleted && (task.completionSource === 'manual' || task.completionSource === 'project-task')
+        ? task.completionSource
+        : undefined,
+      completionSourceTaskId: task.isCompleted && typeof task.completionSourceTaskId === 'string'
+        ? task.completionSourceTaskId
+        : undefined,
+      completionSourceBlockId: task.isCompleted && typeof task.completionSourceBlockId === 'string'
+        ? task.completionSourceBlockId
+        : undefined,
+      previousSchedule: task.isCompleted && Array.isArray(task.previousSchedule)
+        ? task.previousSchedule.filter((entry) =>
+            !!entry
+            && typeof entry.reviewTaskId === 'string'
+            && isValidDateString(entry.dueDate),
+          )
+        : undefined,
+    }))),
+  );
+  const inboxItems = deduplicateById(
+    (Array.isArray(data?.inboxItems) ? data.inboxItems : []).filter(isValidInboxItem),
+  );
+  const outlineNodes = normalizeOutlineNodes(
+    Array.isArray(data?.outlineNodes) ? data.outlineNodes : [],
+  );
+  const outlineIds = new Set(outlineNodes.map((node) => node.id));
+  reviewTasks = reviewTasks.map((task) =>
+    task.outlineNodeId && !outlineIds.has(task.outlineNodeId)
+      ? { ...task, outlineNodeId: undefined }
+      : task,
+  );
+  const incomingSettings = data?.ebbSettings;
+  const ebbSettings: EbbSettings = {
+    ...DEFAULT_EBB_SETTINGS,
+    ...(incomingSettings ?? {}),
+    complexityConfigs: {
+      ...DEFAULT_EBB_SETTINGS.complexityConfigs,
+      ...(incomingSettings?.complexityConfigs ?? {}),
+    },
+    tagColors: { ...(incomingSettings?.tagColors ?? {}) },
+    collapsedGroups: Array.isArray(incomingSettings?.collapsedGroups)
+      ? incomingSettings.collapsedGroups
+      : [],
+    loadThresholds: Array.isArray(incomingSettings?.loadThresholds)
+      && incomingSettings.loadThresholds.length === 4
+      ? incomingSettings.loadThresholds
+      : DEFAULT_EBB_SETTINGS.loadThresholds,
+  };
+  return {
+    reviewTasks,
+    inboxItems,
+    outlineNodes,
+    ebbSettings: ensureTagColors(reviewTasks, ebbSettings),
+  };
+}
+
 // ── Store 接口 ──────────────────────────────────────────────
 
 export type EbbSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -148,10 +286,11 @@ interface EbbStore extends EbbData {
 
   // 导入导出
   importEbbData: (data: EbbData) => void;
+  replaceEbbData: (data: EbbData) => void;
   exportEbbData: () => string;
 
   // 新增：自动同步任务到 Ebb 复习流
-  syncTaskToEbb: (payload: { action?: 'add' | 'remove'; graphNodeId: string; topicName: string; tag?: string; triggerSchedule?: boolean }) => void;
+  syncTaskToEbb: (payload: SyncTaskToEbbPayload) => void;
   // 新增：同步大盘节点名称修改
   updateTopicNameByGraphNodeId: (graphNodeId: string, newTopicName: string) => void;
 }
@@ -184,24 +323,12 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             }
 
             if (raw) {
-              const reviewTasks = normalizeReviewRoundOrders(raw.reviewTasks ?? []);
-              const normalizedSettings = ensureTagColors(
-                reviewTasks,
-                { ...DEFAULT_EBB_SETTINGS, ...(raw.ebbSettings ?? {}) },
-              );
+              const normalized = normalizeEbbData(raw);
               set({
-                reviewTasks,
-                inboxItems: raw.inboxItems ?? [],
-                outlineNodes: raw.outlineNodes ?? [],
-                ebbSettings: normalizedSettings,
+                ...normalized,
                 isHydrated: true,
               });
-              saveEbbData({
-                reviewTasks,
-                inboxItems: raw.inboxItems ?? [],
-                outlineNodes: raw.outlineNodes ?? [],
-                ebbSettings: normalizedSettings,
-              });
+              saveEbbData(normalized);
               return;
             }
           } catch (e) {
@@ -413,13 +540,36 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           const task = state.reviewTasks.find((t) => t.id === id);
           if (!task) return '任务不存在';
 
-          // 取消完成：无需校验
+          // 取消完成：若后续轮次已经完成，则保护顺序，不允许回退中间轮次。
           if (task.isCompleted) {
+            const taskOrder = task.roundOrder ?? 0;
+            const hasLaterCompletedRound = state.reviewTasks.some((candidate) =>
+              !candidate.isArchived
+              && getReviewTopicKey(candidate) === getReviewTopicKey(task)
+              && candidate.isCompleted
+              && (candidate.roundOrder ?? 0) > taskOrder,
+            );
+            if (hasLaterCompletedRound) return '后续轮次已经完成，不能取消当前轮次';
+
+            const previousSchedule = new Map(
+              (task.previousSchedule ?? []).map((entry) => [entry.reviewTaskId, entry.dueDate]),
+            );
             set((s) => {
               const reviewTasks = s.reviewTasks.map((t) =>
                 t.id === id
-                  ? { ...t, isCompleted: false, completedDate: undefined, smStatus: 'scheduled' as const }
-                  : t,
+                  ? {
+                      ...t,
+                      isCompleted: false,
+                      completedDate: undefined,
+                      smStatus: 'scheduled' as const,
+                      completionSource: undefined,
+                      completionSourceTaskId: undefined,
+                      completionSourceBlockId: undefined,
+                      previousSchedule: undefined,
+                    }
+                  : previousSchedule.has(t.id)
+                    ? { ...t, dueDate: previousSchedule.get(t.id)! }
+                    : t,
               );
               const newData: EbbData = {
                 reviewTasks,
@@ -430,6 +580,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               saveEbbData(newData);
               return newData;
             });
+            if (previousSchedule.size > 0) {
+              setTimeout(() => {
+                useDailyScheduleStore.getState().removeBySourceIds(
+                  [...previousSchedule.keys()].map((reviewTaskId) => getReviewSourceId(reviewTaskId)),
+                );
+              }, 0);
+            }
             return null;
           }
 
@@ -443,8 +600,12 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 ? {
                     ...t,
                     isCompleted: true,
-                    completedDate: todayStr(),
-                    smStatus: 'confirmed' as const,
+                      completedDate: todayStr(),
+                      smStatus: 'confirmed' as const,
+                      completionSource: 'manual' as const,
+                      completionSourceTaskId: undefined,
+                      completionSourceBlockId: undefined,
+                      previousSchedule: undefined,
                   }
                 : t,
             );
@@ -588,7 +749,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 dueDate = addDays(dueDate, 1);
               }
               topicDates.add(dueDate);
-              const existingTopicTasks = [...state.reviewTasks, ...allGenerated]
+              const existingTopicTasks = [...state.reviewTasks, ...allGenerated, ...generated]
                 .filter((task) => !task.isArchived && task.topicName === item.topicName);
               const nextRoundOrder = Math.max(0, ...existingTopicTasks.map((task) => task.roundOrder ?? 0)) + 1;
               generated.push({
@@ -844,36 +1005,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         // ── 导入导出 ──────────────────────────────────────
 
         importEbbData: (data) => {
-          // Schema 校验：过滤字段缺失/类型错误的条目，避免后续渲染崩溃
-          const isValidReviewTask = (t: unknown): t is ReviewTask => {
-            if (!t || typeof t !== 'object') return false;
-            const r = t as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.topicName === 'string'
-              && typeof r.dueDate === 'string'
-              && typeof r.isCompleted === 'boolean';
-          };
-          const isValidInboxItem = (i: unknown): i is InboxItem => {
-            if (!i || typeof i !== 'object') return false;
-            const r = i as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.topicName === 'string'
-              && (r.status === 'draft' || r.status === 'staged');
-          };
-          const isValidOutlineNode = (n: unknown): n is StudyOutlineNode => {
-            if (!n || typeof n !== 'object') return false;
-            const r = n as Record<string, unknown>;
-            return typeof r.id === 'string'
-              && typeof r.name === 'string'
-              && (r.type === 'book' || r.type === 'chapter' || r.type === 'section');
-          };
-
-          const normalized: EbbData = {
-            reviewTasks: Array.isArray(data?.reviewTasks) ? data.reviewTasks.filter(isValidReviewTask) : [],
-            inboxItems: Array.isArray(data?.inboxItems) ? data.inboxItems.filter(isValidInboxItem) : [],
-            outlineNodes: Array.isArray(data?.outlineNodes) ? data.outlineNodes.filter(isValidOutlineNode) : [],
-            ebbSettings: { ...DEFAULT_EBB_SETTINGS, ...(data?.ebbSettings ?? {}) },
-          };
+          const normalized = normalizeEbbData(data);
 
           // 按 id 合并：保留本地未在导入数据中的条目，避免多端并发场景下
           // 整体覆盖冲掉他端刚刚更新的字段。同 id 时以导入数据为准。
@@ -882,14 +1014,20 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             const importedIds = new Set(imported.map((x) => x.id));
             return [...existing.filter((x) => !importedIds.has(x.id)), ...imported];
           };
-          const merged: EbbData = {
+          const merged = normalizeEbbData({
             reviewTasks: mergeById(current.reviewTasks, normalized.reviewTasks),
             inboxItems: mergeById(current.inboxItems, normalized.inboxItems),
             outlineNodes: mergeById(current.outlineNodes, normalized.outlineNodes),
             ebbSettings: normalized.ebbSettings,
-          };
+          });
           saveEbbData(merged);
           set({ ...merged, undoStack: [] });
+        },
+
+        replaceEbbData: (data) => {
+          const normalized = normalizeEbbData(data);
+          saveEbbData(normalized);
+          set({ ...normalized, undoStack: [] });
         },
 
         exportEbbData: () => {
@@ -923,21 +1061,85 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         // ── 自动同步任务到 Ebb 复习流 ─────────────────────────────────
 
         syncTaskToEbb: (payload) => {
+          const dailySourceIdsToRemove: string[] = [];
           set((state) => {
-            const { action = 'add', graphNodeId, topicName, tag, triggerSchedule = true } = payload;
-            
-            // 找到所有该 graphNodeId 关联的任务
-            const existingTasks = state.reviewTasks.filter(t => !t.isArchived && t.graphNodeId === graphNodeId);
-            
-            // 如果是删除动作（例如：取消完成任务）
+            const {
+              action = 'add',
+              graphNodeId,
+              topicName,
+              tag,
+              triggerSchedule = true,
+              sourceTaskId,
+              sourceBlockId,
+            } = payload;
+            const existingTasks = state.reviewTasks
+              .filter((task) => !task.isArchived && task.graphNodeId === graphNodeId)
+              .sort((a, b) =>
+                (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER),
+              );
+
+            if (action === 'revert-source') {
+              if (!sourceTaskId || !sourceBlockId) return state;
+
+              const supplementalIds = new Set(
+                existingTasks
+                  .filter((task) =>
+                    task.isSupplemental
+                    && !task.isCompleted
+                    && task.scheduleSourceTaskId === sourceTaskId
+                    && task.scheduleSourceBlockId === sourceBlockId,
+                  )
+                  .map((task) => task.id),
+              );
+              const target = existingTasks.find((task) =>
+                task.completionSource === 'project-task'
+                && task.completionSourceTaskId === sourceTaskId
+                && task.completionSourceBlockId === sourceBlockId,
+              );
+              const targetOrder = target?.roundOrder ?? Number.MAX_SAFE_INTEGER;
+              const hasLaterCompletedRound = !!target && existingTasks.some((task) =>
+                task.isCompleted && (task.roundOrder ?? 0) > targetOrder,
+              );
+              if (!target && supplementalIds.size === 0) return state;
+
+              const previousSchedule = !hasLaterCompletedRound
+                ? new Map((target?.previousSchedule ?? []).map((entry) => [entry.reviewTaskId, entry.dueDate]))
+                : new Map<string, string>();
+              const changedScheduleIds = new Set(previousSchedule.keys());
+              supplementalIds.forEach((id) => changedScheduleIds.add(id));
+              dailySourceIdsToRemove.push(
+                ...[...changedScheduleIds].map((id) => getReviewSourceId(id)),
+              );
+
+              const reviewTasks = state.reviewTasks
+                .filter((task) => !supplementalIds.has(task.id))
+                .map((task) => {
+                  if (previousSchedule.has(task.id)) {
+                    return { ...task, dueDate: previousSchedule.get(task.id)! };
+                  }
+                  if (target && task.id === target.id && !hasLaterCompletedRound) {
+                    return {
+                      ...task,
+                      isCompleted: false,
+                      completedDate: undefined,
+                      smStatus: 'scheduled' as const,
+                      completionSource: undefined,
+                      completionSourceTaskId: undefined,
+                      completionSourceBlockId: undefined,
+                      previousSchedule: undefined,
+                    };
+                  }
+                  return task;
+                });
+              const newData: EbbData = { ...state, reviewTasks };
+              saveEbbData(newData);
+              return newData;
+            }
+
             if (action === 'remove') {
-              // 检查是否有关联的任务，并且它们是否都没有被完成
-              // 只有当所有的复习任务都是未完成状态时，我们才安全地删除它们
-              const hasCompletedReview = existingTasks.some(t => t.isCompleted);
+              const hasCompletedReview = existingTasks.some((task) => task.isCompleted);
               if (!hasCompletedReview) {
-                // Only discard the current, uncompleted schedule. Archived
-                // cycles are immutable learning history and must survive a
-                // later cancellation of the originating project task.
+                dailySourceIdsToRemove.push(...existingTasks.map((task) => getReviewSourceId(task.id)));
                 const newReviewTasks = state.reviewTasks.filter(
                   (task) => task.isArchived || task.graphNodeId !== graphNodeId,
                 );
@@ -953,90 +1155,100 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
             let newReviewTasks = [...state.reviewTasks];
             const nowStr = todayStr();
-            
-            // === 条件执行（是否排期） ===
-            if (!triggerSchedule) {
-              // 如果用户取消了同步排期，直接结束流程！
-              // 移除空壳任务生成逻辑，让该节点在 Ebb 中没有任何任务记录，从而在图谱中呈现蓝色（已激活但无排期）
-              return state;
-            }
+            if (!triggerSchedule) return state;
 
-            // === 如果 triggerSchedule 为 true，执行原本的时间线重置与生成逻辑 ===
             if (existingTasks.length === 0) {
-              // 分支 1：完全新学 -> 创建全新的 ReviewTask 序列
               const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
               const dueDates = buildAbsoluteScheduleDates(nowStr, intervals);
-              const generated: ReviewTask[] = [];
-              
-              for (let i = 0; i < intervals.length; i++) {
-                generated.push({
+              const generated: ReviewTask[] = intervals.map((_, index) => ({
                   id: genId('rt'),
                   topicName,
                   tag,
                   graphNodeId,
-                  dueDate: dueDates[i],
-                  originalDueDate: dueDates[i],
-                  roundOrder: i + 1,
+                  dueDate: dueDates[index],
+                  originalDueDate: dueDates[index],
+                  roundOrder: index + 1,
                   isCompleted: false,
                   complexity: 'normal',
                   smStatus: 'scheduled',
-                });
-              }
+                  scheduleCreatedDate: nowStr,
+                  scheduleSourceTaskId: sourceTaskId,
+                  scheduleSourceBlockId: sourceBlockId,
+                }));
               newReviewTasks.push(...generated);
             } else {
-              // 分支 2：找到了 -> 更新现有的 ReviewTask 序列
+              const sourceAlreadyHandled = !!sourceTaskId && !!sourceBlockId && existingTasks.some((task) =>
+                (task.completionSourceTaskId === sourceTaskId && task.completionSourceBlockId === sourceBlockId)
+                || (task.scheduleSourceTaskId === sourceTaskId && task.scheduleSourceBlockId === sourceBlockId),
+              );
+              if (sourceAlreadyHandled) return state;
 
-              // 筛选出尚未完成的任务（即未来的复习轮次）
-              const uncompletedTasks = existingTasks
-                .filter((task) => !task.isCompleted)
-                .sort((a, b) => (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER));
-              
+              const hasReviewCompletedToday = existingTasks.some((task) =>
+                task.isCompleted && task.completedDate === nowStr,
+              );
+              const planCreatedToday = existingTasks.some((task) => task.scheduleCreatedDate === nowStr);
+              const uncompletedTasks = existingTasks.filter((task) => !task.isCompleted);
+
               if (uncompletedTasks.length > 0) {
-                // 将尚未完成的轮次重置，强制拉回到明天
-                const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
-                const dueDates = buildAbsoluteScheduleDates(nowStr, intervals, uncompletedTasks.length);
-                
-                const updatedIds = new Set(uncompletedTasks.map(t => t.id));
-                
-                let i = 0;
-                newReviewTasks = newReviewTasks.map(t => {
-                  if (updatedIds.has(t.id)) {
-                    const newDueDate = dueDates[i];
-                    i++;
+                if (hasReviewCompletedToday || planCreatedToday) return state;
+                const candidate = uncompletedTasks[0];
+                if (candidate.dueDate > addDays(nowStr, 1)) return state;
+
+                const delayDays = Math.max(0, diffDays(nowStr, candidate.dueDate));
+                const laterTasks = uncompletedTasks.slice(1);
+                const previousSchedule = delayDays > 0
+                  ? laterTasks.map((task) => ({ reviewTaskId: task.id, dueDate: task.dueDate }))
+                  : [];
+                if (delayDays > 0) {
+                  dailySourceIdsToRemove.push(...laterTasks.map((task) => getReviewSourceId(task.id)));
+                }
+                const laterIds = new Set(laterTasks.map((task) => task.id));
+                newReviewTasks = newReviewTasks.map((task) => {
+                  if (task.id === candidate.id) {
                     return {
-                      ...t,
-                      dueDate: newDueDate,
-                      originalDueDate: t.originalDueDate ?? t.dueDate,
+                      ...task,
+                      isCompleted: true,
+                      completedDate: nowStr,
+                      smStatus: 'confirmed' as const,
+                      completionSource: 'project-task' as const,
+                      completionSourceTaskId: sourceTaskId,
+                      completionSourceBlockId: sourceBlockId,
+                      previousSchedule: previousSchedule.length > 0 ? previousSchedule : undefined,
+                    };
+                  }
+                  if (delayDays > 0 && laterIds.has(task.id)) {
+                    return {
+                      ...task,
+                      dueDate: addDays(task.dueDate, delayDays),
+                      originalDueDate: task.originalDueDate ?? task.dueDate,
                       smStatus: 'scheduled' as const,
                     };
                   }
-                  return t;
+                  return task;
                 });
               } else {
-                // 全部完成了？说明是彻底的重新学习，开启一轮新循环！
-                const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
-                const dueDates = buildAbsoluteScheduleDates(nowStr, intervals);
-                const generated: ReviewTask[] = [];
-                
+                if (hasReviewCompletedToday || planCreatedToday) return state;
                 const nextRoundOrder = Math.max(0, ...existingTasks.map((task) => task.roundOrder ?? 0)) + 1;
-                for (let i = 0; i < intervals.length; i++) {
-                  generated.push({
-                    id: genId('rt'),
-                    topicName,
-                    tag,
-                    graphNodeId,
-                    dueDate: dueDates[i],
-                  originalDueDate: dueDates[i],
-                  roundOrder: nextRoundOrder + i,
-                    isCompleted: false,
-                    complexity: 'normal',
-                    smStatus: 'scheduled',
-                  });
-                }
-                newReviewTasks.push(...generated);
+                const dueDate = addDays(nowStr, 1);
+                newReviewTasks.push({
+                  id: genId('rt'),
+                  topicName,
+                  tag,
+                  graphNodeId,
+                  dueDate,
+                  originalDueDate: dueDate,
+                  roundOrder: nextRoundOrder,
+                  isCompleted: false,
+                  complexity: 'normal',
+                  smStatus: 'scheduled',
+                  scheduleCreatedDate: nowStr,
+                  scheduleSourceTaskId: sourceTaskId,
+                  scheduleSourceBlockId: sourceBlockId,
+                  isSupplemental: true,
+                });
               }
             }
-            
+
             const newData: EbbData = {
               ...state,
               reviewTasks: newReviewTasks,
@@ -1044,6 +1256,11 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+          if (dailySourceIdsToRemove.length > 0) {
+            setTimeout(() => {
+              useDailyScheduleStore.getState().removeBySourceIds(dailySourceIdsToRemove);
+            }, 0);
+          }
         },
       };
     },
@@ -1084,12 +1301,19 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      saveEbbData({
-        reviewTasks: state.reviewTasks,
-        inboxItems: state.inboxItems,
-        outlineNodes: state.outlineNodes,
-        ebbSettings: state.ebbSettings,
-      });
+      const latest = useEbbStore.getState();
+      const current: EbbData = {
+        reviewTasks: latest.reviewTasks,
+        inboxItems: latest.inboxItems,
+        outlineNodes: latest.outlineNodes,
+        ebbSettings: latest.ebbSettings,
+      };
+      const normalized = normalizeEbbData(current);
+      if (JSON.stringify(current) !== JSON.stringify(normalized)) {
+        useEbbStore.setState({ ...normalized, undoStack: latest.undoStack });
+        return;
+      }
+      saveEbbData(current);
     }, 500);
   });
 }

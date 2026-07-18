@@ -127,7 +127,9 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
 
       // 边界约束
       const gridStartMin = GRID_CONFIG.startHour * 60;
-      const gridEndMin = GRID_CONFIG.endHour * 60;
+      // Keep generated values compatible with <input type="time"> and the
+      // workspace validator; 24:00 is not a valid HTML time value.
+      const gridEndMin = GRID_CONFIG.endHour * 60 - 15;
       newStartMin = Math.max(gridStartMin, Math.min(newStartMin, gridEndMin - GRID_CONFIG.minDuration));
       newEndMin = Math.max(newStartMin + GRID_CONFIG.minDuration, Math.min(newEndMin, gridEndMin));
 

@@ -229,7 +229,17 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 </span>
                 <small style={{ marginLeft: 8 }}>上次：{formatTime(lastConnected[module.key])}</small>
                 {enabledCount > 0 && module.status !== 'connected' && (
-                  <button type="button" className="tl-sync-copy-btn" onClick={() => connectModule(module.key, activeCode)} title={`重新连接${module.label}`}>
+                  <button
+                    type="button"
+                    className="tl-sync-copy-btn"
+                    onClick={() => connectModule(module.key, ({
+                      timeline: timeline.syncRoomCode,
+                      ebb: ebb.syncRoomCode,
+                      daily: daily.syncRoomCode,
+                      graph: graph.syncRoomCode,
+                    }[module.key] || activeCode))}
+                    title={`重新连接${module.label}`}
+                  >
                     <RefreshCw size={13} />
                   </button>
                 )}

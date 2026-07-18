@@ -1,11 +1,11 @@
 import type { TimelineData } from '@/types';
-import type { EbbData, ReviewTask, StudyOutlineNode } from '@/ebb/types';
-import type { GraphData, GraphNode } from '@/graph/types';
+import type { EbbData } from '@/ebb/types';
+import type { GraphData } from '@/graph/types';
 import type { DaySchedule } from '@/components/dailySchedule/types';
-import { useTimelineStore } from '@/store';
+import { persistTimelineData, useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { persistDailySchedules, useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { parseSourceId } from '@/components/dailySchedule/conversion';
 import { getReviewTopicKey } from '@/ebb/scheduler';
 import { createScopedStorage } from '@/utils/persistence';
@@ -412,28 +412,29 @@ export async function listLocalSnapshots(): Promise<WorkspaceSnapshot[]> {
 export async function restoreWorkspaceBackup(backup: WorkspaceBackup): Promise<void> {
   await createLocalSnapshot('恢复完整工作区前');
   const before = createWorkspaceBackup();
-  const apply = (source: WorkspaceBackup) => {
+  const apply = async (source: WorkspaceBackup) => {
     const safe = deepClone(source);
     useTimelineStore.getState().replaceData(safe.timeline);
-    useEbbStore.setState({
-      reviewTasks: safe.ebb.reviewTasks as ReviewTask[],
-      inboxItems: safe.ebb.inboxItems,
-      outlineNodes: safe.ebb.outlineNodes as StudyOutlineNode[],
-      ebbSettings: safe.ebb.ebbSettings,
-      undoStack: [],
-    });
-    useGraphStore.setState({ nodes: safe.graph.nodes as GraphNode[] });
-    useDailyScheduleStore.setState({ schedules: safe.daily.schedules });
+    useEbbStore.getState().replaceEbbData(safe.ebb);
+    useGraphStore.getState().replaceGraphData(safe.graph);
+    useDailyScheduleStore.getState().replaceSchedules(safe.daily.schedules);
+    await Promise.all([
+      persistTimelineData({
+        tasks: useTimelineStore.getState().tasks,
+        groups: useTimelineStore.getState().groups,
+        notes: useTimelineStore.getState().notes,
+        milestones: useTimelineStore.getState().milestones,
+      }),
+      persistDailySchedules(useDailyScheduleStore.getState().schedules),
+    ]);
   };
   try {
-    apply(backup);
+    await apply(backup);
     if (backup.settings?.timelineViewPreferences !== undefined) {
       localStorage.setItem('smart-timeline-view-preferences-v2', JSON.stringify(backup.settings.timelineViewPreferences));
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 750));
   } catch (error) {
-    apply(before);
-    await new Promise((resolve) => window.setTimeout(resolve, 750));
+    await apply(before);
     throw error;
   }
   localStorage.setItem('smart-line-workspace-revision', String(Math.max(currentRevision(), backup.revision)));

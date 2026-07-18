@@ -202,16 +202,23 @@ export const KnowledgeGraphView: React.FC = () => {
       if (!(activationStates.get(id)?.isActivated ?? false)) return gray;
 
       const descendantIds = getDescendants(id);
-      const scopedIds = new Set([id, ...descendantIds]);
-      const rounds = reviewTasks.filter(
-        (task) => !task.isArchived && !!task.graphNodeId && scopedIds.has(task.graphNodeId),
-      );
-      if (rounds.length > 0 && rounds.every((task) => task.isCompleted)) return gold;
+      const scopedIds = [id, ...descendantIds];
+      const activatedLeafIds = scopedIds.filter((scopedId) => {
+        const hasChildren = nodes.some((node) => node.parentId === scopedId);
+        return !hasChildren && (activationStates.get(scopedId)?.isActivated ?? false);
+      });
+      const allActivatedLeavesAreGold = activatedLeafIds.length > 0 && activatedLeafIds.every((leafId) => {
+        const rounds = reviewTasks.filter(
+          (task) => !task.isArchived && task.graphNodeId === leafId,
+        );
+        return rounds.length > 0 && rounds.every((task) => task.isCompleted);
+      });
+      if (allActivatedLeavesAreGold) return gold;
       return green;
     };
 
     return getColor(nodeId);
-  }, [activationStates, getDescendants, reviewTasks]);
+  }, [activationStates, getDescendants, nodes, reviewTasks]);
 
   const islandsData = useMemo(() => {
     const today = todayStr();

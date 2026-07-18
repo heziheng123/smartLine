@@ -50,6 +50,8 @@ try {
     dailyModule,
     backupModule,
     sourceIds,
+    dateSafe,
+    dailyConversion,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -60,6 +62,8 @@ try {
     load('/src/components/dailySchedule/store.ts'),
     load('/src/services/workspaceBackup.ts'),
     load('/src/components/dailySchedule/sourceIds.ts'),
+    load('/src/utils/dateSafe.ts'),
+    load('/src/components/dailySchedule/conversion.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
@@ -119,6 +123,7 @@ try {
   const getBlock = (taskId, blockId) => useTimelineStore.getState().tasks
     .find((task) => task.id === taskId)?.blocks.find((block) => block.id === blockId);
   const nextTick = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const today = dateSafe.todayStr();
 
   check('父节点仅在全部可见子节点激活后激活，归档子节点不阻塞', () => {
     const nodes = [node('parent'), node('a', 'parent'), node('b', 'parent')];
@@ -163,6 +168,7 @@ try {
     resetStores({ nodes: [node('leaf')], tasks: [project('p1', [smartBlock('b1', '任务一', ['leaf'])])] });
     useTimelineStore.getState().updateBlockHeader('p1', 'b1', { isCompleted: true });
     assert.equal(getBlock('p1', 'b1').header.isCompleted, true);
+    assert.ok(getBlock('p1', 'b1').header.completedDate);
     assert.equal(useGraphStore.getState().nodes[0].status, 'activated');
     assert.ok(useEbbStore.getState().reviewTasks.length > 0);
 
@@ -198,6 +204,269 @@ try {
     assert.equal(useEbbStore.getState().reviewTasks.length, 0);
   });
 
+  check('同节点练习任务会完成今天到期的最早一轮，且不改变后续日期', () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    first.header.completedDate = dateSafe.addDays(today, -1);
+    const practice = smartBlock('practice', '对应练习', ['leaf']);
+    const reviewTasks = [
+      { id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: today, originalDueDate: today, roundOrder: 1, isCompleted: false, complexity: 'normal' },
+      { id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 2), originalDueDate: dateSafe.addDays(today, 2), roundOrder: 2, isCompleted: false, complexity: 'normal' },
+    ];
+    resetStores({ nodes: [node('leaf', null, 'activated')], tasks: [project('p1', [first, practice])], reviewTasks });
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: true });
+    const [r1, r2] = useEbbStore.getState().reviewTasks;
+    assert.equal(r1.isCompleted, true);
+    assert.equal(r1.completedDate, today);
+    assert.equal(r1.completionSource, 'project-task');
+    assert.equal(r1.completionSourceBlockId, 'practice');
+    assert.equal(r2.isCompleted, false);
+    assert.equal(r2.dueDate, dateSafe.addDays(today, 2));
+  });
+
+  check('每日安排先完成绑定节点的项目任务，会自动完成当天晚间的同节点复习', () => {
+    const learned = smartBlock('learn', '知识学习', ['leaf']);
+    learned.header.isCompleted = true;
+    const practice = smartBlock('practice', '当天练习', ['leaf']);
+    const projectSourceId = sourceIds.getProjectBlockSourceId('p1', 'practice');
+    const reviewSourceId = sourceIds.getReviewSourceId('r1');
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [learned, practice])],
+      reviewTasks: [
+        { id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: today, roundOrder: 1, isCompleted: false },
+        { id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 3), roundOrder: 2, isCompleted: false },
+      ],
+      schedules: {
+        [today]: {
+          date: today,
+          items: [
+            { id: 'morning-project', title: '当天练习', source: 'project', sourceId: projectSourceId, slot: 'morning' },
+            { id: 'evening-review', title: '晚间复习', source: 'review', sourceId: reviewSourceId, slot: 'evening' },
+          ],
+          blocks: [],
+        },
+      },
+    });
+
+    // 与每日安排两个视图的点击处理一致：解析来源后更新项目任务源数据。
+    const clickedItem = useDailyScheduleStore.getState().schedules[today].items[0];
+    const parsed = dailyConversion.parseSourceId(clickedItem.sourceId);
+    assert.deepEqual(parsed, { source: 'project', parentTaskId: 'p1', blockId: 'practice' });
+    useTimelineStore.getState().updateBlockHeader(parsed.parentTaskId, parsed.blockId, {
+      isCompleted: true,
+      completedDate: today,
+    });
+
+    const reviews = useEbbStore.getState().reviewTasks;
+    assert.equal(reviews.find((task) => task.id === 'r1').isCompleted, true);
+    assert.equal(reviews.find((task) => task.id === 'r1').completedDate, today);
+    assert.equal(reviews.find((task) => task.id === 'r2').isCompleted, false);
+    assert.equal(useDailyScheduleStore.getState().schedules[today].items[1].sourceId, reviewSourceId);
+  });
+
+  check('先手动完成 EBB 再完成同节点练习，不会提前消耗下一轮', () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    const practice = smartBlock('practice', '对应练习', ['leaf']);
+    const reviewTasks = [
+      { id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: today, originalDueDate: today, roundOrder: 1, isCompleted: false, complexity: 'normal' },
+      { id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 1), originalDueDate: dateSafe.addDays(today, 1), roundOrder: 2, isCompleted: false, complexity: 'normal' },
+    ];
+    resetStores({ nodes: [node('leaf', null, 'activated')], tasks: [project('p1', [first, practice])], reviewTasks });
+    assert.equal(useEbbStore.getState().toggleReviewTask('r1'), null);
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: true });
+    const tasks = useEbbStore.getState().reviewTasks;
+    assert.equal(tasks.filter((task) => task.isCompleted).length, 1);
+    assert.equal(tasks[0].completionSource, 'manual');
+    assert.equal(tasks[1].isCompleted, false);
+    assert.equal(tasks[1].dueDate, dateSafe.addDays(today, 1));
+  });
+
+  check('同一节点同一天完成多个项目任务，最多自动完成一轮', () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    const p1 = smartBlock('practice-1', '练习一', ['leaf']);
+    const p2 = smartBlock('practice-2', '练习二', ['leaf']);
+    const reviewTasks = [
+      { id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: today, roundOrder: 1, isCompleted: false },
+      { id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 1), roundOrder: 2, isCompleted: false },
+    ];
+    resetStores({ nodes: [node('leaf', null, 'activated')], tasks: [project('p1', [first, p1, p2])], reviewTasks });
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice-1', { isCompleted: true });
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice-2', { isCompleted: true });
+    const tasks = useEbbStore.getState().reviewTasks;
+    assert.equal(tasks.filter((task) => task.isCompleted).length, 1);
+    assert.equal(tasks[0].completionSourceBlockId, 'practice-1');
+    assert.equal(tasks[1].isCompleted, false);
+  });
+
+  check('练习可提前一天完成下一轮，但提前超过一天只记录额外巩固', () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    const practice = smartBlock('practice', '对应练习', ['leaf']);
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [first, practice])],
+      reviewTasks: [{ id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 1), roundOrder: 1, isCompleted: false }],
+    });
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: true });
+    assert.equal(useEbbStore.getState().reviewTasks[0].isCompleted, true);
+
+    const practice2 = smartBlock('practice-2', '远期练习', ['leaf']);
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p2', [first, practice2])],
+      reviewTasks: [{ id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 2), roundOrder: 1, isCompleted: false }],
+    });
+    useTimelineStore.getState().updateBlockHeader('p2', 'practice-2', { isCompleted: true });
+    assert.equal(useEbbStore.getState().reviewTasks[0].isCompleted, false);
+  });
+
+  check('逾期轮次由练习完成时只顺延后续日期，并在取消练习后安全恢复', async () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    const practice = smartBlock('practice', '逾期练习', ['leaf']);
+    const oldNextDate = dateSafe.addDays(today, 2);
+    const reviewSourceId = sourceIds.getReviewSourceId('r2');
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [first, practice])],
+      reviewTasks: [
+        { id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, -2), roundOrder: 1, isCompleted: false },
+        { id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: oldNextDate, roundOrder: 2, isCompleted: false },
+      ],
+      schedules: {
+        [oldNextDate]: {
+          date: oldNextDate,
+          items: [{ id: 'daily-r2', sourceId: reviewSourceId, name: 'leaf', source: 'review', timeSlot: 'morning', order: 0 }],
+          blocks: [],
+        },
+      },
+    });
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: true });
+    await nextTick();
+    let reviews = useEbbStore.getState().reviewTasks;
+    assert.equal(reviews[0].isCompleted, true);
+    assert.equal(reviews[1].dueDate, dateSafe.addDays(oldNextDate, 2));
+    assert.equal(useDailyScheduleStore.getState().schedules[oldNextDate].items.length, 0);
+
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: false });
+    await nextTick();
+    reviews = useEbbStore.getState().reviewTasks;
+    assert.equal(reviews[0].isCompleted, false);
+    assert.equal(reviews[1].dueDate, oldNextDate);
+  });
+
+  check('当天刚完成最后一轮后再完成项目任务，节点保持金色且不新增补充轮次', () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    const practice = smartBlock('practice', '最后练习', ['leaf']);
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [first, practice])],
+      reviewTasks: [{ id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: today, roundOrder: 1, isCompleted: false }],
+    });
+    assert.equal(useEbbStore.getState().toggleReviewTask('r1'), null);
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: true });
+    assert.equal(useEbbStore.getState().reviewTasks.length, 1);
+    assert.equal(useEbbStore.getState().reviewTasks[0].isCompleted, true);
+  });
+
+  check('全部轮次在以前完成后再次学习，只增加一次明日补充复习', () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    const reinforce = smartBlock('reinforce', '再次强化', ['leaf']);
+    const another = smartBlock('another', '同日继续强化', ['leaf']);
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [first, reinforce, another])],
+      reviewTasks: [{
+        id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, -10),
+        roundOrder: 1, isCompleted: true, completedDate: dateSafe.addDays(today, -5),
+      }],
+    });
+    useTimelineStore.getState().updateBlockHeader('p1', 'reinforce', { isCompleted: true });
+    let reviews = useEbbStore.getState().reviewTasks;
+    assert.equal(reviews.length, 2);
+    assert.equal(reviews[1].isSupplemental, true);
+    assert.equal(reviews[1].dueDate, dateSafe.addDays(today, 1));
+    useTimelineStore.getState().updateBlockHeader('p1', 'another', { isCompleted: true });
+    reviews = useEbbStore.getState().reviewTasks;
+    assert.equal(reviews.length, 2);
+    assert.equal(reviews[1].isCompleted, false);
+  });
+
+  check('取消补充复习的来源任务会移除尚未完成的补充轮次', () => {
+    const first = smartBlock('learn', '知识学习', ['leaf']);
+    first.header.isCompleted = true;
+    const reinforce = smartBlock('reinforce', '再次强化', ['leaf']);
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [first, reinforce])],
+      reviewTasks: [{ id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, -2), roundOrder: 1, isCompleted: true, completedDate: dateSafe.addDays(today, -1) }],
+    });
+    useTimelineStore.getState().updateBlockHeader('p1', 'reinforce', { isCompleted: true });
+    assert.equal(useEbbStore.getState().reviewTasks.length, 2);
+    useTimelineStore.getState().updateBlockHeader('p1', 'reinforce', { isCompleted: false });
+    assert.equal(useEbbStore.getState().reviewTasks.length, 1);
+  });
+
+  check('删除已完成的练习任务块会撤销它自动完成的轮次', () => {
+    const learned = smartBlock('learn', '知识学习', ['leaf']);
+    learned.header.isCompleted = true;
+    const practice = smartBlock('practice', '对应练习', ['leaf']);
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [learned, practice])],
+      reviewTasks: [
+        { id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: today, roundOrder: 1, isCompleted: false },
+        { id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 3), roundOrder: 2, isCompleted: false },
+      ],
+    });
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: true });
+    assert.equal(useEbbStore.getState().reviewTasks.find((task) => task.id === 'r1').isCompleted, true);
+    useTimelineStore.getState().removeBlock('p1', 'practice');
+    assert.equal(useEbbStore.getState().reviewTasks.find((task) => task.id === 'r1').isCompleted, false);
+    assert.equal(useTimelineStore.getState().tasks[0].blocks.some((block) => block.id === 'practice'), false);
+  });
+
+  check('删除首次学习项目会释放节点并清理尚未开始的排期', () => {
+    resetStores({ nodes: [node('leaf')], tasks: [project('p1', [smartBlock('learn', '知识学习', ['leaf'])])] });
+    useTimelineStore.getState().updateBlockHeader('p1', 'learn', { isCompleted: true });
+    assert.ok(useEbbStore.getState().reviewTasks.length > 0);
+    useTimelineStore.getState().deleteTask('p1');
+    assert.equal(useTimelineStore.getState().tasks.length, 0);
+    assert.equal(useEbbStore.getState().reviewTasks.length, 0);
+    assert.notEqual(useGraphStore.getState().nodes[0].status, 'activated');
+  });
+
+  check('后续轮次已完成时，取消来源练习不会篡改既有复习历史', () => {
+    const learned = smartBlock('learn', '知识学习', ['leaf']);
+    learned.header.isCompleted = true;
+    const practice = smartBlock('practice', '对应练习', ['leaf']);
+    practice.header.isCompleted = true;
+    resetStores({
+      nodes: [node('leaf', null, 'activated')],
+      tasks: [project('p1', [learned, practice])],
+      reviewTasks: [
+        {
+          id: 'r1', topicName: 'leaf', graphNodeId: 'leaf', dueDate: today, roundOrder: 1,
+          isCompleted: true, completedDate: today, completionSource: 'project-task',
+          completionSourceTaskId: 'p1', completionSourceBlockId: 'practice',
+        },
+        {
+          id: 'r2', topicName: 'leaf', graphNodeId: 'leaf', dueDate: dateSafe.addDays(today, 1),
+          roundOrder: 2, isCompleted: true, completedDate: today, completionSource: 'manual',
+        },
+      ],
+    });
+    useTimelineStore.getState().updateBlockHeader('p1', 'practice', { isCompleted: false });
+    const reviews = useEbbStore.getState().reviewTasks;
+    assert.equal(reviews.find((task) => task.id === 'r1').isCompleted, true);
+    assert.equal(reviews.find((task) => task.id === 'r2').isCompleted, true);
+  });
+
   check('父节点上的任务不会绕过“全部子节点完成”规则', () => {
     resetStores({
       nodes: [node('parent'), node('a', 'parent'), node('b', 'parent')],
@@ -207,6 +476,7 @@ try {
     const parent = useGraphStore.getState().nodes.find((item) => item.id === 'parent');
     assert.notEqual(parent.status, 'activated');
     assert.equal(activation.computeNodeActivationStates(useGraphStore.getState().nodes).get('parent').isActivated, false);
+    assert.equal(useEbbStore.getState().reviewTasks.length, 0);
   });
 
   check('EBB 完成必须按顺序，且已完成轮次可取消完成', () => {
@@ -281,6 +551,108 @@ try {
     schedule = useDailyScheduleStore.getState().schedules['2026-07-17'];
     assert.equal(schedule.items.length, 0);
     assert.equal(schedule.blocks.length, 0);
+  });
+
+  check('批量编辑与跨分组拖动复用单任务联动，不遗留旧节点、EBB 或每日安排', () => {
+    const sourceId = sourceIds.getProjectBlockSourceId('p1', 'b1');
+    resetStores({
+      nodes: [node('old'), node('next')],
+      tasks: [project('p1', [smartBlock('b1', '旧名称', ['old'])])],
+      schedules: {
+        '2026-07-17': {
+          date: '2026-07-17',
+          items: [{ id: 's1', sourceId, name: '旧名称', source: 'project', timeSlot: 'morning', order: 0, duration: 30 }],
+          blocks: [],
+        },
+      },
+    });
+    useTimelineStore.getState().updateBlockHeader('p1', 'b1', { isCompleted: true, completedDate: '2026-07-17' });
+    const edited = structuredClone(getBlock('p1', 'b1'));
+    edited.header = {
+      ...edited.header,
+      title: '新名称',
+      duration: 45,
+      date: '2026-07-18',
+      graphNodeIds: ['next'],
+      graphNodeId: 'next',
+    };
+    useTimelineStore.getState().updateTaskBlocks('p1', [edited]);
+    assert.equal(useGraphStore.getState().nodes.find((item) => item.id === 'old').status, 'unactivated');
+    assert.equal(useGraphStore.getState().nodes.find((item) => item.id === 'next').status, 'activated');
+    assert.equal(useEbbStore.getState().reviewTasks.some((task) => task.graphNodeId === 'old'), false);
+    assert.equal(useEbbStore.getState().reviewTasks.some((task) => task.graphNodeId === 'next'), true);
+    assert.equal(useDailyScheduleStore.getState().schedules['2026-07-17'].items.length, 0);
+  });
+
+  check('EBB 收件箱批量生成的轮次编号唯一且连续', () => {
+    resetStores();
+    useEbbStore.setState({
+      inboxItems: [{
+        id: 'inbox-1', topicName: '批量主题', tag: '测试', status: 'staged',
+        intervals: [1, 2, 4, 7], startDate: '2026-07-18', complexity: 'normal', createdAt: new Date().toISOString(),
+      }],
+    });
+    const generated = useEbbStore.getState().generateTasksFromInbox(['inbox-1']);
+    assert.deepEqual(generated.map((task) => task.roundOrder), [1, 2, 3, 4]);
+    assert.equal(new Set(generated.map((task) => task.roundOrder)).size, generated.length);
+  });
+
+  check('EBB 标准化会过滤无效日期、去重 ID、修复重复轮次和大纲循环', () => {
+    const normalized = ebbModule.normalizeEbbData({
+      reviewTasks: [
+        { id: 'r1', topicName: '主题', dueDate: '2026-07-18', roundOrder: 1, isCompleted: false },
+        { id: 'r2', topicName: '主题', dueDate: '2026-07-19', roundOrder: 1, isCompleted: false },
+        { id: 'bad', topicName: '坏日期', dueDate: '2026-02-30', isCompleted: false },
+      ],
+      inboxItems: [],
+      outlineNodes: [
+        { id: 'o1', type: 'book', name: '一', parentId: 'o2', childrenIds: ['o2'], orderIndex: 0 },
+        { id: 'o2', type: 'chapter', name: '二', parentId: 'o1', childrenIds: ['o1'], orderIndex: 1 },
+      ],
+      ebbSettings: baseSettings,
+    });
+    assert.equal(normalized.reviewTasks.some((task) => task.id === 'bad'), false);
+    assert.equal(new Set(normalized.reviewTasks.map((task) => task.roundOrder)).size, 2);
+    const outlineById = new Map(normalized.outlineNodes.map((item) => [item.id, item]));
+    for (const item of normalized.outlineNodes) {
+      assert.notEqual(outlineById.get(item.parentId)?.parentId, item.id);
+    }
+  });
+
+  check('积分按实际完成日期统计，而不是计划日期', () => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const task = {
+      id: 'points-1', topicName: '逾期后完成', dueDate: '2020-01-01', roundOrder: 1,
+      isCompleted: true, completedDate: today, complexity: 'normal',
+    };
+    assert.ok(scheduler.calcTodayPoints([task], baseSettings) > 0);
+    assert.ok(scheduler.calcWeekPoints([task], baseSettings) > 0);
+  });
+
+  check('每日安排标准化拒绝零时长、24:00 和重复 ID 时间块', () => {
+    const normalized = dailyModule.normalizeDailySchedules({
+      '2026-07-18': {
+        date: '2026-07-18', items: [],
+        blocks: [
+          { id: 'ok', sourceId: 'free-ok', name: '正常', source: 'free', startTime: '23:15', endTime: '23:45' },
+          { id: 'zero', sourceId: 'free-zero', name: '零时长', source: 'free', startTime: '23:45', endTime: '23:45' },
+          { id: 'midnight', sourceId: 'free-midnight', name: '午夜', source: 'free', startTime: '23:30', endTime: '24:00' },
+          { id: 'ok', sourceId: 'free-dup', name: '重复', source: 'free', startTime: '09:00', endTime: '09:30' },
+        ],
+      },
+    });
+    assert.deepEqual(normalized['2026-07-18'].blocks.map((block) => block.id), ['ok']);
+  });
+
+  check('时间轴和每日安排每次保存都会同步写入本地镜像', () => {
+    resetStores({ tasks: [project('p1', [smartBlock('b1', '镜像任务', [])])] });
+    useTimelineStore.getState().updateBlockHeader('p1', 'b1', { title: '已保存' });
+    useDailyScheduleStore.getState().addScheduledItem('2026-07-18', {
+      sourceId: 'free-mirror', name: '镜像安排', source: 'free', timeSlot: 'morning',
+    });
+    assert.ok(localStorage.getItem('smart-timeline-data:mirror'));
+    assert.ok(localStorage.getItem('daily-schedule-data:mirror'));
   });
 
   check('EBB 单轮改期保留原计划日期、轮次编号，并清理每日安排旧引用', async () => {
