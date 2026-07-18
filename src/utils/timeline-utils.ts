@@ -6,6 +6,7 @@ import dayjs from 'dayjs';
 import { makeLocalDayjs } from '@/utils/dateSafe';
 import type {
   TaskWithLayout,
+  Task,
   MonthLayout,
   Note,
   NoteSegment,
@@ -245,6 +246,33 @@ export function getTaskBorderColor(taskBg: string): string {
   return theme ? theme.taskBorder : getBorderColor(taskBg);
 }
 
+export interface ResolvedTaskTheme {
+  backgroundColor: string;
+  borderColor: string;
+  textColor: string;
+  accentColor: string;
+}
+
+/**
+ * Resolve the single effective task theme used by every project surface.
+ * This mirrors the timeline precedence: explicit task color, inherited group
+ * theme, main-task theme, then the stable automatic palette.
+ */
+export function resolveTaskTheme(task: Task, groupColor?: string): ResolvedTaskTheme {
+  const safeIdx = hashString(task.id) % NORMAL_TIMELINE_THEMES.length;
+  const inheritedGroupColor = groupColor ? getTaskBgForGroupColor(groupColor) : undefined;
+  const backgroundColor = task.isMain
+    ? task.color ?? TIMELINE_THEMES[MAIN_TASK_THEME_IDX].taskBg
+    : task.color ?? inheritedGroupColor ?? NORMAL_TIMELINE_THEMES[safeIdx].taskBg;
+  const theme = findThemeByTaskBg(backgroundColor);
+  return {
+    backgroundColor,
+    borderColor: theme?.taskBorder ?? getTaskBorderColor(backgroundColor),
+    textColor: theme?.taskText ?? getTaskTextColor(backgroundColor),
+    accentColor: theme?.groupColor ?? groupColor ?? getTaskBorderColor(backgroundColor),
+  };
+}
+
 /** 分组色 -> 主题 的反查缓存 */
 const GROUP_COLOR_INDEX: Map<string, TimelineTheme> = (() => {
   const m = new Map<string, TimelineTheme>();
@@ -327,13 +355,10 @@ export function sliceTasksForYear(
       // 颜色选择逻辑：
       // 1. 主线任务（isMain）：优先使用红色主题（浅红背景 #FEE2E2），除非用户显式设置了自定义颜色
       // 2. 普通任务：优先使用任务自带颜色，否则按 id 轮询标准主题浅背景（前 4 套）
-      const safeIdx = hashString(task.id) % NORMAL_TIMELINE_THEMES.length;
-      const inheritedGroupColor = task.groupId && groupColors.has(task.groupId)
-        ? getTaskBgForGroupColor(groupColors.get(task.groupId)!)
-        : undefined;
-      const bgColor = task.isMain
-        ? task.color ?? TIMELINE_THEMES[MAIN_TASK_THEME_IDX].taskBg
-        : task.color ?? inheritedGroupColor ?? NORMAL_TIMELINE_THEMES[safeIdx].taskBg;
+      const bgColor = resolveTaskTheme(
+        task,
+        task.groupId ? groupColors.get(task.groupId) : undefined,
+      ).backgroundColor;
 
       months[m].segments.push({
         taskId: task.id,

@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { todayStr } from '@/utils/dateSafe';
 import type { TimeBlock } from './types';
 import TimeBlockCard from './TimeBlockCard';
+import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import {
   GRID_CONFIG,
   gridTotalHeight,
@@ -25,7 +26,7 @@ interface TimeGridProps {
   onBlockDragStart?: (blockId: string) => void;
   onBlankClick: (startTime: string) => void;
   /** 从任务池拖入的预览块 */
-  ghostBlock: { startTime: string; endTime: string; name: string; color?: string } | null;
+  ghostBlock: { startTime: string; endTime: string; name: string; color?: string; categoryColor?: string } | null;
   conflictIds: string[];
   isUnlinkedTask: (sourceId: string) => boolean;
   isLinkedTask: (sourceId: string) => boolean;
@@ -173,11 +174,12 @@ const TimeGrid: React.FC<TimeGridProps> = ({
               style={{
                 top: gTop,
                 height: gBottom - gTop,
+                backgroundColor: resolveTaskCategoryTheme(ghostBlock.categoryColor).backgroundColor,
               }}
             >
               <div
                 className="tb-accent"
-                style={{ backgroundColor: ghostBlock.color ?? '#8B9DC3' }}
+                style={{ backgroundColor: resolveTaskCategoryTheme(ghostBlock.categoryColor).accentColor }}
               />
               <span className="tg-ghost-name">{ghostBlock.name}</span>
             </div>

@@ -35,6 +35,8 @@ export interface ScheduledItem {
   completed?: boolean;
   /** 标签颜色 */
   color?: string;
+  /** 任务种类颜色（项目标签色 / 复习色），与所属项目颜色相互独立 */
+  categoryColor?: string;
   /** 预计时长（分钟） */
   duration?: number;
   /** 额外信息（如轮次、所属项目等） */
@@ -59,6 +61,8 @@ export interface TimeBlock {
   completed?: boolean;
   /** 标签颜色 */
   color?: string;
+  /** 任务种类颜色（项目标签色 / 复习色），与所属项目颜色相互独立 */
+  categoryColor?: string;
   /** 额外信息 */
   detail?: string;
 }

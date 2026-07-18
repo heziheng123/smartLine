@@ -9,6 +9,7 @@ import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from '@/store/client';
 import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
 import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
+import { registerUndoExecutor } from '@/services/operationHistory';
 
 const STORAGE_KEY = 'daily-schedule-data';
 const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
@@ -131,6 +132,7 @@ interface DailyScheduleStore {
 
   /** 从时间段移除任务 */
   removeScheduledItem: (date: string, itemId: string) => void;
+  restoreScheduledItem: (date: string, item: ScheduledItem, targetIndex: number) => void;
 
   /** 移动任务到另一个时间段 */
   moveScheduledItem: (date: string, itemId: string, targetSlot: TimeSlot, targetIndex: number) => void;
@@ -445,6 +447,21 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
           });
         },
 
+        restoreScheduledItem: (date, item, targetIndex) => {
+          set((state) => {
+            const schedules = { ...state.schedules };
+            const day = schedules[date] ?? { date, items: [], blocks: [] };
+            if (day.items.some((candidate) => candidate.id === item.id)) return state;
+            const slotItems = day.items.filter((candidate) => candidate.timeSlot === item.timeSlot);
+            slotItems.splice(Math.min(Math.max(0, targetIndex), slotItems.length), 0, { ...item });
+            const otherItems = day.items.filter((candidate) => candidate.timeSlot !== item.timeSlot);
+            schedules[date] = { ...day, items: [...otherItems, ...slotItems] };
+            reorderSlotItems(schedules, date);
+            saveSchedules(schedules);
+            return { schedules };
+          });
+        },
+
         updateBySourceId: (sourceId, patch) => {
           set((state) => {
             let changed = false;
@@ -485,6 +502,27 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
     }
   )
 );
+
+registerUndoExecutor('daily-remove', (raw) => {
+  const payload = raw as { date: string; itemId: string; expectedSourceId: string };
+  const state = useDailyScheduleStore.getState();
+  const item = state.schedules[payload.date]?.items.find((candidate) => candidate.id === payload.itemId);
+  if (!item || item.sourceId !== payload.expectedSourceId) return '安排项已经发生变化';
+  state.removeScheduledItem(payload.date, payload.itemId);
+});
+registerUndoExecutor('daily-move', (raw) => {
+  const payload = raw as { date: string; itemId: string; targetSlot: TimeSlot; targetIndex: number; expectedSlot: TimeSlot };
+  const state = useDailyScheduleStore.getState();
+  const item = state.schedules[payload.date]?.items.find((candidate) => candidate.id === payload.itemId);
+  if (!item || item.timeSlot !== payload.expectedSlot) return '任务位置已经发生变化';
+  state.moveScheduledItem(payload.date, payload.itemId, payload.targetSlot, payload.targetIndex);
+});
+registerUndoExecutor('daily-restore', (raw) => {
+  const payload = raw as { date: string; item: ScheduledItem; targetIndex: number };
+  const state = useDailyScheduleStore.getState();
+  if (state.schedules[payload.date]?.items.some((candidate) => candidate.id === payload.item.id)) return '任务已经重新安排';
+  state.restoreScheduledItem(payload.date, payload.item, payload.targetIndex);
+});
 
 // 远端 Liveblocks 推送同步落盘，避免刷新后回退到旧的本地排期。
 {

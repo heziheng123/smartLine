@@ -42,6 +42,12 @@ import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { parseSourceId } from './conversion';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
+import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
+import {
+  projectBadgeStyle,
+  resolveProjectAppearance,
+} from './projectAppearance';
+import { recordOperation } from '@/services/operationHistory';
 
 // ── Droppable IDs ────────────────────────────────────────────
 
@@ -177,7 +183,7 @@ const DailyScheduleView: React.FC = () => {
   }, [selectedDate, addScheduledItem]);
 
   // ── 获取指定日期的项目任务 ─────────────────────────────
-  const allSmartTaskTodos = useSmartTaskTodos(tlTasks);
+  const allSmartTaskTodos = useSmartTaskTodos(tlTasks, rawTlGroups);
   // 数据来源已统一为 SmartTaskBlock，不再走 markdown 待办
   const mergedTodos = allSmartTaskTodos;
 
@@ -270,7 +276,7 @@ const DailyScheduleView: React.FC = () => {
   }, [daySchedule.items, daySchedule.blocks]);
 
   const completedPoolItems = useMemo(() => {
-    const items: { id: string; name: string; source: TaskSource; sourceId: string; detail?: string }[] = [];
+    const items: { id: string; name: string; source: TaskSource; sourceId: string; detail?: string; color?: string; categoryColor?: string }[] = [];
     for (const todo of completedProjectTasks) {
       if (!todo._blockId) continue;
       const sourceId = getProjectBlockSourceId(todo.parentTaskId, todo._blockId);
@@ -281,6 +287,8 @@ const DailyScheduleView: React.FC = () => {
         source: 'project',
         sourceId,
         detail: todo.parentTaskTitle,
+        color: todo.parentTaskColor,
+        categoryColor: todo._tagColor,
       });
     }
     for (const task of completedReviewTasks) {
@@ -291,10 +299,11 @@ const DailyScheduleView: React.FC = () => {
         name: task.topicName,
         source: 'review',
         sourceId,
+        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
       });
     }
     return filterSource === 'all' ? items : items.filter((item) => item.source === filterSource);
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource]);
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData]);
 
   // ── 构建右侧任务池列表（时段模式用） ─────────────────────
   const poolItems = useMemo(() => {
@@ -303,6 +312,7 @@ const DailyScheduleView: React.FC = () => {
       name: string;
       source: TaskSource;
       color?: string;
+      categoryColor?: string;
       detail?: string;
       duration?: number;
       sourceId: string;
@@ -319,6 +329,7 @@ const DailyScheduleView: React.FC = () => {
         name: todo.text,
         source: 'project',
         color: todo.parentTaskColor,
+        categoryColor: todo._tagColor,
         detail: todo.parentTaskTitle,
         sourceId,
         duration: todo._duration,
@@ -335,8 +346,10 @@ const DailyScheduleView: React.FC = () => {
         name: task.topicName,
         source: 'review',
         color: ebbSettingsData.tagColors[task.tag ?? ''] ?? '#8B9DC3',
+        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
         detail: `第${round}/${total}轮`,
         sourceId: getReviewSourceId(task.id),
+        duration: 30,
       });
     }
 
@@ -355,11 +368,27 @@ const DailyScheduleView: React.FC = () => {
       const normalItems = daySchedule.items
         .filter((i) => i.timeSlot === slot)
         .sort((a, b) => a.order - b.order)
-        .map((i) => ({ ...i, completed: checkIsCompleted(i.source, i.sourceId) }));
+        .map((i) => {
+          const appearance = resolveProjectAppearance(i.sourceId, tlTasks, rawTlGroups);
+          const parsed = parseSourceId(i.sourceId);
+          const reviewTask = parsed?.source === 'review'
+            ? ebbReviewTasks.find((task) => task.id === parsed.reviewId)
+            : undefined;
+          const reviewCategoryColor = reviewTask
+            ? ebbSettingsData.tagColors[reviewTask.tag ?? '']
+            : undefined;
+          return {
+            ...i,
+            completed: checkIsCompleted(i.source, i.sourceId),
+            detail: appearance?.name ?? i.detail,
+            color: appearance?.theme.backgroundColor ?? i.color,
+            categoryColor: appearance?.categoryColor ?? reviewCategoryColor ?? i.categoryColor,
+          };
+        });
 
       return normalItems;
     },
-    [daySchedule.items, checkIsCompleted],
+    [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData],
   );
 
   // ── 拖拽处理（时段模式） ─────────────────────────────────
@@ -380,6 +409,7 @@ const DailyScheduleView: React.FC = () => {
         const targetSlot = destDroppableId.replace('ds-slot-', '') as TimeSlot;
         const poolItem = poolItems.find((i) => i.id === draggableId);
         if (!poolItem) return;
+        const beforeIds = new Set((useDailyScheduleStore.getState().schedules[selectedDate]?.items ?? []).map((item) => item.id));
 
         addScheduledItem(selectedDate, {
           sourceId: poolItem.sourceId,
@@ -388,8 +418,18 @@ const DailyScheduleView: React.FC = () => {
           timeSlot: targetSlot,
           completed: false,
           color: poolItem.color,
+          categoryColor: poolItem.categoryColor,
           detail: poolItem.detail,
           duration: poolItem.duration,
+        });
+        const created = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => !beforeIds.has(item.id));
+        if (created) recordOperation({
+          label: `安排“${poolItem.name}”`, detail: `已拖入${targetSlot === 'morning' ? '上午' : targetSlot === 'afternoon' ? '下午' : '晚上'}`, modules: ['每日安排'],
+          undoSpec: { kind: 'daily-remove', payload: { date: selectedDate, itemId: created.id, expectedSourceId: created.sourceId } },
+        }, () => {
+          const latest = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => item.id === created.id);
+          if (!latest || latest.sourceId !== created.sourceId) return '安排项已经发生变化';
+          useDailyScheduleStore.getState().removeScheduledItem(selectedDate, created.id);
         });
         return;
       }
@@ -410,11 +450,15 @@ const DailyScheduleView: React.FC = () => {
           // 限制插入位置，防止拖拽到虚拟块的下方导致乱序
           newOrder.splice(Math.min(destIndex, newOrder.length), 0, removed);
           reorderScheduledItems(selectedDate, srcSlot, newOrder);
+          recordOperation({ label: `调整“${draggedItem.name}”顺序`, detail: '已在当前时段内移动位置', modules: ['每日安排'], undoSpec: { kind: 'daily-move', payload: { date: selectedDate, itemId: draggedItem.id, targetSlot: srcSlot, targetIndex: source.index, expectedSlot: destSlot } } },
+            () => { const latest = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => item.id === draggedItem.id); if (!latest || latest.timeSlot !== destSlot) return '任务位置已经发生变化'; useDailyScheduleStore.getState().moveScheduledItem(selectedDate, draggedItem.id, srcSlot, source.index); });
         } else {
           const destItems = getSlotItems(destSlot);
           const normalDestItems = destItems.filter(i => !i.id.startsWith('virtual-block-'));
           const clampedIndex = Math.min(destIndex, normalDestItems.length);
           moveScheduledItem(selectedDate, draggedItem.id, destSlot, clampedIndex);
+          recordOperation({ label: `移动“${draggedItem.name}”`, detail: `已从${srcSlot}移动到${destSlot}`, modules: ['每日安排'], undoSpec: { kind: 'daily-move', payload: { date: selectedDate, itemId: draggedItem.id, targetSlot: srcSlot, targetIndex: source.index, expectedSlot: destSlot } } },
+            () => { const latest = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => item.id === draggedItem.id); if (!latest || latest.timeSlot !== destSlot) return '任务位置已经发生变化'; useDailyScheduleStore.getState().moveScheduledItem(selectedDate, draggedItem.id, srcSlot, source.index); });
         }
         return;
       }
@@ -429,10 +473,24 @@ const DailyScheduleView: React.FC = () => {
         const draggedItem = srcItems[source.index];
         if (!draggedItem) return;
         removeScheduledItem(selectedDate, draggedItem.id);
+        recordOperation({ label: `移回任务池“${draggedItem.name}”`, detail: '已从每日安排移除，可撤销恢复原时段与位置', modules: ['每日安排'], undoSpec: { kind: 'daily-restore', payload: { date: selectedDate, item: draggedItem, targetIndex: source.index } } },
+          () => { if (useDailyScheduleStore.getState().schedules[selectedDate]?.items.some((item) => item.id === draggedItem.id)) return '任务已经重新安排'; useDailyScheduleStore.getState().restoreScheduledItem(selectedDate, draggedItem, source.index); });
       }
     },
     [poolItems, selectedDate, addScheduledItem, reorderScheduledItems, moveScheduledItem, removeScheduledItem, getSlotItems],
   );
+
+  // Playwright bridge for deterministic DnD verification. The production
+  // bundle removes this DEV-only branch; tests still execute the exact same
+  // handleDragEnd command used by @hello-pangea/dnd.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const testWindow = window as typeof window & { __e2eDailyDragEnd?: (result: DropResult) => void };
+    testWindow.__e2eDailyDragEnd = handleDragEnd;
+    const listener = (event: Event) => handleDragEnd((event as CustomEvent<DropResult>).detail);
+    window.addEventListener('e2e-daily-drag-end', listener);
+    return () => { window.removeEventListener('e2e-daily-drag-end', listener); delete testWindow.__e2eDailyDragEnd; };
+  }, [handleDragEnd]);
 
   // ── 完成/删除 操作（时段模式） ──────────────────────────
   const syncProjectTaskCompletion = useCallback((sourceId: string) => {
@@ -676,6 +734,7 @@ const DailyScheduleView: React.FC = () => {
                         <div
                           ref={provided.innerRef}
                           {...provided.droppableProps}
+                          data-testid={`daily-slot-${config.slot}`}
                           className={`ds-slot-dropzone ${
                             snapshot.isDraggingOver ? 'ds-slot-dropzone--active' : ''
                           } ${slotItems.length === 0 ? 'ds-slot-dropzone--empty' : ''}`}
@@ -696,12 +755,17 @@ const DailyScheduleView: React.FC = () => {
                                   } ${item.id.startsWith('virtual-block-') ? 'ds-item--virtual' : ''} ${
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-item--unlinked' : ''
                                   } ${item.source === 'free' ? 'ds-item--free' : ''}`}
+                                  style={{
+                                    backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
+                                  }}
                                   onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}
                                 >
                                   {item.source !== 'free' && (
                                     <div
                                       className="ds-item-accent"
-                                      style={{ backgroundColor: item.color ?? '#8B9DC3' }}
+                                      style={{
+                                        backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor,
+                                      }}
                                     />
                                   )}
                                   {!item.id.startsWith('virtual-block-') && (
@@ -726,7 +790,7 @@ const DailyScheduleView: React.FC = () => {
                                           </>
                                         )}
                                       </span>
-                                    {item.detail && (
+                                    {item.detail && item.source === 'free' && (
                                       <span className="ds-item-detail">{item.detail}</span>
                                     )}
                                   </div>
@@ -741,17 +805,27 @@ const DailyScheduleView: React.FC = () => {
                                     </div>
                                   )}
 
-                                  {item.duration && !item.id.startsWith('virtual-block-') && (
+                                  {(item.duration || item.source === 'review') && !item.id.startsWith('virtual-block-') && (
                                     <span className="ds-item-duration">
                                       <Clock size={11} />
-                                      {item.duration}min
+                                      {item.duration ?? 30}min
                                     </span>
                                   )}
 
                                   <span
-                                    className={`ds-item-source ds-item-source--${item.source}`}
+                                    className={`ds-item-source ds-item-source--${item.source} ${
+                                      item.source === 'project' ? 'ds-project-name-badge' : ''
+                                    }`}
+                                    title={item.source === 'project' ? (item.detail || '项目') : undefined}
+                                    style={item.source === 'project'
+                                      ? projectBadgeStyle(item.color)
+                                      : undefined}
                                   >
-                                    {item.source === 'project' ? '项目' : item.source === 'review' ? '复习' : '占位'}
+                                    {item.source === 'project'
+                                      ? (item.detail || '项目')
+                                      : item.source === 'review'
+                                        ? `复习${item.detail ? ` · ${item.detail}` : ''}`
+                                        : '占位'}
                                   </span>
 
                                   {item.source !== 'free' && (
@@ -871,11 +945,14 @@ const DailyScheduleView: React.FC = () => {
                                   className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''} ${
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
                                   }`}
+                                  style={{
+                                    backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
+                                  }}
                                   onClick={() => openProjectTaskFromSource(item.sourceId)}
                                 >
                                   <div
                                     className="ds-pool-item-accent"
-                                    style={{ backgroundColor: item.color ?? '#8B9DC3' }}
+                                    style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }}
                                   />
                                   <div className="ds-pool-item-content">
                                     <span className="ds-pool-item-name" title={item.name}>
@@ -890,11 +967,14 @@ const DailyScheduleView: React.FC = () => {
                                         </span>
                                       )}
                                     </span>
-                                    {item.detail && (
-                                      <span className="ds-pool-item-detail">{item.detail}</span>
-                                    )}
                                   </div>
-                                  <span className="ds-pool-item-tag ds-pool-item-tag--project">项目</span>
+                                  <span
+                                    className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"
+                                    title={item.detail || '项目'}
+                                    style={projectBadgeStyle(item.color)}
+                                  >
+                                    {item.detail || '项目'}
+                                  </span>
                                 </div>
                               )}
                             </Draggable>
@@ -935,10 +1015,13 @@ const DailyScheduleView: React.FC = () => {
                                   className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''} ${
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
                                   }`}
+                                  style={{
+                                    backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
+                                  }}
                                 >
                                   <div
                                     className="ds-pool-item-accent"
-                                    style={{ backgroundColor: item.color ?? '#8B9DC3' }}
+                                    style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }}
                                   />
                                   <div className="ds-pool-item-content">
                                     <span className="ds-pool-item-name" title={item.name}>
@@ -953,11 +1036,10 @@ const DailyScheduleView: React.FC = () => {
                                         </span>
                                       )}
                                     </span>
-                                    {item.detail && (
-                                      <span className="ds-pool-item-detail">{item.detail}</span>
-                                    )}
                                   </div>
-                                  <span className="ds-pool-item-tag ds-pool-item-tag--review">复习</span>
+                                  <span className="ds-pool-item-tag ds-pool-item-tag--review">
+                                    复习{item.detail ? ` · ${item.detail}` : ''}
+                                  </span>
                                 </div>
                               )}
                             </Draggable>
@@ -986,11 +1068,25 @@ const DailyScheduleView: React.FC = () => {
                   {showCompletedPool && (
                     <div className="ds-pool-list">
                       {completedPoolItems.map((item) => (
-                        <div key={item.id} className="ds-pool-item ds-pool-item--completed" onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}>
+                        <div
+                          key={item.id}
+                          className="ds-pool-item ds-pool-item--completed"
+                          style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
+                          onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}
+                        >
                           <div className="ds-pool-item-content">
                             <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                            {item.detail && <span className="ds-pool-item-detail">{item.detail}</span>}
+                            {item.detail && item.source !== 'project' && <span className="ds-pool-item-detail">{item.detail}</span>}
                           </div>
+                          {item.source === 'project' && (
+                            <span
+                              className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"
+                              title={item.detail || '项目'}
+                              style={projectBadgeStyle(item.color)}
+                            >
+                              {item.detail || '项目'}
+                            </span>
+                          )}
                           <button
                             type="button"
                             className="ds-pool-undo-btn"

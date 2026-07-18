@@ -5,6 +5,8 @@
 import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Check, X, Clock, GripVertical, CircleDashed, Link as LinkIcon } from 'lucide-react';
 import type { TimeBlock } from './types';
+import { projectBadgeStyle } from './projectAppearance';
+import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import {
   timeToMinutes,
   minutesToTime,
@@ -191,15 +193,10 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
   const accentColor = block.color ?? '#8B9DC3';
   
   // 拖拽状态下加深透明度，让它看起来更清晰，而非处于底层半透明状态
-  const opacityHex = dragMode !== 'none' ? '80' : '60'; // 静态透明度提升到 60，拖拽时 80
-  
-  const bgColor = block.source === 'free' 
-    ? (dragMode !== 'none' ? '#E5E7EB' : '#F3F4F6')
-    : block.completed
-      ? '#ECFDF5'
-      : isConflict || localConflict
-        ? '#FEF2F2'
-        : `${accentColor}${opacityHex}`;
+  const categoryTheme = resolveTaskCategoryTheme(block.categoryColor, block.source);
+  const bgColor = block.source === 'free' && dragMode !== 'none'
+    ? '#E5E7EB'
+    : categoryTheme.backgroundColor;
 
   const borderClass = isConflict || localConflict
     ? 'tb-card--conflict'
@@ -246,7 +243,9 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
       {block.source !== 'free' && (
         <div
           className="tb-accent"
-          style={{ backgroundColor: block.completed ? '#6EE7B7' : accentColor }}
+          style={{
+            backgroundColor: categoryTheme.accentColor,
+          }}
         />
       )}
 
@@ -268,13 +267,23 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
             </>
           )}
         </span>
-        {block.detail && <span className="tb-detail">{block.detail}</span>}
+        {block.detail && block.source !== 'project' && <span className="tb-detail">{block.detail}</span>}
         <span className="tb-time-label">
           <Clock size={10} />
           {displayStart} - {displayEnd}
           <span className="tb-duration-label">({durationMin}min)</span>
         </span>
       </div>
+
+      {block.source === 'project' && (
+        <span
+          className="tb-project-badge ds-project-name-badge"
+          title={block.detail || '项目'}
+          style={projectBadgeStyle(accentColor)}
+        >
+          {block.detail || '项目'}
+        </span>
+      )}
 
       {/* 操作按钮 */}
       <div className="tb-actions">

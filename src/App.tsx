@@ -25,6 +25,7 @@ import '@/styles/timeline.css';
 import '@/styles/ebb.css';
 import '@/styles/daily-schedule.css';
 import '@/styles/smart-block.css';
+import '@/styles/task-overview.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 type TimelineNavigateDetail = {
@@ -45,6 +46,7 @@ const EbbView = React.lazy(() => import('@/ebb/components/EbbView'));
 const DailyScheduleView = React.lazy(() => import('@/components/dailySchedule/DailyScheduleView'));
 const ProjectDocumentView = React.lazy(() => import('@/components/smartBlock/ProjectDocumentView'));
 const WeekMatrixView = React.lazy(() => import('@/components/smartBlock/WeekMatrixView'));
+const TaskOverviewView = React.lazy(() => import('@/components/smartBlock/TaskOverviewView'));
 const KnowledgeGraphView = React.lazy(() =>
   import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView })),
 );
@@ -53,6 +55,9 @@ import { useGraphStore } from '@/graph/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
+import OperationHistoryPanel from '@/components/OperationHistoryPanel';
+import { recordOperation } from '@/services/operationHistory';
+import { useRecycleBin } from '@/services/recycleBin';
 
 const ViewFallback: React.FC = () => (
   <div className="tl-app-split tl-app-split--ebb">
@@ -86,6 +91,7 @@ const App: React.FC = () => {
     milestones,
     updateTask,
     deleteTask,
+    restoreTask,
     toggleTaskComplete,
     addTask,
     updateGroup,
@@ -110,6 +116,7 @@ const App: React.FC = () => {
       milestones: s.milestones,
       updateTask: s.updateTask,
       deleteTask: s.deleteTask,
+      restoreTask: s.restoreTask,
       toggleTaskComplete: s.toggleTaskComplete,
       addTask: s.addTask,
       updateGroup: s.updateGroup,
@@ -137,6 +144,7 @@ const App: React.FC = () => {
       milestones,
       updateTask,
       deleteTask,
+      restoreTask,
       toggleTaskComplete,
       addTask,
       updateGroup,
@@ -159,6 +167,7 @@ const App: React.FC = () => {
       milestones,
       updateTask,
       deleteTask,
+      restoreTask,
       toggleTaskComplete,
       addTask,
       updateGroup,
@@ -443,7 +452,19 @@ const App: React.FC = () => {
 
   // 抽屉：删除任务
   const handleDeleteTaskFromDrawer = useCallback((taskId: string) => {
-    store.deleteTask(taskId);
+    const task = [...store.tasks, ...store.groups.flatMap((group) => group.children)].find((item) => item.id === taskId);
+    const groupId = store.groups.find((group) => group.children.some((item) => item.id === taskId))?.id;
+    if (task) {
+      const sourcePrefix = `project-blk:${taskId}::`;
+      const placements = Object.entries(useDailyScheduleStore.getState().schedules).map(([date, day]) => ({
+        date,
+        items: day.items.filter((item) => item.sourceId.startsWith(sourcePrefix)),
+        blocks: day.blocks.filter((block) => block.sourceId.startsWith(sourcePrefix)),
+      })).filter((entry) => entry.items.length > 0 || entry.blocks.length > 0);
+      const recycled = useRecycleBin.getState().recycle(task, groupId, placements);
+      store.deleteTask(taskId);
+      recordOperation({ label: `删除“${task.name}”`, detail: '任务及其每日安排位置已移入回收站，保留 30 天', modules: ['项目文档', '每日安排', 'EBB', '知识大盘'], undoSpec: { kind: 'restore-recycled', payload: { recycledId: recycled.id } } });
+    }
     setDrawerTaskId(null);
   }, [store]);
 
@@ -464,10 +485,10 @@ const App: React.FC = () => {
   }, [dialogMode, store]);
 
   const handleDeleteTask = useCallback((taskId: string) => {
-    store.deleteTask(taskId);
+    handleDeleteTaskFromDrawer(taskId);
     setDialogType(null);
     setEditingTask(undefined);
-  }, [store]);
+  }, [handleDeleteTaskFromDrawer]);
 
   // ── 分组操作 ──────────────────────────────────────────────
 
@@ -585,7 +606,7 @@ const App: React.FC = () => {
         { label: '✏️ 编辑', action: () => handleOpenDrawerWithMeta(task) },
         { label: task.completed ? '标记未完成' : '标记完成', action: () => store.toggleTaskComplete(task.id) },
         { label: '', action: () => {}, divider: true },
-        { label: '删除', action: () => store.deleteTask(task.id), danger: true },
+        { label: '删除', action: () => handleDeleteTaskFromDrawer(task.id), danger: true },
       ];
     }
 
@@ -612,7 +633,7 @@ const App: React.FC = () => {
     }
 
     return [];
-  }, [contextMenu, store, handleEditNote, handleEditMilestone, handleOpenDrawer, handleOpenDrawerWithMeta]);
+  }, [contextMenu, store, handleDeleteTaskFromDrawer, handleEditNote, handleEditMilestone, handleOpenDrawer, handleOpenDrawerWithMeta]);
 
   // ── 导入/导出 ──────────────────────────────────────────────
 
@@ -664,7 +685,8 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
+    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'task-overview' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
+      <OperationHistoryPanel />
       <Toolbar
         currentView={currentView}
         onViewChange={setCurrentView}
@@ -734,6 +756,25 @@ const App: React.FC = () => {
                   tasks={weekMatrixTasks}
                   onUpdateBlockHeader={store.updateBlockHeader}
                 />
+              </Suspense>
+            </div>
+          </motion.div>
+        )}
+
+        {currentView === 'task-overview' && (
+          <motion.div
+            key="task-overview"
+            id="view-task-overview"
+            role="tabpanel"
+            className="tl-app-split tl-app-split--ebb"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
+                <TaskOverviewView />
               </Suspense>
             </div>
           </motion.div>

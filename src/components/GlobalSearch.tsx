@@ -249,13 +249,27 @@ export const GlobalSearchModal = ({ isOpen, onClose }: { isOpen: boolean; onClos
 export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
   const { nodes } = useGraphStore();
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
-  const archivedRoots = useMemo(() => {
+  const { archivedRoots, archivedNodes } = useMemo(() => {
     const archived = nodes.filter(n => n.isArchived);
     const archivedIds = new Set(archived.map(n => n.id));
-    // 如果父节点也被归档了，就不作为根显示在库里（被折叠在里面）
-    return archived.filter(n => !n.parentId || !archivedIds.has(n.parentId));
+    return {
+      archivedNodes: archived,
+      // 如果父节点也被归档了，就不作为根显示在库里（被折叠在里面）
+      archivedRoots: archived.filter(n => !n.parentId || !archivedIds.has(n.parentId)),
+    };
   }, [nodes]);
+
+  const displayedNodes = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase('zh-CN');
+    if (!normalized) return archivedRoots;
+    return archivedNodes.filter((node) => node.name.toLocaleLowerCase('zh-CN').includes(normalized));
+  }, [archivedNodes, archivedRoots, query]);
+
+  useEffect(() => {
+    if (!isOpen) setQuery('');
+  }, [isOpen]);
 
   if (!isOpen && !capsuleNodeId) return null;
 
@@ -286,13 +300,31 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
                   <p className="text-xs text-slate-500 mt-0.5">这里存放着你曾经征服过的知识与岁月</p>
                 </div>
               </div>
-              <button onClick={onClose} className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-xl transition-colors">
+              <button onClick={onClose} className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-xl transition-colors" aria-label="关闭归档库">
                 <X size={20} />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-              {archivedRoots.length > 0 ? (
+              <label className="max-w-4xl mx-auto mb-4 h-10 px-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white shadow-sm focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100">
+                <Search size={16} className="text-slate-400 shrink-0" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索已归档的知识节点……"
+                  aria-label="搜索归档知识节点"
+                  className="min-w-0 flex-1 border-0 bg-transparent outline-none text-sm text-slate-700 placeholder:text-slate-400"
+                  autoFocus
+                />
+                {query && (
+                  <button type="button" onClick={() => setQuery('')} className="p-1 text-slate-400 hover:text-slate-600" aria-label="清除归档搜索">
+                    <X size={14} />
+                  </button>
+                )}
+              </label>
+
+              {displayedNodes.length > 0 ? (
                 <div className="flex flex-col gap-1 max-w-4xl mx-auto w-full">
                   <div className="flex items-center px-4 py-2 text-xs font-semibold text-slate-400 border-b border-slate-200/60 mb-2">
                     <div className="flex-1">节点名称</div>
@@ -300,7 +332,7 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
                     <div className="w-24"></div>
                   </div>
                   
-                  {archivedRoots.map(node => (
+                  {displayedNodes.map(node => (
                     <button
                       key={node.id}
                       onClick={() => setCapsuleNodeId(node.id)}
@@ -330,8 +362,8 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
               ) : (
                 <div className="text-center py-20 text-slate-400">
                   <Archive size={48} className="mx-auto mb-4 opacity-20" />
-                  <p className="text-sm font-medium">归档库空空如也</p>
-                  <p className="text-xs mt-1 opacity-70">在知识大盘中归档的节点会出现在这里</p>
+                  <p className="text-sm font-medium">{query.trim() ? '没有找到匹配的归档节点' : '归档库空空如也'}</p>
+                  <p className="text-xs mt-1 opacity-70">{query.trim() ? '可以尝试其他关键词' : '在知识大盘中归档的节点会出现在这里'}</p>
                 </div>
               )}
             </div>

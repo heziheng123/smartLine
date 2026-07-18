@@ -17,6 +17,7 @@ import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
 import { todayStr } from '@/utils/dateSafe';
 import type { SyncTaskToEbbPayload } from '@/ebb/types';
+import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
 
 const STORAGE_KEY = 'smart-timeline-data';
 const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
@@ -281,6 +282,7 @@ interface TimelineStore extends TimelineData {
   addTask: (task: Task) => void;
   updateTask: (task: Task) => void;
   deleteTask: (taskId: string) => void;
+  restoreTask: (task: Task, groupId?: string) => void;
   toggleTaskComplete: (taskId: string) => void;
   /** 更新任务的 blocks 数组（新数据载体） */
   updateTaskBlocks: (taskId: string, blocks: Block[]) => void;
@@ -535,6 +537,40 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           for (const blockId of newCompletedIds) {
             const block = newSmartBlocks.get(blockId);
             if (block) get().updateBlockHeader(taskId, blockId, block.header);
+          }
+        },
+
+        restoreTask: (task, groupId) => {
+          const completedBlocks = task.blocks.filter((block) => block.type === 'smart-task' && block.header.isCompleted);
+          const restorableTask: Task = {
+            ...task,
+            blocks: task.blocks.map((block) => block.type === 'smart-task' && block.header.isCompleted
+              ? { ...block, header: { ...block.header, isCompleted: false, completedDate: undefined } }
+              : block),
+          };
+          set((state) => {
+            const tasks = state.tasks.filter((item) => item.id !== task.id);
+            const groups = state.groups.map((group) => ({
+              ...group,
+              children: group.children.filter((item) => item.id !== task.id),
+            }));
+            if (groupId) {
+              const target = groups.find((group) => group.id === groupId);
+              if (target) target.children.push({ ...restorableTask, groupId });
+              else tasks.push(restorableTask);
+            } else tasks.push(restorableTask);
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+          // Replay completed transitions so graph activation, EBB scheduling and
+          // derived daily state are restored through the same business path.
+          for (const block of completedBlocks) {
+            if (block.type !== 'smart-task') continue;
+            get().updateBlockHeader(task.id, block.id, {
+              isCompleted: true,
+              completedDate: block.header.completedDate,
+            });
           }
         },
 
@@ -938,6 +974,33 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               graphState.updateNode(nodeId, { status: 'unactivated' });
             }
           });
+
+          if (currentBlock?.type === 'smart-task' && !isOperationRecordingSuppressed()) {
+            const completionChanged = headerPatch.isCompleted !== undefined && headerPatch.isCompleted !== currentBlock.header.isCompleted;
+            const dateChanged = headerPatch.date !== undefined && headerPatch.date !== currentBlock.header.date;
+            if (completionChanged || dateChanged) {
+              const previousPatch: Partial<SmartTaskHeader> = completionChanged
+                ? { isCompleted: currentBlock.header.isCompleted, completedDate: currentBlock.header.completedDate }
+                : { date: currentBlock.header.date };
+              const expected = completionChanged
+                ? { isCompleted: headerPatch.isCompleted }
+                : { date: headerPatch.date };
+              recordOperation({
+                label: completionChanged
+                  ? `${headerPatch.isCompleted ? '完成' : '取消完成'}“${currentBlock.header.title}”`
+                  : `改期“${currentBlock.header.title}”`,
+                detail: completionChanged ? '项目文档、每日安排、EBB 与知识节点将统一恢复' : `${currentBlock.header.date ?? '未排期'} → ${headerPatch.date ?? '未排期'}`,
+                modules: completionChanged ? ['项目文档', '每日安排', 'EBB', '知识大盘'] : ['项目文档', '周矩阵', '每日安排'],
+                undoSpec: { kind: 'timeline-header', payload: { taskId, blockId, patch: previousPatch, expected } },
+              }, () => {
+                const latestTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
+                const latestBlock = latestTask?.blocks.find((block) => block.id === blockId);
+                if (latestBlock?.type !== 'smart-task') return '任务已经不存在';
+                if (Object.entries(expected).some(([key, value]) => latestBlock.header[key as keyof SmartTaskHeader] !== value)) return '任务在此操作后又被修改';
+                get().updateBlockHeader(taskId, blockId, previousPatch);
+              });
+            }
+          }
         },
 
         updateBlockBody: (taskId, blockId, body) => {
@@ -1234,6 +1297,16 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
     }
   )
 );
+
+registerUndoExecutor('timeline-header', (raw) => {
+  const payload = raw as { taskId: string; blockId: string; patch: Partial<SmartTaskHeader>; expected: Partial<SmartTaskHeader> };
+  const state = useTimelineStore.getState();
+  const task = getUniqueTasks(state.tasks, state.groups).find((item) => item.id === payload.taskId);
+  const block = task?.blocks.find((item) => item.id === payload.blockId);
+  if (block?.type !== 'smart-task') return '任务已经不存在';
+  if (Object.entries(payload.expected).some(([key, value]) => block.header[key as keyof SmartTaskHeader] !== value)) return '任务在此操作后又被修改';
+  state.updateBlockHeader(payload.taskId, payload.blockId, payload.patch);
+});
 
 // ── 远端 Liveblocks 推送同步落盘 ──────────────────────────────
 // 各 setter 中已主动调用 saveData 落盘本地操作；但 Liveblocks 远端推送

@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
+import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
 
 import { todayStr, addDays, diffDays } from '@/utils/dateSafe';
 import type {
@@ -400,10 +401,17 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+          if (existingTask && patch.dueDate !== undefined && patch.dueDate !== existingTask.dueDate && !isOperationRecordingSuppressed()) {
+            const previous = [{ id, dueDate: existingTask.dueDate }];
+            const expected = [{ id, dueDate: patch.dueDate }];
+            recordOperation({ label: `改期“${existingTask.topicName}”`, detail: `${existingTask.dueDate} → ${patch.dueDate}`, modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-reschedule', payload: { previous, expected } } },
+              () => { const current = get().reviewTasks.find((task) => task.id === id); if (current?.dueDate !== patch.dueDate) return '复习轮次在此操作后又被修改'; get().rescheduleReviewRounds(previous); });
+          }
         },
 
         rescheduleReviewRounds: (updates) => {
           if (updates.length === 0) return;
+          const previous = updates.map((update) => ({ id: update.id, dueDate: get().reviewTasks.find((task) => task.id === update.id)?.dueDate ?? update.dueDate }));
           const updateMap = new Map(updates.map((item) => [item.id, item.dueDate]));
           setTimeout(() => {
             useDailyScheduleStore.getState().removeBySourceIds(
@@ -430,6 +438,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+          const changed = updates.filter((update, index) => update.dueDate !== previous[index]?.dueDate);
+          if (changed.length > 0 && !isOperationRecordingSuppressed()) {
+            const expected = changed;
+            const oldValues = previous.filter((item) => changed.some((change) => change.id === item.id));
+            recordOperation({ label: `调整 ${changed.length} 个复习轮次`, detail: `${oldValues.map((item) => item.dueDate).join('、')} → ${expected.map((item) => item.dueDate).join('、')}`, modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-reschedule', payload: { previous: oldValues, expected } } },
+              () => { if (expected.some((item) => get().reviewTasks.find((task) => task.id === item.id)?.dueDate !== item.dueDate)) return '复习轮次在此操作后又被修改'; get().rescheduleReviewRounds(oldValues); });
+          }
         },
 
         restartReviewCycle: (topicKey, startDate) => {
@@ -587,6 +602,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 );
               }, 0);
             }
+            if (!isOperationRecordingSuppressed()) recordOperation({ label: `取消完成复习“${task.topicName}”`, detail: '复习进度、每日安排和知识节点将统一恢复', modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-toggle', payload: { id, expectedCompleted: false } } }, () => get().toggleReviewTask(id) ?? undefined);
             return null;
           }
 
@@ -618,6 +634,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+          if (!isOperationRecordingSuppressed()) recordOperation({ label: `完成复习“${task.topicName}”`, detail: '复习进度、每日安排和知识节点将统一恢复', modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-toggle', payload: { id, expectedCompleted: true } } }, () => get().toggleReviewTask(id) ?? undefined);
           return null;
         },
 
@@ -1275,6 +1292,21 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
     },
   ),
 );
+
+registerUndoExecutor('ebb-toggle', (raw) => {
+  const payload = raw as { id: string; expectedCompleted: boolean };
+  const state = useEbbStore.getState();
+  const task = state.reviewTasks.find((item) => item.id === payload.id);
+  if (!task) return '复习轮次已经不存在';
+  if (task.isCompleted !== payload.expectedCompleted) return '复习轮次在此操作后又被修改';
+  return state.toggleReviewTask(payload.id) ?? undefined;
+});
+registerUndoExecutor('ebb-reschedule', (raw) => {
+  const payload = raw as { previous: Array<{ id: string; dueDate: string }>; expected: Array<{ id: string; dueDate: string }> };
+  const state = useEbbStore.getState();
+  if (payload.expected.some((item) => state.reviewTasks.find((task) => task.id === item.id)?.dueDate !== item.dueDate)) return '复习轮次在此操作后又被修改';
+  state.rescheduleReviewRounds(payload.previous);
+});
 
 // 远端 Liveblocks 推送同步落盘，同时为刷新前的瞬时写入提供本地镜像兜底。
 {

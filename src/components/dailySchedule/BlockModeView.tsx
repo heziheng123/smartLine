@@ -19,6 +19,11 @@ import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
 import TimeGrid from './TimeGrid';
 import type { TimeBlock, TaskSource } from './types';
+import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
+import {
+  projectBadgeStyle,
+  resolveProjectAppearance,
+} from './projectAppearance';
 import {
   timeToMinutes,
   minutesToTime,
@@ -147,6 +152,7 @@ interface PoolItem {
   name: string;
   source: TaskSource;
   color?: string;
+  categoryColor?: string;
   detail?: string;
   duration?: number;
   sourceId: string;
@@ -236,11 +242,24 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   const { checkIsCompleted } = useTaskCompletionStatus();
   const blocks = useMemo(() => {
     const rawBlocks = daySchedule.blocks ?? [];
-    return rawBlocks.map(b => ({
-      ...b,
-      completed: checkIsCompleted(b.source, b.sourceId)
-    }));
-  }, [daySchedule.blocks, checkIsCompleted]);
+    return rawBlocks.map((b) => {
+      const appearance = resolveProjectAppearance(b.sourceId, tlTasks, rawTlGroups);
+      const parsed = parseSourceId(b.sourceId);
+      const reviewTask = parsed?.source === 'review'
+        ? ebbReviewTasks.find((task) => task.id === parsed.reviewId)
+        : undefined;
+      const reviewCategoryColor = reviewTask
+        ? ebbSettingsData.tagColors[reviewTask.tag ?? '']
+        : undefined;
+      return {
+        ...b,
+        completed: checkIsCompleted(b.source, b.sourceId),
+        detail: appearance?.name ?? b.detail,
+        color: appearance?.theme.backgroundColor ?? b.color,
+        categoryColor: appearance?.categoryColor ?? reviewCategoryColor ?? b.categoryColor,
+      };
+    });
+  }, [daySchedule.blocks, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData]);
 
   // ── 判断是否未绑定节点 ──────────────────────────────────
   const checkIsUnlinkedTask = useCallback((sourceId: string) => {
@@ -318,7 +337,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   }, [blocks]);
 
   // ── 项目任务来源：SmartTaskBlock（与时段模式一致） ──────────
-  const allTodos = useSmartTaskTodos(tlTasks);
+  const allTodos = useSmartTaskTodos(tlTasks, rawTlGroups);
 
   const todayProjectTasks = useMemo(() => {
     return allTodos.filter((todo) => {
@@ -364,6 +383,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         name: todo.text,
         source: 'project',
         color: todo.parentTaskColor,
+        categoryColor: todo._tagColor,
         detail: todo.parentTaskTitle,
         sourceId,
         duration: todo._duration,
@@ -380,6 +400,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         name: task.topicName,
         source: 'review',
         color: ebbSettingsData.tagColors[task.tag ?? ''] ?? '#8B9DC3',
+        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
         detail: `第${round}/${total}轮`,
         sourceId: getReviewSourceId(task.id),
         duration: 30,
@@ -401,6 +422,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         source: 'project',
         sourceId,
         detail: todo.parentTaskTitle,
+        color: todo.parentTaskColor,
+        categoryColor: todo._tagColor,
       });
     }
     for (const task of completedReviewTasks) {
@@ -411,10 +434,11 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         name: task.topicName,
         source: 'review',
         sourceId,
+        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
       });
     }
     return items;
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds]);
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, ebbSettingsData]);
 
   // ── 拖拽状态（纯 HTML5 DnD） ──────────────────────────
   const [draggedPoolItemId, setDraggedPoolItemId] = useState<string | null>(null);
@@ -424,6 +448,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     endTime: string;
     name: string;
     color?: string;
+    categoryColor?: string;
   } | null>(null);
 
   // ── 任务池项拖拽开始 ──────────────────────────────────
@@ -468,6 +493,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         endTime,
         completed: false,
         color: poolItem.color,
+        categoryColor: poolItem.categoryColor,
         detail: poolItem.detail,
       });
     },
@@ -637,6 +663,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
             endTime: minutesToTime(previewStartMin + duration),
             name: poolItem.name,
             color: poolItem.color,
+            categoryColor: poolItem.categoryColor,
           });
         }
       }
@@ -789,13 +816,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                 <div
                   key={item.id}
                   className={`ds-pool-item ${draggedPoolItemId === item.id ? 'ds-pool-item--dragging' : ''}`}
+                  style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
                   draggable
                   onDragStart={(e) => handlePoolDragStart(e, item.id)}
                   onClick={() => { if (!suppressPoolOpenRef.current) handleProjectPoolClick(item.sourceId); }}
                 >
                   <div
                     className="ds-pool-item-accent"
-                    style={{ backgroundColor: item.color ?? '#8B9DC3' }}
+                    style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }}
                   />
                   <div className="ds-pool-item-content">
                     <span className="ds-pool-item-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title={item.name}>
@@ -806,11 +834,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                         </span>
                       )}
                     </span>
-                    {item.detail && (
-                      <span className="ds-pool-item-detail">{item.detail}</span>
-                    )}
                   </div>
-                  <span className="ds-pool-item-tag ds-pool-item-tag--project">项目</span>
+                  <span
+                    className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"
+                    title={item.detail || '项目'}
+                    style={projectBadgeStyle(item.color)}
+                  >
+                    {item.detail || '项目'}
+                  </span>
                 </div>
               ))}
             </div>
@@ -832,12 +863,13 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                   <div
                     key={item.id}
                     className={`ds-pool-item ${draggedPoolItemId === item.id ? 'ds-pool-item--dragging' : ''}`}
+                    style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
                     draggable
                     onDragStart={(e) => handlePoolDragStart(e, item.id)}
                   >
                     <div
                       className="ds-pool-item-accent"
-                      style={{ backgroundColor: item.color ?? '#8B9DC3' }}
+                      style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }}
                     />
                     <div className="ds-pool-item-content">
                       <span className="ds-pool-item-name" title={item.name}>
@@ -852,11 +884,10 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                               </span>
                             )}
                           </span>
-                      {item.detail && (
-                        <span className="ds-pool-item-detail">{item.detail}</span>
-                      )}
                     </div>
-                    <span className="ds-pool-item-tag ds-pool-item-tag--review">复习</span>
+                    <span className="ds-pool-item-tag ds-pool-item-tag--review">
+                      复习{item.detail ? ` · ${item.detail}` : ''}
+                    </span>
                   </div>
               ))}
             </div>
@@ -877,11 +908,25 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
             {showCompletedPool && (
               <div className="ds-pool-list">
                 {completedPoolItems.map((item) => (
-                  <div key={item.id} className="ds-pool-item ds-pool-item--completed" onClick={() => { if (item.source === 'project') handleProjectPoolClick(item.sourceId); }}>
+                  <div
+                    key={item.id}
+                    className="ds-pool-item ds-pool-item--completed"
+                    style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
+                    onClick={() => { if (item.source === 'project') handleProjectPoolClick(item.sourceId); }}
+                  >
                     <div className="ds-pool-item-content">
                       <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                      {item.detail && <span className="ds-pool-item-detail">{item.detail}</span>}
+                      {item.detail && item.source !== 'project' && <span className="ds-pool-item-detail">{item.detail}</span>}
                     </div>
+                    {item.source === 'project' && (
+                      <span
+                        className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"
+                        title={item.detail || '项目'}
+                        style={projectBadgeStyle(item.color)}
+                      >
+                        {item.detail || '项目'}
+                      </span>
+                    )}
                     <button
                       type="button"
                       className="ds-pool-undo-btn"

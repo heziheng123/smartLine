@@ -5,6 +5,7 @@ import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } fro
 import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
+import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import {
   todayStr,
   addDays,
@@ -22,14 +23,6 @@ interface WeekMatrixViewProps {
 
 interface ViewBlock extends SmartTaskBlock {
   _taskId: string;
-}
-
-interface MoveHistory {
-  taskId: string;
-  blockId: string;
-  title: string;
-  fromDate: string;
-  toDate: string;
 }
 
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -54,7 +47,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
   const [mode, setMode] = useState<'week' | 'month'>('week');
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ tag: string; date: string } | null>(null);
-  const [lastMove, setLastMove] = useState<MoveHistory | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const suppressCardOpenRef = useRef(false);
@@ -243,28 +235,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
 
       onUpdateBlockHeader(draggedData.taskId, draggedData.blockId, { date: targetDate });
       
-      if (draggedData.fromDate) {
-        setLastMove({
-          taskId: draggedData.taskId,
-          blockId: draggedData.blockId,
-          title: draggedData.title,
-          fromDate: draggedData.fromDate,
-          toDate: targetDate,
-        });
-      }
-      
       showToast(`已将“${draggedData.title}”改期到 ${targetDate}`);
       clearDragState();
     },
     [clearDragState, onUpdateBlockHeader, showToast],
   );
-
-  const handleUndoMove = useCallback(() => {
-    if (!lastMove) return;
-    onUpdateBlockHeader(lastMove.taskId, lastMove.blockId, { date: lastMove.fromDate });
-    showToast(`已撤销“${lastMove.title}”的改期`);
-    setLastMove(null);
-  }, [lastMove, onUpdateBlockHeader, showToast]);
 
   const jumpTo = useCallback((dateStr: string) => {
     setCursor(dateStr);
@@ -405,6 +380,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                     className={`wmv-cell ${isWeekend ? 'wmv-cell--weekend' : ''} ${
                       blocks.length > 0 ? 'wmv-cell--has-data' : ''
                     } ${isDropTarget ? 'wmv-cell--drop-target' : ''}`}
+                    data-date={dateStr}
+                    data-tag={tag}
                     onDragOver={(event) => handleCellDragOver(event, tag, dateStr)}
                     onDragLeave={(event) => handleCellDragLeave(event, tag, dateStr)}
                     onDrop={(event) => handleCellDrop(event, tag, dateStr)}
@@ -449,7 +426,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                           })()} ${
                             isDragging ? 'wmv-block-card--dragging' : ''
                           }`}
-                          style={{ backgroundColor: `${tagColor}40`, borderLeftColor: tagColor }}
+                          data-block-id={block.id}
+                          style={{
+                            backgroundColor: resolveTaskCategoryTheme(tagColor).backgroundColor,
+                            borderLeftColor: resolveTaskCategoryTheme(tagColor).accentColor,
+                          }}
                           onClick={() => { if (!suppressCardOpenRef.current) openProjectTaskModal(block._taskId, block.id); }}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
@@ -527,11 +508,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
             className="wmv-toast"
           >
             <span className="wmv-toast-text">{toastMessage}</span>
-            {lastMove && (
-              <button type="button" className="wmv-toast-btn" onClick={handleUndoMove}>
-                撤销
-              </button>
-            )}
           </motion.div>
         )}
       </AnimatePresence>

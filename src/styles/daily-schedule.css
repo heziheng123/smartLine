@@ -287,6 +287,8 @@
 .ds-item {
   display: flex;
   align-items: center;
+  box-sizing: border-box;
+  height: 56px;
   gap: 8px;
   padding: 8px 12px;
   margin-bottom: 4px;
@@ -470,6 +472,18 @@
   color: #6366F1;
 }
 
+.ds-item-source.ds-project-name-badge,
+.ds-pool-item-tag.ds-project-name-badge,
+.tb-project-badge.ds-project-name-badge {
+  background: var(--project-bg, #E0E7FF);
+  border: 1px solid var(--project-border, #6366F1);
+  color: var(--project-text, #4338CA);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ds-item-source--review {
   background: #FEF3C7;
   color: #B45309;
@@ -625,6 +639,8 @@
 .ds-pool-item {
   display: flex;
   align-items: center;
+  box-sizing: border-box;
+  height: 44px;
   gap: 8px;
   padding: 8px 12px;
   margin-bottom: 4px;
@@ -759,6 +775,24 @@
 .ds-pool-item-tag--project {
   background: #EEF2FF;
   color: #6366F1;
+}
+
+.ds-pool-item-tag--project-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-project-badge {
+  align-self: center;
+  flex-shrink: 0;
+  margin-right: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .ds-pool-item-tag--review {

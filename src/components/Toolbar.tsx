@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Search, Archive } from 'lucide-react';
+import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Archive, ListTodo, History, RotateCcw } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GlobalSearchModal, ArchiveLibraryModal } from './GlobalSearch';
+import { ArchiveLibraryModal } from './GlobalSearch';
+import { useOperationHistory } from '@/services/operationHistory';
 
-export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
+export type AppModule = 'timeline' | 'task-overview' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
 
 interface ToolbarProps {
   currentView: AppModule;
@@ -38,10 +39,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
     })),
   );
 
-  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
+  const {
+    entries: operationEntries,
+    panelOpen: operationPanelOpen,
+    setPanelOpen: setOperationPanelOpen,
+    undo: undoOperation,
+  } = useOperationHistory();
+  const latestUndoableOperation = operationEntries.find((entry) => entry.canUndo);
 
   useEffect(() => {
     if (!isCreateMenuOpen) return;
@@ -66,6 +73,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   const NAV_ITEMS: { module: AppModule; label: string; icon: React.ReactNode }[] = [
     { module: 'timeline', label: '项目规划', icon: <CalendarDays size={18} /> },
+    { module: 'task-overview', label: '任务总览', icon: <ListTodo size={18} /> },
     { module: 'daily-schedule', label: '每日安排', icon: <CalendarClock size={18} /> },
     { module: 'week-matrix', label: '周矩阵', icon: <LayoutGrid size={18} /> },
     { module: 'ebb', label: '艾宾浩斯复习', icon: <BrainCircuit size={18} /> },
@@ -137,20 +145,40 @@ const Toolbar: React.FC<ToolbarProps> = ({
           exit={{ opacity: 0, scale: 0 }}
         />
 
-        {/* ── 全局搜索 ── */}
+        {latestUndoableOperation && (
+          <motion.button
+            layout
+            key="undo-operation"
+            initial={{ opacity: 0, width: 0, scale: 0.8 }}
+            animate={{ opacity: 1, width: 'auto', scale: 1 }}
+            exit={{ opacity: 0, width: 0, scale: 0.8 }}
+            type="button"
+            className="tl-dock-btn tl-dock-btn--primary"
+            onClick={() => void undoOperation(latestUndoableOperation.id)}
+            title={`撤销：${latestUndoableOperation.label}`}
+            aria-label={`撤销：${latestUndoableOperation.label}`}
+            style={{ position: 'relative', flexShrink: 0 }}
+          >
+            <RotateCcw size={18} />
+          </motion.button>
+        )}
+
         <motion.button
           layout
-          key="global-search"
+          key="operation-history"
           initial={{ opacity: 0, width: 0, scale: 0.8 }}
           animate={{ opacity: 1, width: 'auto', scale: 1 }}
           exit={{ opacity: 0, width: 0, scale: 0.8 }}
           type="button"
-          className="tl-dock-btn"
-          onClick={() => setIsGlobalSearchOpen(true)}
-          title="全局搜索 (查找知识点与归档)"
+          className={`tl-dock-btn ${operationPanelOpen ? 'tl-dock-btn--view-active' : ''}`}
+          onClick={() => setOperationPanelOpen(!operationPanelOpen)}
+          title="最近操作与回收站"
+          aria-label="最近操作与回收站"
+          aria-expanded={operationPanelOpen}
           style={{ position: 'relative', flexShrink: 0 }}
         >
-          <Search size={18} />
+          <History size={18} />
+          {operationEntries.length > 0 && <span className="tl-dock-status-badge">{Math.min(operationEntries.length, 99)}</span>}
         </motion.button>
 
         {/* ── 归档库 (仅在知识大盘中显示) ── */}
@@ -268,7 +296,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
         </AnimatePresence>
       </motion.div>
 
-      <GlobalSearchModal isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />
       <ArchiveLibraryModal isOpen={isArchiveLibraryOpen} onClose={() => setIsArchiveLibraryOpen(false)} />
     </div>
   );

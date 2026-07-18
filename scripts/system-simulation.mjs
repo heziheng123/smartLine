@@ -52,6 +52,8 @@ try {
     sourceIds,
     dateSafe,
     dailyConversion,
+    timelineUtils,
+    projectAppearance,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -64,6 +66,8 @@ try {
     load('/src/components/dailySchedule/sourceIds.ts'),
     load('/src/utils/dateSafe.ts'),
     load('/src/components/dailySchedule/conversion.ts'),
+    load('/src/utils/timeline-utils.ts'),
+    load('/src/components/dailySchedule/projectAppearance.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
@@ -263,6 +267,51 @@ try {
     assert.equal(reviews.find((task) => task.id === 'r1').completedDate, today);
     assert.equal(reviews.find((task) => task.id === 'r2').isCompleted, false);
     assert.equal(useDailyScheduleStore.getState().schedules[today].items[1].sourceId, reviewSourceId);
+  });
+
+  check('每日安排项目标签与时间轴共用颜色规则，并随项目颜色实时变化', () => {
+    const task = project('p1', [smartBlock('b1', '项目任务', ['leaf'])]);
+    task.groupId = 'g1';
+    const firstGroup = {
+      id: 'g1', name: '考研政治', start: '2026-07-01', end: '2026-08-31',
+      color: '#F87171', children: [task],
+    };
+    const sourceId = sourceIds.getProjectBlockSourceId('p1', 'b1');
+    const timelineTheme = timelineUtils.resolveTaskTheme(task, firstGroup.color);
+    const firstAppearance = projectAppearance.resolveProjectAppearance(sourceId, [task], [firstGroup]);
+    assert.equal(firstAppearance.name, task.name);
+    assert.deepEqual(firstAppearance.theme, timelineTheme);
+    assert.notEqual(firstAppearance.theme.backgroundColor, '#6366F1');
+
+    const changedGroup = { ...firstGroup, color: '#A78BFA' };
+    const changedAppearance = projectAppearance.resolveProjectAppearance(sourceId, [task], [changedGroup]);
+    assert.equal(
+      changedAppearance.theme.backgroundColor,
+      timelineUtils.resolveTaskTheme(task, changedGroup.color).backgroundColor,
+    );
+    assert.notEqual(changedAppearance.theme.backgroundColor, firstAppearance.theme.backgroundColor);
+
+    const explicitTask = { ...task, color: '#DCFCE7' };
+    const explicitAppearance = projectAppearance.resolveProjectAppearance(sourceId, [explicitTask], [changedGroup]);
+    assert.equal(explicitAppearance.theme.backgroundColor, '#DCFCE7');
+
+    const changedTypeTask = {
+      ...task,
+      blocks: task.blocks.map((block) => block.id === 'b1'
+        ? { ...block, header: { ...block.header, tag: '做题', tagColor: '#60A5FA' } }
+        : block),
+    };
+    const changedTypeAppearance = projectAppearance.resolveProjectAppearance(
+      sourceId,
+      [changedTypeTask],
+      [firstGroup],
+    );
+    assert.equal(changedTypeAppearance.categoryName, '做题');
+    assert.equal(changedTypeAppearance.categoryColor, '#60A5FA');
+    assert.equal(
+      timelineUtils.resolveTaskTheme(changedTypeTask, firstGroup.color).backgroundColor,
+      timelineTheme.backgroundColor,
+    );
   });
 
   check('先手动完成 EBB 再完成同节点练习，不会提前消耗下一轮', () => {

@@ -175,7 +175,9 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
 
   const applyPendingChange = useCallback(() => {
     if (!pendingChange) return;
-    if (pendingChange.kind === 'reschedule') rescheduleReviewRounds(pendingChange.updates);
+    if (pendingChange.kind === 'reschedule') {
+      rescheduleReviewRounds(pendingChange.updates);
+    }
     if (pendingChange.kind === 'delete') {
       deleteReviewTask(pendingChange.taskId);
       if (topicTasks.length === 1) onClose();
