@@ -8,11 +8,12 @@ import {
   Link2,
   Search,
   Target,
+  BookOpen,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import type { SmartTaskBlock, Task, TaskGroup } from '@/types';
-import { getSmartTaskBlocks, getValidGraphNodeIds } from '@/utils/blocks';
+import { getSmartTaskBlocks, getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
 import { addDays, getDayOfWeek, isAfterDay, isBeforeDay, splitDate, todayStr } from '@/utils/dateSafe';
 import { resolveTaskTheme } from '@/utils/timeline-utils';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
@@ -232,6 +233,7 @@ const TaskOverviewView: React.FC = () => {
   });
 
   const toggleComplete = (item: OverviewItem) => {
+    if (isVocabularyTask(item.block.header)) return;
     const completed = !item.block.header.isCompleted;
     updateBlockHeader(item.task.id, item.block.id, {
       isCompleted: completed,
@@ -307,7 +309,7 @@ const TaskOverviewView: React.FC = () => {
                       }
                     }}
                   >
-                    <button type="button" className={`task-overview-check ${header.isCompleted ? 'is-checked' : ''}`} onClick={(event) => { event.stopPropagation(); toggleComplete(item); }} aria-label={header.isCompleted ? `取消完成：${header.title}` : `完成：${header.title}`}>{header.isCompleted && <Check size={15} />}</button>
+                    <button type="button" className={`task-overview-check ${header.isCompleted ? 'is-checked' : ''}`} onClick={(event) => { event.stopPropagation(); toggleComplete(item); }} aria-disabled={isVocabularyTask(header)} aria-label={isVocabularyTask(header) ? `单词进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `完成：${header.title}`}>{header.isCompleted && <Check size={15} />}</button>
                     <div className="task-overview-card-content">
                       <div className="task-overview-card-title">{header.title}</div>
                       <div className="task-overview-card-meta">
@@ -316,7 +318,9 @@ const TaskOverviewView: React.FC = () => {
                         {header.date && <span className={overdue ? 'is-danger' : ''}><CalendarDays size={13} />{formatShortDate(header.date)}</span>}
                         {!header.date && <span><CalendarDays size={13} />未排期</span>}
                         {header.deadline && <span><Target size={13} />截止 {formatShortDate(header.deadline)}</span>}
-                        <span><Clock3 size={13} />{header.duration} 分钟</span>
+                        {isVocabularyTask(header)
+                          ? <span><BookOpen size={13} />已学 {getVocabularyLearnedWords(header)}/{getVocabularyTotalWords(header)}</span>
+                          : <span><Clock3 size={13} />{header.duration} 分钟</span>}
                         <span title={graphCount > 0 ? `已绑定 ${graphCount} 个知识节点` : '未绑定知识节点'}><Link2 size={13} />{graphCount > 0 ? `${graphCount} 个节点` : '未绑定节点'}</span>
                       </div>
                     </div>

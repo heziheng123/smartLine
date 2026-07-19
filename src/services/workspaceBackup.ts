@@ -291,7 +291,32 @@ export function validateWorkspaceBackup(value: unknown): {
       }
       const title = typeof block.header.title === 'string' ? block.header.title : block.id;
       if (typeof block.header.isCompleted !== 'boolean') issues.push(`任务“${title}”的完成状态无效`);
-      if (typeof block.header.duration !== 'number' || !Number.isFinite(block.header.duration) || block.header.duration <= 0) issues.push(`任务“${title}”的时长无效`);
+      const isVocabulary = block.header.taskKind === 'vocabulary';
+      if (typeof block.header.duration !== 'number' || !Number.isFinite(block.header.duration)
+        || (isVocabulary ? block.header.duration < 0 : block.header.duration <= 0)) {
+        issues.push(`任务“${title}”的时长无效`);
+      }
+      if (isVocabulary) {
+        const total = block.header.vocabularyTotalWords;
+        const initial = block.header.vocabularyInitialCompletedWords;
+        const records = block.header.vocabularyRecords;
+        if (!Number.isInteger(total) || (total ?? 0) <= 0
+          || !Number.isInteger(initial) || (initial ?? 0) < 0
+          || !isRecord(records)) {
+          issues.push(`单词任务“${title}”的数量配置无效`);
+        } else {
+          let learned = initial as number;
+          for (const [date, amount] of Object.entries(records)) {
+            if (!isDate(date) || !Number.isInteger(amount) || (amount as number) <= 0) {
+              issues.push(`单词任务“${title}”包含无效的每日记录`);
+            } else {
+              learned += amount as number;
+            }
+          }
+          if (learned > (total as number)) issues.push(`单词任务“${title}”的累计数量超过总数`);
+          if (block.header.isCompleted !== (learned >= (total as number))) issues.push(`单词任务“${title}”的完成状态与数量不一致`);
+        }
+      }
       if (!isDate(block.header.date)) issues.push(`任务“${title}”的计划日期无效`);
       if (block.header.deadline !== undefined && !isDate(block.header.deadline)) issues.push(`任务“${title}”的截止日期无效`);
       if (block.header.completedDate !== undefined && !isDate(block.header.completedDate)) issues.push(`任务“${title}”的完成日期无效`);

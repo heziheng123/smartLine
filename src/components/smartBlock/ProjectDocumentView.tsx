@@ -64,6 +64,7 @@ import SlashCommandMenu from './SlashCommandMenu';
 import TaskMetaEditor from '@/components/TaskMetaEditor';
 import BatchImportDialog from '@/components/BatchImportDialog';
 import BatchEditDialog from '@/components/BatchEditDialog';
+import VocabularyTaskCreateDialog from './VocabularyTaskCreateDialog';
 import { mergeBatchEditRows, type ParsedRow } from '@/utils/excelImport';
 
 interface ProjectDocumentViewProps {
@@ -110,6 +111,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [showBatchEdit, setShowBatchEdit] = useState(false);
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [showExpandMenu, setShowExpandMenu] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showVocabularyCreate, setShowVocabularyCreate] = useState(false);
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(new Set());
   const [groupDimension, setGroupDimension] = useState<'time' | 'node'>('time');
   const [groupByWeek, setGroupByWeek] = useState(false);
@@ -290,7 +293,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const progress = useMemo(() => computeBlockProgress(blocks), [blocks]);
   const smartBlocks = useMemo(() => getSmartTaskBlocks(blocks), [blocks]);
   const totalDuration = useMemo(
-    () => smartBlocks.reduce((sum, b) => sum + b.header.duration, 0),
+    () => smartBlocks.reduce((sum, b) => sum + (b.header.taskKind === 'vocabulary' ? 0 : b.header.duration), 0),
     [smartBlocks],
   );
 
@@ -345,6 +348,36 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       body: '',
     };
     appendBlock(task.id, newBlock);
+    setShowAddMenu(false);
+  }, [appendBlock, task.id]);
+
+  const handleAddVocabularyBlock = useCallback((input: {
+    title: string;
+    totalWords: number;
+    initialCompletedWords: number;
+    date: string;
+  }) => {
+    const newBlock: SmartTaskBlock = {
+      type: 'smart-task',
+      id: genBlockId(),
+      header: {
+        taskKind: 'vocabulary',
+        title: input.title,
+        tag: '单词',
+        tagColor: '#10B981',
+        date: input.date,
+        duration: 0,
+        isCompleted: input.initialCompletedWords >= input.totalWords,
+        completedDate: input.initialCompletedWords >= input.totalWords ? todayStr() : undefined,
+        autoSyncEbb: false,
+        vocabularyTotalWords: input.totalWords,
+        vocabularyInitialCompletedWords: input.initialCompletedWords,
+        vocabularyRecords: {},
+      },
+      body: '',
+    };
+    appendBlock(task.id, newBlock);
+    setShowVocabularyCreate(false);
   }, [appendBlock, task.id]);
 
   // ── 批量导入确认：把 Excel 解析出的 blocks 追加到当前项目 ──
@@ -605,7 +638,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     <aside className={`pdv-container ${isFullscreen ? 'pdv-container--fullscreen' : ''} ${groupDimension === 'node' ? 'pdv-container--node' : ''}`} ref={containerRef}>
       {/* ── 顶部导航栏 ── */}
       <header className="pdv-header">
-        <button type="button" className="pdv-back" onClick={onClose}>
+        <button type="button" className="pdv-back" onClick={onClose} aria-label="关闭项目文档">
           <ArrowLeft size={18} />
         </button>
         <h2 className="pdv-title" onClick={() => setMetaExpanded(!metaExpanded)} title={currentTask.name}>
@@ -708,16 +741,32 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
             )}
           </div>
 
-          <button
-            type="button"
-            className="pdv-btn pdv-btn--primary"
-            onClick={handleAddTaskBlock}
-            title="添加任务块"
-          >
-            <Plus size={16} />
-          </button>
+          <div className="pdv-expand-toggle">
+            <button
+              type="button"
+              className="pdv-btn pdv-btn--primary"
+              onClick={() => setShowAddMenu((value) => !value)}
+              title="添加任务卡片"
+              aria-label="添加任务卡片"
+            >
+              <Plus size={16} />
+            </button>
+            {showAddMenu && (
+              <div className="pdv-expand-menu pdv-more-menu pdv-add-task-menu">
+                <button type="button" className="pdv-expand-option" onClick={handleAddTaskBlock}>普通任务</button>
+                <button type="button" className="pdv-expand-option" onClick={() => { setShowAddMenu(false); setShowVocabularyCreate(true); }}>单词任务</button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
+
+      {showVocabularyCreate && (
+        <VocabularyTaskCreateDialog
+          onClose={() => setShowVocabularyCreate(false)}
+          onCreate={handleAddVocabularyBlock}
+        />
+      )}
 
       {/* ── 元信息折叠区 ── */}
       {metaExpanded && (
@@ -747,7 +796,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
             />
           </div>
           <span className="pdv-progress-text">
-            {progress.done}/{progress.total} 完成 · {totalDuration}min 总时长
+            {progress.done}/{progress.total} 完成{totalDuration > 0 ? ` · ${totalDuration}min 总时长` : ''}
           </span>
         </div>
       )}
@@ -822,7 +871,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                 <div className="pdv-kanban-board">
                   {groupedByDate.groups.map((group) => {
                     const isCollapsed = collapsedDates.has(group.key);
-                    const duration = group.blocks.reduce((s, b) => s + b.header.duration, 0);
+                    const duration = group.blocks.reduce((s, b) => s + (b.header.taskKind === 'vocabulary' ? 0 : b.header.duration), 0);
                     const doneCount = group.blocks.filter(b => b.header.isCompleted).length;
                     const today = todayStr();
                     const isToday = groupByWeek

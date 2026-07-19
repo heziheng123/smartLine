@@ -24,13 +24,14 @@ import {
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
-import { getValidGraphNodeIds } from '@/utils/blocks';
+import { getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
 import BlockModeView from './BlockModeView';
+import VocabularyProgressDialog from './VocabularyProgressDialog';
 import {
   DEFAULT_TIME_SLOT_CONFIGS,
   type TimeSlot,
@@ -39,6 +40,7 @@ import {
   type TimeSlotConfig,
   type ScheduleViewMode,
 } from './types';
+import type { SmartTaskBlock } from '@/types';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { parseSourceId } from './conversion';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
@@ -53,6 +55,7 @@ import { recordOperation } from '@/services/operationHistory';
 // ── Droppable IDs ────────────────────────────────────────────
 
 const DROPPABLE_POOL = 'ds-pool';
+const DROPPABLE_VOCABULARY_POOL = `${DROPPABLE_POOL}-vocabulary`;
 const droppableIdForSlot = (slot: TimeSlot) => `ds-slot-${slot}`;
 
 // ── 主组件 ───────────────────────────────────────────────────
@@ -63,6 +66,7 @@ const DailyScheduleView: React.FC = () => {
   const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
   const [showCompletedPool, setShowCompletedPool] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [progressTask, setProgressTask] = useState<{ taskId: string; block: SmartTaskBlock } | null>(null);
 
   const openProjectTaskFromSource = useCallback((sourceId: string) => {
     const parsed = parseSourceId(sourceId);
@@ -123,6 +127,18 @@ const DailyScheduleView: React.FC = () => {
   }, [rawTlTasks, rawTlGroups, archivedNodeIds]);
 
   const { checkIsCompleted } = useTaskCompletionStatus();
+  const getProjectBlockFromSource = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (parsed?.source !== 'project' || !parsed.parentTaskId || !parsed.blockId) return null;
+    const task = tlTasks.find((candidate) => candidate.id === parsed.parentTaskId);
+    const block = task?.blocks.find((candidate) => candidate.id === parsed.blockId);
+    return block?.type === 'smart-task' ? { taskId: parsed.parentTaskId, task, block } : null;
+  }, [tlTasks]);
+
+  const isVocabularySource = useCallback(
+    (sourceId: string) => Boolean(getProjectBlockFromSource(sourceId)?.block.header.taskKind === 'vocabulary'),
+    [getProjectBlockFromSource],
+  );
   const {
     isHydrated,
     hydrateStore,
@@ -151,7 +167,7 @@ const DailyScheduleView: React.FC = () => {
   const [showSlotSettings, setShowSlotSettings] = useState(false);
 
   // 筛选/排序
-  const [filterSource, setFilterSource] = useState<'all' | TaskSource>('all');
+  const [filterSource, setFilterSource] = useState<'all' | 'project' | 'review' | 'vocabulary'>('all');
 
   // ── 添加自由占位符 ───────────────────────────────────────
   const [addingFreeSlot, setAddingFreeSlot] = useState<TimeSlot | null>(null);
@@ -194,6 +210,10 @@ const DailyScheduleView: React.FC = () => {
 
   const todayProjectTasks = useMemo(() => {
     return mergedTodos.filter((todo) => {
+      if (todo._taskKind === 'vocabulary') {
+        if (todo.checked || todo._vocabularyRecords?.[selectedDate]) return false;
+        return Boolean(todo.scheduled && todo.scheduled <= selectedDate);
+      }
       if (todo.checked) return false;
       // 只有精确指定了排期日或截止日为当天的任务才会被纳入任务池
       if (todo.scheduled && todo.scheduled === selectedDate) return true;
@@ -204,6 +224,7 @@ const DailyScheduleView: React.FC = () => {
 
   const completedProjectTasks = useMemo(() => {
     return mergedTodos.filter((todo) => {
+      if (todo._taskKind === 'vocabulary') return Boolean(todo._vocabularyRecords?.[selectedDate]);
       if (!todo.checked) return false;
       return todo.scheduled === selectedDate || todo.due === selectedDate;
     });
@@ -281,17 +302,22 @@ const DailyScheduleView: React.FC = () => {
   }, [daySchedule.items, daySchedule.blocks]);
 
   const completedPoolItems = useMemo(() => {
-    const items: { id: string; name: string; source: TaskSource; sourceId: string; detail?: string; color?: string; categoryColor?: string }[] = [];
+    const items: { id: string; name: string; source: TaskSource; sourceId: string; taskKind?: 'standard' | 'vocabulary'; detail?: string; color?: string; categoryColor?: string }[] = [];
     for (const todo of completedProjectTasks) {
       if (!todo._blockId) continue;
       const sourceId = getProjectBlockSourceId(todo.parentTaskId, todo._blockId);
       if (scheduledSourceIds.has(sourceId)) continue;
+      const vocabularyLearned = (todo._vocabularyInitialCompletedWords ?? 0)
+        + Object.values(todo._vocabularyRecords ?? {}).reduce((sum, value) => sum + value, 0);
       items.push({
         id: `completed-project-${todo.id}`,
         name: todo.text,
         source: 'project',
         sourceId,
-        detail: todo.parentTaskTitle,
+        taskKind: todo._taskKind,
+        detail: todo._taskKind === 'vocabulary'
+          ? `今日 +${todo._vocabularyRecords?.[selectedDate]} · 已学 ${vocabularyLearned}/${todo._vocabularyTotalWords ?? 0}`
+          : todo.parentTaskTitle,
         color: todo.parentTaskColor,
         categoryColor: todo._tagColor,
       });
@@ -307,8 +333,12 @@ const DailyScheduleView: React.FC = () => {
         categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
       });
     }
-    return filterSource === 'all' ? items : items.filter((item) => item.source === filterSource);
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData]);
+    return filterSource === 'all'
+      ? items
+      : items.filter((item) => filterSource === 'vocabulary'
+        ? item.taskKind === 'vocabulary'
+        : item.source === filterSource && item.taskKind !== 'vocabulary');
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData, selectedDate]);
 
   // ── 构建右侧任务池列表（时段模式用） ─────────────────────
   const poolItems = useMemo(() => {
@@ -321,6 +351,7 @@ const DailyScheduleView: React.FC = () => {
       detail?: string;
       duration?: number;
       sourceId: string;
+      taskKind?: 'standard' | 'vocabulary';
     }[] = [];
 
     for (const todo of todayProjectTasks) {
@@ -329,15 +360,20 @@ const DailyScheduleView: React.FC = () => {
         ? getProjectBlockSourceId(todo.parentTaskId, todo._blockId)
         : `project-md:${todo.id}`;
       if (scheduledSourceIds.has(sourceId)) continue;
+      const vocabularyLearned = (todo._vocabularyInitialCompletedWords ?? 0)
+        + Object.values(todo._vocabularyRecords ?? {}).reduce((sum, value) => sum + value, 0);
       items.push({
         id: `pool-project-${todo.id}`,
         name: todo.text,
         source: 'project',
         color: todo.parentTaskColor,
-        categoryColor: todo._tagColor,
-        detail: todo.parentTaskTitle,
+        categoryColor: todo._taskKind === 'vocabulary' ? '#10B981' : todo._tagColor,
+        taskKind: todo._taskKind,
+        detail: todo._taskKind === 'vocabulary'
+          ? `${todo.parentTaskTitle} · 已学 ${vocabularyLearned}/${todo._vocabularyTotalWords ?? 0} · 剩余 ${Math.max(0, (todo._vocabularyTotalWords ?? 0) - vocabularyLearned)}`
+          : todo.parentTaskTitle,
         sourceId,
-        duration: todo._duration,
+        duration: todo._taskKind === 'vocabulary' ? undefined : todo._duration,
       });
     }
 
@@ -360,7 +396,9 @@ const DailyScheduleView: React.FC = () => {
 
     let filtered = items;
     if (filterSource !== 'all') {
-      filtered = filtered.filter((i) => i.source === filterSource);
+      filtered = filtered.filter((item) => filterSource === 'vocabulary'
+        ? item.taskKind === 'vocabulary'
+        : item.source === filterSource && item.taskKind !== 'vocabulary');
     }
 
     return filtered;
@@ -382,18 +420,29 @@ const DailyScheduleView: React.FC = () => {
           const reviewCategoryColor = reviewTask
             ? ebbSettingsData.tagColors[reviewTask.tag ?? '']
             : undefined;
+          const projectSource = getProjectBlockFromSource(i.sourceId);
+          const vocabularyHeader = projectSource && isVocabularyTask(projectSource.block.header)
+            ? projectSource.block.header
+            : undefined;
+          const vocabularyRecord = vocabularyHeader?.vocabularyRecords?.[selectedDate];
+          const vocabularyProgress = vocabularyHeader ? getVocabularyLearnedWords(vocabularyHeader) : 0;
+          const vocabularyTotal = vocabularyHeader ? getVocabularyTotalWords(vocabularyHeader) : 0;
           return {
             ...i,
-            completed: checkIsCompleted(i.source, i.sourceId),
-            detail: appearance?.name ?? i.detail,
+            name: vocabularyHeader?.title ?? i.name,
+            completed: checkIsCompleted(i.source, i.sourceId, selectedDate),
+            detail: vocabularyHeader
+              ? `${vocabularyRecord ? `今日 +${vocabularyRecord} · ` : ''}已学 ${vocabularyProgress}/${vocabularyTotal}`
+              : appearance?.name ?? i.detail,
             color: appearance?.theme.backgroundColor ?? i.color,
-            categoryColor: appearance?.categoryColor ?? reviewCategoryColor ?? i.categoryColor,
+            categoryColor: vocabularyHeader ? '#10B981' : appearance?.categoryColor ?? reviewCategoryColor ?? i.categoryColor,
+            duration: vocabularyHeader ? undefined : i.duration,
           };
         });
 
       return normalItems;
     },
-    [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData],
+    [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData, getProjectBlockFromSource, selectedDate],
   );
 
   // ── 拖拽处理（时段模式） ─────────────────────────────────
@@ -408,7 +457,7 @@ const DailyScheduleView: React.FC = () => {
 
       // 从右侧任务池拖入左侧时间段
       if (
-        (srcDroppableId === DROPPABLE_POOL || srcDroppableId === `${DROPPABLE_POOL}-review`) &&
+        (srcDroppableId === DROPPABLE_POOL || srcDroppableId === `${DROPPABLE_POOL}-review` || srcDroppableId === DROPPABLE_VOCABULARY_POOL) &&
         destDroppableId.startsWith('ds-slot-')
       ) {
         const targetSlot = destDroppableId.replace('ds-slot-', '') as TimeSlot;
@@ -471,7 +520,7 @@ const DailyScheduleView: React.FC = () => {
       // 从左侧拖回右侧任务池 = 移除 (自由块拖回任务池相当于直接删除)
       if (
         srcDroppableId.startsWith('ds-slot-') &&
-        (destDroppableId === DROPPABLE_POOL || destDroppableId === `${DROPPABLE_POOL}-review` || destDroppableId === 'ds-pool-container')
+        (destDroppableId === DROPPABLE_POOL || destDroppableId === `${DROPPABLE_POOL}-review` || destDroppableId === DROPPABLE_VOCABULARY_POOL || destDroppableId === 'ds-pool-container')
       ) {
         const srcSlot = srcDroppableId.replace('ds-slot-', '') as TimeSlot;
         const srcItems = getSlotItems(srcSlot);
@@ -525,14 +574,26 @@ const DailyScheduleView: React.FC = () => {
 
   const handleUndoCompletedPoolItem = useCallback((source: TaskSource, sourceId: string) => {
     if (source === 'project') {
+      const projectSource = getProjectBlockFromSource(sourceId);
+      if (projectSource && isVocabularyTask(projectSource.block.header)) {
+        const records = { ...(projectSource.block.header.vocabularyRecords ?? {}) };
+        delete records[selectedDate];
+        tlUpdateBlockHeader(projectSource.taskId, projectSource.block.id, {
+          vocabularyRecords: records,
+          isCompleted: false,
+          completedDate: undefined,
+        });
+        return;
+      }
       syncProjectTaskCompletion(sourceId);
       return;
     }
     if (source === 'review') {
       const parsed = parseSourceId(sourceId);
       if (parsed?.source === 'review') toggleReviewWithFeedback(parsed.reviewId);
+      return;
     }
-  }, [syncProjectTaskCompletion, toggleReviewWithFeedback]);
+  }, [syncProjectTaskCompletion, toggleReviewWithFeedback, selectedDate, getProjectBlockFromSource, tlUpdateBlockHeader]);
 
   // 先校验并写入源 store（ebb/timeline），成功后再同步 schedule，
   // 避免"先写 schedule 后校验失败"导致的 UI 闪烁与短暂不一致。
@@ -560,11 +621,16 @@ const DailyScheduleView: React.FC = () => {
         const reviewId = item.sourceId.replace('review-', '');
         toggleReviewWithFeedback(reviewId);
       } else if (item.source === 'project') {
-        syncProjectTaskCompletion(item.sourceId);
+        const projectSource = getProjectBlockFromSource(item.sourceId);
+        if (projectSource && isVocabularyTask(projectSource.block.header)) {
+          setProgressTask({ taskId: projectSource.taskId, block: projectSource.block });
+        } else {
+          syncProjectTaskCompletion(item.sourceId);
+        }
       }
       // toggleScheduledItem 已经被移除，底层数据变化后 getSlotItems 自动重新计算
     },
-    [daySchedule.items, daySchedule.blocks, toggleReviewWithFeedback, syncProjectTaskCompletion],
+    [daySchedule.items, daySchedule.blocks, toggleReviewWithFeedback, syncProjectTaskCompletion, getProjectBlockFromSource],
   );
 
   const handleRemoveItem = useCallback(
@@ -584,10 +650,10 @@ const DailyScheduleView: React.FC = () => {
       const items = getSlotItems(slot).filter(i => i.source !== 'free');
       const total = items.length;
       const completed = items.filter((i) => i.completed).length;
-      const totalDuration = items.reduce((sum, i) => sum + (i.duration ?? 30), 0);
+      const totalDuration = items.reduce((sum, item) => sum + (isVocabularySource(item.sourceId) ? 0 : (item.duration ?? 30)), 0);
       return { total, completed, totalDuration };
     },
-    [getSlotItems],
+    [getSlotItems, isVocabularySource],
   );
 
   // 异步加载 IndexedDB 数据
@@ -767,7 +833,9 @@ const DailyScheduleView: React.FC = () => {
                                     ...provided.draggableProps.style,
                                     backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
                                   }}
-                                  onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}
+                                  onClick={() => {
+                                    if (item.source === 'project') openProjectTaskFromSource(item.sourceId);
+                                  }}
                                 >
                                   {item.source !== 'free' && (
                                     <div
@@ -799,7 +867,7 @@ const DailyScheduleView: React.FC = () => {
                                           </>
                                         )}
                                       </span>
-                                    {item.detail && item.source === 'free' && (
+                                    {item.detail && (item.source === 'free' || isVocabularySource(item.sourceId)) && (
                                       <span className="ds-item-detail">{item.detail}</span>
                                     )}
                                   </div>
@@ -822,18 +890,20 @@ const DailyScheduleView: React.FC = () => {
                                   )}
 
                                   <span
-                                    className={`ds-item-source ds-item-source--${item.source} ${
-                                      item.source === 'project' ? 'ds-project-name-badge' : ''
+                                    className={`ds-item-source ds-item-source--${isVocabularySource(item.sourceId) ? 'vocabulary' : item.source} ${
+                                      item.source === 'project' && !isVocabularySource(item.sourceId) ? 'ds-project-name-badge' : ''
                                     }`}
-                                    title={item.source === 'project' ? (item.detail || '项目') : undefined}
-                                    style={item.source === 'project'
+                                    title={item.source === 'project' ? (isVocabularySource(item.sourceId) ? '单词任务' : item.detail || '项目') : undefined}
+                                    style={item.source === 'project' && !isVocabularySource(item.sourceId)
                                       ? projectBadgeStyle(item.color)
                                       : undefined}
                                   >
-                                    {item.source === 'project'
+                                    {isVocabularySource(item.sourceId)
+                                      ? '单词'
+                                      : item.source === 'project'
                                       ? (item.detail || '项目')
-                                      : item.source === 'review'
-                                        ? `复习${item.detail ? ` · ${item.detail}` : ''}`
+                                        : item.source === 'review'
+                                          ? `复习${item.detail ? ` · ${item.detail}` : ''}`
                                         : '占位'}
                                   </span>
 
@@ -912,27 +982,27 @@ const DailyScheduleView: React.FC = () => {
                   <div className="ds-pool-header">
                     <h2 className="ds-pool-title">任务池</h2>
                     <div className="ds-pool-filters">
-                      {(['all', 'project', 'review'] as const).map((f) => (
+                      {(['all', 'project', 'review', 'vocabulary'] as const).map((f) => (
                         <button
                           key={f}
                           type="button"
                           className={`ds-filter-btn ${filterSource === f ? 'ds-filter-btn--active' : ''}`}
                           onClick={() => setFilterSource(f)}
                         >
-                          {f === 'all' ? '全部' : f === 'project' ? '项目' : '复习'}
+                          {f === 'all' ? '全部' : f === 'project' ? '项目' : f === 'review' ? '复习' : '单词'}
                         </button>
                       ))}
                     </div>
                   </div>
 
               {/* 项目任务 */}
-              {poolItems.filter((i) => i.source === 'project').length > 0 && (
+              {poolItems.filter((item) => item.source === 'project' && item.taskKind !== 'vocabulary').length > 0 && (
                 <div className="ds-pool-group">
                   <div className="ds-pool-group-header">
                     <div className="ds-pool-group-dot ds-pool-group-dot--project" />
                     <span className="ds-pool-group-label">项目任务</span>
                     <span className="ds-pool-group-count">
-                      {poolItems.filter((i) => i.source === 'project').length}
+                      {poolItems.filter((item) => item.source === 'project' && item.taskKind !== 'vocabulary').length}
                     </span>
                   </div>
                   <Droppable droppableId={DROPPABLE_POOL}>
@@ -943,7 +1013,7 @@ const DailyScheduleView: React.FC = () => {
                         className="ds-pool-list"
                       >
                         {poolItems
-                          .filter((i) => i.source === 'project')
+                          .filter((item) => item.source === 'project' && item.taskKind !== 'vocabulary')
                           .map((item, idx) => (
                             <Draggable key={item.id} draggableId={item.id} index={idx}>
                               {(provided, snapshot) => (
@@ -1062,6 +1132,47 @@ const DailyScheduleView: React.FC = () => {
                 </div>
               )}
 
+              {/* 项目中的单词任务：没有默认时段，由用户每天拖入具体时段 */}
+              {poolItems.filter((item) => item.taskKind === 'vocabulary').length > 0 && (
+                <div className="ds-pool-group">
+                  <div className="ds-pool-group-header">
+                    <div className="ds-pool-group-dot ds-pool-group-dot--vocabulary" />
+                    <span className="ds-pool-group-label">单词任务</span>
+                    <span className="ds-pool-group-count">{poolItems.filter((item) => item.taskKind === 'vocabulary').length}</span>
+                  </div>
+                  <Droppable droppableId={DROPPABLE_VOCABULARY_POOL}>
+                    {(provided) => (
+                      <div ref={provided.innerRef} {...provided.droppableProps} className="ds-pool-list">
+                        {poolItems.filter((item) => item.taskKind === 'vocabulary').map((item, idx) => (
+                          <Draggable key={item.id} draggableId={item.id} index={idx}>
+                            {(provided, snapshot) => (
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                {...provided.dragHandleProps}
+                                className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''}`}
+                                style={{
+                                  ...provided.draggableProps.style,
+                                  backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
+                                }}
+                              >
+                                <div className="ds-pool-item-accent" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }} />
+                                <div className="ds-pool-item-content">
+                                  <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
+                                  <span className="ds-pool-item-detail">{item.detail}</span>
+                                </div>
+                                <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">单词</span>
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </div>
+              )}
+
               {poolItems.length === 0 && (
                 <div className="ds-pool-empty">今日暂无待安排任务</div>
               )}
@@ -1083,13 +1194,15 @@ const DailyScheduleView: React.FC = () => {
                           key={item.id}
                           className="ds-pool-item ds-pool-item--completed"
                           style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
-                          onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}
+                          onClick={() => {
+                            if (item.source === 'project') openProjectTaskFromSource(item.sourceId);
+                          }}
                         >
                           <div className="ds-pool-item-content">
                             <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                            {item.detail && item.source !== 'project' && <span className="ds-pool-item-detail">{item.detail}</span>}
+                            {item.detail && (item.source !== 'project' || item.taskKind === 'vocabulary') && <span className="ds-pool-item-detail">{item.detail}</span>}
                           </div>
-                          {item.source === 'project' && (
+                          {item.source === 'project' && item.taskKind !== 'vocabulary' && (
                             <span
                               className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"
                               title={item.detail || '项目'}
@@ -1125,6 +1238,14 @@ const DailyScheduleView: React.FC = () => {
             selectedDate={selectedDate}
             scheduledSourceIds={scheduledSourceIds}
             onReviewToggleError={setOperationError}
+          />
+        )}
+        {progressTask && (
+          <VocabularyProgressDialog
+            taskId={progressTask.taskId}
+            block={progressTask.block}
+            date={selectedDate}
+            onClose={() => setProgressTask(null)}
           />
         )}
       </div>

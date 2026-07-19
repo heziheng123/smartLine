@@ -64,6 +64,28 @@ export function shouldAutoSyncEbb(header: Partial<SmartTaskHeader> | undefined |
   return header?.autoSyncEbb !== false;
 }
 
+export function isVocabularyTask(header: Partial<SmartTaskHeader> | undefined | null): boolean {
+  return header?.taskKind === 'vocabulary';
+}
+
+export function getVocabularyLearnedWords(header: Partial<SmartTaskHeader> | undefined | null): number {
+  if (!isVocabularyTask(header)) return 0;
+  const initial = Number.isInteger(header?.vocabularyInitialCompletedWords)
+    ? Math.max(0, header!.vocabularyInitialCompletedWords!)
+    : 0;
+  const records = header?.vocabularyRecords ?? {};
+  return initial + Object.values(records).reduce(
+    (sum, value) => sum + (Number.isInteger(value) && value > 0 ? value : 0),
+    0,
+  );
+}
+
+export function getVocabularyTotalWords(header: Partial<SmartTaskHeader> | undefined | null): number {
+  return Number.isInteger(header?.vocabularyTotalWords) && header!.vocabularyTotalWords! > 0
+    ? header!.vocabularyTotalWords!
+    : 0;
+}
+
 // ── Markdown → Blocks 迁移 ─────────────────────────────────
 
 /**

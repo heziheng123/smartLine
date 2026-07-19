@@ -54,6 +54,7 @@ try {
     dailyConversion,
     timelineUtils,
     projectAppearance,
+    blocksModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -68,6 +69,7 @@ try {
     load('/src/components/dailySchedule/conversion.ts'),
     load('/src/utils/timeline-utils.ts'),
     load('/src/components/dailySchedule/projectAppearance.ts'),
+    load('/src/utils/blocks.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
@@ -812,6 +814,55 @@ try {
     assert.ok(result.summary.issues.some((issue) => /重复/.test(issue)));
     assert.ok(result.summary.issues.some((issue) => /时间/.test(issue)));
     assert.ok(result.summary.issues.some((issue) => /轮次/.test(issue)));
+  });
+
+  check('单词任务作为项目任务块保存，累计数量由初始值和每日记录共同派生', () => {
+    const header = {
+      taskKind: 'vocabulary', title: '考研英语单词', tag: '单词', tagColor: '#10B981',
+      date: '2026-07-01', duration: 0, isCompleted: false,
+      vocabularyTotalWords: 5500, vocabularyInitialCompletedWords: 1200,
+      vocabularyRecords: { '2026-07-19': 50, '2026-07-20': 80 },
+    };
+    assert.equal(blocksModule.isVocabularyTask(header), true);
+    assert.equal(blocksModule.getVocabularyLearnedWords(header), 1330);
+    assert.equal(blocksModule.getVocabularyTotalWords(header), 5500);
+  });
+
+  check('更新单词任务每日记录不会生成独立全局计划，并跟随项目任务持久化', () => {
+    const vocabulary = smartBlock('vocab', '考研英语单词', [], false);
+    vocabulary.header = {
+      ...vocabulary.header,
+      taskKind: 'vocabulary', duration: 0,
+      vocabularyTotalWords: 100, vocabularyInitialCompletedWords: 10, vocabularyRecords: {},
+    };
+    resetStores({ tasks: [project('p1', [vocabulary])] });
+    useTimelineStore.getState().updateBlockHeader('p1', 'vocab', { vocabularyRecords: { '2026-07-19': 20 } });
+    let header = getBlock('p1', 'vocab').header;
+    assert.equal(blocksModule.getVocabularyLearnedWords(header), 30);
+    useTimelineStore.getState().updateBlockHeader('p1', 'vocab', { vocabularyRecords: { '2026-07-19': 25 } });
+    header = getBlock('p1', 'vocab').header;
+    assert.equal(blocksModule.getVocabularyLearnedWords(header), 35);
+  });
+
+  check('完整工作区备份包含项目内单词任务、每日记录和日程引用并通过校验', () => {
+    const vocabulary = smartBlock('vocab', '备份词汇', [], false);
+    vocabulary.header = {
+      ...vocabulary.header,
+      taskKind: 'vocabulary', duration: 0,
+      vocabularyTotalWords: 200, vocabularyInitialCompletedWords: 20,
+      vocabularyRecords: { '2026-07-19': 10 },
+    };
+    const sourceId = sourceIds.getProjectBlockSourceId('p1', 'vocab');
+    resetStores({
+      tasks: [project('p1', [vocabulary])],
+      schedules: { '2026-07-19': { date: '2026-07-19', items: [{ id: 'sv1', sourceId, name: '备份词汇', source: 'project', timeSlot: 'evening', order: 0 }], blocks: [] } },
+    });
+    const backup = backupModule.createWorkspaceBackup();
+    const saved = backup.timeline.tasks[0].blocks[0];
+    assert.equal(saved.header.vocabularyRecords['2026-07-19'], 10);
+    const validation = backupModule.validateWorkspaceBackup(backup);
+    assert.equal(validation.errors.length, 0);
+    assert.equal(validation.summary.issues.length, 0);
   });
 
   let passed = 0;

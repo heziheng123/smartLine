@@ -20,7 +20,7 @@ export function useTaskCompletionStatus() {
     return [...byId.values()];
   }, [tasks, groups]);
 
-  const checkIsCompleted = useCallback((source: TaskSource, sourceId: string) => {
+  const checkIsCompleted = useCallback((source: TaskSource, sourceId: string, date?: string) => {
     if (source === 'free') return false;
     
     const parsed = parseSourceId(sourceId);
@@ -38,6 +38,9 @@ export function useTaskCompletionStatus() {
       if (parsed.blockId) {
         const block = parentTask.blocks.find(b => b.id === parsed.blockId);
         if (block?.type === 'smart-task') {
+          if (block.header.taskKind === 'vocabulary') {
+            return Boolean(date && block.header.vocabularyRecords?.[date]);
+          }
           return block.header.isCompleted;
         }
       }

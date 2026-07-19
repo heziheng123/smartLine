@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
-import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds } from '@/utils/blocks';
+import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
@@ -452,9 +452,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                             <button
                               type="button"
                               className={`wmv-check ${header.isCompleted ? 'wmv-check--done' : ''}`}
-                              onClick={(event) => { event.stopPropagation(); handleToggle(block._taskId, block.id, header.isCompleted); }}
-                              title={header.isCompleted ? '取消完成' : '标记完成'}
-                              aria-label={header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
+                              onClick={(event) => { event.stopPropagation(); if (!isVocabularyTask(header)) handleToggle(block._taskId, block.id, header.isCompleted); }}
+                              title={isVocabularyTask(header) ? '请在每日安排中记录学习数量' : header.isCompleted ? '取消完成' : '标记完成'}
+                              aria-label={isVocabularyTask(header) ? `单词进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
+                              aria-disabled={isVocabularyTask(header)}
                             >
                               {header.isCompleted && '✓'}
                             </button>
@@ -475,7 +476,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                           </div>
 
                           <div className="wmv-block-meta">
-                            <span>⏱ {header.duration}m</span>
+                            <span>{isVocabularyTask(header) ? `📖 ${getVocabularyLearnedWords(header)}/${getVocabularyTotalWords(header)}` : `⏱ ${header.duration}m`}</span>
                           </div>
 
                           {block.body && (

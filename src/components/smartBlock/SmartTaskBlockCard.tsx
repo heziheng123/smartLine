@@ -14,13 +14,20 @@ import {
   Trash2,
   ChevronDown,
   RotateCcw,
+  BookOpen,
 } from 'lucide-react';
 import type { SmartTaskBlock, SmartTaskHeader } from '@/types';
 import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
 import { useGraphStore } from '@/graph/store';
-import { getValidGraphNodeIds, shouldAutoSyncEbb } from '@/utils/blocks';
+import {
+  getValidGraphNodeIds,
+  getVocabularyLearnedWords,
+  getVocabularyTotalWords,
+  isVocabularyTask,
+  shouldAutoSyncEbb,
+} from '@/utils/blocks';
 import { useGraphBindingStore } from '@/graph/bindingStore';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -48,6 +55,13 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   expandOverride = null,
 }) => {
   const { header, body } = block;
+  const isVocabulary = isVocabularyTask(header);
+  const vocabularyLearned = getVocabularyLearnedWords(header);
+  const vocabularyTotal = getVocabularyTotalWords(header);
+  const vocabularyRecordTotal = Object.values(header.vocabularyRecords ?? {}).reduce(
+    (sum, value) => sum + (Number.isInteger(value) && value > 0 ? value : 0),
+    0,
+  );
   const hasBody = body && body.trim() !== '';
   const [bodyExpanded, setBodyExpanded] = useState(() => !compact && !!hasBody);
 
@@ -139,12 +153,13 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   // 完成切换
   const handleToggle = useCallback(() => {
+    if (isVocabulary) return;
     const now = todayStr();
     onUpdateHeader(block.id, {
       isCompleted: !header.isCompleted,
       completedDate: !header.isCompleted ? now : undefined,
     });
-  }, [block.id, header.isCompleted, onUpdateHeader]);
+  }, [block.id, header.isCompleted, isVocabulary, onUpdateHeader]);
 
   // Body 编辑
   const handleBodyBlur = useCallback(() => {
@@ -202,6 +217,30 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     }
   }, [block.id, onUpdateHeader]);
 
+  const handleVocabularyTotalChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Number(e.target.value);
+    if (Number.isInteger(value) && value > 0 && value >= vocabularyLearned) {
+      const completed = vocabularyLearned >= value;
+      onUpdateHeader(block.id, {
+        vocabularyTotalWords: value,
+        isCompleted: completed,
+        completedDate: completed ? (header.completedDate ?? todayStr()) : undefined,
+      });
+    }
+  }, [block.id, header.completedDate, onUpdateHeader, vocabularyLearned]);
+
+  const handleVocabularyLearnedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Number(e.target.value);
+    const nextInitial = value - vocabularyRecordTotal;
+    if (Number.isInteger(value) && nextInitial >= 0 && value <= vocabularyTotal) {
+      onUpdateHeader(block.id, {
+        vocabularyInitialCompletedWords: nextInitial,
+        isCompleted: value >= vocabularyTotal,
+        completedDate: value >= vocabularyTotal ? todayStr() : undefined,
+      });
+    }
+  }, [block.id, onUpdateHeader, vocabularyRecordTotal, vocabularyTotal]);
+
   const dateLabel = header.date
     ? `${formatDate(header.date, 'M.D')} 周${WEEKDAY_SHORT[getDayOfWeek(header.date)]}`
     : '未排期';
@@ -253,7 +292,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           onBlur={commitTitle}
         />
         <span className="stb-meta">
-          <Clock size={12} /> {header.duration}min
+          {isVocabulary ? <><BookOpen size={12} /> {vocabularyLearned}/{vocabularyTotal}</> : <><Clock size={12} /> {header.duration}min</>}
         </span>
         <AnimatePresence initial={false}>
           {bodyExpanded && (
@@ -301,8 +340,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           type="button"
           className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
           onClick={handleToggle}
-          title={header.isCompleted ? '标记未完成' : '标记完成'}
-          aria-label={header.isCompleted ? '取消完成' : '标记完成'}
+          title={isVocabulary ? '请在每日安排中记录学习数量' : header.isCompleted ? '标记未完成' : '标记完成'}
+          aria-label={isVocabulary ? '单词任务进度由每日记录完成' : header.isCompleted ? '取消完成' : '标记完成'}
+          aria-disabled={isVocabulary}
         >
           {header.isCompleted && <Check size={11} strokeWidth={3} />}
         </motion.button>
@@ -384,18 +424,28 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
             <span className="text-slate-300">·</span>
 
-            <span className="stb-duration-badge">
-              <input
-                type="number"
-                className="stb-duration-input"
-                value={header.duration}
-                onChange={handleDurationChange}
-                min={5}
-                step={5}
-                title="预估时长（分钟）"
-              />
-              <span style={{ fontSize: 10 }}>m</span>
-            </span>
+            {isVocabulary ? (
+              <span className="stb-vocabulary-fields">
+                <BookOpen size={12} />
+                <span>已学</span>
+                <input type="number" min={vocabularyRecordTotal} max={vocabularyTotal} step={1} value={vocabularyLearned} onChange={handleVocabularyLearnedChange} title="累计已学单词数" />
+                <span>/</span>
+                <input type="number" min={Math.max(1, vocabularyLearned)} step={1} value={vocabularyTotal} onChange={handleVocabularyTotalChange} title="总单词数" />
+              </span>
+            ) : (
+              <span className="stb-duration-badge">
+                <input
+                  type="number"
+                  className="stb-duration-input"
+                  value={header.duration}
+                  onChange={handleDurationChange}
+                  min={5}
+                  step={5}
+                  title="预估时长（分钟）"
+                />
+                <span style={{ fontSize: 10 }}>m</span>
+              </span>
+            )}
 
             {header.recurring && (
               <>
@@ -481,6 +531,12 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               <ChevronDown size={12} />
             </button>
           </div>
+
+          {isVocabulary && vocabularyTotal > 0 && (
+            <div className="stb-vocabulary-progress" aria-label={`单词进度 ${vocabularyLearned}/${vocabularyTotal}`}>
+              <span style={{ width: `${Math.min(100, Math.round((vocabularyLearned / vocabularyTotal) * 100))}%` }} />
+            </div>
+          )}
 
           {/* 第三层：Body 详情区（紧贴元数据下方，缩进+引述线） */}
           <AnimatePresence initial={false}>

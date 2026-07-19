@@ -18,6 +18,8 @@ export interface TextBlock {
 
 /** 智能任务块的 Header（结构化属性区，给系统看） */
 export interface SmartTaskHeader {
+  /** 任务业务类型；旧数据未设置时视为普通任务 */
+  taskKind?: 'standard' | 'vocabulary';
   title: string;
   tag: string;
   tagColor: string;
@@ -35,6 +37,12 @@ export interface SmartTaskHeader {
   frozenAt?: string;      // 🧊 进入冷冻仓的时间戳
   priority?: 'P0' | 'P1' | 'P2'; // 🚨 优先级
   estimatedTime?: number; // ⏱️ 预估耗时（分钟）
+  /** 单词任务的总单词数 */
+  vocabularyTotalWords?: number;
+  /** 创建单词任务时已经掌握的数量 */
+  vocabularyInitialCompletedWords?: number;
+  /** 单词任务每日新增学习量，键为 YYYY-MM-DD */
+  vocabularyRecords?: Record<string, number>;
 }
 
 /** 智能任务块（核心：Header + Body 双层结构） */
@@ -266,4 +274,9 @@ export interface AggregatedTodo {
   _graphNodeIds?: string[];
   /** 是否自动同步至 Ebb 复习流 */
   _autoSyncEbb?: boolean;
+  /** 任务业务类型 */
+  _taskKind?: 'standard' | 'vocabulary';
+  _vocabularyTotalWords?: number;
+  _vocabularyInitialCompletedWords?: number;
+  _vocabularyRecords?: Record<string, number>;
 }

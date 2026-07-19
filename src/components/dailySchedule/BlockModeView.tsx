@@ -253,13 +253,13 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         : undefined;
       return {
         ...b,
-        completed: checkIsCompleted(b.source, b.sourceId),
+        completed: checkIsCompleted(b.source, b.sourceId, selectedDate),
         detail: appearance?.name ?? b.detail,
         color: appearance?.theme.backgroundColor ?? b.color,
         categoryColor: appearance?.categoryColor ?? reviewCategoryColor ?? b.categoryColor,
       };
     });
-  }, [daySchedule.blocks, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData]);
+  }, [daySchedule.blocks, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData, selectedDate]);
 
   // ── 判断是否未绑定节点 ──────────────────────────────────
   const checkIsUnlinkedTask = useCallback((sourceId: string) => {
@@ -341,6 +341,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const todayProjectTasks = useMemo(() => {
     return allTodos.filter((todo) => {
+      if (todo._taskKind === 'vocabulary') return false;
       if (todo.checked) return false;
       // 只有精确指定了排期日或截止日为当天的任务才会被纳入任务池
       if (todo.scheduled && todo.scheduled === selectedDate) return true;
@@ -351,6 +352,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const completedProjectTasks = useMemo(() => {
     return allTodos.filter((todo) => {
+      if (todo._taskKind === 'vocabulary') return false;
       if (!todo.checked) return false;
       return todo.scheduled === selectedDate || todo.due === selectedDate;
     });

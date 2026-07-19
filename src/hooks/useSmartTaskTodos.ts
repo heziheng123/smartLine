@@ -53,6 +53,10 @@ export function useSmartTaskTodos(tasks: Task[], groups: TaskGroup[] = []): Aggr
           _graphNodeId: h.graphNodeId,
           _graphNodeIds: getValidGraphNodeIds(h),
           _autoSyncEbb: h.autoSyncEbb,
+          _taskKind: h.taskKind,
+          _vocabularyTotalWords: h.vocabularyTotalWords,
+          _vocabularyInitialCompletedWords: h.vocabularyInitialCompletedWords,
+          _vocabularyRecords: h.vocabularyRecords,
         });
       }
     }
