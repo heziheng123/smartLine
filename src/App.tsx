@@ -28,11 +28,22 @@ import '@/styles/smart-block.css';
 import '@/styles/task-overview.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
+type ProjectWorkspaceView = 'timeline' | 'overview';
 type TimelineNavigateDetail = {
-  view?: AppModule;
+  view?: AppModule | 'task-overview';
   taskId?: string;
   blockId?: string;
 };
+
+const PROJECT_WORKSPACE_VIEW_KEY = 'project-workspace-view-v1';
+
+function loadProjectWorkspaceView(): ProjectWorkspaceView {
+  try {
+    return localStorage.getItem(PROJECT_WORKSPACE_VIEW_KEY) === 'overview' ? 'overview' : 'timeline';
+  } catch {
+    return 'timeline';
+  }
+}
 
 function mapLiveblocksStatus(status: string | undefined) {
   if (status === 'connected') return 'connected' as const;
@@ -224,6 +235,15 @@ const App: React.FC = () => {
 
   // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
   const [currentView, setCurrentView] = useState<AppModule>('timeline');
+  const [projectWorkspaceView, setProjectWorkspaceView] = useState<ProjectWorkspaceView>(loadProjectWorkspaceView);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(PROJECT_WORKSPACE_VIEW_KEY, projectWorkspaceView);
+    } catch {
+      // 视图偏好写入失败不应影响项目数据和页面使用。
+    }
+  }, [projectWorkspaceView]);
 
   // 年份显示
   const [displayYear, setDisplayYear] = useState(() => {
@@ -410,10 +430,15 @@ const App: React.FC = () => {
     const handleNav = (event: Event) => {
       const e = event as CustomEvent<TimelineNavigateDetail>;
       const detail = e.detail;
-      if (detail?.view) {
+      if (detail?.view === 'task-overview') {
+        setCurrentView('timeline');
+        setProjectWorkspaceView('overview');
+      } else if (detail?.view) {
         setCurrentView(detail.view);
       }
       if (detail?.taskId) {
+        // 带任务定位的返回需要显示项目文档抽屉，因此回到项目时间轴。
+        if (detail.view === 'timeline') setProjectWorkspaceView('timeline');
         setDrawerTaskId(detail.taskId);
       }
       setDrawerBlockId(detail?.blockId ?? null);
@@ -685,7 +710,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'task-overview' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
+    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
       <OperationHistoryPanel />
       <Toolbar
         currentView={currentView}
@@ -697,6 +722,8 @@ const App: React.FC = () => {
         onAddNote={handleAddNote}
         onAddMilestone={handleAddMilestone}
         onOpenSync={handleOpenSync}
+        projectWorkspaceView={projectWorkspaceView}
+        onProjectWorkspaceViewChange={setProjectWorkspaceView}
       />
 
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
@@ -761,25 +788,6 @@ const App: React.FC = () => {
           </motion.div>
         )}
 
-        {currentView === 'task-overview' && (
-          <motion.div
-            key="task-overview"
-            id="view-task-overview"
-            role="tabpanel"
-            className="tl-app-split tl-app-split--ebb"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <div className="tl-app-main">
-              <Suspense fallback={<ViewFallback />}>
-                <TaskOverviewView />
-              </Suspense>
-            </div>
-          </motion.div>
-        )}
-
         {currentView === 'knowledge-graph' && (
           <motion.div 
             key="knowledge-graph"
@@ -804,58 +812,70 @@ const App: React.FC = () => {
             key="timeline"
             id="view-timeline"
             role="tabpanel"
-            className="tl-app-split"
+            className="tl-app-split project-workspace"
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
           >
-            <div className="tl-app-main">
-              <Suspense fallback={<ViewFallback />}>
-                <TimelineView
-                  tasks={store.tasks}
-                  groups={store.groups}
-                  notes={store.notes}
-                  milestones={store.milestones}
-                  displayYear={displayYear}
-                  onTaskClick={handleOpenDrawer}
-                  onTaskContextMenu={handleTaskContextMenu}
-                  onNoteDoubleClick={handleEditNote}
-                  onNoteContextMenu={handleNoteContextMenu}
-                  onMilestoneDoubleClick={handleEditMilestone}
-                  onMilestoneContextMenu={handleMilestoneContextMenu}
-                  onGroupDoubleClick={handleEditGroup}
-                  onSmartBlockDrop={(dragData, targetDate) => {
-                    store.updateBlockHeader(dragData.taskId, dragData.blockId, { date: targetDate });
-                  }}
-                />
-              </Suspense>
-            </div>
+            <div className="project-workspace-content">
+              {projectWorkspaceView === 'timeline' ? (
+                <>
+                  <div className="tl-app-main">
+                    <Suspense fallback={<ViewFallback />}>
+                      <TimelineView
+                        tasks={store.tasks}
+                        groups={store.groups}
+                        notes={store.notes}
+                        milestones={store.milestones}
+                        displayYear={displayYear}
+                        onTaskClick={handleOpenDrawer}
+                        onTaskContextMenu={handleTaskContextMenu}
+                        onNoteDoubleClick={handleEditNote}
+                        onNoteContextMenu={handleNoteContextMenu}
+                        onMilestoneDoubleClick={handleEditMilestone}
+                        onMilestoneContextMenu={handleMilestoneContextMenu}
+                        onGroupDoubleClick={handleEditGroup}
+                        onSmartBlockDrop={(dragData, targetDate) => {
+                          store.updateBlockHeader(dragData.taskId, dragData.blockId, { date: targetDate });
+                        }}
+                      />
+                    </Suspense>
+                  </div>
 
-            {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
-            <AnimatePresence mode="popLayout">
-              {drawerTask && (
-                <motion.div
-                  key={drawerTask.id}
-                  initial={{ width: 0, opacity: 0, x: 20 }}
-                  animate={{ width: 450, opacity: 1, x: 0 }}
-                  exit={{ width: 0, opacity: 0, x: 20 }}
-                  transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                  style={{ overflow: 'hidden', borderLeft: '1px solid #E5E7EB', background: '#fff', flexShrink: 0 }}
-                >
+                  {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
+                  <AnimatePresence mode="popLayout">
+                    {drawerTask && (
+                      <motion.div
+                        key={drawerTask.id}
+                        initial={{ width: 0, opacity: 0, x: 20 }}
+                        animate={{ width: 450, opacity: 1, x: 0 }}
+                        exit={{ width: 0, opacity: 0, x: 20 }}
+                        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                        style={{ overflow: 'hidden', borderLeft: '1px solid #E5E7EB', background: '#fff', flexShrink: 0 }}
+                      >
+                        <Suspense fallback={<ViewFallback />}>
+                          <ProjectDocumentView
+                            task={drawerTask}
+                            focusBlockId={drawerBlockId}
+                            focusRequest={drawerFocusRequest}
+                            onClose={handleCloseDrawer}
+                            onUpdateTask={handleUpdateTaskMeta}
+                            onDeleteTask={handleDeleteTaskFromDrawer}
+                          />
+                        </Suspense>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </>
+              ) : (
+                <div className="tl-app-main project-workspace-overview">
                   <Suspense fallback={<ViewFallback />}>
-                    <ProjectDocumentView
-                      task={drawerTask}
-                      focusBlockId={drawerBlockId}
-                      focusRequest={drawerFocusRequest}
-                      onClose={handleCloseDrawer}
-                      onUpdateTask={handleUpdateTaskMeta}
-                      onDeleteTask={handleDeleteTaskFromDrawer}
-                    />
+                    <TaskOverviewView />
                   </Suspense>
-                </motion.div>
+                </div>
               )}
-            </AnimatePresence>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -911,7 +931,7 @@ const App: React.FC = () => {
 
       {/* 悬浮磁吸面板：冷冻库 (Icebox) - 在周矩阵与项目规划视图中显示 */}
       <AnimatePresence>
-        {(currentView === 'week-matrix' || currentView === 'timeline') && (
+        {(currentView === 'week-matrix' || (currentView === 'timeline' && projectWorkspaceView === 'timeline')) && (
           <IceboxPalette />
         )}
       </AnimatePresence>

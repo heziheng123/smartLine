@@ -166,6 +166,78 @@ html, body, #root {
   width: 190px;
 }
 
+.tl-project-view-caret {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  color: #94A3B8;
+  pointer-events: none;
+}
+
+.tl-project-view-menu {
+  width: 252px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 5px;
+  border-color: rgba(203, 213, 225, 0.8);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+}
+
+.tl-project-view-menu--portal {
+  position: fixed;
+  z-index: 1400;
+  pointer-events: auto;
+}
+
+.tl-project-view-menu button {
+  width: auto;
+  min-width: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.tl-project-view-menu button:hover {
+  background: #F8FAFC;
+  color: #334155;
+}
+
+.tl-project-view-menu button[aria-checked="true"] {
+  background: linear-gradient(135deg, #F0F3FF 0%, #E8EDFF 100%);
+  color: #4F46E5;
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.08), 0 2px 8px rgba(79, 70, 229, 0.08);
+}
+
+.tl-project-view-menu button:active {
+  transform: scale(0.98);
+}
+
+.tl-project-view-menu button:focus-visible {
+  outline: 2px solid rgba(99, 102, 241, 0.45);
+  outline-offset: 1px;
+}
+
+.tl-project-view-menu button span {
+  min-width: 0;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .tl-create-menu button {
   width: 100%;
   height: 36px;

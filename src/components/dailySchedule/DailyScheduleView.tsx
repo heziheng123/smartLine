@@ -20,6 +20,7 @@ import {
   Settings2,
   CircleDashed,
   Link as LinkIcon,
+  ListTodo,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
@@ -68,6 +69,10 @@ const DailyScheduleView: React.FC = () => {
     if (parsed?.source === 'project' && parsed.blockId) {
       openProjectTaskModal(parsed.parentTaskId, parsed.blockId);
     }
+  }, []);
+
+  const openAllProjectTasks = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'task-overview' } }));
   }, []);
 
   const { tasks: rawTlTasks, groups: rawTlGroups, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
@@ -614,6 +619,9 @@ const DailyScheduleView: React.FC = () => {
             />
           </div>
           <div className="ds-header-right">
+            <button type="button" className="ds-header-btn" onClick={openAllProjectTasks} aria-label="查看全部项目任务">
+              <ListTodo size={15} />全部任务
+            </button>
             {/* 视图模式切换 */}
             <div className="ds-mode-switch" role="tablist" aria-label="排期模式切换">
               <button
@@ -756,6 +764,7 @@ const DailyScheduleView: React.FC = () => {
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-item--unlinked' : ''
                                   } ${item.source === 'free' ? 'ds-item--free' : ''}`}
                                   style={{
+                                    ...provided.draggableProps.style,
                                     backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
                                   }}
                                   onClick={() => { if (item.source === 'project') openProjectTaskFromSource(item.sourceId); }}
@@ -946,6 +955,7 @@ const DailyScheduleView: React.FC = () => {
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
                                   }`}
                                   style={{
+                                    ...provided.draggableProps.style,
                                     backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
                                   }}
                                   onClick={() => openProjectTaskFromSource(item.sourceId)}
@@ -1016,6 +1026,7 @@ const DailyScheduleView: React.FC = () => {
                                     checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
                                   }`}
                                   style={{
+                                    ...provided.draggableProps.style,
                                     backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
                                   }}
                                 >

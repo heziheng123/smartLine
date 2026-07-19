@@ -2036,6 +2036,12 @@
   backdrop-filter: blur(3px);
 }
 
+.wmv-all-tasks-btn {
+  gap: 5px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+}
+
 .ptm-dialog {
   width: min(720px, 100%);
   max-height: min(82vh, 820px);

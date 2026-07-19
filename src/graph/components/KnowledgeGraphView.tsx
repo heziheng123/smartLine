@@ -633,23 +633,30 @@ export const KnowledgeGraphView: React.FC = () => {
       }} />
 
       {bindingSession.active && (
-        <div className="absolute top-4 left-1/2 z-30 w-[min(680px,calc(100%-32px))] -translate-x-1/2 rounded-2xl border border-indigo-100 bg-white/95 px-4 py-3 shadow-xl backdrop-blur-md">
-          <div className="flex items-center gap-3">
+        <div
+          className="absolute left-1/2 top-4 z-30 rounded-2xl border border-indigo-100 bg-white/95 px-4 py-3 shadow-xl backdrop-blur-md"
+          style={{ width: 'min(680px, calc(100% - 32px))', transform: 'translateX(-50%)' }}
+          data-testid="graph-binding-banner"
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-bold text-slate-800">为“{bindingSession.taskTitle || '当前任务'}”选择知识节点</div>
               <div className="mt-0.5 text-xs text-slate-500">点击父节点继续浏览，点击最外层叶子节点勾选；已选择 {bindingSession.selectedNodeIds.length} 个</div>
               {bindingError && <div className="mt-1 text-xs font-medium text-rose-600">{bindingError}</div>}
             </div>
-            <button onClick={bindingSession.cancel} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">取消</button>
-            <button
-              onClick={() => {
-                setBindingError('');
-                if (!bindingSession.confirm()) setBindingError('原任务已不存在或任务块已被删除，无法保存；你可以取消返回。');
-              }}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
-            >
-              <Check size={14} /> 完成选择
-            </button>
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              <button onClick={bindingSession.cancel} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">取消</button>
+              <button
+                onClick={() => {
+                  setBindingError('');
+                  if (!bindingSession.confirm()) setBindingError('原任务已不存在或任务块已被删除，无法保存；你可以取消返回。');
+                }}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
+                aria-label="完成知识节点选择"
+              >
+                <Check size={14} /> 完成选择
+              </button>
+            </div>
           </div>
         </div>
       )}

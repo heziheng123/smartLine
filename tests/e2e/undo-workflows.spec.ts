@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const formatShanghaiDate = (date: Date) => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai',
@@ -24,6 +24,19 @@ const daily = {
 };
 const ebb = { reviewTasks: [{ id: 'e2e-review', topicName: 'E2E复习撤销', dueDate: testDate, originalDueDate: testDate, roundOrder: 1, isCompleted: false, tag: '默认', smStatus: 'scheduled' }], inboxItems: [], outlineNodes: [], ebbSettings: {} };
 
+const undoLatestFromHistory = async (page: Page) => {
+  await page.getByTitle('最近操作与回收站').click();
+  const panel = page.getByLabel('最近操作面板');
+  await expect(panel).toBeVisible();
+  await panel.locator('.operation-history-list article').first().getByRole('button', { name: '撤销' }).click();
+  await page.getByLabel('关闭最近操作').click();
+};
+
+const openTaskOverview = async (page: Page) => {
+  await page.getByTitle('项目规划').click();
+  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
+};
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(({ taskData, dailyData, ebbData }) => {
     if (sessionStorage.getItem('e2e-seeded') === '1') return;
@@ -42,12 +55,13 @@ test('completion from daily schedule creates one unified undo and restores the c
   await expect(card).toBeVisible();
   await card.locator('.ds-item-check').click();
   await expect(card).toHaveClass(/ds-item--completed/);
-  await page.getByRole('button', { name: /撤销/ }).first().click();
+  await expect(page.getByRole('button', { name: /^撤销：/ })).toHaveCount(0);
+  await undoLatestFromHistory(page);
   await expect(card).not.toHaveClass(/ds-item--completed/);
 });
 
 test('task overview aggregates project tasks and edits the original task block', async ({ page }) => {
-  await page.getByTitle('任务总览').click();
+  await openTaskOverview(page);
   const card = page.locator('[data-block-id="e2e-block"]');
   await expect(card).toBeVisible();
   await expect(card).toContainText('E2E项目');
@@ -75,7 +89,7 @@ test('latest undo survives page refresh and remains executable', async ({ page }
   await page.getByTitle('每日安排').click();
   const refreshedCard = page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' });
   await expect(refreshedCard).toHaveClass(/ds-item--completed/);
-  await page.getByRole('button', { name: /撤销/ }).first().click();
+  await undoLatestFromHistory(page);
   await expect(refreshedCard).not.toHaveClass(/ds-item--completed/);
 });
 
@@ -98,7 +112,7 @@ test('EBB completion from the main matrix uses the same global undo', async ({ p
   await expect(toggle).toBeVisible();
   await toggle.click();
   await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
-  await page.getByRole('button', { name: /撤销/ }).first().click();
+  await undoLatestFromHistory(page);
   await expect(page.getByLabel('标记第 1 轮完成')).toBeVisible();
 });
 
@@ -112,7 +126,7 @@ test('daily schedule drag between slots can be undone precisely', async ({ page 
     destination: { droppableId: 'ds-slot-afternoon', index: 0 },
   }));
   await expect(afternoon.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toBeVisible();
-  await page.getByRole('button', { name: /撤销/ }).first().click();
+  await undoLatestFromHistory(page);
   await expect(page.getByTestId('daily-slot-morning').locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toBeVisible();
 });
 
@@ -133,6 +147,40 @@ test('week matrix drag reschedules through unified undo', async ({ page }) => {
     source.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
   }, { sourceDate: testDate, targetDate: weekMoveTargetDate });
   await expect(target.locator('[data-block-id="e2e-block"]')).toBeVisible();
-  await page.getByRole('button', { name: /撤销/ }).first().click();
+  await undoLatestFromHistory(page);
   await expect(page.locator(`[data-date="${testDate}"][data-tag="默认"] [data-block-id="e2e-block"]`)).toBeVisible();
+});
+
+test('daily schedule keeps the real drag transform and visual feedback', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  const card = page.locator('.ds-pool-item').filter({ hasText: 'E2E复习撤销' });
+  await expect(card).toBeVisible();
+  const box = await card.boundingBox();
+  if (!box) throw new Error('drag card has no bounding box');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 80, box.y + box.height / 2, { steps: 8 });
+  await expect(card).toHaveClass(/ds-pool-item--dragging/);
+  await expect.poll(() => card.evaluate((element) => element.style.transform)).toContain('translate');
+  await page.mouse.up();
+  await expect(card).not.toHaveClass(/ds-pool-item--dragging/);
+});
+
+test('knowledge binding actions stay inside an iPad Air viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await openTaskOverview(page);
+  await page.locator('[data-block-id="e2e-block"]').click();
+  await page.getByRole('button', { name: '未绑定节点' }).click();
+  await page.getByRole('button', { name: '去知识大盘选择' }).click();
+
+  const banner = page.getByTestId('graph-binding-banner');
+  const confirm = page.getByRole('button', { name: '完成知识节点选择' });
+  await expect(banner).toBeVisible();
+  await expect(confirm).toBeVisible();
+  const confirmBox = await confirm.boundingBox();
+  if (!confirmBox) throw new Error('binding confirm button has no bounding box');
+  expect(confirmBox.x).toBeGreaterThanOrEqual(0);
+  expect(confirmBox.x + confirmBox.width).toBeLessThanOrEqual(1180);
+  await page.getByRole('button', { name: '取消' }).click();
+  await expect(page.locator('.tl-year-stack')).toBeVisible();
 });

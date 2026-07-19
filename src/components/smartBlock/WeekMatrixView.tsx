@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
 import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
@@ -282,6 +282,14 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
         )}
 
         <div className="wmv-nav-right">
+          <button
+            type="button"
+            className="wmv-nav-btn wmv-all-tasks-btn"
+            onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'task-overview' } }))}
+            aria-label="查看全部项目任务"
+          >
+            <ListTodo size={15} />全部任务
+          </button>
           {hasOffRangeBlocks && (
             <div
               className="wmv-offrange-capsule"

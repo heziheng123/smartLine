@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Archive, ListTodo, History, RotateCcw } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Archive, History, ListTodo, Check, ChevronUp } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArchiveLibraryModal } from './GlobalSearch';
 import { useOperationHistory } from '@/services/operationHistory';
 
-export type AppModule = 'timeline' | 'task-overview' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
+export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
 
 interface ToolbarProps {
   currentView: AppModule;
@@ -18,6 +19,8 @@ interface ToolbarProps {
   onAddNote: () => void;
   onAddMilestone: () => void;
   onOpenSync: () => void;
+  projectWorkspaceView: 'timeline' | 'overview';
+  onProjectWorkspaceViewChange: (view: 'timeline' | 'overview') => void;
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({
@@ -30,6 +33,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onAddNote,
   onAddMilestone,
   onOpenSync,
+  projectWorkspaceView,
+  onProjectWorkspaceViewChange,
 }) => {
   const { syncEnabled, syncStatus, dockContext } = useTimelineStore(
     useShallow((s) => ({ 
@@ -41,14 +46,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const [isProjectViewMenuOpen, setIsProjectViewMenuOpen] = useState(false);
+  const [projectViewMenuPosition, setProjectViewMenuPosition] = useState<{ left: number; bottom: number } | null>(null);
   const createMenuRef = useRef<HTMLDivElement>(null);
+  const projectViewMenuRef = useRef<HTMLDivElement>(null);
+  const projectViewPopoverRef = useRef<HTMLDivElement>(null);
   const {
     entries: operationEntries,
     panelOpen: operationPanelOpen,
     setPanelOpen: setOperationPanelOpen,
-    undo: undoOperation,
   } = useOperationHistory();
-  const latestUndoableOperation = operationEntries.find((entry) => entry.canUndo);
 
   useEffect(() => {
     if (!isCreateMenuOpen) return;
@@ -66,6 +73,29 @@ const Toolbar: React.FC<ToolbarProps> = ({
     };
   }, [isCreateMenuOpen]);
 
+  useEffect(() => {
+    if (!isProjectViewMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!projectViewMenuRef.current?.contains(target) && !projectViewPopoverRef.current?.contains(target)) {
+        setIsProjectViewMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsProjectViewMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isProjectViewMenuOpen]);
+
+  useEffect(() => {
+    if (currentView !== 'timeline') setIsProjectViewMenuOpen(false);
+  }, [currentView]);
+
   const runCreateAction = (action: () => void) => {
     setIsCreateMenuOpen(false);
     action();
@@ -73,7 +103,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   const NAV_ITEMS: { module: AppModule; label: string; icon: React.ReactNode }[] = [
     { module: 'timeline', label: '项目规划', icon: <CalendarDays size={18} /> },
-    { module: 'task-overview', label: '任务总览', icon: <ListTodo size={18} /> },
     { module: 'daily-schedule', label: '每日安排', icon: <CalendarClock size={18} /> },
     { module: 'week-matrix', label: '周矩阵', icon: <LayoutGrid size={18} /> },
     { module: 'ebb', label: '艾宾浩斯复习', icon: <BrainCircuit size={18} /> },
@@ -107,6 +136,95 @@ const Toolbar: React.FC<ToolbarProps> = ({
           // Context takeover: only show active view icon if context is not 'none'
           if (dockContext !== 'none' && !active) return null;
           
+          if (item.module === 'timeline') {
+            return (
+              <motion.div
+                layout
+                key={item.module}
+                className="tl-dock-popover-wrap"
+                ref={projectViewMenuRef}
+                initial={{ opacity: 0, width: 0, scale: 0.8 }}
+                animate={{ opacity: 1, width: 'auto', scale: 1 }}
+                exit={{ opacity: 0, width: 0, scale: 0.8 }}
+              >
+                <button
+                  role="tab"
+                  aria-label="项目规划"
+                  aria-selected={active}
+                  aria-controls="view-timeline"
+                  aria-haspopup="menu"
+                  aria-expanded={active ? isProjectViewMenuOpen : false}
+                  type="button"
+                  className={`tl-dock-btn ${active ? 'tl-dock-btn--active' : ''} ${isProjectViewMenuOpen ? 'tl-dock-btn--menu-open' : ''}`}
+                  onClick={() => {
+                    if (!active) {
+                      onViewChange('timeline');
+                      setIsProjectViewMenuOpen(false);
+                    } else {
+                      if (isProjectViewMenuOpen) {
+                        setIsProjectViewMenuOpen(false);
+                      } else {
+                        const rect = projectViewMenuRef.current?.getBoundingClientRect();
+                        const halfMenuWidth = 126;
+                        const rawLeft = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+                        setProjectViewMenuPosition({
+                          left: Math.max(halfMenuWidth + 8, Math.min(window.innerWidth - halfMenuWidth - 8, rawLeft)),
+                          bottom: rect ? window.innerHeight - rect.top + 12 : 88,
+                        });
+                        setIsProjectViewMenuOpen(true);
+                      }
+                    }
+                  }}
+                  title="项目规划"
+                >
+                  {item.icon}
+                  <ChevronUp size={8} className="tl-project-view-caret" aria-hidden="true" />
+                  {active && (
+                    <motion.div
+                      layoutId="dock-active-indicator"
+                      className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-500"
+                      initial={false}
+                      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                    />
+                  )}
+                </button>
+                {active && isProjectViewMenuOpen && projectViewMenuPosition && createPortal(
+                  <div
+                    ref={projectViewPopoverRef}
+                    className="tl-dock-popover tl-project-view-menu tl-project-view-menu--portal"
+                    role="menu"
+                    aria-label="项目规划视图"
+                    style={{ left: projectViewMenuPosition.left, bottom: projectViewMenuPosition.bottom }}
+                  >
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={projectWorkspaceView === 'timeline'}
+                      onClick={() => {
+                        onProjectWorkspaceViewChange('timeline');
+                        setIsProjectViewMenuOpen(false);
+                      }}
+                    >
+                      <CalendarDays size={15} /><span>项目时间轴</span>{projectWorkspaceView === 'timeline' && <Check size={12} />}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={projectWorkspaceView === 'overview'}
+                      onClick={() => {
+                        onProjectWorkspaceViewChange('overview');
+                        setIsProjectViewMenuOpen(false);
+                      }}
+                    >
+                      <ListTodo size={15} /><span>全部任务</span>{projectWorkspaceView === 'overview' && <Check size={12} />}
+                    </button>
+                  </div>,
+                  document.body,
+                )}
+              </motion.div>
+            );
+          }
+
           return (
             <motion.button
               layout
@@ -144,24 +262,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0 }}
         />
-
-        {latestUndoableOperation && (
-          <motion.button
-            layout
-            key="undo-operation"
-            initial={{ opacity: 0, width: 0, scale: 0.8 }}
-            animate={{ opacity: 1, width: 'auto', scale: 1 }}
-            exit={{ opacity: 0, width: 0, scale: 0.8 }}
-            type="button"
-            className="tl-dock-btn tl-dock-btn--primary"
-            onClick={() => void undoOperation(latestUndoableOperation.id)}
-            title={`撤销：${latestUndoableOperation.label}`}
-            aria-label={`撤销：${latestUndoableOperation.label}`}
-            style={{ position: 'relative', flexShrink: 0 }}
-          >
-            <RotateCcw size={18} />
-          </motion.button>
-        )}
 
         <motion.button
           layout

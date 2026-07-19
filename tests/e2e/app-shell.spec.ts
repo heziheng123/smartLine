@@ -5,19 +5,55 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
 
-test('six main views remain reachable through the real interface', async ({ page }) => {
-  for (const title of ['任务总览', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
+test('five main views remain reachable through the real interface', async ({ page }) => {
+  for (const title of ['每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
     await page.getByTitle(title).click();
     await expect(page.getByTitle(title)).toHaveAttribute('aria-selected', 'true');
   }
+  await expect(page.getByTitle('任务总览')).toHaveCount(0);
 });
 
-test('task overview remains usable on desktop and small screens', async ({ page }) => {
-  await page.getByTitle('任务总览').click();
+test('task overview is embedded in project planning on desktop and small screens', async ({ page }) => {
+  await page.getByTitle('项目规划').click();
+  const projectViewMenu = page.getByRole('menu', { name: '项目规划视图' });
+  await expect(projectViewMenu).toBeVisible();
+  const menuBox = await projectViewMenu.boundingBox();
+  const viewport = page.viewportSize();
+  expect(menuBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(menuBox!.x).toBeGreaterThanOrEqual(0);
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(menuBox!.y).toBeGreaterThanOrEqual(0);
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(viewport!.height);
+  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
   await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
   await expect(page.getByLabel('搜索全部项目任务')).toBeVisible();
   await expect(page.getByRole('group', { name: '任务分组方式' })).toBeVisible();
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
+});
+
+test('daily schedule and week matrix can open the single embedded task overview', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  await page.getByRole('button', { name: '查看全部项目任务' }).click();
+  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
+
+  await page.getByTitle('周矩阵').click();
+  await page.getByRole('button', { name: '查看全部项目任务' }).click();
+  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
+});
+
+test('project planning remembers the selected internal view after refresh', async ({ page }) => {
+  await page.getByTitle('项目规划').click();
+  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
+  await page.reload();
+  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
+  await page.getByTitle('项目规划').click();
+  await expect(page.getByRole('menuitemradio', { name: '全部任务' })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('menuitemradio', { name: '项目时间轴' }).click();
+  await expect(page.locator('.tl-year-stack')).toBeVisible();
 });
 
 test('global search is removed while archive search remains available', async ({ page }) => {
