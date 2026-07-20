@@ -5,6 +5,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import '@/styles/ebb.css';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
 import { todayStr, addDays, formatDate, getDayOfWeek, makeLocalDayjs } from '@/utils/dateSafe';
@@ -27,6 +28,7 @@ import {
   TriangleAlert,
   Target,
   ChartNoAxesColumn,
+  ShieldCheck,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -49,6 +51,10 @@ import BoardView from './BoardView';
 type ViewTab = 'matrix' | 'board';
 
 const EbbView: React.FC = () => {
+  const safeMode = useMemo(() => {
+    try { return sessionStorage.getItem('smart-line-ebb-safe-mode') === '1'; }
+    catch { return false; }
+  }, []);
   // 选择性订阅: 只关心 reviewTasks/inboxItems/outlineNodes/ebbSettings/undoStack
   // + 各 CRUD 方法（方法引用稳定）。避免 syncStatus 等无关切片变化触发本组件重渲染。
   const {
@@ -87,13 +93,23 @@ const EbbView: React.FC = () => {
     })),
   );
 
-  const { nodes: graphNodes } = useGraphStore();
+  const graphNodes = useGraphStore((state) => state.nodes);
   
   // 过滤掉已归档节点关联的复习任务，确保冷数据不出现在 Ebb 矩阵和排期中
   const reviewTasks = useMemo(() => {
     const archivedNodeIds = new Set(graphNodes.filter(n => n.isArchived).map(n => n.id));
-    return rawReviewTasks.filter(t => !t.isArchived && (!t.graphNodeId || !archivedNodeIds.has(t.graphNodeId)));
-  }, [rawReviewTasks, graphNodes]);
+    const active = rawReviewTasks.filter(t => !t.isArchived && (!t.graphNodeId || !archivedNodeIds.has(t.graphNodeId)));
+    if (!safeMode || active.length <= 700) return active;
+    return [...active]
+      .sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted) || a.dueDate.localeCompare(b.dueDate))
+      .slice(0, 700);
+  }, [rawReviewTasks, graphNodes, safeMode]);
+  const highLoadMode = !safeMode && reviewTasks.length > 1500;
+
+  const exitSafeMode = useCallback(() => {
+    try { sessionStorage.removeItem('smart-line-ebb-safe-mode'); } catch { /* optional storage */ }
+    window.location.reload();
+  }, []);
 
   // 重构 store 视图供下游代码以 `store.X` 形式访问
   const store = useMemo(
@@ -404,6 +420,15 @@ const EbbView: React.FC = () => {
           </div>
         </header>
 
+        {(safeMode || highLoadMode) && (
+          <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">
+            <span className="flex items-center gap-2"><ShieldCheck size={16} />{safeMode
+              ? '安全模式已开启：优先显示最多 700 条复习轮次，并暂停高负载看板。'
+              : `当前有 ${reviewTasks.length} 条复习轮次：矩阵会分批呈现，看板暂时停用以防止页面卡死。`}</span>
+            {safeMode && <button type="button" onClick={exitSafeMode} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold hover:bg-amber-100">退出安全模式</button>}
+          </div>
+        )}
+
         {/* ── 统计区 ──────────────────────────────────────── */}
         <section className="eb-stats-bar">
           <div className="eb-stats-cards">
@@ -493,7 +518,9 @@ const EbbView: React.FC = () => {
             aria-controls="board-panel"
             id="tab-board"
             className={`eb-tab ${activeTab === 'board' ? 'eb-tab--active' : ''}`}
-            onClick={() => setActiveTab('board')}
+            onClick={() => { if (!safeMode && !highLoadMode) setActiveTab('board'); }}
+            disabled={safeMode || highLoadMode}
+            title={safeMode || highLoadMode ? '当前数据量较大，暂不启用看板拖拽' : undefined}
           >
             <Columns3 size={14} aria-hidden="true" />
             看板视图

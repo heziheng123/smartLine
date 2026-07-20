@@ -40,6 +40,14 @@ export interface ScheduledItem {
   duration?: number;
   /** 额外信息（如轮次、所属项目等） */
   detail?: string;
+  /** 数量任务当日实际完成量（仅视图派生，不持久化） */
+  quantityActual?: number;
+  /** 数量任务当日稳定目标（仅视图派生） */
+  quantityTarget?: number;
+  quantityTotal?: number;
+  quantityCompleted?: number;
+  quantityUnit?: string;
+  quantityState?: 'unrecorded' | 'in-progress' | 'achieved' | 'recorded';
 }
 
 /** 时间块（精确到分钟的时间安排） */

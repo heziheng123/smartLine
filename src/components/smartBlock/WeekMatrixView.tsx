@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, BookOpen, Clock3 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, Hash, Clock3 } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
-import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
+import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
@@ -452,10 +452,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                             <button
                               type="button"
                               className={`wmv-check ${header.isCompleted ? 'wmv-check--done' : ''}`}
-                              onClick={(event) => { event.stopPropagation(); if (!isVocabularyTask(header)) handleToggle(block._taskId, block.id, header.isCompleted); }}
-                              title={isVocabularyTask(header) ? '请在每日安排中记录学习数量' : header.isCompleted ? '取消完成' : '标记完成'}
-                              aria-label={isVocabularyTask(header) ? `单词进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
-                              aria-disabled={isVocabularyTask(header)}
+                              onClick={(event) => { event.stopPropagation(); if (!isQuantityTask(header)) handleToggle(block._taskId, block.id, header.isCompleted); }}
+                              title={isQuantityTask(header) ? '请在每日安排中记录完成数量' : header.isCompleted ? '取消完成' : '标记完成'}
+                              aria-label={isQuantityTask(header) ? `数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
+                              aria-disabled={isQuantityTask(header)}
                             >
                               {header.isCompleted && '✓'}
                             </button>
@@ -476,7 +476,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                           </div>
 
                           <div className="wmv-block-meta">
-                            <span>{isVocabularyTask(header) ? <><BookOpen size={12} />{getVocabularyLearnedWords(header)}/{getVocabularyTotalWords(header)}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
+                            <span>{isQuantityTask(header) ? <><Hash size={12} />{getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}% · 当日 {getQuantityDailyStatus(header, header.date).actual}/{getQuantityDailyStatus(header, header.date).target}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
                           </div>
 
                           {block.body && (

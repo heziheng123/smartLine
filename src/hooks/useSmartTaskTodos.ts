@@ -6,7 +6,15 @@
 
 import { useMemo } from 'react';
 import type { Task, TaskGroup, AggregatedTodo } from '@/types';
-import { getSmartTaskBlocks, getValidGraphNodeIds } from '@/utils/blocks';
+import {
+  getQuantityInitialCompleted,
+  getQuantityRecords,
+  getQuantityTotal,
+  getQuantityUnit,
+  getSmartTaskBlocks,
+  getValidGraphNodeIds,
+  isQuantityTask,
+} from '@/utils/blocks';
 import { resolveTaskTheme } from '@/utils/timeline-utils';
 
 /**
@@ -57,6 +65,10 @@ export function useSmartTaskTodos(tasks: Task[], groups: TaskGroup[] = []): Aggr
           _vocabularyTotalWords: h.vocabularyTotalWords,
           _vocabularyInitialCompletedWords: h.vocabularyInitialCompletedWords,
           _vocabularyRecords: h.vocabularyRecords,
+          _quantityUnit: isQuantityTask(h) ? getQuantityUnit(h) : undefined,
+          _quantityTotal: isQuantityTask(h) ? getQuantityTotal(h) : undefined,
+          _quantityInitialCompleted: isQuantityTask(h) ? getQuantityInitialCompleted(h) : undefined,
+          _quantityRecords: isQuantityTask(h) ? getQuantityRecords(h) : undefined,
         });
       }
     }

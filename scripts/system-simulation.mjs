@@ -696,12 +696,13 @@ try {
     assert.deepEqual(normalized['2026-07-18'].blocks.map((block) => block.id), ['ok']);
   });
 
-  check('时间轴和每日安排每次保存都会同步写入本地镜像', () => {
+  check('时间轴和每日安排会合并高频变化并同步写入本地镜像', async () => {
     resetStores({ tasks: [project('p1', [smartBlock('b1', '镜像任务', [])])] });
     useTimelineStore.getState().updateBlockHeader('p1', 'b1', { title: '已保存' });
     useDailyScheduleStore.getState().addScheduledItem('2026-07-18', {
       sourceId: 'free-mirror', name: '镜像安排', source: 'free', timeSlot: 'morning',
     });
+    await new Promise((resolve) => setTimeout(resolve, 450));
     assert.ok(localStorage.getItem('smart-timeline-data:mirror'));
     assert.ok(localStorage.getItem('daily-schedule-data:mirror'));
   });
@@ -826,6 +827,59 @@ try {
     assert.equal(blocksModule.isVocabularyTask(header), true);
     assert.equal(blocksModule.getVocabularyLearnedWords(header), 1330);
     assert.equal(blocksModule.getVocabularyTotalWords(header), 5500);
+    assert.equal(blocksModule.isQuantityTask(header), true);
+    assert.equal(blocksModule.getQuantityUnit(header), '个');
+    assert.equal(blocksModule.getQuantityCompleted(header), 1330);
+  });
+
+  check('通用数量任务支持自定义单位，并按剩余量和截止日动态调整每日建议', () => {
+    const header = {
+      taskKind: 'quantity', title: '考研数学题库', tag: '做题', tagColor: '#60A5FA',
+      date: '2026-07-20', deadline: '2026-07-22', duration: 0, isCompleted: false,
+      quantityUnit: '题', quantityTotal: 1000, quantityInitialCompleted: 700,
+      quantityRecords: {},
+    };
+    assert.equal(blocksModule.isQuantityTask(header), true);
+    assert.equal(blocksModule.getQuantityCompleted(header), 700);
+    assert.deepEqual(blocksModule.getQuantityDailySuggestion(header, '2026-07-20'), {
+      remaining: 300, daysRemaining: 2, suggested: 100, overdue: false,
+    });
+    header.quantityRecords['2026-07-20'] = 50;
+    assert.deepEqual(blocksModule.getQuantityDailySuggestion(header, '2026-07-20'), {
+      remaining: 300, daysRemaining: 2, suggested: 100, overdue: false,
+    });
+    assert.deepEqual(blocksModule.getQuantityDailyStatus(header, '2026-07-20'), {
+      state: 'in-progress', actual: 50, target: 100, remainingToTarget: 50,
+    });
+    assert.deepEqual(blocksModule.getQuantityDailySuggestion(header, '2026-07-21'), {
+      remaining: 250, daysRemaining: 1, suggested: 125, overdue: false,
+    });
+    header.quantityRecords['2026-07-20'] = 100;
+    assert.deepEqual(blocksModule.getQuantityDailyStatus(header, '2026-07-20'), {
+      state: 'achieved', actual: 100, target: 100, remainingToTarget: 0,
+    });
+    const openEnded = { ...header, deadline: undefined, quantityRecords: { '2026-07-20': 12 } };
+    assert.deepEqual(blocksModule.getQuantityDailyStatus(openEnded, '2026-07-20'), {
+      state: 'recorded', actual: 12, remainingToTarget: 0,
+    });
+  });
+
+  check('通用数量任务和每日记录可进入完整工作区备份并通过校验', () => {
+    const quantity = smartBlock('quantity', '专业课背诵', [], false);
+    quantity.header = {
+      ...quantity.header,
+      taskKind: 'quantity', duration: 0, deadline: '2026-08-10',
+      quantityUnit: '章', quantityTotal: 30, quantityInitialCompleted: 3,
+      quantityRecords: { '2026-07-19': 1 },
+    };
+    resetStores({ tasks: [project('p1', [quantity])] });
+    const backup = backupModule.createWorkspaceBackup();
+    const saved = backup.timeline.tasks[0].blocks[0];
+    assert.equal(saved.header.quantityRecords['2026-07-19'], 1);
+    assert.equal(saved.header.quantityUnit, '章');
+    const validation = backupModule.validateWorkspaceBackup(backup);
+    assert.equal(validation.errors.length, 0);
+    assert.equal(validation.summary.issues.length, 0);
   });
 
   check('更新单词任务每日记录不会生成独立全局计划，并跟随项目任务持久化', () => {

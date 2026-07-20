@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from './client';
-import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
+import { createCoalescedPersistence, createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 
 import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
 import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, getValidGraphNodeIds, shouldAutoSyncEbb } from '@/utils/blocks';
@@ -250,13 +250,27 @@ async function saveDataAsync(data: TimelineData) {
   }
 }
 
+function toTimelineData(data: TimelineData): TimelineData {
+  return {
+    tasks: Array.isArray(data.tasks) ? data.tasks : [],
+    groups: Array.isArray(data.groups) ? data.groups : [],
+    notes: Array.isArray(data.notes) ? data.notes : [],
+    milestones: Array.isArray(data.milestones) ? data.milestones : [],
+  };
+}
+
+const timelinePersistence = createCoalescedPersistence<TimelineData>({
+  mirrorKey: STORAGE_MIRROR_KEY,
+  label: 'smart-timeline',
+  writeAsync: saveDataAsync,
+});
+
 export async function persistTimelineData(data: TimelineData): Promise<void> {
-  writeJsonStorage(STORAGE_MIRROR_KEY, data, 'smart-timeline');
-  await saveDataAsync(data);
+  await timelinePersistence.writeNow(toTimelineData(data));
 }
 
 export function saveData(data: TimelineData) {
-  void persistTimelineData(data);
+  timelinePersistence.schedule(toTimelineData(data));
 }
 
 // ── Liveblocks 客户端初始化 ───────────────────────────────────
@@ -985,7 +999,10 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             const dateChanged = headerPatch.date !== undefined && headerPatch.date !== currentBlock.header.date;
             const vocabularyChanged = headerPatch.vocabularyRecords !== undefined
               && !headerValueEquals(headerPatch.vocabularyRecords, currentBlock.header.vocabularyRecords);
-            if (completionChanged || dateChanged || vocabularyChanged) {
+            const quantityChanged = headerPatch.quantityRecords !== undefined
+              && !headerValueEquals(headerPatch.quantityRecords, currentBlock.header.quantityRecords);
+            const progressChanged = vocabularyChanged || quantityChanged;
+            if (completionChanged || dateChanged || progressChanged) {
               const previousPatch: Partial<SmartTaskHeader> = {};
               const expected: Partial<SmartTaskHeader> = {};
               if (completionChanged) {
@@ -1002,14 +1019,18 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 previousPatch.vocabularyRecords = currentBlock.header.vocabularyRecords;
                 expected.vocabularyRecords = headerPatch.vocabularyRecords;
               }
+              if (quantityChanged) {
+                previousPatch.quantityRecords = currentBlock.header.quantityRecords;
+                expected.quantityRecords = headerPatch.quantityRecords;
+              }
               recordOperation({
-                label: vocabularyChanged
-                  ? `更新“${currentBlock.header.title}”的单词进度`
+                label: progressChanged
+                  ? `更新“${currentBlock.header.title}”的数量进度`
                   : completionChanged
                   ? `${headerPatch.isCompleted ? '完成' : '取消完成'}“${currentBlock.header.title}”`
                   : `改期“${currentBlock.header.title}”`,
-                detail: vocabularyChanged
-                  ? '单词进度、完成状态与每日安排将作为一次操作统一恢复'
+                detail: progressChanged
+                  ? '数量进度、完成状态与每日安排将作为一次操作统一恢复'
                   : completionChanged
                     ? '项目文档、每日安排、EBB 与知识节点将统一恢复'
                     : `${currentBlock.header.date ?? '未排期'} → ${headerPatch.date ?? '未排期'}`,
@@ -1132,6 +1153,20 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             saveData(newData);
             return newData;
           });
+          if (!isOperationRecordingSuppressed()) {
+            const blockTitle = block.type === 'smart-task' ? block.header.title : '文本内容';
+            recordOperation({
+              label: `创建“${blockTitle}”`,
+              detail: '已添加到项目文档，可统一撤销',
+              modules: ['项目文档'],
+              undoSpec: { kind: 'timeline-remove-created-block', payload: { taskId, blockId: block.id } },
+            }, () => {
+              const latestState = useTimelineStore.getState();
+              const latestTask = getUniqueTasks(latestState.tasks, latestState.groups).find((item) => item.id === taskId);
+              if (!latestTask?.blocks.some((item) => item.id === block.id)) return '新建任务已经不存在';
+              latestState.removeBlock(taskId, block.id);
+            });
+          }
         },
 
         extendTaskBlocks: (taskId, newBlocks) => {
@@ -1333,6 +1368,14 @@ registerUndoExecutor('timeline-header', (raw) => {
   if (block?.type !== 'smart-task') return '任务已经不存在';
   if (Object.entries(payload.expected).some(([key, value]) => !headerValueEquals(block.header[key as keyof SmartTaskHeader], value))) return '任务在此操作后又被修改';
   state.updateBlockHeader(payload.taskId, payload.blockId, payload.patch);
+});
+
+registerUndoExecutor('timeline-remove-created-block', (raw) => {
+  const payload = raw as { taskId: string; blockId: string };
+  const state = useTimelineStore.getState();
+  const task = getUniqueTasks(state.tasks, state.groups).find((item) => item.id === payload.taskId);
+  if (!task?.blocks.some((item) => item.id === payload.blockId)) return '新建任务已经不存在';
+  state.removeBlock(payload.taskId, payload.blockId);
 });
 
 // ── 远端 Liveblocks 推送同步落盘 ──────────────────────────────

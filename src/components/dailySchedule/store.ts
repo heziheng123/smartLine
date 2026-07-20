@@ -8,7 +8,7 @@ import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from '@/store/client';
 import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
-import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
+import { createCoalescedPersistence, createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 import { registerUndoExecutor } from '@/services/operationHistory';
 
 const STORAGE_KEY = 'daily-schedule-data';
@@ -95,13 +95,18 @@ async function saveSchedulesAsync(schedules: Record<string, DaySchedule>) {
   }
 }
 
+const dailyPersistence = createCoalescedPersistence<Record<string, DaySchedule>>({
+  mirrorKey: STORAGE_MIRROR_KEY,
+  label: 'daily-schedule',
+  writeAsync: saveSchedulesAsync,
+});
+
 export async function persistDailySchedules(schedules: Record<string, DaySchedule>): Promise<void> {
-  writeJsonStorage(STORAGE_MIRROR_KEY, schedules, 'daily-schedule');
-  await saveSchedulesAsync(schedules);
+  await dailyPersistence.writeNow(schedules);
 }
 
 function saveSchedules(schedules: Record<string, DaySchedule>) {
-  void persistDailySchedules(schedules);
+  dailyPersistence.schedule(schedules);
 }
 
 // ── Store 接口 ──────────────────────────────────────────────

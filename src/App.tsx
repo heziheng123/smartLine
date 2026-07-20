@@ -18,14 +18,14 @@ import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
 import { IceboxPalette } from '@/components/smartBlock/IceboxPalette';
 import ProjectTaskBlockModal from '@/components/smartBlock/ProjectTaskBlockModal';
+import ProjectTaskCreateDialog from '@/components/smartBlock/ProjectTaskCreateDialog';
+import ViewErrorBoundary from '@/components/ViewErrorBoundary';
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
 import { AnimatePresence, motion } from 'framer-motion';
 
 import '@/styles/timeline.css';
-import '@/styles/ebb.css';
 import '@/styles/daily-schedule.css';
 import '@/styles/smart-block.css';
-import '@/styles/task-overview.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 type ProjectWorkspaceView = 'timeline' | 'overview';
@@ -52,15 +52,38 @@ function mapLiveblocksStatus(status: string | undefined) {
   return 'error' as const;
 }
 
-const TimelineView = React.lazy(() => import('@/components/TimelineView'));
-const EbbView = React.lazy(() => import('@/ebb/components/EbbView'));
-const DailyScheduleView = React.lazy(() => import('@/components/dailySchedule/DailyScheduleView'));
-const ProjectDocumentView = React.lazy(() => import('@/components/smartBlock/ProjectDocumentView'));
-const WeekMatrixView = React.lazy(() => import('@/components/smartBlock/WeekMatrixView'));
-const TaskOverviewView = React.lazy(() => import('@/components/smartBlock/TaskOverviewView'));
-const KnowledgeGraphView = React.lazy(() =>
-  import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView })),
-);
+const loadTimelineView = () => import('@/components/TimelineView');
+const loadEbbView = () => import('@/ebb/components/EbbView');
+const loadDailyScheduleView = () => import('@/components/dailySchedule/DailyScheduleView');
+const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDocumentView');
+const loadWeekMatrixView = () => import('@/components/smartBlock/WeekMatrixView');
+const loadTaskOverviewView = () => import('@/components/smartBlock/TaskOverviewView');
+const loadKnowledgeGraphView = () => import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView }));
+
+const TimelineView = React.lazy(loadTimelineView);
+const EbbView = React.lazy(async () => {
+  const retryKey = 'smart-line-lazy-retry-ebb';
+  try {
+    const module = await loadEbbView();
+    try { sessionStorage.removeItem(retryKey); } catch { /* optional storage */ }
+    return module;
+  } catch (error) {
+    try {
+      if (sessionStorage.getItem(retryKey) !== '1') {
+        sessionStorage.setItem(retryKey, '1');
+        window.location.reload();
+      }
+    } catch {
+      // The view boundary below remains available when storage cannot be used.
+    }
+    throw error;
+  }
+});
+const DailyScheduleView = React.lazy(loadDailyScheduleView);
+const ProjectDocumentView = React.lazy(loadProjectDocumentView);
+const WeekMatrixView = React.lazy(loadWeekMatrixView);
+const TaskOverviewView = React.lazy(loadTaskOverviewView);
+const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
 
 import { useGraphStore } from '@/graph/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
@@ -79,12 +102,18 @@ const ViewFallback: React.FC = () => (
 );
 
 const App: React.FC = () => {
-  const { isHydrated: isGraphHydrated, hydrateStore: hydrateGraphStore } = useGraphStore();
-  const { isHydrated: isEbbHydrated, hydrateStore: hydrateEbbStore } = useEbbStore();
+  const { isHydrated: isGraphHydrated, hydrateStore: hydrateGraphStore } = useGraphStore(
+    useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
+  );
+  const { isHydrated: isEbbHydrated, hydrateStore: hydrateEbbStore } = useEbbStore(
+    useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
+  );
   const {
     isHydrated: isDailyHydrated,
     hydrateStore: hydrateDailyStore,
-  } = useDailyScheduleStore();
+  } = useDailyScheduleStore(
+    useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
+  );
   const timelineLiveStatus = useTimelineStore((state) => state.liveblocks?.status);
   const ebbLiveStatus = useEbbStore((state) => state.liveblocks?.status);
   const dailyLiveStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
@@ -265,14 +294,16 @@ const App: React.FC = () => {
     if (!isHydrated) {
       hydrateStore();
     }
-    if (!isGraphHydrated) {
-      hydrateGraphStore();
-    }
-    if (!isEbbHydrated) {
-      hydrateEbbStore();
-    }
-    if (!isDailyHydrated) {
-      hydrateDailyStore();
+    const hydrateSecondaryStores = () => {
+      if (!isGraphHydrated) hydrateGraphStore();
+      if (!isEbbHydrated) hydrateEbbStore();
+      if (!isDailyHydrated) hydrateDailyStore();
+    };
+    const requestIdle = window.requestIdleCallback;
+    if (typeof requestIdle === 'function') {
+      requestIdle(hydrateSecondaryStores, { timeout: 800 });
+    } else {
+      globalThis.setTimeout(hydrateSecondaryStores, 50);
     }
   }, [
     isHydrated,
@@ -701,7 +732,15 @@ const App: React.FC = () => {
     setDialogType('sync');
   }, []);
 
-  if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated) {
+  const preloadView = useCallback((view: AppModule) => {
+    if (view === 'timeline') { void loadTimelineView(); void loadTaskOverviewView(); return; }
+    if (view === 'ebb') { void loadEbbView(); return; }
+    if (view === 'daily-schedule') { void loadDailyScheduleView(); return; }
+    if (view === 'week-matrix') { void loadWeekMatrixView(); return; }
+    if (view === 'knowledge-graph') void loadKnowledgeGraphView();
+  }, []);
+
+  if (!isHydrated) {
     return (
       <div className="tl-app flex items-center justify-center">
         <div className="text-slate-400 text-sm">正在加载数据...</div>
@@ -722,11 +761,18 @@ const App: React.FC = () => {
         onAddNote={handleAddNote}
         onAddMilestone={handleAddMilestone}
         onOpenSync={handleOpenSync}
+        onViewPreload={preloadView}
         projectWorkspaceView={projectWorkspaceView}
         onProjectWorkspaceViewChange={setProjectWorkspaceView}
       />
 
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
+      <ViewErrorBoundary
+        viewName={currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
+        resetKey={currentView}
+        safeModeKey={currentView === 'ebb' ? 'smart-line-ebb-safe-mode' : undefined}
+        onExit={currentView === 'timeline' ? undefined : () => setCurrentView('timeline')}
+      >
       <AnimatePresence mode="wait">
         {currentView === 'ebb' && (
           <motion.div 
@@ -935,6 +981,8 @@ const App: React.FC = () => {
           <IceboxPalette />
         )}
       </AnimatePresence>
+      </ViewErrorBoundary>
+      <ProjectTaskCreateDialog />
       <ProjectTaskBlockModal />
     </div>
   );

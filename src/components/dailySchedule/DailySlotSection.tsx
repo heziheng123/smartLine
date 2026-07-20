@@ -1,6 +1,6 @@
 import React from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
-import { Check, CircleDashed, Clock, GripVertical, Link as LinkIcon, X } from 'lucide-react';
+import { Check, CircleDashed, Clock, GripVertical, Hash, Link as LinkIcon, X } from 'lucide-react';
 import type { ScheduledItem, TimeSlotConfig } from './types';
 import TimeSlotIcon from './TimeSlotIcon';
 import { droppableIdForSlot } from './dndIds';
@@ -11,6 +11,7 @@ interface SlotStats {
   total: number;
   completed: number;
   totalDuration: number;
+  inProgress: number;
 }
 
 interface DailySlotSectionProps {
@@ -21,11 +22,12 @@ interface DailySlotSectionProps {
   freeItemName: string;
   freeInputRef: React.RefObject<HTMLInputElement | null>;
   getVirtualTime: (itemId: string) => string;
-  isVocabularySource: (sourceId: string) => boolean;
+  isQuantitySource: (sourceId: string) => boolean;
   checkIsUnlinkedTask: (sourceId: string) => boolean;
   checkIsLinkedTask: (sourceId: string) => boolean;
   onOpenProjectSource: (sourceId: string) => void;
   onToggleItem: (itemId: string) => void;
+  onRecordQuantityTarget: (itemId: string, target: number) => void;
   onRemoveItem: (itemId: string) => void;
   onStartAddFree: () => void;
   onFreeItemNameChange: (value: string) => void;
@@ -41,11 +43,12 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
   freeItemName,
   freeInputRef,
   getVirtualTime,
-  isVocabularySource,
+  isQuantitySource,
   checkIsUnlinkedTask,
   checkIsLinkedTask,
   onOpenProjectSource,
   onToggleItem,
+  onRecordQuantityTarget,
   onRemoveItem,
   onStartAddFree,
   onFreeItemNameChange,
@@ -56,7 +59,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
     ? '暂无任务'
     : stats.completed === stats.total
       ? '本时段已完成'
-      : `${stats.completed}/${stats.total} 完成`;
+      : `${stats.completed}/${stats.total} 完成${stats.inProgress > 0 ? ` · ${stats.inProgress} 进行中` : ''}`;
 
   return (
     <section className="ds-slot-section" aria-labelledby={`ds-slot-title-${config.slot}`}>
@@ -85,7 +88,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
               <div className="ds-slot-placeholder">从任务池拖入，或添加生活安排</div>
             )}
             {items.map((item, index) => {
-              const vocabulary = isVocabularySource(item.sourceId);
+              const quantity = isQuantitySource(item.sourceId);
               const unlinked = checkIsUnlinkedTask(item.sourceId);
               return (
                 <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={item.id.startsWith('virtual-block-')}>
@@ -93,7 +96,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
                     <div
                       ref={provided.innerRef}
                       {...provided.draggableProps}
-                      className={`ds-item ${item.completed ? 'ds-item--completed' : ''} ${snapshot.isDragging ? 'ds-item--dragging' : ''} ${item.id.startsWith('virtual-block-') ? 'ds-item--virtual' : ''} ${unlinked ? 'ds-item--unlinked' : ''} ${item.source === 'free' ? 'ds-item--free' : ''}`}
+                      className={`ds-item ${quantity ? 'ds-item--quantity' : ''} ${item.completed ? 'ds-item--completed' : ''} ${snapshot.isDragging ? 'ds-item--dragging' : ''} ${item.id.startsWith('virtual-block-') ? 'ds-item--virtual' : ''} ${unlinked ? 'ds-item--unlinked' : ''} ${item.source === 'free' ? 'ds-item--free' : ''}`}
                       style={{
                         ...provided.draggableProps.style,
                         backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
@@ -109,18 +112,48 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
                             ? <span title="未绑定节点" className="ml-1 inline-flex items-center"><CircleDashed size={12} className="opacity-40" /></span>
                             : checkIsLinkedTask(item.sourceId) && <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500"><LinkIcon size={12} className="opacity-60" /></span>)}
                         </span>
-                        {item.detail && (item.source === 'free' || vocabulary) && <span className="ds-item-detail">{item.detail}</span>}
+                        {item.detail && item.source === 'free' && <span className="ds-item-detail">{item.detail}</span>}
                       </div>
+                      {quantity && (
+                        <div
+                          className={`ds-item-quantity-inline ds-item-quantity-inline--${item.quantityState ?? 'unrecorded'}`}
+                          title={`今日 ${item.quantityActual ?? 0}${item.quantityTarget !== undefined ? `/${item.quantityTarget}` : ''} ${item.quantityUnit} · 总进度 ${item.quantityCompleted ?? 0}/${item.quantityTotal ?? 0} ${item.quantityUnit} · 剩余 ${Math.max(0, (item.quantityTotal ?? 0) - (item.quantityCompleted ?? 0))} ${item.quantityUnit}`}
+                        >
+                          <span className="ds-item-quantity-metric ds-item-quantity-metric--today"><Hash size={11} />今日 <strong>{item.quantityActual ?? 0}{item.quantityTarget !== undefined ? `/${item.quantityTarget}` : ''} {item.quantityUnit}</strong></span>
+                          <span className="ds-item-quantity-metric ds-item-quantity-metric--total">总 <strong>{item.quantityCompleted ?? 0}/{item.quantityTotal ?? 0} {item.quantityUnit}</strong></span>
+                          <span className="ds-item-quantity-mini-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.round(((item.quantityCompleted ?? 0) / Math.max(1, item.quantityTotal ?? 1)) * 100))}%` }} /></span>
+                          {item.quantityTarget !== undefined && (item.quantityActual ?? 0) < item.quantityTarget && (
+                            <button
+                              type="button"
+                              className="ds-item-quantity-quick"
+                              aria-label={(item.quantityActual ?? 0) > 0 ? `补到 ${item.quantityTarget} ${item.quantityUnit}` : `按目标记录 ${item.quantityTarget} ${item.quantityUnit}`}
+                              title={(item.quantityActual ?? 0) > 0 ? `补到 ${item.quantityTarget} ${item.quantityUnit}` : `按目标记录 ${item.quantityTarget} ${item.quantityUnit}`}
+                              onClick={(event) => { event.stopPropagation(); onRecordQuantityTarget(item.id, item.quantityTarget!); }}
+                            >
+                              {(item.quantityActual ?? 0) > 0 ? `补${Math.max(0, item.quantityTarget - (item.quantityActual ?? 0))}` : `+${item.quantityTarget}`}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="ds-item-quantity-edit"
+                            aria-label={(item.quantityActual ?? 0) > 0 ? '编辑记录' : '自定义数量'}
+                            title={(item.quantityActual ?? 0) > 0 ? '编辑今日数量' : '记录今日数量'}
+                            onClick={(event) => { event.stopPropagation(); onToggleItem(item.id); }}
+                          >
+                            {(item.quantityActual ?? 0) > 0 ? '编辑' : '记录'}
+                          </button>
+                        </div>
+                      )}
                       {item.id.startsWith('virtual-block-') && <div className="ds-item-duration ds-item-duration--virtual"><Clock size={11} />{getVirtualTime(item.id)}</div>}
                       {(item.duration || item.source === 'review') && !item.id.startsWith('virtual-block-') && <span className="ds-item-duration"><Clock size={11} />{item.duration ?? 30}min</span>}
                       <span
-                        className={`ds-item-source ds-item-source--${vocabulary ? 'vocabulary' : item.source} ${item.source === 'project' && !vocabulary ? 'ds-project-name-badge' : ''}`}
-                        title={item.source === 'project' ? (vocabulary ? '单词任务' : item.detail || '项目') : undefined}
-                        style={item.source === 'project' && !vocabulary ? projectBadgeStyle(item.color) : undefined}
+                        className={`ds-item-source ds-item-source--${quantity ? 'vocabulary' : item.source} ${item.source === 'project' && !quantity ? 'ds-project-name-badge' : ''}`}
+                        title={item.source === 'project' ? (quantity ? '数量任务' : item.detail || '项目') : undefined}
+                        style={item.source === 'project' && !quantity ? projectBadgeStyle(item.color) : undefined}
                       >
-                        {vocabulary ? '单词' : item.source === 'project' ? (item.detail || '项目') : item.source === 'review' ? `复习${item.detail ? ` · ${item.detail}` : ''}` : '占位'}
+                        {quantity ? '数量' : item.source === 'project' ? (item.detail || '项目') : item.source === 'review' ? `复习${item.detail ? ` · ${item.detail}` : ''}` : '占位'}
                       </span>
-                      {item.source !== 'free' && (
+                      {item.source !== 'free' && !quantity && (
                         <button type="button" className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`} onClick={(event) => { event.stopPropagation(); onToggleItem(item.id); }} aria-label={item.completed ? `取消完成：${item.name}` : `完成：${item.name}`}>
                           <Check size={13} />
                         </button>

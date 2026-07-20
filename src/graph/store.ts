@@ -4,7 +4,7 @@ import type { WithLiveblocks } from '@liveblocks/zustand';
 import { GraphNode, GraphData } from './types';
 import { genId } from '@/ebb/scheduler';
 import { liveblocksClient } from '@/store/client';
-import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
+import { createCoalescedPersistence, createScopedStorage, readJsonStorage } from '@/utils/persistence';
 
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
@@ -114,9 +114,14 @@ async function saveGraphDataAsync(data: GraphData) {
 }
 
 function saveGraphData(data: GraphData) {
-  writeJsonStorage(GRAPH_STORAGE_MIRROR_KEY, data, 'smart-graph');
-  saveGraphDataAsync(data);
+  graphPersistence.schedule(data);
 }
+
+const graphPersistence = createCoalescedPersistence<GraphData>({
+  mirrorKey: GRAPH_STORAGE_MIRROR_KEY,
+  label: 'smart-graph',
+  writeAsync: saveGraphDataAsync,
+});
 
 export type GraphSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -175,7 +180,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                 nodes,
                 isHydrated: true,
               });
-              saveGraphData({ nodes });
               return;
             }
           } catch (e) {
@@ -220,7 +224,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                 newNode,
               ],
             };
-            saveGraphData(newData);
             return newData;
           });
 
@@ -247,7 +250,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                     : node
               ),
             };
-            saveGraphData(newData);
             return newData;
           });
           
@@ -282,7 +284,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                     : node
                 ),
             };
-            saveGraphData(newData);
             return newData;
           });
         },
@@ -302,7 +303,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                 { ...node, status: childrenIds.length > 0 ? undefined : node.status }
               ]
             };
-            saveGraphData(newData);
             return newData;
           });
         },
@@ -332,7 +332,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                     : n
               )
             };
-            saveGraphData(newData);
             return newData;
           });
         },
@@ -357,7 +356,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             nodes: mergedNodes,
           };
           
-          saveGraphData(merged);
           set(merged);
         },
 
@@ -367,7 +365,6 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
               Array.isArray(data?.nodes) ? data.nodes.filter(isValidGraphNode) : [],
             ),
           };
-          saveGraphData(normalized);
           set(normalized);
         },
       };
@@ -398,6 +395,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
 
     if (state.nodes === lastNodes) return;
     lastNodes = state.nodes;
+    saveGraphData({ nodes: state.nodes });
 
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -405,9 +403,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
       const normalized = normalizeGraphNodes(latest);
       if (JSON.stringify(latest) !== JSON.stringify(normalized)) {
         useGraphStore.setState({ nodes: normalized });
-        return;
       }
-      saveGraphData({ nodes: latest });
     }, 500);
   });
 }

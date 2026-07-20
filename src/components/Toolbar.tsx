@@ -12,6 +12,7 @@ export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 
 interface ToolbarProps {
   currentView: AppModule;
   onViewChange: (view: AppModule) => void;
+  onViewPreload?: (view: AppModule) => void;
   displayYear: number;
   onYearChange: (year: number) => void;
   onAddTask: () => void;
@@ -26,6 +27,7 @@ interface ToolbarProps {
 const Toolbar: React.FC<ToolbarProps> = ({
   currentView,
   onViewChange,
+  onViewPreload,
   displayYear,
   onYearChange,
   onAddTask,
@@ -175,6 +177,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
                       }
                     }
                   }}
+                  onPointerEnter={() => onViewPreload?.('timeline')}
+                  onFocus={() => onViewPreload?.('timeline')}
                   title="项目规划"
                 >
                   {item.icon}
@@ -238,6 +242,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
               type="button"
               className={`tl-dock-btn ${active ? 'tl-dock-btn--active' : ''}`}
               onClick={() => onViewChange(item.module)}
+              onPointerEnter={() => onViewPreload?.(item.module)}
+              onFocus={() => onViewPreload?.(item.module)}
               title={item.label}
               style={{ position: 'relative', flexShrink: 0 }}
             >

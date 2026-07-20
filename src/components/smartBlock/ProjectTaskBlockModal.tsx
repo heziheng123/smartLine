@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUpRight, BookOpen, CalendarDays, Clock3, FolderOpen, Layers3, ListTodo, Tag, X } from 'lucide-react';
+import { ArrowUpRight, Hash, CalendarDays, Clock3, FolderOpen, Layers3, ListTodo, Tag, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import { SmartTaskBlockCard } from './SmartTaskBlockCard';
 import { PROJECT_TASK_MODAL_EVENT, type ProjectTaskModalDetail } from './projectTaskModal';
-import { getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
+import { getQuantityCompleted, getQuantityTotal, getQuantityUnit, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { formatDate } from '@/utils/dateSafe';
 
 const ProjectTaskBlockModal: React.FC = () => {
@@ -74,7 +74,7 @@ const ProjectTaskBlockModal: React.FC = () => {
     'time-block': '时间块',
     project: '项目文档',
   };
-  const vocabulary = isVocabularyTask(block.header);
+  const quantity = isQuantityTask(block.header);
   const graphNodeCount = getValidGraphNodeIds(block.header).length;
 
   const openInProject = () => {
@@ -106,7 +106,7 @@ const ProjectTaskBlockModal: React.FC = () => {
           <div className="ptm-context-grid" aria-label="任务上下文">
             <div><CalendarDays size={14} /><span>计划日期</span><strong>{formatDate(block.header.date, 'M月D日')}</strong></div>
             <div><Tag size={14} /><span>标签</span><strong>{block.header.tag || '未分类'}</strong></div>
-            <div>{vocabulary ? <BookOpen size={14} /> : <Clock3 size={14} />}<span>{vocabulary ? '单词进度' : '预计时长'}</span><strong>{vocabulary ? `${getVocabularyLearnedWords(block.header)}/${getVocabularyTotalWords(block.header)}` : `${block.header.duration} 分钟`}</strong></div>
+            <div>{quantity ? <Hash size={14} /> : <Clock3 size={14} />}<span>{quantity ? '数量进度' : '预计时长'}</span><strong>{quantity ? `${getQuantityCompleted(block.header)}/${getQuantityTotal(block.header)} ${getQuantityUnit(block.header)}` : `${block.header.duration} 分钟`}</strong></div>
             <div><Layers3 size={14} /><span>知识关联</span><strong>{graphNodeCount > 0 ? `${graphNodeCount} 个节点` : '未绑定'}</strong></div>
           </div>
           <SmartTaskBlockCard
@@ -120,7 +120,7 @@ const ProjectTaskBlockModal: React.FC = () => {
           <p className="ptm-date-change-hint">修改名称、日期、标签或进度后，项目文档、任务总览、周矩阵和每日安排会读取同一份任务数据。</p>
         </div>
         <footer className="ptm-footer">
-          <div className="ptm-footer-context"><ListTodo size={14} /><span>{vocabulary ? '单词任务通过每日数量记录推进总进度' : '完成状态会同步关联模块并进入统一撤销记录'}</span></div>
+          <div className="ptm-footer-context"><ListTodo size={14} /><span>{quantity ? '数量任务通过每日完成量推进总进度，不记录时长' : '完成状态会同步关联模块并进入统一撤销记录'}</span></div>
           <div className="ptm-footer-actions">
             <button type="button" className="ptm-nav-btn" onClick={openInProject}><ArrowUpRight size={14} />在项目中定位</button>
             <button type="button" className="ptm-nav-btn" onClick={openInDailySchedule}><CalendarDays size={14} />查看每日安排</button>

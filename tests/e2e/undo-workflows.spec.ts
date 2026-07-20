@@ -182,62 +182,92 @@ test('daily schedule keeps the real drag transform and visual feedback', async (
   await expect(card).not.toHaveClass(/ds-pool-item--dragging/);
 });
 
-test('project vocabulary task is placed manually and records daily word count without duration', async ({ page }) => {
+test('project quantity task suggests a daily target and records progress without duration', async ({ page }) => {
   await page.getByTitle('项目规划').click();
   await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
   await page.getByRole('button', { name: '添加任务卡片' }).click();
-  await page.getByRole('button', { name: '单词任务', exact: true }).click();
-  const createDialog = page.getByRole('dialog', { name: '新建单词任务' });
+  const createDialog = page.getByRole('dialog', { name: '新建项目任务' });
   await expect(createDialog).toBeVisible();
-  await createDialog.getByLabel('任务名称').fill('考研核心词汇');
-  await createDialog.getByLabel('总单词数').fill('5500');
-  await createDialog.getByLabel('当前已学').fill('1200');
-  await createDialog.getByRole('button', { name: '创建单词任务' }).click();
+  await createDialog.getByRole('button', { name: '按数量推进' }).click();
+  await createDialog.getByLabel('任务名称').fill('考研数学题库');
+  await createDialog.getByLabel('目标总量').fill('1000');
+  await createDialog.locator('summary').click();
+  await createDialog.getByLabel('当前已完成').fill('200');
+  await createDialog.getByLabel('截止日期（可选）').fill(addTestDays(testDate, 9));
+  await expect(createDialog.getByLabel('每日建议预览')).toContainText('建议首日完成 80 题');
+  await createDialog.getByRole('button', { name: '创建任务' }).click();
 
-  const projectCard = page.locator('.stb-card').filter({ hasText: '考研核心词汇' });
+  const projectCard = page.locator('.stb-card').filter({ hasText: '考研数学题库' });
   await expect(projectCard).toBeVisible();
-  await expect(projectCard.getByTitle('累计已学单词数')).toHaveValue('1200');
-  await expect(projectCard.getByTitle('总单词数')).toHaveValue('5500');
+  await expect(projectCard).toContainText('进度 200/1000 题 · 20%');
+  await expect(projectCard).toContainText('今日 0/80 题');
+  await expect(projectCard).toContainText('剩余 800 题');
+  await expect(projectCard).toContainText('建议今天 80 题');
   await expect(projectCard).not.toContainText('min');
   await page.getByRole('button', { name: '关闭项目文档' }).click();
 
   await page.getByRole('tab', { name: '每日安排' }).click();
 
-  const poolCard = page.locator('.ds-pool-item').filter({ hasText: '考研核心词汇' });
-  await expect(poolCard).toContainText('剩余 4300');
+  const poolCard = page.locator('.ds-pool-item').filter({ hasText: '考研数学题库' });
+  await expect(poolCard).toContainText('剩余 800 题');
+  await expect(poolCard).toContainText('今日目标 80 题');
   await expect(poolCard).not.toContainText('min');
   const draggableId = await poolCard.evaluate((element) => {
     const attribute = [...element.attributes].find((candidate) => candidate.name.endsWith('draggable-id'));
     return attribute?.value;
   });
-  if (!draggableId) throw new Error('vocabulary draggable id missing');
+  if (!draggableId) throw new Error('quantity draggable id missing');
   await page.waitForFunction(() => typeof (window as typeof window & { __e2eDailyDragEnd?: unknown }).__e2eDailyDragEnd === 'function');
   await page.evaluate((id) => (window as typeof window & { __e2eDailyDragEnd: (result: unknown) => void }).__e2eDailyDragEnd({
     draggableId: id, type: 'DEFAULT', reason: 'DROP', mode: 'FLUID', combine: null,
-    source: { droppableId: 'ds-pool-vocabulary', index: 0 },
+    source: { droppableId: 'ds-pool', index: 0 },
     destination: { droppableId: 'ds-slot-afternoon', index: 0 },
   }), draggableId);
 
-  const afternoonCard = page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: '考研核心词汇' });
+  const afternoonCard = page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: '考研数学题库' });
   await expect(afternoonCard).toBeVisible();
+  await expect(afternoonCard).toHaveClass(/ds-item--quantity/);
   await expect(afternoonCard).not.toContainText('min');
-  await afternoonCard.locator('.ds-item-check').click();
-  const progressDialog = page.getByRole('dialog', { name: '记录今日单词' });
-  await progressDialog.getByLabel('今天新学了多少个？').fill('50');
+  const quantityLayout = await afternoonCard.evaluate((element) => {
+    const card = element.getBoundingClientRect();
+    const name = element.querySelector('.ds-item-name')?.getBoundingClientRect();
+    const summary = element.querySelector('.ds-item-quantity-inline')?.getBoundingClientRect();
+    const editButton = element.querySelector('.ds-item-quantity-edit')?.getBoundingClientRect();
+    return {
+      height: card.height,
+      nameVisible: Boolean(name && name.top >= card.top && name.bottom <= card.bottom),
+      summaryVisible: Boolean(summary && summary.top >= card.top && summary.bottom <= card.bottom),
+      editButtonVisible: Boolean(editButton && editButton.top >= card.top && editButton.bottom <= card.bottom),
+    };
+  });
+  expect(quantityLayout.height).toBeGreaterThanOrEqual(54);
+  expect(quantityLayout.height).toBeLessThanOrEqual(58);
+  expect(quantityLayout.nameVisible).toBeTruthy();
+  expect(quantityLayout.summaryVisible).toBeTruthy();
+  expect(quantityLayout.editButtonVisible).toBeTruthy();
+  await afternoonCard.getByRole('button', { name: '自定义数量' }).click();
+  const progressDialog = page.getByRole('dialog', { name: '记录今日完成量' });
+  await expect(progressDialog.getByLabel('每日完成建议')).toContainText('建议今日完成 80 题');
+  await progressDialog.getByLabel('今日完成了多少题？').fill('35');
   await progressDialog.getByRole('button', { name: '完成记录' }).click();
-  await expect(afternoonCard).toHaveClass(/ds-item--completed/);
-  await expect(afternoonCard).toContainText('今日 +50');
-  await expect(afternoonCard).toContainText('1250/5500');
+  await expect(afternoonCard).not.toHaveClass(/ds-item--completed/);
+  await expect(afternoonCard).toContainText('今日 35/80 题');
+  await expect(afternoonCard).toContainText('235/1000 题');
+  await expect(afternoonCard.locator('.ds-item-quantity-inline')).toHaveAttribute('title', /剩余 765 题/);
+  await expect(afternoonCard.getByRole('button', { name: '补到 80 题' })).toContainText('补45');
 
   await page.reload();
   await page.getByRole('tab', { name: '每日安排' }).click();
-  const refreshedCard = page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: '考研核心词汇' });
+  const refreshedCard = page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: '考研数学题库' });
+  await expect(refreshedCard).not.toHaveClass(/ds-item--completed/);
+  await expect(refreshedCard).toContainText('今日 35/80 题');
+  await refreshedCard.getByRole('button', { name: '补到 80 题' }).click();
   await expect(refreshedCard).toHaveClass(/ds-item--completed/);
-  await expect(refreshedCard).toContainText('今日 +50');
+  await expect(refreshedCard).toContainText('今日 80/80 题');
   await undoLatestFromHistory(page);
   await expect(refreshedCard).not.toHaveClass(/ds-item--completed/);
-  await expect(refreshedCard).not.toContainText('今日 +50');
-  await expect(refreshedCard).toContainText('1200/5500');
+  await expect(refreshedCard).toContainText('今日 35/80 题');
+  await expect(refreshedCard).toContainText('235/1000 题');
 });
 
 test('knowledge binding actions stay inside an iPad Air viewport', async ({ page }) => {

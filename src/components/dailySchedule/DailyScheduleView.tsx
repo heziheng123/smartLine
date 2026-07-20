@@ -13,17 +13,27 @@ import {
 import {
   Settings2,
   ListTodo,
+  Plus,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
-import { getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
+import {
+  getQuantityCompleted,
+  getQuantityDailySuggestion,
+  getQuantityDailyStatus,
+  getQuantityRecords,
+  getQuantityTotal,
+  getQuantityUnit,
+  getValidGraphNodeIds,
+  isQuantityTask,
+} from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
 import BlockModeView from './BlockModeView';
-import VocabularyProgressDialog from './VocabularyProgressDialog';
+import QuantityProgressDialog from './QuantityProgressDialog';
 import {
   DEFAULT_TIME_SLOT_CONFIGS,
   type TimeSlot,
@@ -41,7 +51,7 @@ import {
   resolveProjectAppearance,
 } from './projectAppearance';
 import { recordOperation } from '@/services/operationHistory';
-import { removeVocabularyProgress, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { recordQuantityProgress, removeQuantityProgress, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
 import DailySlotSection from './DailySlotSection';
 import DailyTaskPool, { type CompletedDailyPoolItem, type DailyPoolItem } from './DailyTaskPool';
 import TimeSlotIcon from './TimeSlotIcon';
@@ -51,6 +61,7 @@ import {
   DROPPABLE_VOCABULARY_POOL,
   isTaskPoolDroppable,
 } from './dndIds';
+import { openProjectTaskCreate } from '@/components/smartBlock/projectTaskCreate';
 
 // ── 主组件 ───────────────────────────────────────────────────
 
@@ -129,7 +140,7 @@ const DailyScheduleView: React.FC = () => {
     })),
   );
 
-  const { nodes: graphNodes } = useGraphStore();
+  const graphNodes = useGraphStore((state) => state.nodes);
 
   // 过滤冷数据（已归档节点关联的任务/块）
   const archivedNodeIds = useMemo(() => new Set(graphNodes.filter(n => n.isArchived).map(n => n.id)), [graphNodes]);
@@ -161,17 +172,25 @@ const DailyScheduleView: React.FC = () => {
     }));
   }, [rawTlTasks, rawTlGroups, archivedNodeIds]);
 
-  const { checkIsCompleted } = useTaskCompletionStatus();
-  const getProjectBlockFromSource = useCallback((sourceId: string) => {
-    const parsed = parseSourceId(sourceId);
-    if (parsed?.source !== 'project' || !parsed.parentTaskId || !parsed.blockId) return null;
-    const task = tlTasks.find((candidate) => candidate.id === parsed.parentTaskId);
-    const block = task?.blocks.find((candidate) => candidate.id === parsed.blockId);
-    return block?.type === 'smart-task' ? { taskId: parsed.parentTaskId, task, block } : null;
+  const projectSourceById = useMemo(() => {
+    const map = new Map<string, { taskId: string; task: (typeof tlTasks)[number]; block: SmartTaskBlock }>();
+    for (const task of tlTasks) {
+      for (const block of task.blocks ?? []) {
+        if (block.type === 'smart-task') map.set(getProjectBlockSourceId(task.id, block.id), { taskId: task.id, task, block });
+      }
+    }
+    return map;
   }, [tlTasks]);
+  const ebbReviewById = useMemo(() => new Map(ebbReviewTasks.map((task) => [task.id, task])), [ebbReviewTasks]);
 
-  const isVocabularySource = useCallback(
-    (sourceId: string) => Boolean(getProjectBlockFromSource(sourceId)?.block.header.taskKind === 'vocabulary'),
+  const { checkIsCompleted } = useTaskCompletionStatus();
+  const getProjectBlockFromSource = useCallback(
+    (sourceId: string) => projectSourceById.get(sourceId) ?? null,
+    [projectSourceById],
+  );
+
+  const isQuantitySource = useCallback(
+    (sourceId: string) => isQuantityTask(getProjectBlockFromSource(sourceId)?.block.header),
     [getProjectBlockFromSource],
   );
   const {
@@ -202,7 +221,7 @@ const DailyScheduleView: React.FC = () => {
   const [showSlotSettings, setShowSlotSettings] = useState(false);
 
   // 筛选/排序
-  const [filterSource, setFilterSource] = useState<'all' | 'project' | 'review' | 'vocabulary'>('all');
+  const [filterSource, setFilterSource] = useState<'all' | 'project' | 'review' | 'quantity'>('all');
 
   // ── 添加自由占位符 ───────────────────────────────────────
   const [addingFreeSlot, setAddingFreeSlot] = useState<TimeSlot | null>(null);
@@ -245,8 +264,14 @@ const DailyScheduleView: React.FC = () => {
 
   const todayProjectTasks = useMemo(() => {
     return mergedTodos.filter((todo) => {
-      if (todo._taskKind === 'vocabulary') {
-        if (todo.checked || todo._vocabularyRecords?.[selectedDate]) return false;
+      if (isQuantityTask({ taskKind: todo._taskKind })) {
+        const status = getQuantityDailyStatus({
+          taskKind: 'quantity', date: todo.scheduled, deadline: todo.due,
+          quantityTotal: todo._quantityTotal,
+          quantityInitialCompleted: todo._quantityInitialCompleted,
+          quantityRecords: todo._quantityRecords,
+        }, selectedDate);
+        if (todo.checked || status.state === 'achieved' || status.state === 'recorded') return false;
         return Boolean(todo.scheduled && todo.scheduled <= selectedDate);
       }
       if (todo.checked) return false;
@@ -259,7 +284,15 @@ const DailyScheduleView: React.FC = () => {
 
   const completedProjectTasks = useMemo(() => {
     return mergedTodos.filter((todo) => {
-      if (todo._taskKind === 'vocabulary') return Boolean(todo._vocabularyRecords?.[selectedDate]);
+      if (isQuantityTask({ taskKind: todo._taskKind })) {
+        const status = getQuantityDailyStatus({
+          taskKind: 'quantity', date: todo.scheduled, deadline: todo.due,
+          quantityTotal: todo._quantityTotal,
+          quantityInitialCompleted: todo._quantityInitialCompleted,
+          quantityRecords: todo._quantityRecords,
+        }, selectedDate);
+        return status.state === 'achieved' || status.state === 'recorded';
+      }
       if (!todo.checked) return false;
       return todo.scheduled === selectedDate || todo.due === selectedDate;
     });
@@ -284,24 +317,16 @@ const DailyScheduleView: React.FC = () => {
     if (!parsed) return false;
 
     if (parsed.source === 'review') {
-      const reviewTask = ebbReviewTasks.find((t) => t.id === parsed.reviewId);
+      const reviewTask = ebbReviewById.get(parsed.reviewId);
       return reviewTask ? !reviewTask.graphNodeId : false;
     }
     
     if (parsed.source === 'project') {
-      const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-      if (!parentTask || !parentTask.blocks) return false;
-      
-      if (parsed.blockId) {
-        const block = parentTask.blocks.find(b => b.id === parsed.blockId);
-        if (block?.type === 'smart-task') {
-          const ids = getValidGraphNodeIds(block.header);
-          return ids.length === 0; // 如果没有 graphNodeIds，说明未绑定
-        }
-      }
+      const block = getProjectBlockFromSource(sourceId)?.block;
+      if (block) return getValidGraphNodeIds(block.header).length === 0;
     }
     return false;
-  }, [tlTasks, ebbReviewTasks]);
+  }, [ebbReviewById, getProjectBlockFromSource]);
 
   // ── 判断是否已绑定节点 ──────────────────────────────────
   const checkIsLinkedTask = useCallback((sourceId: string) => {
@@ -309,24 +334,16 @@ const DailyScheduleView: React.FC = () => {
     if (!parsed) return false;
 
     if (parsed.source === 'review') {
-      const reviewTask = ebbReviewTasks.find((t) => t.id === parsed.reviewId);
+      const reviewTask = ebbReviewById.get(parsed.reviewId);
       return reviewTask ? !!reviewTask.graphNodeId : false;
     }
     
     if (parsed.source === 'project') {
-      const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-      if (!parentTask || !parentTask.blocks) return false;
-      
-      if (parsed.blockId) {
-        const block = parentTask.blocks.find(b => b.id === parsed.blockId);
-        if (block?.type === 'smart-task') {
-          const ids = getValidGraphNodeIds(block.header);
-          return ids.length > 0; // 如果有 graphNodeIds，说明已绑定
-        }
-      }
+      const block = getProjectBlockFromSource(sourceId)?.block;
+      if (block) return getValidGraphNodeIds(block.header).length > 0;
     }
     return false;
-  }, [tlTasks, ebbReviewTasks]);
+  }, [ebbReviewById, getProjectBlockFromSource]);
 
   // ── 已安排的 sourceId 集合（items + blocks 合并） ────────
   const scheduledSourceIds = useMemo(() => {
@@ -342,16 +359,20 @@ const DailyScheduleView: React.FC = () => {
       if (!todo._blockId) continue;
       const sourceId = getProjectBlockSourceId(todo.parentTaskId, todo._blockId);
       if (scheduledSourceIds.has(sourceId)) continue;
-      const vocabularyLearned = (todo._vocabularyInitialCompletedWords ?? 0)
-        + Object.values(todo._vocabularyRecords ?? {}).reduce((sum, value) => sum + value, 0);
+      const projectSource = getProjectBlockFromSource(sourceId);
+      const quantityHeader = projectSource && isQuantityTask(projectSource.block.header) ? projectSource.block.header : undefined;
+      const quantityCompleted = quantityHeader ? getQuantityCompleted(quantityHeader) : 0;
+      const quantityTotal = quantityHeader ? getQuantityTotal(quantityHeader) : 0;
+      const quantityUnit = quantityHeader ? getQuantityUnit(quantityHeader) : '';
+      const quantityRecord = quantityHeader ? getQuantityRecords(quantityHeader)[selectedDate] : undefined;
       items.push({
         id: `completed-project-${todo.id}`,
         name: todo.text,
         source: 'project',
         sourceId,
         taskKind: todo._taskKind,
-        detail: todo._taskKind === 'vocabulary'
-          ? `今日 +${todo._vocabularyRecords?.[selectedDate]} · 已学 ${vocabularyLearned}/${todo._vocabularyTotalWords ?? 0}`
+        detail: quantityHeader
+          ? `今日完成 ${quantityRecord ?? 0} ${quantityUnit} · 总进度 ${quantityCompleted}/${quantityTotal} ${quantityUnit} · 剩余 ${Math.max(0, quantityTotal - quantityCompleted)} ${quantityUnit}`
           : todo.parentTaskTitle,
         color: todo.parentTaskColor,
         categoryColor: todo._tagColor,
@@ -370,10 +391,10 @@ const DailyScheduleView: React.FC = () => {
     }
     return filterSource === 'all'
       ? items
-      : items.filter((item) => filterSource === 'vocabulary'
-        ? item.taskKind === 'vocabulary'
-        : item.source === filterSource && item.taskKind !== 'vocabulary');
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData, selectedDate]);
+      : items.filter((item) => filterSource === 'quantity'
+        ? isQuantityTask({ taskKind: item.taskKind })
+        : item.source === filterSource && !isQuantityTask({ taskKind: item.taskKind }));
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData, selectedDate, getProjectBlockFromSource]);
 
   // ── 构建右侧任务池列表（时段模式用） ─────────────────────
   const poolItems = useMemo(() => {
@@ -385,20 +406,29 @@ const DailyScheduleView: React.FC = () => {
         ? getProjectBlockSourceId(todo.parentTaskId, todo._blockId)
         : `project-md:${todo.id}`;
       if (scheduledSourceIds.has(sourceId)) continue;
-      const vocabularyLearned = (todo._vocabularyInitialCompletedWords ?? 0)
-        + Object.values(todo._vocabularyRecords ?? {}).reduce((sum, value) => sum + value, 0);
+      const projectSource = getProjectBlockFromSource(sourceId);
+      const quantityHeader = projectSource && isQuantityTask(projectSource.block.header) ? projectSource.block.header : undefined;
+      const quantityCompleted = quantityHeader ? getQuantityCompleted(quantityHeader) : 0;
+      const quantityTotal = quantityHeader ? getQuantityTotal(quantityHeader) : 0;
+      const quantityUnit = quantityHeader ? getQuantityUnit(quantityHeader) : '';
+      const suggestion = quantityHeader ? getQuantityDailySuggestion(quantityHeader, selectedDate) : null;
+      const dailyStatus = quantityHeader ? getQuantityDailyStatus(quantityHeader, selectedDate) : null;
       items.push({
         id: `pool-project-${todo.id}`,
         name: todo.text,
         source: 'project',
         color: todo.parentTaskColor,
-        categoryColor: todo._taskKind === 'vocabulary' ? '#10B981' : todo._tagColor,
+        categoryColor: quantityHeader ? (todo._tagColor ?? '#10B981') : todo._tagColor,
         taskKind: todo._taskKind,
-        detail: todo._taskKind === 'vocabulary'
-          ? `${todo.parentTaskTitle} · 已学 ${vocabularyLearned}/${todo._vocabularyTotalWords ?? 0} · 剩余 ${Math.max(0, (todo._vocabularyTotalWords ?? 0) - vocabularyLearned)}`
-          : todo.parentTaskTitle,
+        detail: todo.parentTaskTitle,
         sourceId,
-        duration: todo._taskKind === 'vocabulary' ? undefined : todo._duration,
+        duration: quantityHeader ? undefined : todo._duration,
+        quantityActual: dailyStatus?.actual,
+        quantityTarget: dailyStatus?.target ?? suggestion?.suggested,
+        quantityTotal: quantityHeader ? quantityTotal : undefined,
+        quantityCompleted: quantityHeader ? quantityCompleted : undefined,
+        quantityUnit: quantityHeader ? quantityUnit : undefined,
+        quantityState: dailyStatus?.state,
       });
     }
 
@@ -420,7 +450,7 @@ const DailyScheduleView: React.FC = () => {
     }
 
     return items;
-  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData]);
+  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData, getProjectBlockFromSource, selectedDate]);
 
   const poolOpen = poolPreference === 'open'
     || (poolPreference === 'auto' && !isCompactLayout && poolItems.length > 0);
@@ -436,34 +466,41 @@ const DailyScheduleView: React.FC = () => {
           const appearance = resolveProjectAppearance(i.sourceId, tlTasks, rawTlGroups);
           const parsed = parseSourceId(i.sourceId);
           const reviewTask = parsed?.source === 'review'
-            ? ebbReviewTasks.find((task) => task.id === parsed.reviewId)
+            ? ebbReviewById.get(parsed.reviewId)
             : undefined;
           const reviewCategoryColor = reviewTask
             ? ebbSettingsData.tagColors[reviewTask.tag ?? '']
             : undefined;
           const projectSource = getProjectBlockFromSource(i.sourceId);
-          const vocabularyHeader = projectSource && isVocabularyTask(projectSource.block.header)
+          const quantityHeader = projectSource && isQuantityTask(projectSource.block.header)
             ? projectSource.block.header
             : undefined;
-          const vocabularyRecord = vocabularyHeader?.vocabularyRecords?.[selectedDate];
-          const vocabularyProgress = vocabularyHeader ? getVocabularyLearnedWords(vocabularyHeader) : 0;
-          const vocabularyTotal = vocabularyHeader ? getVocabularyTotalWords(vocabularyHeader) : 0;
+          const quantityRecord = quantityHeader ? getQuantityRecords(quantityHeader)[selectedDate] : undefined;
+          const quantityProgress = quantityHeader ? getQuantityCompleted(quantityHeader) : 0;
+          const quantityTotal = quantityHeader ? getQuantityTotal(quantityHeader) : 0;
+          const quantityUnit = quantityHeader ? getQuantityUnit(quantityHeader) : '';
+          const suggestion = quantityHeader ? getQuantityDailySuggestion(quantityHeader, selectedDate) : null;
+          const dailyStatus = quantityHeader ? getQuantityDailyStatus(quantityHeader, selectedDate) : null;
           return {
             ...i,
-            name: vocabularyHeader?.title ?? i.name,
+            name: quantityHeader?.title ?? i.name,
             completed: checkIsCompleted(i.source, i.sourceId, selectedDate),
-            detail: vocabularyHeader
-              ? `${vocabularyRecord ? `今日 +${vocabularyRecord} · ` : ''}已学 ${vocabularyProgress}/${vocabularyTotal}`
-              : appearance?.name ?? i.detail,
+            detail: appearance?.name ?? i.detail,
             color: appearance?.theme.backgroundColor ?? i.color,
-            categoryColor: vocabularyHeader ? '#10B981' : appearance?.categoryColor ?? reviewCategoryColor ?? i.categoryColor,
-            duration: vocabularyHeader ? undefined : i.duration,
+            categoryColor: quantityHeader ? (quantityHeader.tagColor || '#10B981') : appearance?.categoryColor ?? reviewCategoryColor ?? i.categoryColor,
+            duration: quantityHeader ? undefined : i.duration,
+            quantityActual: dailyStatus?.actual ?? quantityRecord,
+            quantityTarget: dailyStatus?.target ?? suggestion?.suggested,
+            quantityTotal: quantityHeader ? quantityTotal : undefined,
+            quantityCompleted: quantityHeader ? quantityProgress : undefined,
+            quantityUnit: quantityHeader ? quantityUnit : undefined,
+            quantityState: dailyStatus?.state,
           };
         });
 
       return normalItems;
     },
-    [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData, getProjectBlockFromSource, selectedDate],
+    [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewById, ebbSettingsData, getProjectBlockFromSource, selectedDate],
   );
 
   // ── 拖拽处理（时段模式） ─────────────────────────────────
@@ -586,8 +623,8 @@ const DailyScheduleView: React.FC = () => {
   const handleUndoCompletedPoolItem = useCallback((source: TaskSource, sourceId: string) => {
     if (source === 'project') {
       const projectSource = getProjectBlockFromSource(sourceId);
-      if (projectSource && isVocabularyTask(projectSource.block.header)) {
-        const result = removeVocabularyProgress(projectSource.taskId, projectSource.block.id, selectedDate);
+      if (projectSource && isQuantityTask(projectSource.block.header)) {
+        const result = removeQuantityProgress(projectSource.taskId, projectSource.block.id, selectedDate);
         if ('error' in result) setOperationError(result.error);
         return;
       }
@@ -628,7 +665,7 @@ const DailyScheduleView: React.FC = () => {
         toggleReviewWithFeedback(reviewId);
       } else if (item.source === 'project') {
         const projectSource = getProjectBlockFromSource(item.sourceId);
-        if (projectSource && isVocabularyTask(projectSource.block.header)) {
+        if (projectSource && isQuantityTask(projectSource.block.header)) {
           setProgressTask({ taskId: projectSource.taskId, block: projectSource.block });
         } else {
           syncProjectTaskCompletion(item.sourceId);
@@ -638,6 +675,15 @@ const DailyScheduleView: React.FC = () => {
     },
     [daySchedule.items, daySchedule.blocks, toggleReviewWithFeedback, syncProjectTaskCompletion, getProjectBlockFromSource],
   );
+
+  const handleRecordQuantityTarget = useCallback((itemId: string, target: number) => {
+    const item = daySchedule.items.find((candidate) => candidate.id === itemId);
+    if (!item || item.source !== 'project' || !Number.isInteger(target) || target <= 0) return;
+    const projectSource = getProjectBlockFromSource(item.sourceId);
+    if (!projectSource || !isQuantityTask(projectSource.block.header)) return;
+    const result = recordQuantityProgress(projectSource.taskId, projectSource.block.id, selectedDate, target);
+    if ('error' in result) setOperationError(result.error);
+  }, [daySchedule.items, getProjectBlockFromSource, selectedDate]);
 
   const handleRemoveItem = useCallback(
     (itemId: string) => {
@@ -656,10 +702,11 @@ const DailyScheduleView: React.FC = () => {
       const items = getSlotItems(slot).filter(i => i.source !== 'free');
       const total = items.length;
       const completed = items.filter((i) => i.completed).length;
-      const totalDuration = items.reduce((sum, item) => sum + (isVocabularySource(item.sourceId) ? 0 : (item.duration ?? 30)), 0);
-      return { total, completed, totalDuration };
+      const inProgress = items.filter((item) => item.quantityState === 'in-progress').length;
+      const totalDuration = items.reduce((sum, item) => sum + (isQuantitySource(item.sourceId) ? 0 : (item.duration ?? 30)), 0);
+      return { total, completed, inProgress, totalDuration };
     },
-    [getSlotItems, isVocabularySource],
+    [getSlotItems, isQuantitySource],
   );
 
   // 异步加载 IndexedDB 数据
@@ -691,6 +738,9 @@ const DailyScheduleView: React.FC = () => {
             />
           </div>
           <div className="ds-header-right">
+            <button type="button" className="ds-header-btn" onClick={() => openProjectTaskCreate({ date: selectedDate, source: 'daily-schedule' })} aria-label="新建项目任务">
+              <Plus size={15} />新建任务
+            </button>
             <button type="button" className="ds-header-btn" onClick={openAllProjectTasks} aria-label="查看全部项目任务">
               <ListTodo size={15} />全部任务
             </button>
@@ -803,11 +853,12 @@ const DailyScheduleView: React.FC = () => {
                       const block = daySchedule.blocks?.find((candidate) => candidate.id === itemId.replace('virtual-block-', ''));
                       return block ? `${block.startTime}-${block.endTime}` : '';
                     }}
-                    isVocabularySource={isVocabularySource}
+                    isQuantitySource={isQuantitySource}
                     checkIsUnlinkedTask={checkIsUnlinkedTask}
                     checkIsLinkedTask={checkIsLinkedTask}
                     onOpenProjectSource={openProjectTaskFromSource}
                     onToggleItem={handleToggleItem}
+                    onRecordQuantityTarget={handleRecordQuantityTarget}
                     onRemoveItem={handleRemoveItem}
                     onStartAddFree={() => setAddingFreeSlot(config.slot)}
                     onFreeItemNameChange={setFreeItemName}
@@ -849,7 +900,7 @@ const DailyScheduleView: React.FC = () => {
           />
         )}
         {progressTask && (
-          <VocabularyProgressDialog
+          <QuantityProgressDialog
             taskId={progressTask.taskId}
             block={progressTask.block}
             date={selectedDate}

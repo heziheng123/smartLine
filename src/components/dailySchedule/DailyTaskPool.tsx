@@ -2,9 +2,10 @@ import React from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { ChevronDown, CircleDashed, Link as LinkIcon, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import type { TaskSource } from './types';
-import { DROPPABLE_POOL, DROPPABLE_POOL_CONTAINER, DROPPABLE_REVIEW_POOL, DROPPABLE_VOCABULARY_POOL } from './dndIds';
+import { DROPPABLE_POOL, DROPPABLE_POOL_CONTAINER, DROPPABLE_REVIEW_POOL } from './dndIds';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { projectBadgeStyle } from './projectAppearance';
+import { isQuantityTask } from '@/utils/blocks';
 
 export interface DailyPoolItem {
   id: string;
@@ -15,7 +16,13 @@ export interface DailyPoolItem {
   detail?: string;
   duration?: number;
   sourceId: string;
-  taskKind?: 'standard' | 'vocabulary';
+  taskKind?: 'standard' | 'vocabulary' | 'quantity';
+  quantityActual?: number;
+  quantityTarget?: number;
+  quantityTotal?: number;
+  quantityCompleted?: number;
+  quantityUnit?: string;
+  quantityState?: 'unrecorded' | 'in-progress' | 'achieved' | 'recorded';
 }
 
 export interface CompletedDailyPoolItem {
@@ -23,13 +30,13 @@ export interface CompletedDailyPoolItem {
   name: string;
   source: TaskSource;
   sourceId: string;
-  taskKind?: 'standard' | 'vocabulary';
+  taskKind?: 'standard' | 'vocabulary' | 'quantity';
   detail?: string;
   color?: string;
   categoryColor?: string;
 }
 
-type PoolFilter = 'all' | 'project' | 'review' | 'vocabulary';
+type PoolFilter = 'all' | 'project' | 'review' | 'quantity';
 
 interface DailyTaskPoolProps {
   open: boolean;
@@ -80,7 +87,7 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
               <Draggable key={item.id} draggableId={item.id} index={index}>
                 {(provided, snapshot) => {
                   const unlinked = checkIsUnlinkedTask(item.sourceId);
-                  const vocabulary = item.taskKind === 'vocabulary';
+                  const quantity = isQuantityTask({ taskKind: item.taskKind });
                   return (
                     <div
                       ref={provided.innerRef}
@@ -98,13 +105,20 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
                             ? <span title="未绑定节点" className="ml-1 inline-flex items-center"><CircleDashed size={12} className="opacity-40" /></span>
                             : checkIsLinkedTask(item.sourceId) && <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500"><LinkIcon size={12} className="opacity-60" /></span>)}
                         </span>
-                        {item.detail && (item.source !== 'project' || vocabulary) && <span className="ds-pool-item-detail">{item.detail}</span>}
+                        {item.detail && (item.source !== 'project' || !quantity) && <span className="ds-pool-item-detail">{item.detail}</span>}
+                        {quantity && (
+                          <span className="ds-pool-quantity-summary">
+                            <span>总进度 <strong>{item.quantityCompleted}/{item.quantityTotal} {item.quantityUnit}</strong></span>
+                            <span>剩余 <strong>{Math.max(0, (item.quantityTotal ?? 0) - (item.quantityCompleted ?? 0))} {item.quantityUnit}</strong></span>
+                            {item.quantityTarget !== undefined && <span>今日目标 <strong>{item.quantityTarget} {item.quantityUnit}</strong></span>}
+                          </span>
+                        )}
                       </div>
-                      {item.source === 'project' && !vocabulary && (
+                      {item.source === 'project' && !quantity && (
                         <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>
                       )}
                       {item.source === 'review' && <span className="ds-pool-item-tag ds-pool-item-tag--review">复习{item.detail ? ` · ${item.detail}` : ''}</span>}
-                      {vocabulary && <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">单词</span>}
+                      {quantity && <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">数量</span>}
                     </div>
                   );
                 }}
@@ -134,12 +148,11 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
 }) => {
   const visibleItems = filter === 'all'
     ? items
-    : items.filter((item) => filter === 'vocabulary'
-      ? item.taskKind === 'vocabulary'
-      : item.source === filter && item.taskKind !== 'vocabulary');
-  const projectItems = visibleItems.filter((item) => item.source === 'project' && item.taskKind !== 'vocabulary');
+    : items.filter((item) => filter === 'quantity'
+      ? isQuantityTask({ taskKind: item.taskKind })
+      : item.source === filter && !isQuantityTask({ taskKind: item.taskKind }));
+  const projectItems = visibleItems.filter((item) => item.source === 'project');
   const reviewItems = visibleItems.filter((item) => item.source === 'review');
-  const vocabularyItems = visibleItems.filter((item) => item.taskKind === 'vocabulary');
   const totalAvailable = items.length;
 
   return (
@@ -179,21 +192,20 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
                 </button>
               </div>
               <div className="ds-pool-filters" role="group" aria-label="任务池筛选">
-                {(['all', 'project', 'review', 'vocabulary'] as const).map((value) => (
+                {(['all', 'project', 'review', 'quantity'] as const).map((value) => (
                   <button key={value} type="button" className={`ds-filter-btn ${filter === value ? 'ds-filter-btn--active' : ''}`} onClick={() => onFilterChange(value)}>
-                    {value === 'all' ? '全部' : value === 'project' ? '项目' : value === 'review' ? '复习' : '单词'}
+                    {value === 'all' ? '全部' : value === 'project' ? '项目' : value === 'review' ? '复习' : '数量'}
                   </button>
                 ))}
               </div>
               <div className="ds-pool-scroll">
                 <PoolGroup title="项目任务" dotClass="ds-pool-group-dot--project" droppableId={DROPPABLE_POOL} items={projectItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
                 <PoolGroup title="复习任务" dotClass="ds-pool-group-dot--review" droppableId={DROPPABLE_REVIEW_POOL} items={reviewItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
-                <PoolGroup title="单词任务" dotClass="ds-pool-group-dot--vocabulary" droppableId={DROPPABLE_VOCABULARY_POOL} items={vocabularyItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
                 {visibleItems.length === 0 && (
                   <div className="ds-pool-empty">
                     <ListTodo size={22} />
                     <strong>{items.length === 0 ? '今日暂无待安排任务' : '当前筛选下没有任务'}</strong>
-                    <span>{items.length === 0 ? '项目任务、复习和单词任务会显示在这里' : '可以切换上方筛选条件'}</span>
+                    <span>{items.length === 0 ? '普通任务、数量进度任务和复习会显示在这里' : '可以切换上方筛选条件'}</span>
                   </div>
                 )}
                 {completedItems.length > 0 && (
@@ -209,9 +221,9 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
                           <div key={item.id} className="ds-pool-item ds-pool-item--completed" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }} onClick={() => { if (item.source === 'project') onOpenProjectSource(item.sourceId); }}>
                             <div className="ds-pool-item-content">
                               <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                              {item.detail && (item.source !== 'project' || item.taskKind === 'vocabulary') && <span className="ds-pool-item-detail">{item.detail}</span>}
+                              {item.detail && (item.source !== 'project' || isQuantityTask({ taskKind: item.taskKind })) && <span className="ds-pool-item-detail">{item.detail}</span>}
                             </div>
-                            {item.source === 'project' && item.taskKind !== 'vocabulary' && <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>}
+                            {item.source === 'project' && !isQuantityTask({ taskKind: item.taskKind }) && <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>}
                             <button type="button" className="ds-pool-undo-btn" onClick={(event) => { event.stopPropagation(); onUndoCompleted(item.source, item.sourceId); }}>撤销</button>
                           </div>
                         ))}

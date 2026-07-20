@@ -19,7 +19,7 @@ export interface TextBlock {
 /** 智能任务块的 Header（结构化属性区，给系统看） */
 export interface SmartTaskHeader {
   /** 任务业务类型；旧数据未设置时视为普通任务 */
-  taskKind?: 'standard' | 'vocabulary';
+  taskKind?: 'standard' | 'vocabulary' | 'quantity';
   title: string;
   tag: string;
   tagColor: string;
@@ -43,6 +43,14 @@ export interface SmartTaskHeader {
   vocabularyInitialCompletedWords?: number;
   /** 单词任务每日新增学习量，键为 YYYY-MM-DD */
   vocabularyRecords?: Record<string, number>;
+  /** 通用数量任务的计量单位，例如“个、题、页、节、章” */
+  quantityUnit?: string;
+  /** 通用数量任务的目标总量 */
+  quantityTotal?: number;
+  /** 创建通用数量任务时已经完成的数量 */
+  quantityInitialCompleted?: number;
+  /** 通用数量任务每日新增完成量，键为 YYYY-MM-DD */
+  quantityRecords?: Record<string, number>;
 }
 
 /** 智能任务块（核心：Header + Body 双层结构） */
@@ -275,8 +283,12 @@ export interface AggregatedTodo {
   /** 是否自动同步至 Ebb 复习流 */
   _autoSyncEbb?: boolean;
   /** 任务业务类型 */
-  _taskKind?: 'standard' | 'vocabulary';
+  _taskKind?: 'standard' | 'vocabulary' | 'quantity';
   _vocabularyTotalWords?: number;
   _vocabularyInitialCompletedWords?: number;
   _vocabularyRecords?: Record<string, number>;
+  _quantityUnit?: string;
+  _quantityTotal?: number;
+  _quantityInitialCompleted?: number;
+  _quantityRecords?: Record<string, number>;
 }

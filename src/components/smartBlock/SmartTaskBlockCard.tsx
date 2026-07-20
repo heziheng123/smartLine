@@ -5,6 +5,7 @@
 // ============================================================
 
 import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
 import { todayStr, formatDate, getDayOfWeek, isBeforeDay, makeLocalDayjs } from '@/utils/dateSafe';
@@ -14,7 +15,7 @@ import {
   Trash2,
   ChevronDown,
   RotateCcw,
-  BookOpen,
+  Hash,
 } from 'lucide-react';
 import type { SmartTaskBlock, SmartTaskHeader } from '@/types';
 import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
@@ -23,8 +24,14 @@ import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
 import { useGraphStore } from '@/graph/store';
 import {
   getValidGraphNodeIds,
-  getVocabularyLearnedWords,
-  getVocabularyTotalWords,
+  getQuantityCompleted,
+  getQuantityDailySuggestion,
+  getQuantityDailyStatus,
+  getQuantityProgressPercent,
+  getQuantityRecords,
+  getQuantityTotal,
+  getQuantityUnit,
+  isQuantityTask,
   isVocabularyTask,
   shouldAutoSyncEbb,
 } from '@/utils/blocks';
@@ -55,13 +62,20 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   expandOverride = null,
 }) => {
   const { header, body } = block;
-  const isVocabulary = isVocabularyTask(header);
-  const vocabularyLearned = getVocabularyLearnedWords(header);
-  const vocabularyTotal = getVocabularyTotalWords(header);
-  const vocabularyRecordTotal = Object.values(header.vocabularyRecords ?? {}).reduce(
+  const isQuantity = isQuantityTask(header);
+  const isLegacyVocabulary = isVocabularyTask(header);
+  const quantityCompleted = getQuantityCompleted(header);
+  const quantityTotal = getQuantityTotal(header);
+  const quantityUnit = getQuantityUnit(header);
+  const quantityRecords = getQuantityRecords(header);
+  const quantityRecordTotal = Object.values(quantityRecords).reduce(
     (sum, value) => sum + (Number.isInteger(value) && value > 0 ? value : 0),
     0,
   );
+  const quantitySuggestion = getQuantityDailySuggestion(header, todayStr());
+  const quantityDailyStatus = getQuantityDailyStatus(header, todayStr());
+  const quantityPercent = getQuantityProgressPercent(header);
+  const todayQuantity = quantityRecords[todayStr()] ?? 0;
   const hasBody = body && body.trim() !== '';
   const [bodyExpanded, setBodyExpanded] = useState(() => !compact && !!hasBody);
 
@@ -113,7 +127,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     if (titleSaveTimerRef.current) window.clearTimeout(titleSaveTimerRef.current);
   }, []);
 
-  const { nodes, getNodeById } = useGraphStore();
+  const { nodes, getNodeById } = useGraphStore(
+    useShallow((state) => ({ nodes: state.nodes, getNodeById: state.getNodeById })),
+  );
   const graphNodeIds = useMemo(() => getValidGraphNodeIds(header), [header]);
   const validGraphNodeIds = useMemo(() => graphNodeIds.filter(id => getNodeById(id)), [graphNodeIds, getNodeById]);
   const graphNodes = useMemo(() => {
@@ -153,13 +169,13 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   // 完成切换
   const handleToggle = useCallback(() => {
-    if (isVocabulary) return;
+    if (isQuantity) return;
     const now = todayStr();
     onUpdateHeader(block.id, {
       isCompleted: !header.isCompleted,
       completedDate: !header.isCompleted ? now : undefined,
     });
-  }, [block.id, header.isCompleted, isVocabulary, onUpdateHeader]);
+  }, [block.id, header.isCompleted, isQuantity, onUpdateHeader]);
 
   // Body 编辑
   const handleBodyBlur = useCallback(() => {
@@ -217,29 +233,39 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     }
   }, [block.id, onUpdateHeader]);
 
-  const handleVocabularyTotalChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleQuantityTotalChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = Number(e.target.value);
-    if (Number.isInteger(value) && value > 0 && value >= vocabularyLearned) {
-      const completed = vocabularyLearned >= value;
+    if (Number.isInteger(value) && value > 0 && value >= quantityCompleted) {
+      const completed = quantityCompleted >= value;
       onUpdateHeader(block.id, {
-        vocabularyTotalWords: value,
+        ...(isLegacyVocabulary ? { vocabularyTotalWords: value } : { quantityTotal: value }),
         isCompleted: completed,
         completedDate: completed ? (header.completedDate ?? todayStr()) : undefined,
       });
     }
-  }, [block.id, header.completedDate, onUpdateHeader, vocabularyLearned]);
+  }, [block.id, header.completedDate, isLegacyVocabulary, onUpdateHeader, quantityCompleted]);
 
-  const handleVocabularyLearnedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleQuantityCompletedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = Number(e.target.value);
-    const nextInitial = value - vocabularyRecordTotal;
-    if (Number.isInteger(value) && nextInitial >= 0 && value <= vocabularyTotal) {
+    const nextInitial = value - quantityRecordTotal;
+    if (Number.isInteger(value) && nextInitial >= 0 && value <= quantityTotal) {
       onUpdateHeader(block.id, {
-        vocabularyInitialCompletedWords: nextInitial,
-        isCompleted: value >= vocabularyTotal,
-        completedDate: value >= vocabularyTotal ? todayStr() : undefined,
+        ...(isLegacyVocabulary ? { vocabularyInitialCompletedWords: nextInitial } : { quantityInitialCompleted: nextInitial }),
+        isCompleted: value >= quantityTotal,
+        completedDate: value >= quantityTotal ? todayStr() : undefined,
       });
     }
-  }, [block.id, onUpdateHeader, vocabularyRecordTotal, vocabularyTotal]);
+  }, [block.id, isLegacyVocabulary, onUpdateHeader, quantityRecordTotal, quantityTotal]);
+
+  const handleQuantityDeadlineChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (!value || value >= header.date) onUpdateHeader(block.id, { deadline: value || undefined });
+  }, [block.id, header.date, onUpdateHeader]);
+
+  const handleQuantityUnitChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.trim().slice(0, 6);
+    if (value && !isLegacyVocabulary) onUpdateHeader(block.id, { quantityUnit: value });
+  }, [block.id, isLegacyVocabulary, onUpdateHeader]);
 
   const dateLabel = header.date
     ? `${formatDate(header.date, 'M.D')} 周${WEEKDAY_SHORT[getDayOfWeek(header.date)]}`
@@ -292,7 +318,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           onBlur={commitTitle}
         />
         <span className="stb-meta">
-          {isVocabulary ? <><BookOpen size={12} /> {vocabularyLearned}/{vocabularyTotal}</> : <><Clock size={12} /> {header.duration}min</>}
+          {isQuantity ? <><Hash size={12} /> {quantityCompleted}/{quantityTotal} {quantityUnit}</> : <><Clock size={12} /> {header.duration}min</>}
         </span>
         <AnimatePresence initial={false}>
           {bodyExpanded && (
@@ -340,9 +366,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           type="button"
           className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
           onClick={handleToggle}
-          title={isVocabulary ? '请在每日安排中记录学习数量' : header.isCompleted ? '标记未完成' : '标记完成'}
-          aria-label={isVocabulary ? '单词任务进度由每日记录完成' : header.isCompleted ? '取消完成' : '标记完成'}
-          aria-disabled={isVocabulary}
+          title={isQuantity ? '请在每日安排中记录今日完成量' : header.isCompleted ? '标记未完成' : '标记完成'}
+          aria-label={isQuantity ? '数量任务进度由每日记录完成' : header.isCompleted ? '取消完成' : '标记完成'}
+          aria-disabled={isQuantity}
         >
           {header.isCompleted && <Check size={11} strokeWidth={3} />}
         </motion.button>
@@ -424,14 +450,8 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
             <span className="text-slate-300">·</span>
 
-            {isVocabulary ? (
-              <span className="stb-vocabulary-fields">
-                <BookOpen size={12} />
-                <span>已学</span>
-                <input type="number" min={vocabularyRecordTotal} max={vocabularyTotal} step={1} value={vocabularyLearned} onChange={handleVocabularyLearnedChange} title="累计已学单词数" />
-                <span>/</span>
-                <input type="number" min={Math.max(1, vocabularyLearned)} step={1} value={vocabularyTotal} onChange={handleVocabularyTotalChange} title="总单词数" />
-              </span>
+            {isQuantity ? (
+              <span className="stb-quantity-meta"><Hash size={12} />进度 {quantityCompleted}/{quantityTotal} {quantityUnit} · {quantityPercent}%</span>
             ) : (
               <span className="stb-duration-badge">
                 <input
@@ -532,9 +552,27 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             </button>
           </div>
 
-          {isVocabulary && vocabularyTotal > 0 && (
-            <div className="stb-vocabulary-progress" aria-label={`单词进度 ${vocabularyLearned}/${vocabularyTotal}`}>
-              <span style={{ width: `${Math.min(100, Math.round((vocabularyLearned / vocabularyTotal) * 100))}%` }} />
+          {isQuantity && quantityTotal > 0 && (
+            <div className="stb-quantity-status" aria-label={`数量进度 ${quantityCompleted}/${quantityTotal} ${quantityUnit}`}>
+              <div className="stb-quantity-status-row">
+                <span>今日 <strong>{todayQuantity}{quantityDailyStatus.target !== undefined ? `/${quantityDailyStatus.target}` : ''} {quantityUnit}</strong></span>
+                <span>总进度 <strong>{quantityCompleted}/{quantityTotal} {quantityUnit}</strong></span>
+                <span>剩余 <strong>{Math.max(0, quantityTotal - quantityCompleted)} {quantityUnit}</strong></span>
+                {quantityDailyStatus.state === 'achieved' && <span className="stb-quantity-advice is-achieved">今日达标</span>}
+                {quantityDailyStatus.state === 'in-progress' && quantityDailyStatus.target !== undefined && <span className="stb-quantity-advice">还差 <strong>{Math.max(0, quantityDailyStatus.target - todayQuantity)} {quantityUnit}</strong></span>}
+                {quantitySuggestion && quantityDailyStatus.state === 'unrecorded' && <span className="stb-quantity-advice">建议今天 <strong>{quantitySuggestion.suggested} {quantityUnit}</strong></span>}
+              </div>
+              <div className="stb-vocabulary-progress">
+                <span style={{ width: `${Math.min(100, Math.round((quantityCompleted / quantityTotal) * 100))}%` }} />
+              </div>
+              {bodyExpanded && (
+                <div className="stb-quantity-editor" aria-label="数量任务设置">
+                  <label>累计完成<input type="number" min={quantityRecordTotal} max={quantityTotal} step={1} value={quantityCompleted} onChange={handleQuantityCompletedChange} title={`累计已完成${quantityUnit}数`} /></label>
+                  <label>目标总量<input type="number" min={Math.max(1, quantityCompleted)} step={1} value={quantityTotal} onChange={handleQuantityTotalChange} title="目标总量" /></label>
+                  <label>单位<input type="text" value={quantityUnit} disabled={isLegacyVocabulary} onChange={handleQuantityUnitChange} title="计量单位" /></label>
+                  <label>截止日期<input type="date" min={header.date} value={header.deadline ?? ''} onChange={handleQuantityDeadlineChange} title="截止日期（可选）" aria-label="数量任务截止日期" /></label>
+                </div>
+              )}
             </div>
           )}
 

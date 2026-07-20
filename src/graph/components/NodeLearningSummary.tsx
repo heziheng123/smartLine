@@ -20,6 +20,7 @@ export interface NodeLearningSummaryData {
   nodeCount: number;
   taskTotal: number;
   taskCompleted: number;
+  taskProgressPercent: number;
   reviewTotal: number;
   reviewCompleted: number;
   reviewPending: number;
@@ -81,7 +82,7 @@ const NodeLearningSummary: React.FC<NodeLearningSummaryProps> = ({
     <div className="grid grid-cols-2 gap-2 p-3">
       <div className="rounded-lg bg-slate-50 p-2.5">
         <div className="flex items-center gap-1 text-[10px] text-slate-500"><ListChecks size={11} />关联任务</div>
-        <div className="mt-1 text-base font-bold text-slate-800">{data.taskTotal}</div>
+        <div className="mt-1 text-base font-bold text-slate-800">{data.taskProgressPercent}%</div>
         <div className="text-[10px] text-slate-500">已完成 {data.taskCompleted}/{data.taskTotal}</div>
       </div>
       <div className="rounded-lg bg-slate-50 p-2.5">
@@ -103,8 +104,8 @@ const NodeLearningSummary: React.FC<NodeLearningSummaryProps> = ({
 
     <div className="space-y-2 px-3 pb-3">
       <div>
-        <div className="mb-1 flex justify-between text-[10px] text-slate-500"><span>任务完成</span><span>{data.taskCompleted}/{data.taskTotal}</span></div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: progressWidth(data.taskCompleted, data.taskTotal) }} /></div>
+        <div className="mb-1 flex justify-between text-[10px] text-slate-500"><span>任务进度</span><span>{data.taskProgressPercent}%</span></div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${data.taskProgressPercent}%` }} /></div>
       </div>
       <div>
         <div className="mb-1 flex justify-between text-[10px] text-slate-500"><span>复习进度</span><span>{data.reviewCompleted}/{data.reviewTotal}</span></div>

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import '@/styles/task-overview.css';
 import {
   CalendarDays,
   Check,
@@ -8,17 +9,19 @@ import {
   Link2,
   Search,
   Target,
-  BookOpen,
+  Hash,
+  Plus,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import type { SmartTaskBlock, Task, TaskGroup } from '@/types';
-import { getSmartTaskBlocks, getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
+import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { addDays, getDayOfWeek, isAfterDay, isBeforeDay, splitDate, todayStr } from '@/utils/dateSafe';
 import { resolveTaskTheme } from '@/utils/timeline-utils';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { openProjectTaskModal } from './projectTaskModal';
 import { toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { openProjectTaskCreate } from './projectTaskCreate';
 
 type GroupMode = 'date' | 'project' | 'tag';
 type StatusFilter = 'all' | 'pending' | 'completed' | 'overdue' | 'unscheduled';
@@ -111,6 +114,7 @@ const TaskOverviewView: React.FC = () => {
   );
   const preferences = useMemo(loadPreferences, []);
   const [query, setQuery] = useState(preferences.query);
+  const deferredQuery = useDeferredValue(query);
   const [projectId, setProjectId] = useState(preferences.projectId);
   const [tag, setTag] = useState(preferences.tag);
   const [status, setStatus] = useState<StatusFilter>(preferences.status);
@@ -169,17 +173,21 @@ const TaskOverviewView: React.FC = () => {
     if (tag !== 'all' && !tags.includes(tag)) setTag('all');
   }, [tag, tags]);
 
-  const stats = useMemo(() => ({
-    total: allItems.length,
-    pending: allItems.filter((item) => !item.block.header.isCompleted).length,
-    today: allItems.filter((item) => !item.block.header.isCompleted && item.block.header.date === today).length,
-    overdue: allItems.filter((item) => !item.block.header.isCompleted && Boolean(item.block.header.date) && isBeforeDay(item.block.header.date, today)).length,
-    unscheduled: allItems.filter((item) => !item.block.header.isCompleted && !item.block.header.date).length,
-    completed: allItems.filter((item) => item.block.header.isCompleted).length,
-  }), [allItems, today]);
+  const stats = useMemo(() => {
+    const result = { total: allItems.length, pending: 0, today: 0, overdue: 0, unscheduled: 0, completed: 0 };
+    for (const item of allItems) {
+      const header = item.block.header;
+      if (header.isCompleted) { result.completed++; continue; }
+      result.pending++;
+      if (header.date === today) result.today++;
+      if (!header.date) result.unscheduled++;
+      else if (isBeforeDay(header.date, today)) result.overdue++;
+    }
+    return result;
+  }, [allItems, today]);
 
   const filtered = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN');
+    const normalizedQuery = deferredQuery.trim().toLocaleLowerCase('zh-CN');
     const endOfWeek = weekEnd(today);
     const thisMonth = today.slice(0, 7);
     return allItems.filter((item) => {
@@ -204,7 +212,7 @@ const TaskOverviewView: React.FC = () => {
       const dateB = b.block.header.date || '9999-12-31';
       return dateA.localeCompare(dateB) || a.block.header.title.localeCompare(b.block.header.title, 'zh-CN');
     });
-  }, [allItems, dateFilter, projectId, query, status, tag, today]);
+  }, [allItems, dateFilter, deferredQuery, projectId, status, tag, today]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, OverviewGroup>();
@@ -233,7 +241,7 @@ const TaskOverviewView: React.FC = () => {
   });
 
   const toggleComplete = (item: OverviewItem) => {
-    if (isVocabularyTask(item.block.header)) return;
+    if (isQuantityTask(item.block.header)) return;
     toggleProjectTaskCompletion(item.task.id, item.block.id, today);
   };
 
@@ -244,10 +252,13 @@ const TaskOverviewView: React.FC = () => {
           <h1 id="task-overview-title">任务总览</h1>
           <p>集中查看和管理所有项目文档中的任务</p>
         </div>
-        <div className="task-overview-group-switch" role="group" aria-label="任务分组方式">
-          {([['date', '按日期'], ['project', '按项目'], ['tag', '按类型']] as const).map(([value, label]) => (
-            <button key={value} type="button" className={groupMode === value ? 'is-active' : ''} onClick={() => setGroupMode(value)}>{label}</button>
-          ))}
+        <div className="task-overview-header-actions">
+          <button type="button" className="task-overview-create" onClick={() => openProjectTaskCreate({ source: 'task-overview' })}><Plus size={15} />新建任务</button>
+          <div className="task-overview-group-switch" role="group" aria-label="任务分组方式">
+            {([['date', '按日期'], ['project', '按项目'], ['tag', '按类型']] as const).map(([value, label]) => (
+              <button key={value} type="button" className={groupMode === value ? 'is-active' : ''} onClick={() => setGroupMode(value)}>{label}</button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -289,6 +300,7 @@ const TaskOverviewView: React.FC = () => {
                 const overdue = !header.isCompleted && Boolean(header.date) && isBeforeDay(header.date, today);
                 const category = resolveTaskCategoryTheme(header.tagColor);
                 const graphCount = getValidGraphNodeIds(header).length;
+                const quantityStatus = isQuantityTask(header) ? getQuantityDailyStatus(header, today) : null;
                 return (
                   <article
                     key={`${item.task.id}-${item.block.id}`}
@@ -305,7 +317,7 @@ const TaskOverviewView: React.FC = () => {
                       }
                     }}
                   >
-                    <button type="button" className={`task-overview-check ${header.isCompleted ? 'is-checked' : ''}`} onClick={(event) => { event.stopPropagation(); toggleComplete(item); }} aria-disabled={isVocabularyTask(header)} aria-label={isVocabularyTask(header) ? `单词进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `完成：${header.title}`}>{header.isCompleted && <Check size={15} />}</button>
+                    <button type="button" className={`task-overview-check ${header.isCompleted ? 'is-checked' : ''}`} onClick={(event) => { event.stopPropagation(); toggleComplete(item); }} aria-disabled={isQuantityTask(header)} aria-label={isQuantityTask(header) ? `数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `完成：${header.title}`}>{header.isCompleted && <Check size={15} />}</button>
                     <div className="task-overview-card-content">
                       <div className="task-overview-card-title">{header.title}</div>
                       <div className="task-overview-card-meta">
@@ -314,8 +326,8 @@ const TaskOverviewView: React.FC = () => {
                         {header.date && <span className={overdue ? 'is-danger' : ''}><CalendarDays size={13} />{formatShortDate(header.date)}</span>}
                         {!header.date && <span><CalendarDays size={13} />未排期</span>}
                         {header.deadline && <span><Target size={13} />截止 {formatShortDate(header.deadline)}</span>}
-                        {isVocabularyTask(header)
-                          ? <span><BookOpen size={13} />已学 {getVocabularyLearnedWords(header)}/{getVocabularyTotalWords(header)}</span>
+                        {isQuantityTask(header)
+                          ? <><span><Hash size={13} />进度 {getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}%</span><span>今日 {quantityStatus?.actual ?? 0}{quantityStatus?.target !== undefined ? `/${quantityStatus.target}` : ''} {getQuantityUnit(header)}</span></>
                           : <span><Clock3 size={13} />{header.duration} 分钟</span>}
                         <span title={graphCount > 0 ? `已绑定 ${graphCount} 个知识节点` : '未绑定知识节点'}><Link2 size={13} />{graphCount > 0 ? `${graphCount} 个节点` : '未绑定节点'}</span>
                       </div>

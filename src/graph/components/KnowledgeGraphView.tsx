@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
@@ -8,7 +9,14 @@ import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Ar
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { TimeCapsuleModal } from '@/components/GlobalSearch';
-import { getValidGraphNodeIds } from '@/utils/blocks';
+import {
+  getQuantityCompleted,
+  getQuantityProgressPercent,
+  getQuantityTotal,
+  getQuantityUnit,
+  getValidGraphNodeIds,
+  isQuantityTask,
+} from '@/utils/blocks';
 import { computeNodeActivationStates } from '../activation';
 import styles from './GraphConsole.module.css';
 import { useGraphBindingStore } from '../bindingStore';
@@ -62,10 +70,46 @@ const getContrastYIQ = (hexcolor: string) => {
 };
 
 export const KnowledgeGraphView: React.FC = () => {
-  const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore();
+  const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore(
+    useShallow((state) => ({
+      isHydrated: state.isHydrated,
+      hydrateStore: state.hydrateStore,
+      nodes: state.nodes,
+      addNode: state.addNode,
+      deleteNode: state.deleteNode,
+      updateNode: state.updateNode,
+      archiveNodeCascade: state.archiveNodeCascade,
+    })),
+  );
   const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
-  const { reviewTasks } = useEbbStore();
-  const { tasks, groups } = useTimelineStore();
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const node of nodes) {
+      if (!node.parentId) continue;
+      const children = map.get(node.parentId) ?? [];
+      children.push(node.id);
+      map.set(node.parentId, children);
+    }
+    return map;
+  }, [nodes]);
+  const descendantsByNode = useMemo(() => {
+    const cache = new Map<string, string[]>();
+    const collect = (id: string, path = new Set<string>()): string[] => {
+      if (cache.has(id)) return cache.get(id)!;
+      if (path.has(id)) return [];
+      const nextPath = new Set(path).add(id);
+      const descendants: string[] = [];
+      for (const childId of childrenByParent.get(id) ?? []) {
+        descendants.push(childId, ...collect(childId, nextPath));
+      }
+      cache.set(id, descendants);
+      return descendants;
+    };
+    nodes.forEach((node) => collect(node.id));
+    return cache;
+  }, [childrenByParent, nodes]);
+  const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const { tasks, groups } = useTimelineStore(useShallow((state) => ({ tasks: state.tasks, groups: state.groups })));
   const bindingSession = useGraphBindingStore();
   const [bindingError, setBindingError] = useState('');
 
@@ -117,12 +161,12 @@ export const KnowledgeGraphView: React.FC = () => {
 
   useEffect(() => {
     if (!bindingSession.active || !isHydrated) return;
-    const validLeafIds = new Set(nodes.filter((node) => !nodes.some((candidate) => candidate.parentId === node.id)).map((node) => node.id));
+    const validLeafIds = new Set(nodes.filter((node) => !childrenByParent.has(node.id)).map((node) => node.id));
     const validSelection = bindingSession.selectedNodeIds.filter((id) => validLeafIds.has(id));
     if (validSelection.length !== bindingSession.selectedNodeIds.length) {
       bindingSession.setSelectedNodeIds(validSelection);
     }
-  }, [bindingSession, isHydrated, nodes]);
+  }, [bindingSession, childrenByParent, isHydrated, nodes]);
 
   useEffect(() => {
     if (!bindingSession.active) return;
@@ -182,16 +226,21 @@ export const KnowledgeGraphView: React.FC = () => {
     };
   }, [isHydrated]);
 
-  const getDescendants = useCallback((id: string, visited = new Set<string>()): string[] => {
-    if (visited.has(id)) return [];
-    visited.add(id);
-    const children = nodes.filter(n => n.parentId === id).map(n => n.id);
-    let allDescendants = [...children];
-    children.forEach(childId => {
-      allDescendants = allDescendants.concat(getDescendants(childId, visited));
-    });
-    return allDescendants;
-  }, [nodes]);
+  const getDescendants = useCallback(
+    (id: string): string[] => descendantsByNode.get(id) ?? [],
+    [descendantsByNode],
+  );
+
+  const reviewsByNode = useMemo(() => {
+    const map = new Map<string, typeof reviewTasks>();
+    for (const task of reviewTasks) {
+      if (!task.graphNodeId || task.isArchived) continue;
+      const list = map.get(task.graphNodeId) ?? [];
+      list.push(task);
+      map.set(task.graphNodeId, list);
+    }
+    return map;
+  }, [reviewTasks]);
 
   const getNodeColorHex = useCallback((nodeId: string): string => {
     const gray = '#64748b';
@@ -207,13 +256,11 @@ export const KnowledgeGraphView: React.FC = () => {
       const descendantIds = getDescendants(id);
       const scopedIds = [id, ...descendantIds];
       const activatedLeafIds = scopedIds.filter((scopedId) => {
-        const hasChildren = nodes.some((node) => node.parentId === scopedId);
+        const hasChildren = childrenByParent.has(scopedId);
         return !hasChildren && (activationStates.get(scopedId)?.isActivated ?? false);
       });
       const allActivatedLeavesAreGold = activatedLeafIds.length > 0 && activatedLeafIds.every((leafId) => {
-        const rounds = reviewTasks.filter(
-          (task) => !task.isArchived && task.graphNodeId === leafId,
-        );
+        const rounds = reviewsByNode.get(leafId) ?? [];
         return rounds.length > 0 && rounds.every((task) => task.isCompleted);
       });
       if (allActivatedLeavesAreGold) return gold;
@@ -221,7 +268,7 @@ export const KnowledgeGraphView: React.FC = () => {
     };
 
     return getColor(nodeId);
-  }, [activationStates, getDescendants, nodes, reviewTasks]);
+  }, [activationStates, childrenByParent, getDescendants, reviewsByNode]);
 
   const islandsData = useMemo(() => {
     const today = todayStr();
@@ -599,6 +646,14 @@ export const KnowledgeGraphView: React.FC = () => {
   const selectedLearningSummary = useMemo<NodeLearningSummaryData>(() => {
     const taskTotal = relatedTaskBlocks.length;
     const taskCompleted = relatedTaskBlocks.filter(({ block }) => block.header.isCompleted).length;
+    const taskProgress = relatedTaskBlocks.reduce((sum, { block }) => {
+      if (block.header.isCompleted) return sum + 1;
+      if (!isQuantityTask(block.header)) return sum;
+      return sum + getQuantityProgressPercent(block.header) / 100;
+    }, 0);
+    const taskProgressPercent = taskTotal > 0
+      ? Math.min(100, Math.round((taskProgress / taskTotal) * 100))
+      : 0;
     const reviewTotal = selectedReviewTasks.length;
     const reviewCompleted = selectedReviewTasks.filter(task => task.isCompleted).length;
     const pendingReviews = selectedReviewTasks.filter(task => !task.isCompleted);
@@ -615,11 +670,11 @@ export const KnowledgeGraphView: React.FC = () => {
       masteryReason = reviewOverdue > 0
         ? `有 ${reviewOverdue} 个复习轮次已经逾期，需要优先处理。`
         : '存在今天到期的复习轮次，完成后会继续推进掌握状态。';
-    } else if (taskCompleted === 0) {
+    } else if (taskProgressPercent === 0) {
       masteryState = 'not-started';
       masteryLabel = '未开始';
       masteryReason = taskTotal > 0 ? '尚未完成任何关联项目任务。' : '当前统计范围还没有关联项目任务。';
-    } else if (taskTotal > 0 && taskCompleted === taskTotal && reviewTotal > 0 && reviewCompleted === reviewTotal) {
+    } else if (taskTotal > 0 && taskProgressPercent === 100 && reviewTotal > 0 && reviewCompleted === reviewTotal) {
       masteryState = 'mastered';
       masteryLabel = '已掌握';
       masteryReason = '关联任务和当前计划中的复习轮次均已完成。';
@@ -638,6 +693,7 @@ export const KnowledgeGraphView: React.FC = () => {
       nodeCount: selectedScopeIds.size,
       taskTotal,
       taskCompleted,
+      taskProgressPercent,
       reviewTotal,
       reviewCompleted,
       reviewPending: pendingReviews.length,
@@ -1095,17 +1151,28 @@ export const KnowledgeGraphView: React.FC = () => {
                   <div className="space-y-2">
                     <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Network size={11} className="text-blue-400" />关联项目任务 <span className="font-medium text-slate-400">{relatedTaskBlocks.length}</span></div>
                     <div className="space-y-1">
-                      {relatedTaskBlocks.map(({ task, block }) => (
+                      {relatedTaskBlocks.map(({ task, block }) => {
+                        const quantity = isQuantityTask(block.header);
+                        const quantityProgress = quantity ? getQuantityProgressPercent(block.header) : 0;
+                        return (
                         <div key={`${task.id}-${block.id}`} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id, blockId: block.id } }))} className="group flex flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
                           <div className="flex justify-between gap-3">
                             <div className="text-xs font-semibold text-slate-800 truncate">{block.header.title}</div>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full ${block.header.isCompleted ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'}`}>{block.header.isCompleted ? '已完成' : '进行中'}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full ${block.header.isCompleted ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'}`}>
+                              {block.header.isCompleted ? '已完成' : quantity ? `${quantityProgress}%` : '进行中'}
+                            </span>
                           </div>
                           <div className="flex items-center gap-2 text-[10px] text-slate-500">
                             <span>{block.header.date}</span>·<span className="truncate">{task.name}</span>
                           </div>
+                          {quantity && (
+                            <div className="text-[10px] text-slate-500">
+                              {getQuantityCompleted(block.header)}/{getQuantityTotal(block.header)} {getQuantityUnit(block.header)}
+                            </div>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}

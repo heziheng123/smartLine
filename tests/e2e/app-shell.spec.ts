@@ -109,3 +109,11 @@ test('small screens can scroll the EBB content without the fixed toolbar swallow
   expect(result).toBeTruthy();
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
+
+test('EBB safe mode keeps recovery controls usable and disables the high-load board', async ({ page }) => {
+  await page.evaluate(() => sessionStorage.setItem('smart-line-ebb-safe-mode', '1'));
+  await page.getByTitle('艾宾浩斯复习').click();
+  await expect(page.getByRole('status')).toContainText('安全模式已开启');
+  await expect(page.getByRole('tab', { name: '看板视图' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '退出安全模式' })).toBeVisible();
+});

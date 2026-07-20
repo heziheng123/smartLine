@@ -957,11 +957,44 @@
   color: #047857;
 }
 
+.ds-pool-quantity-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  color: #6B7280;
+  font-size: 10px;
+}
+.ds-pool-quantity-summary strong { color: #065F46; font-weight: 700; }
+
+.ds-item-quantity-inline {
+  display: inline-flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  color: #64748B;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.ds-item-quantity-metric { display: inline-flex; align-items: center; gap: 3px; }
+.ds-item-quantity-metric strong { color: #065F46; font-size: 11px; }
+.ds-item-quantity-inline--in-progress .ds-item-quantity-metric--today strong { color: #B45309; }
+.ds-item-quantity-inline--achieved .ds-item-quantity-metric--today strong,
+.ds-item-quantity-inline--recorded .ds-item-quantity-metric--today strong { color: #047857; }
+.ds-item-quantity-mini-progress { display: block; width: 42px; height: 4px; overflow: hidden; border-radius: 999px; background: #D1FAE5; }
+.ds-item-quantity-mini-progress span { display: block; height: 100%; border-radius: inherit; background: #10B981; }
+.ds-item-quantity-quick,
+.ds-item-quantity-edit { min-height: 24px; padding: 3px 7px; border: 1px solid #A7F3D0; border-radius: 5px; background: rgba(255, 255, 255, .82); color: #047857; font-size: 10px; font-weight: 700; line-height: 1.2; cursor: pointer; }
+.ds-item-quantity-quick:hover,
+.ds-item-quantity-edit:hover { border-color: #10B981; background: #ECFDF5; }
+
 /* ── 项目单词任务与每日数量记录 ─────────────────────────── */
 .ds-vocab-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 1600;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1057,8 +1090,10 @@
 
 .ds-vocab-form h3 { margin: 0; color: #374151; font-size: 14px; }
 .ds-vocab-form label { display: flex; flex-direction: column; gap: 5px; color: #4B5563; font-size: 12px; font-weight: 600; }
-.ds-vocab-form input { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; color: #111827; font-size: 13px; }
-.ds-vocab-form input:focus { outline: none; border-color: #10B981; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.12); }
+.ds-vocab-form input,
+.ds-vocab-form select { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; color: #111827; font-size: 13px; }
+.ds-vocab-form input:focus,
+.ds-vocab-form select:focus { outline: none; border-color: #10B981; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.12); }
 .ds-vocab-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ds-vocab-form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 2px; }
 .ds-vocab-primary-btn, .ds-vocab-secondary-btn, .ds-vocab-danger-btn, .ds-vocab-add-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 13px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -1069,6 +1104,30 @@
 .ds-vocab-add-btn { width: 100%; margin-top: 12px; border: 1px dashed #6EE7B7; background: #ECFDF5; color: #047857; }
 .ds-vocab-error { padding: 8px 10px; border: 1px solid #FCA5A5; border-radius: 6px; background: #FEF2F2; color: #B91C1C; font-size: 12px; }
 .ds-vocab-progress-summary { display: flex; justify-content: space-between; color: #6B7280; font-size: 12px; }
+
+.ds-quantity-presets { margin: 0; padding: 0; border: 0; }
+.ds-quantity-presets legend { margin-bottom: 7px; color: #4B5563; font-size: 12px; font-weight: 600; }
+.ds-quantity-presets > div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.ds-quantity-presets button { padding: 8px 6px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; color: #4B5563; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ds-quantity-presets button:hover { border-color: #6EE7B7; color: #047857; }
+.ds-quantity-presets button.is-active { border-color: #10B981; background: #ECFDF5; color: #047857; box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.12); }
+.ds-quantity-suggestion { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid #A7F3D0; border-radius: 7px; background: #ECFDF5; color: #047857; font-size: 12px; }
+.ds-quantity-suggestion strong { color: #065F46; font-size: 13px; }
+
+.task-create-dialog { width: min(500px, 100%); }
+.task-create-mode { margin: 0; padding: 0; border: 0; }
+.task-create-mode legend { margin-bottom: 7px; color: #4B5563; font-size: 12px; font-weight: 600; }
+.task-create-mode > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.task-create-mode button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; border: 1px solid #D1D5DB; border-radius: 7px; background: #FFFFFF; color: #4B5563; font-size: 12px; font-weight: 600; cursor: pointer; }
+.task-create-mode button.is-active { border-color: #10B981; background: #ECFDF5; color: #047857; box-shadow: 0 0 0 1px rgba(16, 185, 129, .12); }
+.task-create-units { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.task-create-units button { width: 30px; height: 28px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; color: #4B5563; font-size: 12px; cursor: pointer; }
+.task-create-units button.is-active { border-color: #10B981; background: #ECFDF5; color: #047857; font-weight: 700; }
+.task-create-units span { color: #9CA3AF; font-size: 11px; }
+.task-create-more { border: 1px solid #E5E7EB; border-radius: 7px; background: #FFFFFF; }
+.task-create-more summary { padding: 9px 10px; color: #6B7280; font-size: 12px; font-weight: 600; cursor: pointer; }
+.task-create-more[open] summary { border-bottom: 1px solid #E5E7EB; }
+.task-create-more > div { padding: 10px; }
 
 /* ── 动画过渡 ────────────────────────────────────────────── */
 @keyframes ds-item-enter {
@@ -1209,6 +1268,26 @@
 }
 
 @media (max-width: 600px) {
+  .ds-item--quantity {
+    gap: 5px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .ds-item--quantity .ds-item-grip {
+    margin-left: 4px;
+  }
+
+  .ds-item-quantity-inline {
+    gap: 4px;
+  }
+
+  .ds-item-quantity-metric--total,
+  .ds-item-quantity-mini-progress,
+  .ds-item--quantity .ds-item-source--vocabulary {
+    display: none;
+  }
+
   .ds-header {
     flex-direction: column;
     align-items: flex-start;

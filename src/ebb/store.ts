@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import { createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
+import { createCoalescedPersistence, createScopedStorage, readJsonStorage } from '@/utils/persistence';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
 
 import { todayStr, addDays, diffDays } from '@/utils/dateSafe';
@@ -70,9 +70,14 @@ async function saveEbbDataAsync(data: EbbData) {
   }
 }
 
+const ebbPersistence = createCoalescedPersistence<EbbData>({
+  mirrorKey: EBB_STORAGE_MIRROR_KEY,
+  label: 'smart-ebb',
+  writeAsync: saveEbbDataAsync,
+});
+
 function saveEbbData(data: EbbData) {
-  writeJsonStorage(EBB_STORAGE_MIRROR_KEY, data, 'smart-ebb');
-  saveEbbDataAsync(data);
+  ebbPersistence.schedule(data);
 }
 
 function buildAbsoluteScheduleDates(baseDate: string, intervals: number[], count = intervals.length): string[] {

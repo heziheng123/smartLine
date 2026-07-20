@@ -38,6 +38,29 @@
   margin-bottom: 18px;
 }
 
+.task-overview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.task-overview-create {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #0F766E;
+  border-radius: 8px;
+  background: #0F766E;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .task-overview-header h1 {
   margin: 0;
   font-size: 26px;
@@ -222,6 +245,8 @@
 }
 
 .task-overview-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 76px;
   --task-accent: #8b9dc3;
   --task-surface: #f7f8fb;
   position: relative;

@@ -3,7 +3,7 @@
 // 筛选栏 + 标签统计 + 主题任务列表（圆形进度环卡片）
 // ============================================================
 
-import React, { useState, useMemo, memo } from 'react';
+import React, { useState, useMemo, memo, useDeferredValue, useEffect, useRef } from 'react';
 import { Search, ChevronRight, CircleDashed, ListChecks, Plus, RotateCcw } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
@@ -40,6 +40,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('date');
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const [visibleCount, setVisibleCount] = useState(80);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   const nodes = useGraphStore((state) => state.nodes);
 
@@ -96,8 +99,8 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
     } else if (filterStatus === 'completed') {
       list = list.filter((t) => t.completedRounds === t.totalRounds && t.totalRounds > 0);
     }
-    if (query.trim()) {
-      const q = query.trim().toLowerCase();
+    if (deferredQuery.trim()) {
+      const q = deferredQuery.trim().toLowerCase();
       list = list.filter((t) => t.topicName.toLowerCase().includes(q) || (t.tag || '').toLowerCase().includes(q));
     }
     if (sortBy === 'date') {
@@ -106,7 +109,23 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
       list = [...list].sort((a, b) => a.ratio - b.ratio);
     }
     return list;
-  }, [enhancedTasks, settings, filterTag, filterStatus, query, sortBy]);
+  }, [enhancedTasks, settings, filterTag, filterStatus, deferredQuery, sortBy]);
+
+  useEffect(() => setVisibleCount(80), [filterTag, filterStatus, deferredQuery, sortBy]);
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || visibleCount >= topicStats.length) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisibleCount((count) => Math.min(topicStats.length, count + 80));
+      }
+    }, { rootMargin: '320px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [topicStats.length, visibleCount]);
+
+  const visibleTopicStats = useMemo(() => topicStats.slice(0, visibleCount), [topicStats, visibleCount]);
 
   return (
     <div className="eb-matrix">
@@ -171,7 +190,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
             <p className="eb-empty-hint">点击右上角「快速添加」创建第一个复习任务</p>
           </div>
         ) : (
-          topicStats.map((stat) => (
+          visibleTopicStats.map((stat) => (
             <TopicRow
               key={stat.topicKey}
               stat={stat}
@@ -180,6 +199,11 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
               taskActions={taskActions}
             />
           ))
+        )}
+        {visibleCount < topicStats.length && (
+          <div ref={loadMoreRef} className="py-4 text-center text-xs text-slate-400" role="status">
+            已显示 {visibleCount}/{topicStats.length} 个主题，继续滚动加载
+          </div>
         )}
       </div>
     </div>
@@ -223,7 +247,7 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks, ta
     )[0];
 
   return (
-    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''}`} style={{ '--accent': accentColor } as React.CSSProperties}>
+    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''}`} style={{ '--accent': accentColor, contentVisibility: 'auto', containIntrinsicSize: '92px' } as React.CSSProperties}>
       <div className="eb-topic-row-main" onClick={() => setExpanded(!expanded)}>
         {/* 圆形进度环 */}
         <div className="eb-progress-ring" style={{ '--ring-color': ringColor } as React.CSSProperties}>

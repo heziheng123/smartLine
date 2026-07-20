@@ -8,7 +8,7 @@ import { todayStr } from '@/utils/dateSafe';
 import { CircleDashed, Link as LinkIcon } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
-import { getValidGraphNodeIds } from '@/utils/blocks';
+import { getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
@@ -82,7 +82,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     })),
   );
 
-  const { nodes: graphNodes } = useGraphStore();
+  const graphNodes = useGraphStore((state) => state.nodes);
 
   const archivedNodeIds = useMemo(() => new Set(graphNodes.filter(n => n.isArchived).map(n => n.id)), [graphNodes]);
 
@@ -232,7 +232,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const todayProjectTasks = useMemo(() => {
     return allTodos.filter((todo) => {
-      if (todo._taskKind === 'vocabulary') return false;
+      if (isQuantityTask({ taskKind: todo._taskKind })) return false;
       if (todo.checked) return false;
       // 只有精确指定了排期日或截止日为当天的任务才会被纳入任务池
       if (todo.scheduled && todo.scheduled === selectedDate) return true;
@@ -243,7 +243,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const completedProjectTasks = useMemo(() => {
     return allTodos.filter((todo) => {
-      if (todo._taskKind === 'vocabulary') return false;
+      if (isQuantityTask({ taskKind: todo._taskKind })) return false;
       if (!todo.checked) return false;
       return todo.scheduled === selectedDate || todo.due === selectedDate;
     });
