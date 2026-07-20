@@ -17,7 +17,9 @@ import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
+import { setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
 import TimeGrid from './TimeGrid';
+import { BlockEditor, QuickCreateInput } from './TimeBlockOverlays';
 import type { TimeBlock, TaskSource } from './types';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import {
@@ -33,117 +35,6 @@ import {
   parseSourceId,
   GRID_CONFIG,
 } from './conversion';
-
-// ── 快速创建输入框 ──────────────────────────────────────────
-
-const QuickCreateInput: React.FC<{
-  initialTime: string;
-  onCreate: (name: string, startTime: string) => void;
-  onCancel: () => void;
-}> = ({ initialTime, onCreate, onCancel }) => {
-  const [name, setName] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const isSubmitting = useRef(false);
-
-  React.useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  const handleSubmit = () => {
-    if (isSubmitting.current) return;
-    isSubmitting.current = true;
-    const trimmed = name.trim();
-    if (trimmed) onCreate(trimmed, initialTime);
-    else onCancel();
-  };
-
-  return (
-    <div className="tb-quick-create" onClick={(e) => e.stopPropagation()}>
-      <input
-        ref={inputRef}
-        className="tb-quick-create-input"
-        value={name}
-        placeholder={`在 ${initialTime} 添加...`}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') handleSubmit();
-          if (e.key === 'Escape') {
-            isSubmitting.current = true;
-            onCancel();
-          }
-        }}
-        onBlur={handleSubmit}
-      />
-    </div>
-  );
-};
-
-// ── 内联编辑浮层 ────────────────────────────────────────────
-
-const BlockEditor: React.FC<{
-  block: TimeBlock;
-  rect: DOMRect;
-  onSave: (blockId: string, patch: Partial<TimeBlock>) => void;
-  onDelete: (blockId: string) => void;
-  onClose: () => void;
-}> = ({ block, rect, onSave, onDelete, onClose }) => {
-  const [startTime, setStartTime] = useState(block.startTime);
-  const [endTime, setEndTime] = useState(block.endTime);
-
-  return (
-    <div
-      className="tb-editor-overlay"
-      onClick={onClose}
-    >
-      <div
-        className="tb-editor"
-        style={{
-          top: Math.min(rect.bottom + 4, window.innerHeight - 180),
-          left: Math.min(rect.left, window.innerWidth - 240),
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="tb-editor-name">{block.name}</div>
-        <div className="tb-editor-times">
-          <label>
-            开始
-            <input
-              type="time"
-              className="tb-editor-input"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-            />
-          </label>
-          <label>
-            结束
-            <input
-              type="time"
-              className="tb-editor-input"
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-            />
-          </label>
-        </div>
-        <div className="tb-editor-actions">
-          <button
-            type="button"
-            className="tb-editor-save"
-            onClick={() => onSave(block.id, { startTime, endTime })}
-          >
-            保存
-          </button>
-          <button
-            type="button"
-            className="tb-editor-delete"
-            onClick={() => onDelete(block.id)}
-          >
-            删除
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // ── 任务池项类型 ────────────────────────────────────────────
 
@@ -176,8 +67,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 }) => {
   const today = todayStr();
   const [showCompletedPool, setShowCompletedPool] = useState(false);
-  const { tasks: rawTlTasks, groups: rawTlGroups, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
-    useShallow((s) => ({ tasks: s.tasks, groups: s.groups, updateBlockHeader: s.updateBlockHeader })),
+  const { tasks: rawTlTasks, groups: rawTlGroups } = useTimelineStore(
+    useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
   );
   const {
     reviewTasks: rawEbbReviewTasks,
@@ -525,18 +416,12 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         if (!parentTask) return;
 
         if (parsed.blockId) {
-          const currentBlock = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
-          const isCurrentlyDone = currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted;
-          const now = todayStr();
-          // 更新源 store 的 block header，无需手动 toggleTimeBlock
-          tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
-            isCompleted: !isCurrentlyDone,
-            completedDate: !isCurrentlyDone ? now : undefined,
-          });
+          const result = toggleProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, todayStr());
+          if ('error' in result) onReviewToggleError(result.error);
         }
       }
     },
-    [blocks, ebbToggleReviewTask, onReviewToggleError, tlTasks, tlUpdateBlockHeader],
+    [blocks, ebbToggleReviewTask, onReviewToggleError, tlTasks],
   );
 
   const handleUndoCompletedPoolItem = useCallback((item: PoolItem) => {
@@ -551,11 +436,9 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     const parentTask = tlTasks.find((task) => task.id === parsed.parentTaskId);
     const currentBlock = parentTask?.blocks.find((block) => block.id === parsed.blockId);
     if (currentBlock?.type !== 'smart-task' || !currentBlock.header.isCompleted) return;
-    tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
-      isCompleted: false,
-      completedDate: undefined,
-    });
-  }, [ebbToggleReviewTask, onReviewToggleError, tlTasks, tlUpdateBlockHeader]);
+    const result = setProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, false);
+    if ('error' in result) onReviewToggleError(result.error);
+  }, [ebbToggleReviewTask, onReviewToggleError, tlTasks]);
 
   const handleRemove = useCallback(
     (blockId: string) => {
@@ -569,21 +452,21 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       if (block.source === 'project') {
         const parsed = parseSourceId(block.sourceId);
         if (parsed?.source === 'project' && parsed.blockId) {
-          openProjectTaskModal(parsed.parentTaskId, parsed.blockId);
+          openProjectTaskModal(parsed.parentTaskId, parsed.blockId, { source: 'time-block', sourceDate: selectedDate });
           return;
         }
       }
       setEditingBlock({ block, rect });
     },
-    [],
+    [selectedDate],
   );
 
   const handleProjectPoolClick = useCallback((sourceId: string) => {
     const parsed = parseSourceId(sourceId);
     if (parsed?.source === 'project' && parsed.blockId) {
-      openProjectTaskModal(parsed.parentTaskId, parsed.blockId);
+      openProjectTaskModal(parsed.parentTaskId, parsed.blockId, { source: 'time-block', sourceDate: selectedDate });
     }
-  }, []);
+  }, [selectedDate]);
 
   // ── 时间块开始被拖拽（准备拖回任务池） ────────────────
   const handleBlockDragStart = useCallback(

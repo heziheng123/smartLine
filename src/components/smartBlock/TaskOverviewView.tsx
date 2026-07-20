@@ -18,6 +18,7 @@ import { addDays, getDayOfWeek, isAfterDay, isBeforeDay, splitDate, todayStr } f
 import { resolveTaskTheme } from '@/utils/timeline-utils';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { openProjectTaskModal } from './projectTaskModal';
+import { toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
 
 type GroupMode = 'date' | 'project' | 'tag';
 type StatusFilter = 'all' | 'pending' | 'completed' | 'overdue' | 'unscheduled';
@@ -102,11 +103,10 @@ function stripHtml(value: string): string {
 }
 
 const TaskOverviewView: React.FC = () => {
-  const { tasks, groups, updateBlockHeader } = useTimelineStore(
+  const { tasks, groups } = useTimelineStore(
     useShallow((state) => ({
       tasks: state.tasks,
       groups: state.groups,
-      updateBlockHeader: state.updateBlockHeader,
     })),
   );
   const preferences = useMemo(loadPreferences, []);
@@ -234,11 +234,7 @@ const TaskOverviewView: React.FC = () => {
 
   const toggleComplete = (item: OverviewItem) => {
     if (isVocabularyTask(item.block.header)) return;
-    const completed = !item.block.header.isCompleted;
-    updateBlockHeader(item.task.id, item.block.id, {
-      isCompleted: completed,
-      completedDate: completed ? today : undefined,
-    });
+    toggleProjectTaskCompletion(item.task.id, item.block.id, today);
   };
 
   return (
@@ -301,11 +297,11 @@ const TaskOverviewView: React.FC = () => {
                     data-task-id={item.task.id}
                     data-block-id={item.block.id}
                     tabIndex={0}
-                    onClick={() => openProjectTaskModal(item.task.id, item.block.id)}
+                    onClick={() => openProjectTaskModal(item.task.id, item.block.id, { source: 'task-overview' })}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        openProjectTaskModal(item.task.id, item.block.id);
+                        openProjectTaskModal(item.task.id, item.block.id, { source: 'task-overview' });
                       }
                     }}
                   >

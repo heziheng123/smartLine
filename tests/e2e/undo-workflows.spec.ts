@@ -153,8 +153,24 @@ test('week matrix drag reschedules through unified undo', async ({ page }) => {
 
 test('daily schedule keeps the real drag transform and visual feedback', async ({ page }) => {
   await page.getByTitle('每日安排').click();
+  const mobilePoolTrigger = page.locator('.ds-task-pool-trigger');
+  const compactPool = (page.viewportSize()?.width ?? 1200) <= 900;
+  if (compactPool) {
+    await expect(mobilePoolTrigger).toBeVisible();
+    await mobilePoolTrigger.click();
+    await expect(page.getByLabel('待安排任务池')).toHaveClass(/ds-right--open/);
+    await page.waitForTimeout(400); // wait for the drawer transform before reading drag coordinates
+  }
   const card = page.locator('.ds-pool-item').filter({ hasText: 'E2E复习撤销' });
   await expect(card).toBeVisible();
+  if (compactPool) {
+    await card.focus();
+    await page.keyboard.press('Space');
+    await expect(card).toHaveClass(/ds-pool-item--dragging/);
+    await page.keyboard.press('Escape');
+    await expect(card).not.toHaveClass(/ds-pool-item--dragging/);
+    return;
+  }
   const box = await card.boundingBox();
   if (!box) throw new Error('drag card has no bounding box');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -218,6 +234,10 @@ test('project vocabulary task is placed manually and records daily word count wi
   const refreshedCard = page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: '考研核心词汇' });
   await expect(refreshedCard).toHaveClass(/ds-item--completed/);
   await expect(refreshedCard).toContainText('今日 +50');
+  await undoLatestFromHistory(page);
+  await expect(refreshedCard).not.toHaveClass(/ds-item--completed/);
+  await expect(refreshedCard).not.toContainText('今日 +50');
+  await expect(refreshedCard).toContainText('1200/5500');
 });
 
 test('knowledge binding actions stay inside an iPad Air viewport', async ({ page }) => {
@@ -237,4 +257,27 @@ test('knowledge binding actions stay inside an iPad Air viewport', async ({ page
   expect(confirmBox.x + confirmBox.width).toBeLessThanOrEqual(1180);
   await page.getByRole('button', { name: '取消' }).click();
   await expect(page.locator('.tl-year-stack')).toBeVisible();
+});
+
+test('knowledge node detail summarizes linked tasks, reviews and mastery state', async ({ page }) => {
+  await openTaskOverview(page);
+  await page.locator('[data-block-id="e2e-block"]').click();
+  await page.getByRole('button', { name: '未绑定节点' }).click();
+  await page.getByPlaceholder('搜索或创建知识节点...').fill('E2E知识节点');
+  await page.getByRole('button', { name: /创建新知识节点："E2E知识节点"/ }).click();
+  await page.locator('.stb-tag-picker-overlay').click({ position: { x: 5, y: 5 } });
+  await page.getByLabel('关闭任务详情').click();
+
+  await page.getByTitle('知识大盘').click();
+  const nodeLabel = page.locator('svg text[fill="#ffffff"]').filter({ hasText: 'E2E知识节点' });
+  await expect(nodeLabel).toBeVisible();
+  await nodeLabel.evaluate((element) => element.parentElement?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+  const summary = page.getByLabel('学习状态总览');
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText('未开始');
+  await expect(summary).toContainText('已完成 0/1');
+  await expect(summary).toContainText('0/0');
+  await expect(page.getByText(/^关联项目任务 1$/)).toBeVisible();
+  await expect(page.getByText('E2E完成撤销任务')).toBeVisible();
 });

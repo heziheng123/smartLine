@@ -12,6 +12,8 @@ import { getValidGraphNodeIds } from '@/utils/blocks';
 import { computeNodeActivationStates } from '../activation';
 import styles from './GraphConsole.module.css';
 import { useGraphBindingStore } from '../bindingStore';
+import NodeLearningSummary, { type NodeDetailScope, type NodeLearningSummaryData, type NodeMasteryState } from './NodeLearningSummary';
+import type { SmartTaskBlock, Task } from '@/types';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
 import { zoom, zoomIdentity, ZoomBehavior } from 'd3-zoom';
@@ -63,7 +65,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore();
   const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
   const { reviewTasks } = useEbbStore();
-  const { tasks } = useTimelineStore();
+  const { tasks, groups } = useTimelineStore();
   const bindingSession = useGraphBindingStore();
   const [bindingError, setBindingError] = useState('');
 
@@ -73,6 +75,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [newChildName, setNewChildName] = useState('');
   const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [detailScope, setDetailScope] = useState<NodeDetailScope>('subtree');
 
   // Filter States
   const [selectedRootFilter, setSelectedRootFilter] = useState<string>('all');
@@ -494,10 +497,6 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [zoomToFit, selectedRootFilter]);
 
   const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId), [nodes, selectedNodeId]);
-  const selectedGraphNode = useMemo(
-    () => islandsData.allFlatNodes.find(node => node.id === selectedNodeId) ?? null,
-    [islandsData, selectedNodeId],
-  );
   const selectedActivationState = selectedNodeId
     ? activationStates.get(selectedNodeId) ?? null
     : null;
@@ -543,31 +542,47 @@ export const KnowledgeGraphView: React.FC = () => {
     }
   }, [selectedNodeId, islandsData]);
   
-  const selectedNodeReviewPreview = useMemo(() => {
-    if (!selectedNodeId) return [];
-    const scopedIds = new Set([selectedNodeId, ...getDescendants(selectedNodeId)]);
-    return reviewTasks
-      .filter(task => !task.isArchived && task.graphNodeId && scopedIds.has(task.graphNodeId))
-      .sort((a, b) => {
-        if (a.isCompleted !== b.isCompleted) return Number(a.isCompleted) - Number(b.isCompleted);
-        return (a.dueDate || '').localeCompare(b.dueDate || '');
-      })
-      .slice(0, 3);
-  }, [selectedNodeId, getDescendants, reviewTasks]);
+  const allProjectTasks = useMemo(() => {
+    const taskMap = new Map<string, Task>();
+    tasks.forEach(task => taskMap.set(task.id, task));
+    groups.forEach(group => group.children.forEach(task => taskMap.set(task.id, task)));
+    return [...taskMap.values()];
+  }, [tasks, groups]);
+
+  const selectedScopeIds = useMemo(() => {
+    if (!selectedNodeId) return new Set<string>();
+    const ids = detailScope === 'subtree'
+      ? [selectedNodeId, ...getDescendants(selectedNodeId)]
+      : [selectedNodeId];
+    return new Set(ids);
+  }, [selectedNodeId, detailScope, getDescendants]);
+
+  const canIncludeSelectedSubtree = useMemo(
+    () => Boolean(selectedNodeId && getDescendants(selectedNodeId).length > 0),
+    [selectedNodeId, getDescendants],
+  );
+
+  const selectedReviewTasks = useMemo(() => reviewTasks
+    .filter(task => !task.isArchived && task.graphNodeId && selectedScopeIds.has(task.graphNodeId))
+    .sort((a, b) => {
+      if (a.isCompleted !== b.isCompleted) return Number(a.isCompleted) - Number(b.isCompleted);
+      return (a.dueDate || '').localeCompare(b.dueDate || '');
+    }), [reviewTasks, selectedScopeIds]);
+
+  const selectedNodeReviewPreview = useMemo(
+    () => selectedReviewTasks.slice(0, 5),
+    [selectedReviewTasks],
+  );
 
   const relatedTaskBlocks = useMemo(() => {
     if (!selectedNodeId) return [];
-    const scopedIds = new Set([selectedNodeId, ...getDescendants(selectedNodeId)]);
-    
-    const results: { task: any, block: any }[] = [];
-    tasks.forEach(task => {
+    const results: Array<{ task: Task; block: SmartTaskBlock }> = [];
+    allProjectTasks.forEach(task => {
       if (!task.blocks) return;
       task.blocks.forEach(block => {
-        if (block.type === 'smart-task') {
+        if (block.type === 'smart-task' && !block.header.isArchived) {
           const ids = getValidGraphNodeIds(block.header);
-          if (ids.some((id: string) => scopedIds.has(id))) {
-            results.push({ task, block });
-          }
+          if (ids.some(id => selectedScopeIds.has(id))) results.push({ task, block });
         }
       });
     });
@@ -579,14 +594,65 @@ export const KnowledgeGraphView: React.FC = () => {
     });
     
     return results;
-  }, [selectedNodeId, getDescendants, tasks]);
+  }, [selectedNodeId, selectedScopeIds, allProjectTasks]);
+
+  const selectedLearningSummary = useMemo<NodeLearningSummaryData>(() => {
+    const taskTotal = relatedTaskBlocks.length;
+    const taskCompleted = relatedTaskBlocks.filter(({ block }) => block.header.isCompleted).length;
+    const reviewTotal = selectedReviewTasks.length;
+    const reviewCompleted = selectedReviewTasks.filter(task => task.isCompleted).length;
+    const pendingReviews = selectedReviewTasks.filter(task => !task.isCompleted);
+    const reviewOverdue = pendingReviews.filter(task => diffDays(todayStr(), task.dueDate) > 0).length;
+    const dueNow = pendingReviews.filter(task => diffDays(todayStr(), task.dueDate) >= 0).length;
+    const nextReviewDate = pendingReviews[0]?.dueDate;
+    let masteryState: NodeMasteryState;
+    let masteryLabel: string;
+    let masteryReason: string;
+
+    if (dueNow > 0) {
+      masteryState = 'needs-review';
+      masteryLabel = '待巩固';
+      masteryReason = reviewOverdue > 0
+        ? `有 ${reviewOverdue} 个复习轮次已经逾期，需要优先处理。`
+        : '存在今天到期的复习轮次，完成后会继续推进掌握状态。';
+    } else if (taskCompleted === 0) {
+      masteryState = 'not-started';
+      masteryLabel = '未开始';
+      masteryReason = taskTotal > 0 ? '尚未完成任何关联项目任务。' : '当前统计范围还没有关联项目任务。';
+    } else if (taskTotal > 0 && taskCompleted === taskTotal && reviewTotal > 0 && reviewCompleted === reviewTotal) {
+      masteryState = 'mastered';
+      masteryLabel = '已掌握';
+      masteryReason = '关联任务和当前计划中的复习轮次均已完成。';
+    } else {
+      masteryState = 'learning';
+      masteryLabel = '学习中';
+      masteryReason = reviewTotal === 0
+        ? '已经完成部分学习任务，但还没有形成复习轮次。'
+        : '已有学习进展，仍有任务或后续复习轮次需要完成。';
+    }
+
+    return {
+      masteryState,
+      masteryLabel,
+      masteryReason,
+      nodeCount: selectedScopeIds.size,
+      taskTotal,
+      taskCompleted,
+      reviewTotal,
+      reviewCompleted,
+      reviewPending: pendingReviews.length,
+      reviewOverdue,
+      nextReviewDate,
+    };
+  }, [relatedTaskBlocks, selectedReviewTasks, selectedScopeIds]);
 
   useEffect(() => {
     if (selectedNode) {
       setEditName(selectedNode.name);
       setIsPanelOpen(true);
+      setDetailScope(getDescendants(selectedNode.id).length > 0 ? 'subtree' : 'direct');
     }
-  }, [selectedNode]);
+  }, [selectedNode, getDescendants]);
 
   const handleImport = useCallback((text: string, baseParentId: string | null = null) => {
     if (!text.trim()) return;
@@ -988,11 +1054,17 @@ export const KnowledgeGraphView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="px-5 pb-5 flex flex-col gap-5">
+              <div className={`${styles.panelBody} px-5 pb-5 flex flex-col gap-5`}>
+                <NodeLearningSummary
+                  data={selectedLearningSummary}
+                  scope={detailScope}
+                  canIncludeSubtree={canIncludeSelectedSubtree}
+                  onScopeChange={setDetailScope}
+                />
                 {selectedActivationState && (
                   <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
                     <span className="font-medium text-slate-600">
-                      {selectedActivationState.isLeaf ? '节点状态' : '子节点激活进度'}
+                      {selectedActivationState.isLeaf ? '图谱激活状态' : '子节点激活进度'}
                     </span>
                     <span className={selectedActivationState.isActivated ? 'font-semibold text-blue-600' : 'font-semibold text-slate-500'}>
                       {selectedActivationState.isLeaf
@@ -1001,30 +1073,10 @@ export const KnowledgeGraphView: React.FC = () => {
                     </span>
                   </div>
                 )}
-                {selectedGraphNode && (
-                  <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                    <span className="font-medium text-slate-600">EBB 轮次</span>
-                    <span className={`font-semibold ${selectedGraphNode.overdueCount > 0 ? 'text-rose-600' : selectedGraphNode.totalReviewCount > 0 && selectedGraphNode.completedCount === selectedGraphNode.totalReviewCount ? 'text-amber-600' : selectedGraphNode.completedCount > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
-                      {selectedGraphNode.completedCount}/{selectedGraphNode.totalReviewCount}
-                      {selectedGraphNode.overdueCount > 0 ? ` · ${selectedGraphNode.overdueCount} 个逾期` : ''}
-                    </span>
-                  </div>
-                )}
-                {selectedGraphNode && (
-                  <div className={styles.statsBoard}>
-                    <div className={styles.statItem}><span className={styles.statValue}>{selectedGraphNode.pendingCount}</span><span className={styles.statLabel}>待复习</span></div>
-                    <div className={styles.statDivider}></div>
-                    <div className={styles.statItem}><span className={`${styles.statValue} ${selectedGraphNode.overdueCount > 0 ? styles.overdue : ''}`}>{selectedGraphNode.overdueCount}</span><span className={styles.statLabel}>逾期</span></div>
-                    <div className={styles.statDivider}></div>
-                    <div className={styles.statItem}><span className={styles.statValue}>{selectedGraphNode.completedCount}</span><span className={styles.statLabel}>已完成</span></div>
-                    <div className={styles.statDivider}></div>
-                    <div className={styles.statItem}><span className={styles.statValue}>{selectedGraphNode.totalReviewCount}</span><span className={styles.statLabel}>总计</span></div>
-                  </div>
-                )}
                 
                 {selectedNodeReviewPreview.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Zap size={11} className="text-amber-400" />近期复习</div>
+                    <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Zap size={11} className="text-amber-400" />复习记录 <span className="font-medium text-slate-400">{selectedReviewTasks.length}</span></div>
                     <div className="space-y-0.5">
                       {selectedNodeReviewPreview.map(task => (
                         <div key={task.id} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'ebb' } }))} className="group flex justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer">
@@ -1041,10 +1093,10 @@ export const KnowledgeGraphView: React.FC = () => {
 
                 {relatedTaskBlocks.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Network size={11} className="text-blue-400" />关联任务记录</div>
+                    <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Network size={11} className="text-blue-400" />关联项目任务 <span className="font-medium text-slate-400">{relatedTaskBlocks.length}</span></div>
                     <div className="space-y-1">
                       {relatedTaskBlocks.map(({ task, block }) => (
-                        <div key={`${task.id}-${block.id}`} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id } }))} className="group flex flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                        <div key={`${task.id}-${block.id}`} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id, blockId: block.id } }))} className="group flex flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
                           <div className="flex justify-between gap-3">
                             <div className="text-xs font-semibold text-slate-800 truncate">{block.header.title}</div>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full ${block.header.isCompleted ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'}`}>{block.header.isCompleted ? '已完成' : '进行中'}</span>

@@ -23,6 +23,11 @@ import {
   Minimize,
   ListTree,
   MoreHorizontal,
+  CalendarDays,
+  Network,
+  Inbox,
+  SearchX,
+  FileText,
 } from 'lucide-react';
 import {
   todayStr,
@@ -65,6 +70,7 @@ import TaskMetaEditor from '@/components/TaskMetaEditor';
 import BatchImportDialog from '@/components/BatchImportDialog';
 import BatchEditDialog from '@/components/BatchEditDialog';
 import VocabularyTaskCreateDialog from './VocabularyTaskCreateDialog';
+import ProjectDocumentControls from './ProjectDocumentControls';
 import { mergeBatchEditRows, type ParsedRow } from '@/utils/excelImport';
 
 interface ProjectDocumentViewProps {
@@ -232,7 +238,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         if (graphNodeIds.length === 0) {
           groupKey = '__unlinked__';
           label = '未关联节点';
-          icon = '📥';
+          icon = <Inbox size={14} aria-hidden="true" />;
         } else {
           // 在 ProjectDocumentView 分组时，如果绑了多个节点，按第一个节点分组展示，或者可以用逗号拼接
           // 这里为了与原有逻辑尽量保持一致并兼顾多节点，使用第一个节点
@@ -240,7 +246,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           const node = nodes.find(n => n.id === nodeId);
           groupKey = nodeId;
           label = node ? node.name : '未知节点';
-          icon = '🕸️';
+          icon = <Network size={14} aria-hidden="true" />;
         }
       } else {
         // 按时间分组
@@ -252,11 +258,11 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           groupKey = mondayStr;
           label = `第 ${formatDate(mondayStr, 'M.D')} ~ ${formatDate(sundayStr, 'M.D')} 周`;
           subLabel = `${weekdayShort(mondayStr)} ~ ${weekdayShort(sundayStr)}`;
-          icon = '🗓️';
+          icon = <CalendarDays size={14} aria-hidden="true" />;
         } else {
           groupKey = dateStr;
           label = dateStr === '__none__' ? '未排期' : `${formatDate(dateStr, 'M.D')} ${weekdayShort(dateStr)}`;
-          icon = '📅';
+          icon = <CalendarDays size={14} aria-hidden="true" />;
         }
       }
 
@@ -655,13 +661,13 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                 className={`pdv-group-toggle-opt ${groupDimension === 'time' ? 'pdv-group-toggle-opt--active' : ''}`}
                 onClick={() => setGroupDimension('time')}
               >
-                📅
+                <CalendarDays size={14} aria-hidden="true" />
               </span>
               <span 
                 className={`pdv-group-toggle-opt ${groupDimension === 'node' ? 'pdv-group-toggle-opt--active' : ''}`}
                 onClick={() => setGroupDimension('node')}
               >
-                🕸️
+                <Network size={14} aria-hidden="true" />
               </span>
             </div>
           )}
@@ -786,64 +792,30 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         </div>
       )}
 
-      {/* ── 进度统计条 ── */}
-      {progress.total > 0 && (
-        <div className="pdv-progress">
-          <div className="pdv-progress-bar">
-            <div
-              className="pdv-progress-fill"
-              style={{ width: `${Math.round(progress.ratio * 100)}%` }}
-            />
-          </div>
-          <span className="pdv-progress-text">
-            {progress.done}/{progress.total} 完成{totalDuration > 0 ? ` · ${totalDuration}min 总时长` : ''}
-          </span>
-        </div>
-      )}
-
-      {/* ── 快速过滤器 ── */}
-      {smartBlocks.length > 0 && (
-        <div className="pdv-filter-bar">
-          <button
-            type="button"
-            className={`pdv-filter-pill ${hideCompleted ? 'pdv-filter-pill--active' : ''}`}
-            onClick={() => setHideCompleted(v => !v)}
-          >
-            ✅ 隐藏已完成
-          </button>
-          {uniqueTags.map(({ name, color }) => (
-            <button
-              key={name}
-              type="button"
-              className={`pdv-filter-pill ${activeTag === name ? 'pdv-filter-pill--active' : ''}`}
-              onClick={() => setActiveTag(v => v === name ? null : name)}
-            >
-              <span className="pdv-filter-dot" style={{ background: color }} />
-              {name}
-            </button>
-          ))}
-          <button
-            type="button"
-            className={`pdv-filter-pill ${todayOnly ? 'pdv-filter-pill--active' : ''}`}
-            onClick={() => setTodayOnly(v => !v)}
-          >
-            📅 只看今日
-          </button>
-        </div>
-      )}
+      <ProjectDocumentControls
+        progress={progress}
+        totalDuration={totalDuration}
+        tags={uniqueTags}
+        hideCompleted={hideCompleted}
+        activeTag={activeTag}
+        todayOnly={todayOnly}
+        onToggleCompleted={() => setHideCompleted((value) => !value)}
+        onToggleTag={(tag) => setActiveTag((value) => value === tag ? null : tag)}
+        onToggleToday={() => setTodayOnly((value) => !value)}
+      />
 
       {/* ── 文档主体：按日期分组 + 粘性表头 ── */}
       <div className="pdv-body">
         {sortedBlocks.length === 0 ? (
           <div className="pdv-empty">
-            <div className="pdv-empty-icon">📝</div>
+            <div className="pdv-empty-icon"><FileText size={32} aria-hidden="true" /></div>
             <div className="pdv-empty-text">
               这是一个空白文档。输入 <code>/</code> 触发命令，或点击上方按钮添加内容。
             </div>
           </div>
         ) : filteredSmartBlocks.length === 0 ? (
           <div className="pdv-empty">
-            <div className="pdv-empty-icon">🔍</div>
+            <div className="pdv-empty-icon"><SearchX size={32} aria-hidden="true" /></div>
             <div className="pdv-empty-text">
               当前筛选条件下没有匹配的任务，试试调整过滤条件。
             </div>
@@ -886,7 +858,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                           <span className="pdv-date-chevron">
                             {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                           </span>
-                          <span className="pdv-date-icon">{group.icon || (groupByWeek ? '🗓️' : '📅')}</span>
+                          <span className="pdv-date-icon">{group.icon || <CalendarDays size={14} aria-hidden="true" />}</span>
                           <span className="pdv-date-label">{group.label}</span>
                           {group.subLabel && (
                             <span className="pdv-date-sublabel">{group.subLabel}</span>

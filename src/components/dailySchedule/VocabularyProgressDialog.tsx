@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { BookOpen, X } from 'lucide-react';
-import { useTimelineStore } from '@/store';
 import type { SmartTaskBlock } from '@/types';
 import { getVocabularyLearnedWords, getVocabularyTotalWords } from '@/utils/blocks';
+import { recordVocabularyProgress, removeVocabularyProgress } from '@/services/projectTaskCommands';
 
 interface VocabularyProgressDialogProps {
   taskId: string;
@@ -12,7 +12,6 @@ interface VocabularyProgressDialogProps {
 }
 
 const VocabularyProgressDialog: React.FC<VocabularyProgressDialogProps> = ({ taskId, block, date, onClose }) => {
-  const updateBlockHeader = useTimelineStore((state) => state.updateBlockHeader);
   const header = block.header;
   const records = header.vocabularyRecords ?? {};
   const currentRecord = records[date];
@@ -29,25 +28,14 @@ const VocabularyProgressDialog: React.FC<VocabularyProgressDialogProps> = ({ tas
     const learnedWords = Number(value);
     if (!Number.isInteger(learnedWords) || learnedWords <= 0) return setError('请输入大于 0 的整数。');
     if (learnedWords > maxForDate) return setError(`最多还能记录 ${maxForDate} 个单词。`);
-    const nextRecords = { ...records, [date]: learnedWords };
-    const nextProgress = completedBeforeToday + learnedWords;
-    const completed = nextProgress >= total;
-    updateBlockHeader(taskId, block.id, {
-      vocabularyRecords: nextRecords,
-      isCompleted: completed,
-      completedDate: completed ? date : undefined,
-    });
+    const result = recordVocabularyProgress(taskId, block.id, date, learnedWords);
+    if ('error' in result) return setError(result.error);
     onClose();
   };
 
   const remove = () => {
-    const nextRecords = { ...records };
-    delete nextRecords[date];
-    updateBlockHeader(taskId, block.id, {
-      vocabularyRecords: nextRecords,
-      isCompleted: false,
-      completedDate: undefined,
-    });
+    const result = removeVocabularyProgress(taskId, block.id, date);
+    if ('error' in result) return setError(result.error);
     onClose();
   };
 

@@ -77,6 +77,18 @@ test('daily schedule keeps its controls clickable', async ({ page }) => {
   await expect(page.getByRole('tab', { name: '时间块' })).toHaveAttribute('aria-selected', 'true');
 });
 
+test('small screens expose the daily task pool as a closable bottom drawer', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  const trigger = page.locator('.ds-task-pool-trigger');
+  if ((page.viewportSize()?.width ?? 1200) > 900) return;
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await trigger.click();
+  await expect(page.getByLabel('待安排任务池')).toHaveClass(/ds-right--open/);
+  await page.getByLabel('关闭任务池').click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('operation history opens, closes and does not block navigation', async ({ page }) => {
   await page.getByTitle('最近操作与回收站').click();
   await expect(page.getByLabel('最近操作面板')).toBeVisible();

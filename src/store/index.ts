@@ -24,6 +24,11 @@ const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
 const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
 const timelineStorage = createScopedStorage('timeline_data');
 
+const headerValueEquals = (left: unknown, right: unknown) =>
+  typeof left === 'object' || typeof right === 'object'
+    ? JSON.stringify(left) === JSON.stringify(right)
+    : left === right;
+
 interface SyncSettings {
   roomCode: string;
   enabled: boolean;
@@ -978,25 +983,47 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           if (currentBlock?.type === 'smart-task' && !isOperationRecordingSuppressed()) {
             const completionChanged = headerPatch.isCompleted !== undefined && headerPatch.isCompleted !== currentBlock.header.isCompleted;
             const dateChanged = headerPatch.date !== undefined && headerPatch.date !== currentBlock.header.date;
-            if (completionChanged || dateChanged) {
-              const previousPatch: Partial<SmartTaskHeader> = completionChanged
-                ? { isCompleted: currentBlock.header.isCompleted, completedDate: currentBlock.header.completedDate }
-                : { date: currentBlock.header.date };
-              const expected = completionChanged
-                ? { isCompleted: headerPatch.isCompleted }
-                : { date: headerPatch.date };
+            const vocabularyChanged = headerPatch.vocabularyRecords !== undefined
+              && !headerValueEquals(headerPatch.vocabularyRecords, currentBlock.header.vocabularyRecords);
+            if (completionChanged || dateChanged || vocabularyChanged) {
+              const previousPatch: Partial<SmartTaskHeader> = {};
+              const expected: Partial<SmartTaskHeader> = {};
+              if (completionChanged) {
+                previousPatch.isCompleted = currentBlock.header.isCompleted;
+                previousPatch.completedDate = currentBlock.header.completedDate;
+                expected.isCompleted = headerPatch.isCompleted;
+                expected.completedDate = headerPatch.completedDate;
+              }
+              if (dateChanged) {
+                previousPatch.date = currentBlock.header.date;
+                expected.date = headerPatch.date;
+              }
+              if (vocabularyChanged) {
+                previousPatch.vocabularyRecords = currentBlock.header.vocabularyRecords;
+                expected.vocabularyRecords = headerPatch.vocabularyRecords;
+              }
               recordOperation({
-                label: completionChanged
+                label: vocabularyChanged
+                  ? `更新“${currentBlock.header.title}”的单词进度`
+                  : completionChanged
                   ? `${headerPatch.isCompleted ? '完成' : '取消完成'}“${currentBlock.header.title}”`
                   : `改期“${currentBlock.header.title}”`,
-                detail: completionChanged ? '项目文档、每日安排、EBB 与知识节点将统一恢复' : `${currentBlock.header.date ?? '未排期'} → ${headerPatch.date ?? '未排期'}`,
-                modules: completionChanged ? ['项目文档', '每日安排', 'EBB', '知识大盘'] : ['项目文档', '周矩阵', '每日安排'],
+                detail: vocabularyChanged
+                  ? '单词进度、完成状态与每日安排将作为一次操作统一恢复'
+                  : completionChanged
+                    ? '项目文档、每日安排、EBB 与知识节点将统一恢复'
+                    : `${currentBlock.header.date ?? '未排期'} → ${headerPatch.date ?? '未排期'}`,
+                modules: completionChanged
+                  ? ['项目文档', '每日安排', 'EBB', '知识大盘']
+                  : dateChanged
+                    ? ['项目文档', '周矩阵', '每日安排']
+                    : ['项目文档', '每日安排'],
                 undoSpec: { kind: 'timeline-header', payload: { taskId, blockId, patch: previousPatch, expected } },
               }, () => {
                 const latestTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
                 const latestBlock = latestTask?.blocks.find((block) => block.id === blockId);
                 if (latestBlock?.type !== 'smart-task') return '任务已经不存在';
-                if (Object.entries(expected).some(([key, value]) => latestBlock.header[key as keyof SmartTaskHeader] !== value)) return '任务在此操作后又被修改';
+                if (Object.entries(expected).some(([key, value]) => !headerValueEquals(latestBlock.header[key as keyof SmartTaskHeader], value))) return '任务在此操作后又被修改';
                 get().updateBlockHeader(taskId, blockId, previousPatch);
               });
             }
@@ -1304,7 +1331,7 @@ registerUndoExecutor('timeline-header', (raw) => {
   const task = getUniqueTasks(state.tasks, state.groups).find((item) => item.id === payload.taskId);
   const block = task?.blocks.find((item) => item.id === payload.blockId);
   if (block?.type !== 'smart-task') return '任务已经不存在';
-  if (Object.entries(payload.expected).some(([key, value]) => block.header[key as keyof SmartTaskHeader] !== value)) return '任务在此操作后又被修改';
+  if (Object.entries(payload.expected).some(([key, value]) => !headerValueEquals(block.header[key as keyof SmartTaskHeader], value))) return '任务在此操作后又被修改';
   state.updateBlockHeader(payload.taskId, payload.blockId, payload.patch);
 });
 

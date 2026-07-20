@@ -20,6 +20,13 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  BrainCircuit,
+  LibraryBig,
+  ListChecks,
+  AlarmClock,
+  TriangleAlert,
+  Target,
+  ChartNoAxesColumn,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -375,7 +382,7 @@ const EbbView: React.FC = () => {
         {/* ── 顶部导航栏 ──────────────────────────────────── */}
         <header className="eb-nav">
           <div className="eb-nav-left">
-            <span className="eb-nav-brand">🧠 艾宾浩斯复习</span>
+            <span className="eb-nav-brand"><BrainCircuit size={18} aria-hidden="true" />艾宾浩斯复习</span>
             <button
               type="button"
               className="eb-nav-btn eb-nav-btn--primary"
@@ -401,32 +408,32 @@ const EbbView: React.FC = () => {
         <section className="eb-stats-bar">
           <div className="eb-stats-cards">
             <div className="eb-stat-card">
-              <span className="eb-stat-icon">📚</span>
+              <span className="eb-stat-icon"><LibraryBig size={15} aria-hidden="true" /></span>
               <span className="eb-stat-value">{stats.topicCount}</span>
               <span className="eb-stat-label">学习内容</span>
             </div>
             <div className="eb-stat-card">
-              <span className="eb-stat-icon">📋</span>
+              <span className="eb-stat-icon"><ListChecks size={15} aria-hidden="true" /></span>
               <span className="eb-stat-value">{stats.total}</span>
               <span className="eb-stat-label">总任务</span>
             </div>
             <div className={`eb-stat-card ${stats.todayDue > 0 ? 'eb-stat-card--warn' : ''}`}>
-              <span className="eb-stat-icon">⏰</span>
+              <span className="eb-stat-icon"><AlarmClock size={15} aria-hidden="true" /></span>
               <span className="eb-stat-value">{stats.todayDue}</span>
               <span className="eb-stat-label">今日到期</span>
             </div>
             <div className={`eb-stat-card ${stats.overdue > 0 ? 'eb-stat-card--danger' : ''}`}>
-              <span className="eb-stat-icon">⚠️</span>
+              <span className="eb-stat-icon"><TriangleAlert size={15} aria-hidden="true" /></span>
               <span className="eb-stat-value">{stats.overdue}</span>
               <span className="eb-stat-label">逾期</span>
             </div>
             <div className="eb-stat-card">
-              <span className="eb-stat-icon">🎯</span>
+              <span className="eb-stat-icon"><Target size={15} aria-hidden="true" /></span>
               <span className="eb-stat-value">{stats.todayPoints}</span>
               <span className="eb-stat-label">今日积分</span>
             </div>
             <div className="eb-stat-card">
-              <span className="eb-stat-icon">📊</span>
+              <span className="eb-stat-icon"><ChartNoAxesColumn size={15} aria-hidden="true" /></span>
               <span className="eb-stat-value">{stats.weekPoints}</span>
               <span className="eb-stat-label">本周积分</span>
             </div>

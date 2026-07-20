@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderOpen, X } from 'lucide-react';
+import { ArrowUpRight, BookOpen, CalendarDays, Clock3, FolderOpen, Layers3, ListTodo, Tag, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import { SmartTaskBlockCard } from './SmartTaskBlockCard';
 import { PROJECT_TASK_MODAL_EVENT, type ProjectTaskModalDetail } from './projectTaskModal';
+import { getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
+import { formatDate } from '@/utils/dateSafe';
 
 const ProjectTaskBlockModal: React.FC = () => {
   const [target, setTarget] = useState<ProjectTaskModalDetail | null>(null);
@@ -65,17 +67,48 @@ const ProjectTaskBlockModal: React.FC = () => {
 
   if (!target || !task || !block) return null;
 
+  const sourceLabels: Record<NonNullable<ProjectTaskModalDetail['source']>, string> = {
+    'daily-schedule': '每日安排',
+    'task-overview': '任务总览',
+    'week-matrix': '周矩阵',
+    'time-block': '时间块',
+    project: '项目文档',
+  };
+  const vocabulary = isVocabularyTask(block.header);
+  const graphNodeCount = getValidGraphNodeIds(block.header).length;
+
+  const openInProject = () => {
+    window.dispatchEvent(new CustomEvent('tl-navigate', {
+      detail: { view: 'timeline', taskId: task.id, blockId: block.id },
+    }));
+  };
+
+  const openInDailySchedule = () => {
+    try {
+      sessionStorage.setItem('smart-line-daily-target-date', block.header.date);
+    } catch {
+      // Navigation still works when session storage is unavailable.
+    }
+    window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'daily-schedule' } }));
+  };
+
   return createPortal(
     <div className="ptm-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <section className="ptm-dialog" role="dialog" aria-modal="true" aria-labelledby="ptm-title">
         <header className="ptm-header">
           <div className="ptm-heading">
             <div id="ptm-title" className="ptm-title">任务详情</div>
-            <div className="ptm-project"><FolderOpen size={13} />所属项目：{task.name}</div>
+            <div className="ptm-project"><FolderOpen size={13} />{task.name}{target.source ? <span>· 来源：{sourceLabels[target.source]}</span> : null}</div>
           </div>
           <button type="button" className="ptm-close" onClick={close} aria-label="关闭任务详情"><X size={18} /></button>
         </header>
         <div className="ptm-body">
+          <div className="ptm-context-grid" aria-label="任务上下文">
+            <div><CalendarDays size={14} /><span>计划日期</span><strong>{formatDate(block.header.date, 'M月D日')}</strong></div>
+            <div><Tag size={14} /><span>标签</span><strong>{block.header.tag || '未分类'}</strong></div>
+            <div>{vocabulary ? <BookOpen size={14} /> : <Clock3 size={14} />}<span>{vocabulary ? '单词进度' : '预计时长'}</span><strong>{vocabulary ? `${getVocabularyLearnedWords(block.header)}/${getVocabularyTotalWords(block.header)}` : `${block.header.duration} 分钟`}</strong></div>
+            <div><Layers3 size={14} /><span>知识关联</span><strong>{graphNodeCount > 0 ? `${graphNodeCount} 个节点` : '未绑定'}</strong></div>
+          </div>
           <SmartTaskBlockCard
             parentTaskId={task.id}
             block={block}
@@ -84,11 +117,15 @@ const ProjectTaskBlockModal: React.FC = () => {
             onUpdateBody={(blockId, body) => updateBlockBody(task.id, blockId, body)}
             onDelete={(blockId) => { removeBlock(task.id, blockId); close(); }}
           />
-          <p className="ptm-date-change-hint">修改任务日期后，原每日安排会被取消；请在新日期重新安排执行时间。</p>
+          <p className="ptm-date-change-hint">修改名称、日期、标签或进度后，项目文档、任务总览、周矩阵和每日安排会读取同一份任务数据。</p>
         </div>
         <footer className="ptm-footer">
-          <span>标题、日期、时长和正文会同步到各任务视图，但不会调整已有 EBB 轮次日期。</span>
-          <button type="button" onClick={close}>完成</button>
+          <div className="ptm-footer-context"><ListTodo size={14} /><span>{vocabulary ? '单词任务通过每日数量记录推进总进度' : '完成状态会同步关联模块并进入统一撤销记录'}</span></div>
+          <div className="ptm-footer-actions">
+            <button type="button" className="ptm-nav-btn" onClick={openInProject}><ArrowUpRight size={14} />在项目中定位</button>
+            <button type="button" className="ptm-nav-btn" onClick={openInDailySchedule}><CalendarDays size={14} />查看每日安排</button>
+            <button type="button" className="ptm-done-btn" onClick={close}>完成</button>
+          </div>
         </footer>
       </section>
     </div>,

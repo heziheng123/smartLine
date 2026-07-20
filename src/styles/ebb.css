@@ -2680,6 +2680,9 @@
 }
 
 .eb-nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 15px;
   font-weight: 600;
   color: #1F2937;
@@ -2771,10 +2774,15 @@
 }
 
 .eb-stat-icon {
-  font-size: 14px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #6B7280;
   margin-bottom: 2px;
 }
+
+.eb-stat-card--warn .eb-stat-icon { color: #B45309; }
+.eb-stat-card--danger .eb-stat-icon { color: #DC2626; }
 
 .eb-stat-value {
   font-size: 16px;
@@ -5240,3 +5248,118 @@
 .eb-tree-stat-item--pending { background: #F3F4F6; color: #9CA3AF; }
 .eb-tree-stat-item--tasks { background: #EEF2FF; color: #4F46E5; }
 .eb-tree-stat-item--date { background: #F1F5F9; color: #475569; }
+
+/* ── 紧凑屏：日历和复习视图改为纵向信息流，避免双栏被压窄 ── */
+@media (max-width: 760px) {
+  .eb-app {
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-bottom: 72px;
+  }
+
+  .eb-nav {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .eb-nav-left,
+  .eb-nav-right {
+    gap: 4px;
+  }
+
+  .eb-nav-brand {
+    margin-right: 2px;
+    font-size: 13px;
+  }
+
+  .eb-nav-btn {
+    padding: 6px 8px;
+  }
+
+  .eb-stats-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .eb-stats-cards {
+    grid-column: 1 / -1;
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    padding-bottom: 3px;
+  }
+
+  .eb-stat-card {
+    min-width: 76px;
+    padding-inline: 10px;
+  }
+
+  .eb-stats-progress {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .eb-tabs {
+    padding-inline: 12px;
+  }
+
+  .eb-main-wrap {
+    flex: none;
+    min-height: auto;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .eb-cal-sidebar {
+    width: 100%;
+    height: auto;
+    flex: none;
+    border-right: 0;
+    border-bottom: 1px solid #E5E7EB;
+    overflow: visible;
+  }
+
+  .eb-mini-cal {
+    width: 100%;
+    max-width: 460px;
+    margin-inline: auto;
+  }
+
+  .eb-cal-sidebar-tasks {
+    flex: none;
+    max-height: 260px;
+    overflow: hidden;
+  }
+
+  .eb-cal-day-content {
+    max-height: 200px;
+  }
+
+  .eb-main {
+    flex: none;
+    min-height: 620px;
+    width: 100%;
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  .eb-filter-search {
+    min-width: 100%;
+    max-width: none;
+  }
+
+  .eb-tag-stats {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .eb-tag-stat {
+    flex: 0 0 150px;
+    min-width: 150px;
+  }
+}

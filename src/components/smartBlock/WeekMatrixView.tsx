@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, BookOpen, Clock3 } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
 import { getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, getVocabularyLearnedWords, getVocabularyTotalWords, isVocabularyTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
@@ -295,7 +295,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
               className="wmv-offrange-capsule"
               title="存在不在当前显示范围内的任务块，悬停可查看最近日期"
             >
-              <span className="wmv-offrange-capsule-icon">📕</span>
+              <span className="wmv-offrange-capsule-icon"><BookMarked size={14} aria-hidden="true" /></span>
               <span className="wmv-offrange-capsule-count">{offRangeInfo.totalBefore + offRangeInfo.totalAfter}</span>
               <div className="wmv-offrange-popover">
                 <div className="wmv-offrange-popover-text">
@@ -439,11 +439,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                             backgroundColor: resolveTaskCategoryTheme(tagColor).backgroundColor,
                             borderLeftColor: resolveTaskCategoryTheme(tagColor).accentColor,
                           }}
-                          onClick={() => { if (!suppressCardOpenRef.current) openProjectTaskModal(block._taskId, block.id); }}
+                          onClick={() => { if (!suppressCardOpenRef.current) openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date }); }}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault();
-                              openProjectTaskModal(block._taskId, block.id);
+                              openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date });
                             }
                           }}
                           title="拖动到同标签的其他日期列即可直接改期"
@@ -476,7 +476,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                           </div>
 
                           <div className="wmv-block-meta">
-                            <span>{isVocabularyTask(header) ? `📖 ${getVocabularyLearnedWords(header)}/${getVocabularyTotalWords(header)}` : `⏱ ${header.duration}m`}</span>
+                            <span>{isVocabularyTask(header) ? <><BookOpen size={12} />{getVocabularyLearnedWords(header)}/{getVocabularyTotalWords(header)}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
                           </div>
 
                           {block.body && (

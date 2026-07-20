@@ -8,18 +8,10 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { todayStr } from '@/utils/dateSafe';
 import {
   DragDropContext,
-  Droppable,
-  Draggable,
   type DropResult,
 } from '@hello-pangea/dnd';
 import {
-  Check,
-  GripVertical,
-  Clock,
-  X,
   Settings2,
-  CircleDashed,
-  Link as LinkIcon,
   ListTodo,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
@@ -45,42 +37,85 @@ import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { parseSourceId } from './conversion';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
-import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import {
-  projectBadgeStyle,
   resolveProjectAppearance,
 } from './projectAppearance';
 import { recordOperation } from '@/services/operationHistory';
-
-// ── Droppable IDs ────────────────────────────────────────────
-
-const DROPPABLE_POOL = 'ds-pool';
-const DROPPABLE_VOCABULARY_POOL = `${DROPPABLE_POOL}-vocabulary`;
-const droppableIdForSlot = (slot: TimeSlot) => `ds-slot-${slot}`;
+import { removeVocabularyProgress, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import DailySlotSection from './DailySlotSection';
+import DailyTaskPool, { type CompletedDailyPoolItem, type DailyPoolItem } from './DailyTaskPool';
+import TimeSlotIcon from './TimeSlotIcon';
+import {
+  DROPPABLE_POOL,
+  DROPPABLE_REVIEW_POOL,
+  DROPPABLE_VOCABULARY_POOL,
+  isTaskPoolDroppable,
+} from './dndIds';
 
 // ── 主组件 ───────────────────────────────────────────────────
 
 const DailyScheduleView: React.FC = () => {
   const today = todayStr();
-  const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedDate, setSelectedDate] = useState(() => {
+    try {
+      const pending = sessionStorage.getItem('smart-line-daily-target-date');
+      if (pending) {
+        sessionStorage.removeItem('smart-line-daily-target-date');
+        return pending;
+      }
+    } catch {
+      // Session storage is optional; falling back to today keeps navigation usable.
+    }
+    return today;
+  });
   const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
   const [showCompletedPool, setShowCompletedPool] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [progressTask, setProgressTask] = useState<{ taskId: string; block: SmartTaskBlock } | null>(null);
+  const [poolPreference, setPoolPreference] = useState<'auto' | 'open' | 'closed'>('auto');
+  const [isCompactLayout, setIsCompactLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 900px)');
+    const update = () => setIsCompactLayout(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => setPoolPreference('auto'), [selectedDate]);
+
+  useEffect(() => {
+    const handleNavigation = (event: Event) => {
+      const detail = (event as CustomEvent<{ view?: string }>).detail;
+      if (detail?.view !== 'daily-schedule') return;
+      try {
+        const pending = sessionStorage.getItem('smart-line-daily-target-date');
+        if (pending) {
+          sessionStorage.removeItem('smart-line-daily-target-date');
+          setSelectedDate(pending);
+        }
+      } catch {
+        // Ignore optional session storage failures.
+      }
+    };
+    window.addEventListener('tl-navigate', handleNavigation);
+    return () => window.removeEventListener('tl-navigate', handleNavigation);
+  }, []);
 
   const openProjectTaskFromSource = useCallback((sourceId: string) => {
     const parsed = parseSourceId(sourceId);
     if (parsed?.source === 'project' && parsed.blockId) {
-      openProjectTaskModal(parsed.parentTaskId, parsed.blockId);
+      openProjectTaskModal(parsed.parentTaskId, parsed.blockId, { source: 'daily-schedule', sourceDate: selectedDate });
     }
-  }, []);
+  }, [selectedDate]);
 
   const openAllProjectTasks = useCallback(() => {
     window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'task-overview' } }));
   }, []);
 
-  const { tasks: rawTlTasks, groups: rawTlGroups, updateBlockHeader: tlUpdateBlockHeader } = useTimelineStore(
-    useShallow((s) => ({ tasks: s.tasks, groups: s.groups, updateBlockHeader: s.updateBlockHeader })),
+  const { tasks: rawTlTasks, groups: rawTlGroups } = useTimelineStore(
+    useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
   );
   const {
     reviewTasks: rawEbbReviewTasks,
@@ -302,7 +337,7 @@ const DailyScheduleView: React.FC = () => {
   }, [daySchedule.items, daySchedule.blocks]);
 
   const completedPoolItems = useMemo(() => {
-    const items: { id: string; name: string; source: TaskSource; sourceId: string; taskKind?: 'standard' | 'vocabulary'; detail?: string; color?: string; categoryColor?: string }[] = [];
+    const items: CompletedDailyPoolItem[] = [];
     for (const todo of completedProjectTasks) {
       if (!todo._blockId) continue;
       const sourceId = getProjectBlockSourceId(todo.parentTaskId, todo._blockId);
@@ -342,17 +377,7 @@ const DailyScheduleView: React.FC = () => {
 
   // ── 构建右侧任务池列表（时段模式用） ─────────────────────
   const poolItems = useMemo(() => {
-    const items: {
-      id: string;
-      name: string;
-      source: TaskSource;
-      color?: string;
-      categoryColor?: string;
-      detail?: string;
-      duration?: number;
-      sourceId: string;
-      taskKind?: 'standard' | 'vocabulary';
-    }[] = [];
+    const items: DailyPoolItem[] = [];
 
     for (const todo of todayProjectTasks) {
       // 区分 blocks 和 markdown 来源的 sourceId
@@ -394,15 +419,11 @@ const DailyScheduleView: React.FC = () => {
       });
     }
 
-    let filtered = items;
-    if (filterSource !== 'all') {
-      filtered = filtered.filter((item) => filterSource === 'vocabulary'
-        ? item.taskKind === 'vocabulary'
-        : item.source === filterSource && item.taskKind !== 'vocabulary');
-    }
+    return items;
+  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData]);
 
-    return filtered;
-  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, filterSource, ebbReviewTasks, ebbSettingsData]);
+  const poolOpen = poolPreference === 'open'
+    || (poolPreference === 'auto' && !isCompactLayout && poolItems.length > 0);
 
   // ── 辅助函数：根据用户配置动态划分时段 ──────────────────
   // ── 获取时间段内的已安排任务 ─────────────────────────────
@@ -457,7 +478,7 @@ const DailyScheduleView: React.FC = () => {
 
       // 从右侧任务池拖入左侧时间段
       if (
-        (srcDroppableId === DROPPABLE_POOL || srcDroppableId === `${DROPPABLE_POOL}-review` || srcDroppableId === DROPPABLE_VOCABULARY_POOL) &&
+        (srcDroppableId === DROPPABLE_POOL || srcDroppableId === DROPPABLE_REVIEW_POOL || srcDroppableId === DROPPABLE_VOCABULARY_POOL) &&
         destDroppableId.startsWith('ds-slot-')
       ) {
         const targetSlot = destDroppableId.replace('ds-slot-', '') as TimeSlot;
@@ -520,7 +541,7 @@ const DailyScheduleView: React.FC = () => {
       // 从左侧拖回右侧任务池 = 移除 (自由块拖回任务池相当于直接删除)
       if (
         srcDroppableId.startsWith('ds-slot-') &&
-        (destDroppableId === DROPPABLE_POOL || destDroppableId === `${DROPPABLE_POOL}-review` || destDroppableId === DROPPABLE_VOCABULARY_POOL || destDroppableId === 'ds-pool-container')
+        isTaskPoolDroppable(destDroppableId)
       ) {
         const srcSlot = srcDroppableId.replace('ds-slot-', '') as TimeSlot;
         const srcItems = getSlotItems(srcSlot);
@@ -550,21 +571,11 @@ const DailyScheduleView: React.FC = () => {
   const syncProjectTaskCompletion = useCallback((sourceId: string) => {
     const parsed = parseSourceId(sourceId);
     if (!parsed || parsed.source !== 'project') return false;
-    const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-    if (!parentTask) return false;
-
-    if (parsed.blockId) {
-      const now = todayStr();
-      const currentBlock = (parentTask.blocks ?? []).find(b => b.id === parsed.blockId);
-      const isCurrentlyDone = currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted;
-      tlUpdateBlockHeader(parsed.parentTaskId, parsed.blockId, {
-        isCompleted: !isCurrentlyDone,
-        completedDate: !isCurrentlyDone ? now : undefined,
-      });
-      return true;
-    }
-    return false;
-  }, [tlTasks, tlUpdateBlockHeader]);
+    if (!parsed.blockId) return false;
+    const result = toggleProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, todayStr());
+    if ('error' in result) setOperationError(result.error);
+    return result.ok;
+  }, []);
 
   const toggleReviewWithFeedback = useCallback((reviewId: string) => {
     const error = ebbToggleReviewTask(reviewId);
@@ -576,13 +587,8 @@ const DailyScheduleView: React.FC = () => {
     if (source === 'project') {
       const projectSource = getProjectBlockFromSource(sourceId);
       if (projectSource && isVocabularyTask(projectSource.block.header)) {
-        const records = { ...(projectSource.block.header.vocabularyRecords ?? {}) };
-        delete records[selectedDate];
-        tlUpdateBlockHeader(projectSource.taskId, projectSource.block.id, {
-          vocabularyRecords: records,
-          isCompleted: false,
-          completedDate: undefined,
-        });
+        const result = removeVocabularyProgress(projectSource.taskId, projectSource.block.id, selectedDate);
+        if ('error' in result) setOperationError(result.error);
         return;
       }
       syncProjectTaskCompletion(sourceId);
@@ -593,7 +599,7 @@ const DailyScheduleView: React.FC = () => {
       if (parsed?.source === 'review') toggleReviewWithFeedback(parsed.reviewId);
       return;
     }
-  }, [syncProjectTaskCompletion, toggleReviewWithFeedback, selectedDate, getProjectBlockFromSource, tlUpdateBlockHeader]);
+  }, [syncProjectTaskCompletion, toggleReviewWithFeedback, selectedDate, getProjectBlockFromSource]);
 
   // 先校验并写入源 store（ebb/timeline），成功后再同步 schedule，
   // 避免"先写 schedule 后校验失败"导致的 UI 闪烁与短暂不一致。
@@ -744,7 +750,7 @@ const DailyScheduleView: React.FC = () => {
           <div className="ds-slot-settings">
             {slotConfigs.map((config, idx) => (
               <div key={config.slot} className="ds-slot-setting-row">
-                <span className="ds-slot-setting-icon">{config.icon}</span>
+                <span className={`ds-slot-setting-icon ds-slot-icon--${config.slot}`}><TimeSlotIcon slot={config.slot} size={14} /></span>
                 <span className="ds-slot-setting-label">{config.label}</span>
                 <input
                   type="number"
@@ -779,455 +785,57 @@ const DailyScheduleView: React.FC = () => {
 
         {/* ── 时段模式 ──────────────────────────────────── */}
         {viewMode === 'slots' && (
-        <DragDropContext onDragEnd={handleDragEnd}>
-          <div className="ds-body">
-            {/* 左侧：时间安排区 */}
+        <DragDropContext onDragStart={() => setPoolPreference('open')} onDragEnd={handleDragEnd}>
+          <div className={`ds-body ${poolOpen ? 'ds-body--pool-open' : 'ds-body--pool-collapsed'}`}>
             <div className="ds-left">
               {slotConfigs.map((config) => {
                 const slotItems = getSlotItems(config.slot);
-                const stats = getSlotStats(config.slot);
                 return (
-                  <div key={config.slot} className="ds-slot-section">
-                    <div className="ds-slot-header">
-                      <div className="ds-slot-title">
-                        <span className="ds-slot-icon">{config.icon}</span>
-                        <span>{config.label}</span>
-                        <span className="ds-slot-time">
-                          {String(config.startHour).padStart(2, '0')}:00 – {String(config.endHour).padStart(2, '0')}:00
-                        </span>
-                      </div>
-                      <div className="ds-slot-stats">
-                        {stats.completed}/{stats.total} 完成
-                        {stats.totalDuration > 0 && (
-                          <span className="ds-slot-duration">~{stats.totalDuration}分钟</span>
-                        )}
-                      </div>
-                    </div>
-                    <Droppable droppableId={droppableIdForSlot(config.slot)}>
-                      {(provided, snapshot) => (
-                        <div
-                          ref={provided.innerRef}
-                          {...provided.droppableProps}
-                          data-testid={`daily-slot-${config.slot}`}
-                          className={`ds-slot-dropzone ${
-                            snapshot.isDraggingOver ? 'ds-slot-dropzone--active' : ''
-                          } ${slotItems.length === 0 ? 'ds-slot-dropzone--empty' : ''}`}
-                        >
-                          {slotItems.length === 0 && !snapshot.isDraggingOver && (
-                            <div className="ds-slot-placeholder">
-                              拖拽右侧任务到此处
-                            </div>
-                          )}
-                          {slotItems.map((item, index) => (
-                            <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={item.id.startsWith('virtual-block-')}>
-                              {(provided, snapshot) => (
-                                <div
-                                  ref={provided.innerRef}
-                                  {...provided.draggableProps}
-                                  className={`ds-item ${item.completed ? 'ds-item--completed' : ''} ${
-                                    snapshot.isDragging ? 'ds-item--dragging' : ''
-                                  } ${item.id.startsWith('virtual-block-') ? 'ds-item--virtual' : ''} ${
-                                    checkIsUnlinkedTask(item.sourceId) ? 'ds-item--unlinked' : ''
-                                  } ${item.source === 'free' ? 'ds-item--free' : ''}`}
-                                  style={{
-                                    ...provided.draggableProps.style,
-                                    backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
-                                  }}
-                                  onClick={() => {
-                                    if (item.source === 'project') openProjectTaskFromSource(item.sourceId);
-                                  }}
-                                >
-                                  {item.source !== 'free' && (
-                                    <div
-                                      className="ds-item-accent"
-                                      style={{
-                                        backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor,
-                                      }}
-                                    />
-                                  )}
-                                  {!item.id.startsWith('virtual-block-') && (
-                                    <div className="ds-item-grip" {...provided.dragHandleProps}>
-                                      <GripVertical size={14} />
-                                    </div>
-                                  )}
-                                  <div className="ds-item-content">
-                                    <span className="ds-item-name" title={item.name}>
-                                        {item.name}
-                                        {item.source !== 'free' && (
-                                          <>
-                                            {checkIsUnlinkedTask(item.sourceId) ? (
-                                              <span title="未绑定节点" className="ml-1 inline-flex items-center">
-                                                <CircleDashed size={12} className="opacity-40" />
-                                              </span>
-                                            ) : checkIsLinkedTask(item.sourceId) && (
-                                              <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
-                                                <LinkIcon size={12} className="opacity-60" />
-                                              </span>
-                                            )}
-                                          </>
-                                        )}
-                                      </span>
-                                    {item.detail && (item.source === 'free' || isVocabularySource(item.sourceId)) && (
-                                      <span className="ds-item-detail">{item.detail}</span>
-                                    )}
-                                  </div>
-
-                                  {item.id.startsWith('virtual-block-') && (
-                                    <div className="ds-item-duration ds-item-duration--virtual">
-                                      <Clock size={11} />
-                                      {(() => {
-                                        const b = daySchedule.blocks?.find(x => x.id === item.id.replace('virtual-block-', ''));
-                                        return b ? `${b.startTime}-${b.endTime}` : '';
-                                      })()}
-                                    </div>
-                                  )}
-
-                                  {(item.duration || item.source === 'review') && !item.id.startsWith('virtual-block-') && (
-                                    <span className="ds-item-duration">
-                                      <Clock size={11} />
-                                      {item.duration ?? 30}min
-                                    </span>
-                                  )}
-
-                                  <span
-                                    className={`ds-item-source ds-item-source--${isVocabularySource(item.sourceId) ? 'vocabulary' : item.source} ${
-                                      item.source === 'project' && !isVocabularySource(item.sourceId) ? 'ds-project-name-badge' : ''
-                                    }`}
-                                    title={item.source === 'project' ? (isVocabularySource(item.sourceId) ? '单词任务' : item.detail || '项目') : undefined}
-                                    style={item.source === 'project' && !isVocabularySource(item.sourceId)
-                                      ? projectBadgeStyle(item.color)
-                                      : undefined}
-                                  >
-                                    {isVocabularySource(item.sourceId)
-                                      ? '单词'
-                                      : item.source === 'project'
-                                      ? (item.detail || '项目')
-                                        : item.source === 'review'
-                                          ? `复习${item.detail ? ` · ${item.detail}` : ''}`
-                                        : '占位'}
-                                  </span>
-
-                                  {item.source !== 'free' && (
-                                    <button
-                                      type="button"
-                                      className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`}
-                                      onClick={(event) => { event.stopPropagation(); handleToggleItem(item.id); }}
-                                    >
-                                      <Check size={13} />
-                                    </button>
-                                  )}
-
-                                  <button
-                                    type="button"
-                                    className="ds-item-delete"
-                                    onClick={(event) => { event.stopPropagation(); handleRemoveItem(item.id); }}
-                                  >
-                                    <X size={13} />
-                                  </button>
-                                </div>
-                              )}
-                            </Draggable>
-                          ))}
-                          {provided.placeholder}
-
-                          {/* 添加生活占位符的入口 */}
-                          {addingFreeSlot === config.slot ? (
-                            <div className="ds-slot-add-free-input-wrap">
-                              <input
-                                ref={freeInputRef}
-                                type="text"
-                                className="ds-slot-add-free-input"
-                                placeholder="输入生活安排..."
-                                value={freeItemName}
-                                onChange={(e) => setFreeItemName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleAddFreeSubmit(config.slot);
-                                  if (e.key === 'Escape') {
-                                    isCancelingFreeRef.current = true;
-                                    setAddingFreeSlot(null);
-                                    setFreeItemName('');
-                                  }
-                                }}
-                                onBlur={() => handleAddFreeSubmit(config.slot)}
-                              />
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="ds-slot-add-free-btn"
-                              onClick={() => setAddingFreeSlot(config.slot)}
-                            >
-                              + 添加生活占位
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </Droppable>
-                  </div>
+                  <DailySlotSection
+                    key={config.slot}
+                    config={config}
+                    items={slotItems}
+                    stats={getSlotStats(config.slot)}
+                    addingFree={addingFreeSlot === config.slot}
+                    freeItemName={freeItemName}
+                    freeInputRef={freeInputRef}
+                    getVirtualTime={(itemId) => {
+                      const block = daySchedule.blocks?.find((candidate) => candidate.id === itemId.replace('virtual-block-', ''));
+                      return block ? `${block.startTime}-${block.endTime}` : '';
+                    }}
+                    isVocabularySource={isVocabularySource}
+                    checkIsUnlinkedTask={checkIsUnlinkedTask}
+                    checkIsLinkedTask={checkIsLinkedTask}
+                    onOpenProjectSource={openProjectTaskFromSource}
+                    onToggleItem={handleToggleItem}
+                    onRemoveItem={handleRemoveItem}
+                    onStartAddFree={() => setAddingFreeSlot(config.slot)}
+                    onFreeItemNameChange={setFreeItemName}
+                    onSubmitFree={() => handleAddFreeSubmit(config.slot)}
+                    onCancelFree={() => {
+                      isCancelingFreeRef.current = true;
+                      setAddingFreeSlot(null);
+                      setFreeItemName('');
+                    }}
+                  />
                 );
               })}
             </div>
-
-            {/* 分隔线 */}
             <div className="ds-divider" />
-
-            {/* 右侧：任务池 */}
-            <Droppable droppableId="ds-pool-container" isDropDisabled={false}>
-              {(provided, snapshot) => (
-                <div
-                  ref={provided.innerRef}
-                  {...provided.droppableProps}
-                  className={`ds-right ${snapshot.isDraggingOver ? 'ds-right--drop-target' : ''}`}
-                >
-                  <div className="ds-pool-header">
-                    <h2 className="ds-pool-title">任务池</h2>
-                    <div className="ds-pool-filters">
-                      {(['all', 'project', 'review', 'vocabulary'] as const).map((f) => (
-                        <button
-                          key={f}
-                          type="button"
-                          className={`ds-filter-btn ${filterSource === f ? 'ds-filter-btn--active' : ''}`}
-                          onClick={() => setFilterSource(f)}
-                        >
-                          {f === 'all' ? '全部' : f === 'project' ? '项目' : f === 'review' ? '复习' : '单词'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-              {/* 项目任务 */}
-              {poolItems.filter((item) => item.source === 'project' && item.taskKind !== 'vocabulary').length > 0 && (
-                <div className="ds-pool-group">
-                  <div className="ds-pool-group-header">
-                    <div className="ds-pool-group-dot ds-pool-group-dot--project" />
-                    <span className="ds-pool-group-label">项目任务</span>
-                    <span className="ds-pool-group-count">
-                      {poolItems.filter((item) => item.source === 'project' && item.taskKind !== 'vocabulary').length}
-                    </span>
-                  </div>
-                  <Droppable droppableId={DROPPABLE_POOL}>
-                    {(provided) => (
-                      <div
-                        ref={provided.innerRef}
-                        {...provided.droppableProps}
-                        className="ds-pool-list"
-                      >
-                        {poolItems
-                          .filter((item) => item.source === 'project' && item.taskKind !== 'vocabulary')
-                          .map((item, idx) => (
-                            <Draggable key={item.id} draggableId={item.id} index={idx}>
-                              {(provided, snapshot) => (
-                                <div
-                                  ref={provided.innerRef}
-                                  {...provided.draggableProps}
-                                  {...provided.dragHandleProps}
-                                  className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''} ${
-                                    checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
-                                  }`}
-                                  style={{
-                                    ...provided.draggableProps.style,
-                                    backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
-                                  }}
-                                  onClick={() => openProjectTaskFromSource(item.sourceId)}
-                                >
-                                  <div
-                                    className="ds-pool-item-accent"
-                                    style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }}
-                                  />
-                                  <div className="ds-pool-item-content">
-                                    <span className="ds-pool-item-name" title={item.name}>
-                                      {item.name}
-                                      {checkIsUnlinkedTask(item.sourceId) ? (
-                                        <span title="未绑定节点" className="ml-1 inline-flex items-center">
-                                          <CircleDashed size={12} className="opacity-40" />
-                                        </span>
-                                      ) : checkIsLinkedTask(item.sourceId) && (
-                                        <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
-                                          <LinkIcon size={12} className="opacity-60" />
-                                        </span>
-                                      )}
-                                    </span>
-                                  </div>
-                                  <span
-                                    className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"
-                                    title={item.detail || '项目'}
-                                    style={projectBadgeStyle(item.color)}
-                                  >
-                                    {item.detail || '项目'}
-                                  </span>
-                                </div>
-                              )}
-                            </Draggable>
-                          ))}
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </div>
-              )}
-
-              {/* 复习任务 */}
-              {poolItems.filter((i) => i.source === 'review').length > 0 && (
-                <div className="ds-pool-group">
-                  <div className="ds-pool-group-header">
-                    <div className="ds-pool-group-dot ds-pool-group-dot--review" />
-                    <span className="ds-pool-group-label">复习任务</span>
-                    <span className="ds-pool-group-count">
-                      {poolItems.filter((i) => i.source === 'review').length}
-                    </span>
-                  </div>
-                  <Droppable droppableId={`${DROPPABLE_POOL}-review`}>
-                    {(provided) => (
-                      <div
-                        ref={provided.innerRef}
-                        {...provided.droppableProps}
-                        className="ds-pool-list"
-                      >
-                        {poolItems
-                          .filter((i) => i.source === 'review')
-                          .map((item, idx) => (
-                            <Draggable key={item.id} draggableId={item.id} index={idx}>
-                              {(provided, snapshot) => (
-                                <div
-                                  ref={provided.innerRef}
-                                  {...provided.draggableProps}
-                                  {...provided.dragHandleProps}
-                                  className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''} ${
-                                    checkIsUnlinkedTask(item.sourceId) ? 'ds-pool-item--unlinked' : ''
-                                  }`}
-                                  style={{
-                                    ...provided.draggableProps.style,
-                                    backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
-                                  }}
-                                >
-                                  <div
-                                    className="ds-pool-item-accent"
-                                    style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }}
-                                  />
-                                  <div className="ds-pool-item-content">
-                                    <span className="ds-pool-item-name" title={item.name}>
-                                      {item.name}
-                                      {checkIsUnlinkedTask(item.sourceId) ? (
-                                        <span title="未绑定节点" className="ml-1 inline-flex items-center">
-                                          <CircleDashed size={12} className="opacity-40" />
-                                        </span>
-                                      ) : checkIsLinkedTask(item.sourceId) && (
-                                        <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500">
-                                          <LinkIcon size={12} className="opacity-60" />
-                                        </span>
-                                      )}
-                                    </span>
-                                  </div>
-                                  <span className="ds-pool-item-tag ds-pool-item-tag--review">
-                                    复习{item.detail ? ` · ${item.detail}` : ''}
-                                  </span>
-                                </div>
-                              )}
-                            </Draggable>
-                          ))}
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </div>
-              )}
-
-              {/* 项目中的单词任务：没有默认时段，由用户每天拖入具体时段 */}
-              {poolItems.filter((item) => item.taskKind === 'vocabulary').length > 0 && (
-                <div className="ds-pool-group">
-                  <div className="ds-pool-group-header">
-                    <div className="ds-pool-group-dot ds-pool-group-dot--vocabulary" />
-                    <span className="ds-pool-group-label">单词任务</span>
-                    <span className="ds-pool-group-count">{poolItems.filter((item) => item.taskKind === 'vocabulary').length}</span>
-                  </div>
-                  <Droppable droppableId={DROPPABLE_VOCABULARY_POOL}>
-                    {(provided) => (
-                      <div ref={provided.innerRef} {...provided.droppableProps} className="ds-pool-list">
-                        {poolItems.filter((item) => item.taskKind === 'vocabulary').map((item, idx) => (
-                          <Draggable key={item.id} draggableId={item.id} index={idx}>
-                            {(provided, snapshot) => (
-                              <div
-                                ref={provided.innerRef}
-                                {...provided.draggableProps}
-                                {...provided.dragHandleProps}
-                                className={`ds-pool-item ${snapshot.isDragging ? 'ds-pool-item--dragging' : ''}`}
-                                style={{
-                                  ...provided.draggableProps.style,
-                                  backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor,
-                                }}
-                              >
-                                <div className="ds-pool-item-accent" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }} />
-                                <div className="ds-pool-item-content">
-                                  <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                                  <span className="ds-pool-item-detail">{item.detail}</span>
-                                </div>
-                                <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">单词</span>
-                              </div>
-                            )}
-                          </Draggable>
-                        ))}
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </div>
-              )}
-
-              {poolItems.length === 0 && (
-                <div className="ds-pool-empty">今日暂无待安排任务</div>
-              )}
-              {completedPoolItems.length > 0 && (
-                <div className="ds-pool-group ds-pool-group--completed">
-                  <button
-                    type="button"
-                    className="ds-pool-completed-toggle"
-                    onClick={() => setShowCompletedPool((value) => !value)}
-                  >
-                    <span>今日已完成</span>
-                    <span className="ds-pool-group-count">{completedPoolItems.length}</span>
-                    <span>{showCompletedPool ? '收起' : '展开'}</span>
-                  </button>
-                  {showCompletedPool && (
-                    <div className="ds-pool-list">
-                      {completedPoolItems.map((item) => (
-                        <div
-                          key={item.id}
-                          className="ds-pool-item ds-pool-item--completed"
-                          style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
-                          onClick={() => {
-                            if (item.source === 'project') openProjectTaskFromSource(item.sourceId);
-                          }}
-                        >
-                          <div className="ds-pool-item-content">
-                            <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                            {item.detail && (item.source !== 'project' || item.taskKind === 'vocabulary') && <span className="ds-pool-item-detail">{item.detail}</span>}
-                          </div>
-                          {item.source === 'project' && item.taskKind !== 'vocabulary' && (
-                            <span
-                              className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"
-                              title={item.detail || '项目'}
-                              style={projectBadgeStyle(item.color)}
-                            >
-                              {item.detail || '项目'}
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            className="ds-pool-undo-btn"
-                            onClick={(event) => { event.stopPropagation(); handleUndoCompletedPoolItem(item.source, item.sourceId); }}
-                          >
-                            撤销
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              {provided.placeholder}
-            </div>
-            )}
-          </Droppable>
+            <DailyTaskPool
+              open={poolOpen}
+              filter={filterSource}
+              items={poolItems}
+              completedItems={completedPoolItems}
+              showCompleted={showCompletedPool}
+              checkIsUnlinkedTask={checkIsUnlinkedTask}
+              checkIsLinkedTask={checkIsLinkedTask}
+              onOpenChange={(open) => setPoolPreference(open ? 'open' : 'closed')}
+              onFilterChange={setFilterSource}
+              onShowCompletedChange={setShowCompletedPool}
+              onOpenProjectSource={openProjectTaskFromSource}
+              onUndoCompleted={handleUndoCompletedPoolItem}
+            />
           </div>
         </DragDropContext>
         )}

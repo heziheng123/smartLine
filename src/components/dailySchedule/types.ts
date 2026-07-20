@@ -12,7 +12,6 @@ export type TaskSource = 'project' | 'review' | 'free';
 export interface TimeSlotConfig {
   slot: TimeSlot;
   label: string;
-  icon: string;
   startHour: number;
   endHour: number;
 }
@@ -82,7 +81,7 @@ export interface DaySchedule {
 
 /** 默认时间段配置 */
 export const DEFAULT_TIME_SLOT_CONFIGS: TimeSlotConfig[] = [
-  { slot: 'morning', label: '上午', icon: '🌅', startHour: 6, endHour: 12 },
-  { slot: 'afternoon', label: '下午', icon: '☀️', startHour: 12, endHour: 18 },
-  { slot: 'evening', label: '晚上', icon: '🌙', startHour: 18, endHour: 23 },
+  { slot: 'morning', label: '上午', startHour: 6, endHour: 12 },
+  { slot: 'afternoon', label: '下午', startHour: 12, endHour: 18 },
+  { slot: 'evening', label: '晚上', startHour: 18, endHour: 23 },
 ];
