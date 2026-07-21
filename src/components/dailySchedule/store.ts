@@ -92,6 +92,7 @@ async function saveSchedulesAsync(schedules: Record<string, DaySchedule>) {
     await dailyScheduleStorage.setItem(STORAGE_KEY, schedules);
   } catch (e) {
     console.warn('[daily-schedule] IndexedDB 写入失败：', e);
+    throw e;
   }
 }
 

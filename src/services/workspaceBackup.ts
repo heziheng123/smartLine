@@ -11,8 +11,8 @@ import { getReviewTopicKey } from '@/ebb/scheduler';
 import { createScopedStorage } from '@/utils/persistence';
 
 export const WORKSPACE_SCHEMA_VERSION = 1;
-const SNAPSHOT_LIMIT = 10;
 const snapshotStorage = createScopedStorage('workspace_snapshots');
+const snapshotChunkStorage = createScopedStorage('workspace_snapshot_chunks');
 
 export interface WorkspaceBackup {
   kind: 'smart-line-workspace';
@@ -41,7 +41,28 @@ export interface WorkspaceSnapshot {
   id: string;
   createdAt: string;
   reason: string;
-  backup: WorkspaceBackup;
+  backup?: WorkspaceBackup;
+  format?: 2;
+  chunks?: Record<SnapshotSection, string>;
+  isCheckpoint?: boolean;
+  storedBytes?: number;
+}
+
+type SnapshotSection = 'header' | 'timeline' | 'ebb' | 'graph' | 'daily' | 'settings';
+
+interface SnapshotChunk {
+  encoding: 'gzip' | 'json';
+  data: string;
+  rawBytes: number;
+  storedBytes: number;
+}
+
+export interface SnapshotStorageStats {
+  snapshotCount: number;
+  chunkCount: number;
+  snapshotBytes: number;
+  browserUsage?: number;
+  browserQuota?: number;
 }
 
 function getOrCreateDeviceId(): string {
@@ -418,22 +439,146 @@ export function validateWorkspaceBackup(value: unknown): {
   };
 }
 
+async function hashText(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function compressText(value: string): Promise<SnapshotChunk> {
+  const raw = new TextEncoder().encode(value);
+  if (typeof CompressionStream === 'undefined') {
+    return { encoding: 'json', data: value, rawBytes: raw.byteLength, storedBytes: raw.byteLength };
+  }
+  const stream = new Blob([raw]).stream().pipeThrough(new CompressionStream('gzip'));
+  const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < compressed.length; offset += 0x8000) {
+    binary += String.fromCharCode(...compressed.subarray(offset, offset + 0x8000));
+  }
+  return { encoding: 'gzip', data: btoa(binary), rawBytes: raw.byteLength, storedBytes: compressed.byteLength };
+}
+
+async function decompressChunk(chunk: SnapshotChunk): Promise<string> {
+  if (chunk.encoding === 'json') return String(chunk.data);
+  if (typeof DecompressionStream === 'undefined') throw new Error('当前浏览器无法解压此快照。');
+  const binary = atob(chunk.data);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(stream).text();
+}
+
+function snapshotSections(backup: WorkspaceBackup): Record<SnapshotSection, unknown> {
+  return {
+    header: {
+      kind: backup.kind, schemaVersion: backup.schemaVersion, revision: backup.revision,
+      exportedAt: backup.exportedAt, deviceId: backup.deviceId,
+    },
+    timeline: backup.timeline,
+    ebb: backup.ebb,
+    graph: backup.graph,
+    daily: backup.daily,
+    settings: backup.settings,
+  };
+}
+
+async function storeSnapshotChunks(backup: WorkspaceBackup): Promise<{ chunks: Record<SnapshotSection, string>; storedBytes: number }> {
+  const chunks = {} as Record<SnapshotSection, string>;
+  let storedBytes = 0;
+  for (const [section, value] of Object.entries(snapshotSections(backup)) as Array<[SnapshotSection, unknown]>) {
+    const json = JSON.stringify(value);
+    const hash = await hashText(json);
+    chunks[section] = hash;
+    let chunk = await snapshotChunkStorage.getItem<SnapshotChunk>(hash);
+    if (!chunk || typeof chunk.data !== 'string') {
+      chunk = await compressText(json);
+      await snapshotChunkStorage.setItem(hash, chunk);
+    }
+    storedBytes += chunk.storedBytes;
+  }
+  return { chunks, storedBytes };
+}
+
+function retainSnapshots(snapshots: WorkspaceSnapshot[]): WorkspaceSnapshot[] {
+  const sorted = [...snapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const keep = new Map<string, WorkspaceSnapshot>();
+  sorted.slice(0, 3).forEach((snapshot) => keep.set(snapshot.id, { ...snapshot, isCheckpoint: true }));
+  const now = Date.now();
+  const daily = new Set<string>();
+  const monthly = new Set<string>();
+  for (const snapshot of sorted.slice(3)) {
+    const ageDays = (now - new Date(snapshot.createdAt).getTime()) / 86_400_000;
+    const day = snapshot.createdAt.slice(0, 10);
+    const month = snapshot.createdAt.slice(0, 7);
+    if (ageDays <= 7 && !daily.has(day)) {
+      daily.add(day);
+      keep.set(snapshot.id, { ...snapshot, isCheckpoint: false });
+    } else if (!monthly.has(month)) {
+      monthly.add(month);
+      keep.set(snapshot.id, { ...snapshot, isCheckpoint: false });
+    }
+  }
+  return [...keep.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 24);
+}
+
+async function cleanupSnapshotChunks(snapshots: WorkspaceSnapshot[]): Promise<void> {
+  const referenced = new Set(snapshots.flatMap((snapshot) => Object.values(snapshot.chunks ?? {})));
+  const keys = await snapshotChunkStorage.keys();
+  await Promise.all(keys.filter((key) => !referenced.has(String(key))).map((key) => snapshotChunkStorage.removeItem(key)));
+}
+
 export async function createLocalSnapshot(reason: string): Promise<WorkspaceSnapshot> {
+  const backup = createWorkspaceBackup();
+  const stored = await storeSnapshotChunks(backup);
   const snapshot: WorkspaceSnapshot = {
     id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `snapshot-${Date.now()}`,
-    createdAt: new Date().toISOString(),
-    reason,
-    backup: createWorkspaceBackup(),
+    createdAt: new Date().toISOString(), reason, format: 2,
+    chunks: stored.chunks, storedBytes: stored.storedBytes,
   };
-  const snapshots = await listLocalSnapshots();
-  const next = [snapshot, ...snapshots].slice(0, SNAPSHOT_LIMIT);
+  const next = retainSnapshots([snapshot, ...await listLocalSnapshots()]);
   await snapshotStorage.setItem('items', next);
-  return snapshot;
+  await cleanupSnapshotChunks(next);
+  return next.find((item) => item.id === snapshot.id) ?? snapshot;
 }
 
 export async function listLocalSnapshots(): Promise<WorkspaceSnapshot[]> {
   const value = await snapshotStorage.getItem<WorkspaceSnapshot[]>('items');
   return Array.isArray(value) ? value : [];
+}
+
+export async function materializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): Promise<WorkspaceBackup> {
+  if (snapshot.backup) return deepClone(snapshot.backup);
+  if (snapshot.format !== 2 || !snapshot.chunks) throw new Error('快照格式不完整。');
+  const values = {} as Record<SnapshotSection, unknown>;
+  for (const [section, hash] of Object.entries(snapshot.chunks) as Array<[SnapshotSection, string]>) {
+    const chunk = await snapshotChunkStorage.getItem<SnapshotChunk>(hash);
+    if (!chunk) throw new Error(`快照数据块缺失：${section}`);
+    values[section] = JSON.parse(await decompressChunk(chunk));
+  }
+  const header = values.header as Pick<WorkspaceBackup, 'kind' | 'schemaVersion' | 'revision' | 'exportedAt' | 'deviceId'>;
+  return {
+    ...header,
+    timeline: values.timeline as WorkspaceBackup['timeline'],
+    ebb: values.ebb as WorkspaceBackup['ebb'],
+    graph: values.graph as WorkspaceBackup['graph'],
+    daily: values.daily as WorkspaceBackup['daily'],
+    settings: values.settings as WorkspaceBackup['settings'],
+  };
+}
+
+export async function restoreLocalSnapshot(snapshot: WorkspaceSnapshot): Promise<void> {
+  await restoreWorkspaceBackup(await materializeWorkspaceSnapshot(snapshot));
+}
+
+export async function getSnapshotStorageStats(): Promise<SnapshotStorageStats> {
+  const snapshots = await listLocalSnapshots();
+  const keys = await snapshotChunkStorage.keys();
+  let snapshotBytes = 0;
+  for (const key of keys) snapshotBytes += (await snapshotChunkStorage.getItem<SnapshotChunk>(key))?.storedBytes ?? 0;
+  const estimate = await navigator.storage?.estimate?.();
+  return {
+    snapshotCount: snapshots.length, chunkCount: keys.length, snapshotBytes,
+    browserUsage: estimate?.usage, browserQuota: estimate?.quota,
+  };
 }
 
 export async function restoreWorkspaceBackup(backup: WorkspaceBackup): Promise<void> {

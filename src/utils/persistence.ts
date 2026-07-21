@@ -35,9 +35,9 @@ interface CoalescedPersistenceOptions<T> {
 }
 
 /**
- * Coalesces rapid UI mutations into one mirror + IndexedDB write. The latest
- * mirror is still flushed synchronously when the page is being hidden, while
- * IndexedDB writes are serialized so an older async write can never win.
+ * Coalesces rapid UI mutations into one IndexedDB write. localStorage is used
+ * only as an emergency beforeunload journal when an async write is still
+ * pending; it is removed immediately after IndexedDB confirms the write.
  */
 export function createCoalescedPersistence<T>({
   mirrorKey,
@@ -50,10 +50,17 @@ export function createCoalescedPersistence<T>({
   let writeChain = Promise.resolve();
 
   const writeValue = (value: T) => {
-    writeJsonStorage(mirrorKey, value, label);
     writeChain = writeChain
-      .then(() => writeAsync(value))
-      .catch((error) => console.warn(`[${label}] IndexedDB 合并写入失败：`, error));
+      .then(async () => {
+        await writeAsync(value);
+        localStorage.removeItem(mirrorKey);
+      })
+      .catch((error) => {
+        // IndexedDB can be unavailable in private/restricted browser modes.
+        // Keep one recoverable emergency copy instead of losing the edit.
+        writeJsonStorage(mirrorKey, value, label);
+        console.warn(`[${label}] IndexedDB 合并写入失败，已保留应急日志：`, error);
+      });
     return writeChain;
   };
 
@@ -87,6 +94,8 @@ export function createCoalescedPersistence<T>({
       if (document.visibilityState === 'hidden') void flush();
     });
     window.addEventListener('beforeunload', () => {
+      // Synchronous emergency journal only. Normal operation keeps complete
+      // datasets out of localStorage and stores them in IndexedDB.
       if (latest !== undefined) writeJsonStorage(mirrorKey, latest, label);
     });
   }

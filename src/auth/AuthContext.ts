@@ -5,6 +5,7 @@ export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'erro
 export interface AuthContextValue {
   enabled: boolean;
   login?: string;
+  userId?: string;
   logout: () => Promise<void>;
   retry: () => void;
   status: AuthStatus;

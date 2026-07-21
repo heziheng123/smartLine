@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Cloud, Copy, Download, Eye, EyeOff, Link, LogOut, RefreshCw, Unlink, Upload } from 'lucide-react';
+import { ArrowRightLeft, Check, Cloud, Copy, Database, Download, Eye, EyeOff, Link, LogOut, RefreshCw, Unlink, Upload } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
@@ -10,11 +10,29 @@ import {
   downloadWorkspaceBackup,
   createWorkspaceBackup,
   listLocalSnapshots,
+  getSnapshotStorageStats,
+  restoreLocalSnapshot,
   restoreWorkspaceBackup,
   validateWorkspaceBackup,
   type WorkspaceBackupSummary,
   type WorkspaceSnapshot,
+  type SnapshotStorageStats,
 } from '@/services/workspaceBackup';
+import {
+  activateUnifiedWorkspace,
+  connectUnifiedWorkspace,
+  disconnectWorkspace,
+  downloadMigrationReport,
+  inspectLegacyWorkspace,
+  migrateLegacyWorkspace,
+  readWorkspaceSyncSettings,
+  reconnectConfiguredWorkspace,
+  resetToLegacyArchitecture,
+  type WorkspaceMigrationReport,
+} from '@/services/workspaceSync';
+import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflict, type WorkspaceConflictRecord } from '@/services/workspaceOfflineQueue';
+import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
+import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
 
 interface SyncDialogProps { onClose: () => void }
 type ModuleKey = 'timeline' | 'ebb' | 'daily' | 'graph';
@@ -50,9 +68,37 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [restoreSummary, setRestoreSummary] = useState<WorkspaceBackupSummary | null>(null);
   const [restoreMessage, setRestoreMessage] = useState('');
   const [snapshots, setSnapshots] = useState<WorkspaceSnapshot[]>([]);
+  const [snapshotStats, setSnapshotStats] = useState<SnapshotStorageStats | null>(null);
+  const [architecture, setArchitecture] = useState(readWorkspaceSyncSettings);
+  const [migrationCheck, setMigrationCheck] = useState<{ summary: WorkspaceBackupSummary; hash: string } | null>(null);
+  const [migrationReport, setMigrationReport] = useState<WorkspaceMigrationReport | null>(null);
+  const [migrationBusy, setMigrationBusy] = useState(false);
+  const [r2Configured, setR2Configured] = useState<boolean | null>(null);
+  const [pendingFieldCount, setPendingFieldCount] = useState(0);
+  const [syncConflicts, setSyncConflicts] = useState<WorkspaceConflictRecord[]>([]);
+  const [archivePeriod, setArchivePeriod] = useState(() => new Date().toISOString().slice(0, 7));
 
   useEffect(() => {
     listLocalSnapshots().then(setSnapshots).catch(() => setSnapshots([]));
+    getSnapshotStorageStats().then(setSnapshotStats).catch(() => setSnapshotStats(null));
+  }, [restoreMessage]);
+
+  useEffect(() => {
+    if (!auth.enabled) return;
+    fetch('/api/storage/status', { credentials: 'same-origin', cache: 'no-store' })
+      .then(async (response) => response.ok ? await response.json() as { r2Configured?: boolean } : null)
+      .then((result) => setR2Configured(Boolean(result?.r2Configured)))
+      .catch(() => setR2Configured(false));
+  }, [auth.enabled]);
+
+  useEffect(() => {
+    const refresh = () => {
+      readPendingWorkspaceSync().then((pending) => setPendingFieldCount(Object.keys(pending?.fields ?? {}).length)).catch(() => setPendingFieldCount(0));
+      listWorkspaceConflicts().then(setSyncConflicts).catch(() => setSyncConflicts([]));
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 2_000);
+    return () => window.clearInterval(timer);
   }, [restoreMessage]);
 
   useEffect(() => {
@@ -69,8 +115,17 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     { key: 'graph' as const, label: '知识大盘', enabled: graph.syncEnabled, status: graph.syncStatus as DisplayStatus },
   ], [timeline.syncEnabled, timeline.syncStatus, ebb.syncEnabled, ebb.syncStatus, daily.syncEnabled, daily.syncStatus, graph.syncEnabled, graph.syncStatus]);
 
+  const activeCode = timeline.syncRoomCode || ebb.syncRoomCode || daily.syncRoomCode || graph.syncRoomCode || roomCode;
+  const enabledCount = modules.filter((module) => module.enabled).length;
+  const connectedCount = modules.filter((module) => module.enabled && module.status === 'connected').length;
+  const allConnected = enabledCount === 4 && connectedCount === 4;
+
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
+    if (architecture.architecture === 'unified') {
+      connectUnifiedWorkspace(architecture.roomCode || code, architecture.unifiedRoomId);
+      return;
+    }
     if (key === 'timeline') {
       timeline.enableSync(code);
       timeline.liveblocks?.enterRoom?.(code);
@@ -84,9 +139,13 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       graph.enableSync(code);
       graph.liveblocks?.enterRoom?.(`graph-${code}`);
     }
-  }, [timeline, ebb, daily, graph]);
+  }, [timeline, ebb, daily, graph, architecture]);
 
   const handleConnectAll = useCallback(() => {
+    if (!isCurrentTabSyncLeader()) {
+      setRestoreMessage('另一个标签页正在负责云同步。请在主标签页执行连接或迁移。');
+      return;
+    }
     const enteredCode = roomCode.trim();
     const fallbackCode = enteredCode
       || timeline.syncRoomCode
@@ -94,6 +153,16 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       || daily.syncRoomCode
       || graph.syncRoomCode;
     if (!fallbackCode) return;
+
+    if (architecture.architecture === 'unified') {
+      reconnectConfiguredWorkspace();
+      return;
+    }
+    if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
+      activateUnifiedWorkspace(fallbackCode, auth.userId || auth.login || 'owner');
+      setArchitecture(readWorkspaceSyncSettings());
+      return;
+    }
 
     // Existing workspaces may still use four historical room codes. Reconnect
     // each module to its saved room instead of silently moving it to the first
@@ -110,19 +179,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       const moduleCode = reconnectingExisting ? (savedCodes[key] || fallbackCode) : fallbackCode;
       connectModule(key, moduleCode);
     });
-  }, [roomCode, timeline.syncRoomCode, timeline.syncEnabled, ebb.syncRoomCode, ebb.syncEnabled, daily.syncRoomCode, daily.syncEnabled, graph.syncRoomCode, graph.syncEnabled, connectModule]);
+  }, [roomCode, timeline.syncRoomCode, timeline.syncEnabled, ebb.syncRoomCode, ebb.syncEnabled, daily.syncRoomCode, daily.syncEnabled, graph.syncRoomCode, graph.syncEnabled, connectModule, architecture, enabledCount, auth.login, auth.userId]);
 
   const handleDisconnectAll = useCallback(() => {
-    timeline.liveblocks?.leaveRoom?.(); timeline.disableSync();
-    ebb.liveblocks?.leaveRoom?.(); ebb.disableSync();
-    daily.liveblocks?.leaveRoom?.(); daily.disableSync();
-    graph.liveblocks?.leaveRoom?.(); graph.disableSync();
-  }, [timeline, ebb, daily, graph]);
-
-  const activeCode = timeline.syncRoomCode || ebb.syncRoomCode || daily.syncRoomCode || graph.syncRoomCode || roomCode;
-  const enabledCount = modules.filter((module) => module.enabled).length;
-  const connectedCount = modules.filter((module) => module.enabled && module.status === 'connected').length;
-  const allConnected = enabledCount === 4 && connectedCount === 4;
+    disconnectWorkspace(true);
+  }, []);
 
   const handleCopy = useCallback(async () => {
     if (!activeCode) return;
@@ -183,12 +244,82 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const handleRestoreSnapshot = useCallback(async (snapshot: WorkspaceSnapshot) => {
     if (!window.confirm(`确定恢复 ${new Date(snapshot.createdAt).toLocaleString('zh-CN')} 的本地快照吗？当前工作区会先自动保存快照。`)) return;
     try {
-      await restoreWorkspaceBackup(snapshot.backup);
+      await restoreLocalSnapshot(snapshot);
       setRestoreMessage('本地快照恢复成功。');
     } catch (error) {
       setRestoreMessage(error instanceof Error ? error.message : '本地快照恢复失败。');
     }
   }, []);
+
+  const handleInspectLegacy = useCallback(async () => {
+    if (!activeCode) return;
+    setMigrationBusy(true);
+    try {
+      const result = await inspectLegacyWorkspace(activeCode);
+      setMigrationCheck({ summary: result.summary, hash: result.hash });
+      setRestoreMessage('旧四房间检查完成。请核对数量后再执行复制迁移。');
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '旧房间检查失败。');
+    } finally {
+      setMigrationBusy(false);
+    }
+  }, [activeCode]);
+
+  const handleMigrate = useCallback(async () => {
+    if (!activeCode || !migrationCheck) return;
+    if (!isCurrentTabSyncLeader()) {
+      setRestoreMessage('另一个标签页正在负责云同步。请在主标签页执行迁移。');
+      return;
+    }
+    const summary = migrationCheck.summary;
+    if (!window.confirm(`将旧四房间复制到一个认证工作区：\n任务 ${summary.tasks}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
+    setMigrationBusy(true);
+    try {
+      const report = await migrateLegacyWorkspace(activeCode, auth.userId || auth.login || 'owner');
+      setMigrationReport(report);
+      setArchitecture(readWorkspaceSyncSettings());
+      downloadMigrationReport(report);
+      setRestoreMessage('统一工作区迁移完成，前后数量和哈希一致；迁移报告已下载，旧房间保持不变。');
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '统一工作区迁移失败，已返回旧房间。');
+    } finally {
+      setMigrationBusy(false);
+    }
+  }, [activeCode, auth.login, auth.userId, migrationCheck]);
+
+  const handleLegacyFallback = useCallback(() => {
+    if (!activeCode || !window.confirm('确定暂时返回旧四房间吗？统一工作区数据不会删除。')) return;
+    resetToLegacyArchitecture(activeCode);
+    setArchitecture(readWorkspaceSyncSettings());
+    setRestoreMessage('已切回旧四房间恢复通道。');
+  }, [activeCode]);
+
+  const handleArchivePeriod = useCallback(async () => {
+    try {
+      const backup = createWorkspaceBackup();
+      await saveWorkspacePeriodArchive(archivePeriod, {
+        daily: Object.fromEntries(Object.entries(backup.daily.schedules).filter(([date]) => date.startsWith(archivePeriod))),
+        completedTasks: backup.timeline.tasks.filter((task) => task.completed && task.end.slice(0, 7) === archivePeriod),
+      });
+      setRestoreMessage(`${archivePeriod} 历史副本已保存到R2，当前工作区数据未删除。`);
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '历史归档失败。');
+    }
+  }, [archivePeriod]);
+
+  const handleDownloadArchive = useCallback(async () => {
+    try {
+      const archive = await loadWorkspacePeriodArchive(archivePeriod);
+      const blob = new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url; anchor.download = `smart-line-archive-${archivePeriod}.json`; anchor.click();
+      URL.revokeObjectURL(url);
+      setRestoreMessage(`${archivePeriod} 历史归档已下载。`);
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '历史归档读取失败。');
+    }
+  }, [archivePeriod]);
 
   return (
     <div className="tl-dialog-overlay" onClick={onClose}>
@@ -197,12 +328,19 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
         <div className="tl-sync-status">
           <span className="tl-sync-dot" style={{ backgroundColor: allConnected ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
-          <strong>{allConnected ? '全部同步 4/4' : enabledCount > 0 ? `部分同步 ${connectedCount}/4` : '尚未连接'}</strong>
+          <strong>{allConnected ? (architecture.architecture === 'unified' ? '统一工作区已连接' : '旧房间同步 4/4') : enabledCount > 0 ? `部分同步 ${connectedCount}/4` : '尚未连接'}</strong>
         </div>
         <p className="tl-dialog-hint">
           认证方式：{liveblocksAuthMode === 'authenticated' ? '用户身份认证' : '公钥兼容模式'}
           {auth.login ? ` · GitHub：${auth.login}` : ''}
         </p>
+        <p className="tl-dialog-hint">待补传字段：{pendingFieldCount} · 冲突副本：{syncConflicts.length}</p>
+        {syncConflicts[0] && <button type="button" className="tl-sync-backup-btn" onClick={() => {
+          if (!window.confirm('应用最近的离线冲突副本吗？恢复内容会重新进入待同步队列。')) return;
+          void restoreWorkspaceConflict(syncConflicts[0].id)
+            .then(() => setRestoreMessage('冲突副本已恢复并进入待同步队列。'))
+            .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '冲突恢复失败。'));
+        }} style={{ marginBottom: 12 }}><RefreshCw size={14} />恢复最近冲突副本</button>}
         {auth.enabled && auth.login && (
           <button type="button" className="tl-sync-backup-btn" onClick={() => void auth.logout().then(onClose)} style={{ marginBottom: 12 }}>
             <LogOut size={14} />退出当前账号
@@ -228,8 +366,26 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               {copied ? <Check size={16} /> : <Copy size={16} />}
             </button>
           </div>
-          <span className="tl-dialog-hint">使用你现在的原房间号；后台继续连接原有四个模块房间，不迁移数据。</span>
+          <span className="tl-dialog-hint">{architecture.architecture === 'unified' ? `当前使用一个认证工作区房间：${architecture.unifiedRoomId}` : '当前仍使用旧四房间；完成检查后可复制迁移到统一工作区。'}</span>
         </label>
+
+        {liveblocksAuthMode === 'authenticated' && enabledCount > 0 && (
+          <div className="tl-sync-backup-section" style={{ marginBottom: 14 }}>
+            <h4 className="tl-sync-backup-title"><Database size={15} />同步架构</h4>
+            {architecture.architecture === 'legacy' ? <>
+              <p className="tl-sync-backup-hint">迁移采用“读取旧房间 → 本地快照 → 复制 → 数量和 SHA-256 校验 → 切换”，不会删除旧数据。</p>
+              <div className="tl-sync-backup-actions">
+                <button type="button" className="tl-sync-backup-btn" onClick={handleInspectLegacy} disabled={migrationBusy}><Check size={14} />检查旧数据</button>
+                <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={handleMigrate} disabled={migrationBusy || !migrationCheck}><ArrowRightLeft size={14} />迁移到统一工作区</button>
+              </div>
+              {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.graphNodes} 个节点。</p>}
+            </> : <>
+              <p className="tl-sync-backup-hint">四个数据域共享同一底层房间连接。旧四房间仍保留为只读恢复来源。</p>
+              <button type="button" className="tl-sync-backup-btn" onClick={handleLegacyFallback}><RefreshCw size={14} />暂时返回旧房间</button>
+              {migrationReport && <button type="button" className="tl-sync-backup-btn" onClick={() => downloadMigrationReport(migrationReport)} style={{ marginLeft: 8 }}><Download size={14} />下载迁移报告</button>}
+            </>}
+          </div>
+        )}
 
         <div className="tl-sync-info">
           {modules.map((module) => (
@@ -281,6 +437,13 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             </button>
           </div>
           <p className="tl-sync-backup-hint">包含时间轴、项目文档、EBB、每日安排、知识大盘和应用设置。恢复前会校验数据并自动创建本地快照。</p>
+          {snapshotStats && <p className="tl-sync-backup-hint">快照：{snapshotStats.snapshotCount} 份、{snapshotStats.chunkCount} 个去重数据块、约 {(snapshotStats.snapshotBytes / 1024).toFixed(1)} KB。</p>}
+          {auth.enabled && <p className="tl-sync-backup-hint">R2附件与历史归档：{r2Configured === null ? '检测中' : r2Configured ? '已启用' : '尚未绑定 SMARTLINE_R2（不影响现有数据）'}。</p>}
+          {r2Configured && <div className="tl-sync-backup-actions">
+            <input className="tl-dialog-input" type="month" value={archivePeriod} onChange={(event) => setArchivePeriod(event.target.value)} style={{ maxWidth: 150 }} />
+            <button type="button" className="tl-sync-backup-btn" onClick={() => void handleArchivePeriod()}><Upload size={14} />保存月度归档</button>
+            <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadArchive()}><Download size={14} />下载月度归档</button>
+          </div>}
           {restoreSummary && <p className="tl-sync-backup-hint">最近检查：{restoreSummary.tasks} 个任务、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.graphNodes} 个节点。</p>}
           {restoreMessage && <p className="tl-sync-backup-hint" role="status">{restoreMessage}</p>}
           {snapshots.length > 0 && (

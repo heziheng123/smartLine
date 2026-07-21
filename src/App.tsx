@@ -86,9 +86,13 @@ const TaskOverviewView = React.lazy(loadTaskOverviewView);
 const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
 
 import { useGraphStore } from '@/graph/store';
-import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
-import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
+import { useEbbStore } from '@/ebb/store';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
+import { reconnectConfiguredWorkspace } from '@/services/workspaceSync';
+import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking } from '@/services/workspaceOfflineQueue';
+import { disconnectWorkspace } from '@/services/workspaceSync';
+import { isCurrentTabSyncLeader, startWorkspaceTabCoordinator } from '@/services/workspaceTabCoordinator';
 import OperationHistoryPanel from '@/components/OperationHistoryPanel';
 import { recordOperation } from '@/services/operationHistory';
 import { useRecycleBin } from '@/services/recycleBin';
@@ -338,56 +342,23 @@ const App: React.FC = () => {
     }
 
     hasAttemptedAutoReconnect.current = true;
-
-    const connectWorkspace = () => {
-      const timelineState = useTimelineStore.getState();
-      const ebbState = useEbbStore.getState();
-      const dailyState = useDailyScheduleStore.getState();
-      const graphState = useGraphStore.getState();
-      const configuredCodes = [timelineState, ebbState, dailyState, graphState]
-        .filter((state) => state.syncEnabled && state.syncRoomCode)
-        .map((state) => state.syncRoomCode);
-      const code = timelineState.syncRoomCode || configuredCodes[0] || '';
-      const wasEnabled = timelineState.syncEnabled || ebbState.syncEnabled || dailyState.syncEnabled || graphState.syncEnabled;
-      if (!code || !wasEnabled) return;
-
-      const distinctCodes = new Set(configuredCodes);
-      if (distinctCodes.size > 1) {
-        console.warn('[sync] 检测到历史模块使用不同房间号，已保留各模块原房间，不进行静默改写。');
-        if (timelineState.syncEnabled && timelineState.syncRoomCode) timelineState.liveblocks?.enterRoom?.(timelineState.syncRoomCode);
-        if (ebbState.syncEnabled && ebbState.syncRoomCode) ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebbState.syncRoomCode}`);
-        if (dailyState.syncEnabled && dailyState.syncRoomCode) dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${dailyState.syncRoomCode}`);
-        if (graphState.syncEnabled && graphState.syncRoomCode) graphState.liveblocks?.enterRoom?.(`graph-${graphState.syncRoomCode}`);
-        return;
-      }
-
-      timelineState.enableSync(code);
-      ebbState.enableSync(code);
-      dailyState.enableSync(code);
-      graphState.enableSync(code);
-      timelineState.liveblocks?.enterRoom?.(code);
-      ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${code}`);
-      dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${code}`);
-      graphState.liveblocks?.enterRoom?.(`graph-${code}`);
+    const stopCoordinator = startWorkspaceTabCoordinator({
+      onLeader: reconnectConfiguredWorkspace,
+      onFollower: () => disconnectWorkspace(false),
+    });
+    const reconnect = () => { if (isCurrentTabSyncLeader()) reconnectConfiguredWorkspace(); };
+    window.addEventListener('online', reconnect);
+    return () => {
+      window.removeEventListener('online', reconnect);
+      stopCoordinator();
     };
-
-    connectWorkspace();
   }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated]);
 
   React.useEffect(() => {
     if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated) return;
-    const reconnect = () => {
-      const timelineState = useTimelineStore.getState();
-      const ebbState = useEbbStore.getState();
-      const dailyState = useDailyScheduleStore.getState();
-      const graphState = useGraphStore.getState();
-      if (timelineState.syncEnabled && timelineState.syncRoomCode) timelineState.liveblocks?.enterRoom?.(timelineState.syncRoomCode);
-      if (ebbState.syncEnabled && ebbState.syncRoomCode) ebbState.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebbState.syncRoomCode}`);
-      if (dailyState.syncEnabled && dailyState.syncRoomCode) dailyState.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${dailyState.syncRoomCode}`);
-      if (graphState.syncEnabled && graphState.syncRoomCode) graphState.liveblocks?.enterRoom?.(`graph-${graphState.syncRoomCode}`);
-    };
-    window.addEventListener('online', reconnect);
-    return () => window.removeEventListener('online', reconnect);
+    const stopTracking = startWorkspaceQueueTracking();
+    const stopCrossTab = startWorkspaceCrossTabDataSync();
+    return () => { stopTracking(); stopCrossTab(); };
   }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated]);
 
   React.useEffect(() => {

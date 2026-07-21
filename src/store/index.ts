@@ -247,6 +247,7 @@ async function saveDataAsync(data: TimelineData) {
     await timelineStorage.setItem(STORAGE_KEY, data);
   } catch (e) {
     console.warn('[smart-timeline] IndexedDB 写入失败：', e);
+    throw e;
   }
 }
 

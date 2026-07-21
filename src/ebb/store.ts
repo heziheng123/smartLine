@@ -67,6 +67,7 @@ async function saveEbbDataAsync(data: EbbData) {
     await ebbStorage.setItem(EBB_STORAGE_KEY, data);
   } catch (e) {
     console.warn('[smart-ebb] IndexedDB 写入失败：', e);
+    throw e;
   }
 }
 

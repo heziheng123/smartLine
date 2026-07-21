@@ -55,6 +55,7 @@ try {
     timelineUtils,
     projectAppearance,
     blocksModule,
+    persistenceModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -70,6 +71,7 @@ try {
     load('/src/utils/timeline-utils.ts'),
     load('/src/components/dailySchedule/projectAppearance.ts'),
     load('/src/utils/blocks.ts'),
+    load('/src/utils/persistence.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
@@ -696,15 +698,40 @@ try {
     assert.deepEqual(normalized['2026-07-18'].blocks.map((block) => block.id), ['ok']);
   });
 
-  check('时间轴和每日安排会合并高频变化并同步写入本地镜像', async () => {
+  check('IndexedDB成功写入后会清除localStorage完整数据镜像', async () => {
     resetStores({ tasks: [project('p1', [smartBlock('b1', '镜像任务', [])])] });
     useTimelineStore.getState().updateBlockHeader('p1', 'b1', { title: '已保存' });
     useDailyScheduleStore.getState().addScheduledItem('2026-07-18', {
       sourceId: 'free-mirror', name: '镜像安排', source: 'free', timeSlot: 'morning',
     });
     await new Promise((resolve) => setTimeout(resolve, 450));
-    assert.ok(localStorage.getItem('smart-timeline-data:mirror'));
-    assert.ok(localStorage.getItem('daily-schedule-data:mirror'));
+    assert.equal(localStorage.getItem('smart-timeline-data:mirror'), null);
+    assert.equal(localStorage.getItem('daily-schedule-data:mirror'), null);
+  });
+
+  check('IndexedDB写入失败时会保留localStorage应急日志', async () => {
+    const failing = persistenceModule.createCoalescedPersistence({
+      mirrorKey: 'failure:mirror',
+      label: 'failure-test',
+      delay: 1,
+      writeAsync: async () => { throw new Error('simulated IndexedDB failure'); },
+    });
+    await failing.writeNow({ safe: true });
+    assert.deepEqual(JSON.parse(localStorage.getItem('failure:mirror')), { safe: true });
+  });
+
+  check('工作区快照使用压缩去重数据块并可完整还原', async () => {
+    resetStores({
+      tasks: [project('snapshot-project', [smartBlock('snapshot-block', '快照任务', [])])],
+      schedules: { '2026-07-21': { date: '2026-07-21', items: [], blocks: [] } },
+    });
+    const snapshot = await backupModule.createLocalSnapshot('系统模拟');
+    assert.equal(snapshot.format, 2);
+    assert.ok(snapshot.chunks?.timeline);
+    assert.equal(snapshot.backup, undefined);
+    const restored = await backupModule.materializeWorkspaceSnapshot(snapshot);
+    assert.equal(restored.timeline.tasks[0].id, 'snapshot-project');
+    assert.ok((await backupModule.getSnapshotStorageStats()).chunkCount > 0);
   });
 
   check('EBB 单轮改期保留原计划日期、轮次编号，并清理每日安排旧引用', async () => {

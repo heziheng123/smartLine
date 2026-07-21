@@ -110,6 +110,7 @@ async function saveGraphDataAsync(data: GraphData) {
     await graphStorage.setItem(GRAPH_STORAGE_KEY, data);
   } catch (e) {
     console.warn('[smart-graph] IndexedDB 写入失败：', e);
+    throw e;
   }
 }
 

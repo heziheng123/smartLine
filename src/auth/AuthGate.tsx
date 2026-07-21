@@ -5,12 +5,13 @@ import { AuthContext, type AuthStatus } from './AuthContext';
 import './auth.css';
 
 interface AuthGateProps { children: ReactNode }
-interface SessionResponse { authenticated?: boolean; login?: string }
+interface SessionResponse { authenticated?: boolean; login?: string; userId?: string }
 
 export default function AuthGate({ children }: AuthGateProps) {
   const enabled = liveblocksAuthMode === 'authenticated';
   const [status, setStatus] = useState<AuthStatus>(enabled ? 'loading' : 'authenticated');
   const [login, setLogin] = useState<string>();
+  const [userId, setUserId] = useState<string>();
 
   const checkSession = useCallback(async () => {
     if (!enabled) return;
@@ -20,9 +21,11 @@ export default function AuthGate({ children }: AuthGateProps) {
       const body = await response.json() as SessionResponse;
       if (response.ok && body.authenticated) {
         setLogin(body.login);
+        setUserId(body.userId);
         setStatus('authenticated');
       } else {
         setLogin(undefined);
+        setUserId(undefined);
         setStatus('unauthenticated');
       }
     } catch {
@@ -37,10 +40,11 @@ export default function AuthGate({ children }: AuthGateProps) {
     const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
     if (!response.ok) throw new Error('退出登录失败');
     setLogin(undefined);
+    setUserId(undefined);
     setStatus('unauthenticated');
   }, [enabled]);
 
-  const context = useMemo(() => ({ enabled, login, logout, retry: checkSession, status }), [checkSession, enabled, login, logout, status]);
+  const context = useMemo(() => ({ enabled, login, userId, logout, retry: checkSession, status }), [checkSession, enabled, login, logout, status, userId]);
 
   if (status === 'authenticated') return <AuthContext.Provider value={context}>{children}</AuthContext.Provider>;
 
