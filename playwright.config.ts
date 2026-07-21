@@ -9,6 +9,10 @@ export default defineConfig({
   reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
   use: {
     baseURL: 'http://127.0.0.1:4173',
+    // GitHub-hosted runners use UTC. The application and its seeded study
+    // schedule operate in Asia/Shanghai, so keep browser calendar semantics
+    // identical locally and in CI.
+    timezoneId: 'Asia/Shanghai',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
