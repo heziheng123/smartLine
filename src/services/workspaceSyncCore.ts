@@ -21,8 +21,41 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
+export async function hashWorkspaceValue(value: unknown): Promise<string> {
+  const serialized = JSON.stringify(canonicalize(value)) ?? 'undefined';
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serialized));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function findWorkspaceFieldConflicts(
+  fields: Record<string, unknown>,
+  baseHashes: Record<string, string>,
+  remote: Record<string, unknown>,
+): Promise<string[]> {
+  const conflicts: string[] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    const baseHash = baseHashes[key];
+    if (!baseHash) continue;
+    const [remoteHash, pendingHash] = await Promise.all([
+      hashWorkspaceValue(remote[key]),
+      hashWorkspaceValue(value),
+    ]);
+    if (remoteHash !== baseHash && remoteHash !== pendingHash) conflicts.push(key);
+  }
+  return conflicts;
+}
+
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 export async function hashWorkspaceBackup(backup: WorkspaceBackup): Promise<string> {
   const data = { timeline: backup.timeline, ebb: backup.ebb, daily: backup.daily, graph: backup.graph };
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(canonicalize(data))));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return await hashWorkspaceValue(data);
 }

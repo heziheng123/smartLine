@@ -24,3 +24,7 @@ jobs:
       - run: npm run test:system
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: npx playwright test tests/e2e/sync-migration-ui.spec.ts --project=desktop-chromium
+        env:
+          MIGRATION_UI_TEST: '1'
+          VITE_LIVEBLOCKS_AUTH_ENDPOINT: /api/liveblocks-auth

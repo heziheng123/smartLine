@@ -73,6 +73,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [migrationCheck, setMigrationCheck] = useState<{ summary: WorkspaceBackupSummary; hash: string } | null>(null);
   const [migrationReport, setMigrationReport] = useState<WorkspaceMigrationReport | null>(null);
   const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState('');
   const [r2Configured, setR2Configured] = useState<boolean | null>(null);
   const [pendingFieldCount, setPendingFieldCount] = useState(0);
   const [syncConflicts, setSyncConflicts] = useState<WorkspaceConflictRecord[]>([]);
@@ -252,36 +253,53 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, []);
 
   const handleInspectLegacy = useCallback(async () => {
-    if (!activeCode) return;
+    if (!activeCode) {
+      setMigrationStatus('没有找到旧房间号，请先确认同步房间号。');
+      return;
+    }
+    setMigrationCheck(null);
+    setMigrationStatus('正在连接并读取旧四房间，请稍候（最长约15秒）…');
     setMigrationBusy(true);
     try {
       const result = await inspectLegacyWorkspace(activeCode);
       setMigrationCheck({ summary: result.summary, hash: result.hash });
+      setMigrationStatus('检查完成。请核对下方数量，然后执行迁移。');
       setRestoreMessage('旧四房间检查完成。请核对数量后再执行复制迁移。');
     } catch (error) {
-      setRestoreMessage(error instanceof Error ? error.message : '旧房间检查失败。');
+      const message = error instanceof Error ? error.message : '旧房间检查失败。';
+      setMigrationStatus(message);
+      setRestoreMessage(message);
     } finally {
       setMigrationBusy(false);
     }
   }, [activeCode]);
 
   const handleMigrate = useCallback(async () => {
-    if (!activeCode || !migrationCheck) return;
+    if (!activeCode || !migrationCheck) {
+      setMigrationStatus('请先完成“检查旧数据”。');
+      return;
+    }
     if (!isCurrentTabSyncLeader()) {
-      setRestoreMessage('另一个标签页正在负责云同步。请在主标签页执行迁移。');
+      const message = '另一个标签页正在负责云同步。请关闭其他标签页，或在负责同步的标签页执行迁移。';
+      setMigrationStatus(message);
+      setRestoreMessage(message);
       return;
     }
     const summary = migrationCheck.summary;
     if (!window.confirm(`将旧四房间复制到一个认证工作区：\n任务 ${summary.tasks}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
     setMigrationBusy(true);
+    setMigrationStatus('正在创建快照、复制并校验数据；完成前请不要刷新或关闭页面…');
     try {
       const report = await migrateLegacyWorkspace(activeCode, auth.userId || auth.login || 'owner');
       setMigrationReport(report);
       setArchitecture(readWorkspaceSyncSettings());
       downloadMigrationReport(report);
+      setMigrationStatus('迁移成功：数量和 SHA-256 哈希均一致，旧房间未删除。');
       setRestoreMessage('统一工作区迁移完成，前后数量和哈希一致；迁移报告已下载，旧房间保持不变。');
     } catch (error) {
-      setRestoreMessage(error instanceof Error ? error.message : '统一工作区迁移失败，已返回旧房间。');
+      const message = error instanceof Error ? error.message : '统一工作区迁移失败，已返回旧房间。';
+      setMigrationStatus(message);
+      setRestoreMessage(message);
     } finally {
       setMigrationBusy(false);
     }
@@ -375,12 +393,13 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             {architecture.architecture === 'legacy' ? <>
               <p className="tl-sync-backup-hint">迁移采用“读取旧房间 → 本地快照 → 复制 → 数量和 SHA-256 校验 → 切换”，不会删除旧数据。</p>
               <div className="tl-sync-backup-actions">
-                <button type="button" className="tl-sync-backup-btn" onClick={handleInspectLegacy} disabled={migrationBusy}><Check size={14} />检查旧数据</button>
-                <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={handleMigrate} disabled={migrationBusy || !migrationCheck}><ArrowRightLeft size={14} />迁移到统一工作区</button>
+                <button type="button" className="tl-sync-backup-btn" onClick={handleInspectLegacy} disabled={migrationBusy}><Check size={14} />{migrationBusy && !migrationCheck ? '检查中…' : '检查旧数据'}</button>
+                <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={handleMigrate} disabled={migrationBusy || !migrationCheck}><ArrowRightLeft size={14} />{migrationBusy && migrationCheck ? '迁移中…' : '迁移到统一工作区'}</button>
               </div>
-              {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.graphNodes} 个节点。</p>}
+              {migrationStatus && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{migrationStatus}</p>}
+              {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.groups} 个项目组、{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.projectDocuments} 份项目文档、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.graphNodes} 个节点。</p>}
             </> : <>
-              <p className="tl-sync-backup-hint">四个数据域共享同一底层房间连接。旧四房间仍保留为只读恢复来源。</p>
+              <p className="tl-sync-backup-hint">四个数据域共享同一底层房间连接。旧四房间保持不变，仅在主动回退时重新连接。</p>
               <button type="button" className="tl-sync-backup-btn" onClick={handleLegacyFallback}><RefreshCw size={14} />暂时返回旧房间</button>
               {migrationReport && <button type="button" className="tl-sync-backup-btn" onClick={() => downloadMigrationReport(migrationReport)} style={{ marginLeft: 8 }}><Download size={14} />下载迁移报告</button>}
             </>}

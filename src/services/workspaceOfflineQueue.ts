@@ -3,6 +3,7 @@ import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
+import { hashWorkspaceValue } from './workspaceSyncCore';
 
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones'
@@ -15,6 +16,8 @@ export interface PendingWorkspaceSync {
   createdAt: string;
   updatedAt: string;
   fields: Partial<Record<WorkspaceStorageField, unknown>>;
+  /** 每个字段第一次离线修改前的内容哈希，用于多设备逐字段冲突检测 */
+  baseHashes?: Partial<Record<WorkspaceStorageField, string>>;
 }
 
 export interface WorkspaceConflictRecord {
@@ -46,18 +49,26 @@ function deviceId(): string {
   return created;
 }
 
-export function queueWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
+export function queueWorkspaceFields(
+  fields: Partial<Record<WorkspaceStorageField, unknown>>,
+  baseFields: Partial<Record<WorkspaceStorageField, unknown>> = {},
+): void {
   if (trackingSuppressed) return;
   crossTabChannel?.postMessage({ type: 'fields', source: tabId, fields });
   writeChain = writeChain.then(async () => {
     const existing = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
     const now = new Date().toISOString();
+    const baseHashes = { ...(existing?.baseHashes ?? {}) };
+    for (const [key, value] of Object.entries(baseFields) as Array<[WorkspaceStorageField, unknown]>) {
+      if (!baseHashes[key]) baseHashes[key] = await hashWorkspaceValue(value);
+    }
     const next: PendingWorkspaceSync = {
       version: 1,
       deviceId: existing?.deviceId || deviceId(),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
       fields: { ...(existing?.fields ?? {}), ...fields },
+      baseHashes,
     };
     await queueStorage.setItem(QUEUE_KEY, next);
     window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
@@ -139,31 +150,51 @@ export function startWorkspaceQueueTracking(): () => void {
   let daily = useDailyScheduleStore.getState();
   let graph = useGraphStore.getState();
 
+  const shouldQueue = () => {
+    try {
+      const settings = JSON.parse(localStorage.getItem('smart-line-sync-architecture-v1') ?? 'null') as { architecture?: string } | null;
+      if (settings?.architecture !== 'unified') return false;
+    } catch { return false; }
+    const rooms = [
+      useTimelineStore.getState().liveblocks?.room,
+      useEbbStore.getState().liveblocks?.room,
+      useDailyScheduleStore.getState().liveblocks?.room,
+      useGraphStore.getState().liveblocks?.room,
+    ];
+    return !rooms.some((room) => room?.getStatus() === 'connected');
+  };
+
   const unsubscribers = [
     useTimelineStore.subscribe((state) => {
       const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
-      if (state.tasks !== timeline.tasks) changed.tasks = state.tasks;
-      if (state.groups !== timeline.groups) changed.groups = state.groups;
-      if (state.notes !== timeline.notes) changed.notes = state.notes;
-      if (state.milestones !== timeline.milestones) changed.milestones = state.milestones;
+      const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      if (state.tasks !== timeline.tasks) { changed.tasks = state.tasks; base.tasks = timeline.tasks; }
+      if (state.groups !== timeline.groups) { changed.groups = state.groups; base.groups = timeline.groups; }
+      if (state.notes !== timeline.notes) { changed.notes = state.notes; base.notes = timeline.notes; }
+      if (state.milestones !== timeline.milestones) { changed.milestones = state.milestones; base.milestones = timeline.milestones; }
       timeline = state;
-      if (!trackingSuppressed && Object.keys(changed).length) queueWorkspaceFields(changed);
+      if (!trackingSuppressed && shouldQueue() && Object.keys(changed).length) queueWorkspaceFields(changed, base);
     }),
     useEbbStore.subscribe((state) => {
       const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
-      if (state.reviewTasks !== ebb.reviewTasks) changed.reviewTasks = state.reviewTasks;
-      if (state.inboxItems !== ebb.inboxItems) changed.inboxItems = state.inboxItems;
-      if (state.outlineNodes !== ebb.outlineNodes) changed.outlineNodes = state.outlineNodes;
-      if (state.ebbSettings !== ebb.ebbSettings) changed.ebbSettings = state.ebbSettings;
+      const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      if (state.reviewTasks !== ebb.reviewTasks) { changed.reviewTasks = state.reviewTasks; base.reviewTasks = ebb.reviewTasks; }
+      if (state.inboxItems !== ebb.inboxItems) { changed.inboxItems = state.inboxItems; base.inboxItems = ebb.inboxItems; }
+      if (state.outlineNodes !== ebb.outlineNodes) { changed.outlineNodes = state.outlineNodes; base.outlineNodes = ebb.outlineNodes; }
+      if (state.ebbSettings !== ebb.ebbSettings) { changed.ebbSettings = state.ebbSettings; base.ebbSettings = ebb.ebbSettings; }
       ebb = state;
-      if (!trackingSuppressed && Object.keys(changed).length) queueWorkspaceFields(changed);
+      if (!trackingSuppressed && shouldQueue() && Object.keys(changed).length) queueWorkspaceFields(changed, base);
     }),
     useDailyScheduleStore.subscribe((state) => {
-      if (!trackingSuppressed && state.schedules !== daily.schedules) queueWorkspaceFields({ schedules: state.schedules });
+      if (!trackingSuppressed && shouldQueue() && state.schedules !== daily.schedules) {
+        queueWorkspaceFields({ schedules: state.schedules }, { schedules: daily.schedules });
+      }
       daily = state;
     }),
     useGraphStore.subscribe((state) => {
-      if (!trackingSuppressed && state.nodes !== graph.nodes) queueWorkspaceFields({ nodes: state.nodes });
+      if (!trackingSuppressed && shouldQueue() && state.nodes !== graph.nodes) {
+        queueWorkspaceFields({ nodes: state.nodes }, { nodes: graph.nodes });
+      }
       graph = state;
     }),
   ];

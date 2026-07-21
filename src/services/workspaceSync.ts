@@ -18,7 +18,7 @@ import {
   readPendingWorkspaceSync,
   setWorkspaceQueueSuppressed,
 } from './workspaceOfflineQueue';
-import { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
+import { buildUnifiedRoomId, findWorkspaceFieldConflicts, hashWorkspaceBackup, withTimeout } from './workspaceSyncCore';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
 export type SyncArchitecture = 'legacy' | 'unified';
@@ -160,10 +160,14 @@ function summaryOf(backup: WorkspaceBackup): WorkspaceBackupSummary {
   return result.summary;
 }
 
-async function inspectRoom(roomId: string): Promise<Record<string, unknown>> {
+async function inspectRoom(roomId: string, label: string): Promise<Record<string, unknown>> {
   const { room, leave } = liveblocksClient.enterRoom(roomId, { initialPresence: {} });
   try {
-    const { root } = await room.getStorage();
+    const { root } = await withTimeout(
+      room.getStorage(),
+      15_000,
+      `读取${label}超时。请检查网络、登录状态和 Liveblocks Secret Key 后重试。`,
+    );
     return root.toJSON() as Record<string, unknown>;
   } finally {
     leave();
@@ -173,7 +177,8 @@ async function inspectRoom(roomId: string): Promise<Record<string, unknown>> {
 export async function inspectLegacyWorkspace(roomCode: string): Promise<{ backup: WorkspaceBackup; summary: WorkspaceBackupSummary; hash: string }> {
   const base = createWorkspaceBackup();
   const roomIds = [roomCode, `${EBB_ROOM_PREFIX}${roomCode}`, `${DAILY_ROOM_PREFIX}${roomCode}`, `graph-${roomCode}`];
-  const [timeline, ebb, daily, graph] = await Promise.all(roomIds.map(inspectRoom));
+  const labels = ['旧时间轴房间', '旧 EBB 房间', '旧每日安排房间', '旧知识大盘房间'];
+  const [timeline, ebb, daily, graph] = await Promise.all(roomIds.map((roomId, index) => inspectRoom(roomId, labels[index])));
   const backup = rootToBackup({ ...timeline, ...ebb, ...daily, ...graph }, base);
   return { backup, summary: summaryOf(backup), hash: await hashWorkspaceBackup(backup) };
 }
@@ -217,7 +222,17 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
     : {};
   const remoteUpdatedAt = typeof metadata.updatedAt === 'string' ? metadata.updatedAt : '';
   const remoteDeviceId = typeof metadata.deviceId === 'string' ? metadata.deviceId : '';
-  if (remoteUpdatedAt > pending.updatedAt && remoteDeviceId && remoteDeviceId !== pending.deviceId) {
+  const fieldConflicts = await findWorkspaceFieldConflicts(
+    pending.fields,
+    pending.baseHashes ?? {},
+    rootJson,
+  );
+  const fieldsWithoutBaseline = Object.keys(pending.fields).filter((key) => !pending.baseHashes?.[key as keyof typeof pending.baseHashes]);
+  const metadataConflict = fieldsWithoutBaseline.length > 0
+    && remoteUpdatedAt > pending.updatedAt
+    && remoteDeviceId
+    && remoteDeviceId !== pending.deviceId;
+  if (fieldConflicts.length > 0 || metadataConflict) {
     await preserveWorkspaceConflict(pending, remoteUpdatedAt);
     window.dispatchEvent(new CustomEvent('smartline:workspace-conflict'));
     return { applied: 0, conflict: true };
@@ -266,7 +281,7 @@ export async function migrateLegacyWorkspace(roomCode: string, identity: string)
   await clearPendingWorkspaceSync();
   await createLocalSnapshot('统一工作区迁移前');
   const targetRoomId = buildUnifiedRoomId(roomCode, identity);
-  const existingRoot = await inspectRoom(targetRoomId);
+  const existingRoot = await inspectRoom(targetRoomId, '统一工作区目标房间');
   const hasExistingData = EXPECTED_KEYS.some((key) => existingRoot[key] !== undefined);
 
   if (hasExistingData) {

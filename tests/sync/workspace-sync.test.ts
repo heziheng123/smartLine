@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildUnifiedRoomId, hashWorkspaceBackup } from '../../src/services/workspaceSyncCore.ts';
+import { buildUnifiedRoomId, findWorkspaceFieldConflicts, hashWorkspaceBackup, hashWorkspaceValue, withTimeout } from '../../src/services/workspaceSyncCore.ts';
 import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
 
 function backup(): WorkspaceBackup {
@@ -25,4 +25,24 @@ test('workspace hashes ignore object key insertion order but detect data changes
   const changed = backup();
   changed.timeline.notes.push({ id: 'n1', name: 'changed', date: '2026-07-21', type: 'pin' });
   assert.notEqual(await hashWorkspaceBackup(first), await hashWorkspaceBackup(changed));
+});
+
+test('offline field conflicts are detected per field without blocking unrelated device changes', async () => {
+  const originalTasks = [{ id: 'one', title: 'before' }];
+  const pendingTasks = [{ id: 'one', title: 'offline edit' }];
+  const baseHashes = { tasks: await hashWorkspaceValue(originalTasks) };
+  assert.deepEqual(await findWorkspaceFieldConflicts(
+    { tasks: pendingTasks }, baseHashes, { tasks: originalTasks, nodes: [{ id: 'other-device-change' }] },
+  ), []);
+  assert.deepEqual(await findWorkspaceFieldConflicts(
+    { tasks: pendingTasks }, baseHashes, { tasks: [{ id: 'one', title: 'remote edit' }] },
+  ), ['tasks']);
+  assert.deepEqual(await findWorkspaceFieldConflicts(
+    { tasks: pendingTasks }, baseHashes, { tasks: pendingTasks },
+  ), []);
+});
+
+test('room inspection timeout reports a visible failure instead of waiting forever', async () => {
+  await assert.rejects(withTimeout(new Promise(() => undefined), 5, '读取旧房间超时'), /读取旧房间超时/);
+  assert.equal(await withTimeout(Promise.resolve('ok'), 50, '不应超时'), 'ok');
 });
