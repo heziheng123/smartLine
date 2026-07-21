@@ -270,6 +270,20 @@ test('project quantity task suggests a daily target and records progress without
   await expect(refreshedCard).toContainText('235/1000 题');
 });
 
+test('project task duration accepts any positive minute value', async ({ page }) => {
+  await page.getByTitle('项目规划').click();
+  await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
+  await page.getByRole('button', { name: '添加任务卡片' }).click();
+  const createDialog = page.getByRole('dialog', { name: '新建项目任务' });
+  await createDialog.getByLabel('任务名称').fill('任意分钟任务');
+  const durationInput = createDialog.getByLabel('预计时长（分钟）');
+  await durationInput.fill('17.5');
+  expect(await durationInput.evaluate((input: HTMLInputElement) => input.checkValidity())).toBeTruthy();
+  await createDialog.getByRole('button', { name: '创建任务' }).click();
+  await expect(createDialog).toBeHidden();
+  await expect(page.locator('.stb-card').filter({ hasText: '任意分钟任务' })).toBeVisible();
+});
+
 test('knowledge binding actions stay inside an iPad Air viewport', async ({ page }) => {
   await page.setViewportSize({ width: 1180, height: 820 });
   await openTaskOverview(page);

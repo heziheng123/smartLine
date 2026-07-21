@@ -103,7 +103,7 @@ const ProjectTaskCreateDialog: React.FC = () => {
       };
     } else {
       const parsedDuration = Number(duration);
-      if (!Number.isInteger(parsedDuration) || parsedDuration <= 0) return setError('预计时长必须是大于 0 的整数。');
+      if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) return setError('预计时长必须是大于 0 的分钟数。');
       block = {
         type: 'smart-task', id: genBlockId(), body: '',
         header: {
@@ -135,7 +135,7 @@ const ProjectTaskCreateDialog: React.FC = () => {
             </div>
           </fieldset>
           {mode === 'binary' ? (
-            <label>预计时长（分钟）<input type="number" min="1" step="5" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>
+            <label>预计时长（分钟）<input type="number" step="any" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>
           ) : (
             <>
               <div className="ds-vocab-form-grid">

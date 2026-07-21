@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Cloud, Copy, Download, Eye, EyeOff, Link, RefreshCw, Unlink, Upload } from 'lucide-react';
+import { Check, Cloud, Copy, Download, Eye, EyeOff, Link, LogOut, RefreshCw, Unlink, Upload } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
+import { liveblocksAuthMode } from '@/store/client';
+import { useAuth } from '@/auth/AuthContext';
 import {
   downloadWorkspaceBackup,
   createWorkspaceBackup,
@@ -35,6 +37,7 @@ function formatTime(value?: string): string {
 }
 
 const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
+  const auth = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timeline = useTimelineStore();
   const ebb = useEbbStore();
@@ -196,6 +199,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           <span className="tl-sync-dot" style={{ backgroundColor: allConnected ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
           <strong>{allConnected ? '全部同步 4/4' : enabledCount > 0 ? `部分同步 ${connectedCount}/4` : '尚未连接'}</strong>
         </div>
+        <p className="tl-dialog-hint">
+          认证方式：{liveblocksAuthMode === 'authenticated' ? '用户身份认证' : '公钥兼容模式'}
+          {auth.login ? ` · GitHub：${auth.login}` : ''}
+        </p>
+        {auth.enabled && auth.login && (
+          <button type="button" className="tl-sync-backup-btn" onClick={() => void auth.logout().then(onClose)} style={{ marginBottom: 12 }}>
+            <LogOut size={14} />退出当前账号
+          </button>
+        )}
 
         <label className="tl-dialog-label">
           房间号（仍然只输入一个）

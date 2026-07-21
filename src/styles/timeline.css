@@ -3465,6 +3465,20 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* 项目工作区外壳由时间轴和任务总览共同使用，必须随首屏样式加载。 */
+.project-workspace {
+  flex-direction: column;
+  background: #f6f7fb;
+}
+
+.project-workspace-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
 /* 左侧甘特图区域：弹性伸缩，平滑过渡 */
 .tl-app-main {
   flex: 1 1 auto;

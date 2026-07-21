@@ -5,6 +5,25 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
 
+test('timeline fills the workspace on the initial load before lazy views are opened', async ({ page }) => {
+  const workspace = page.locator('.project-workspace-content');
+  await expect(workspace).toBeVisible();
+  const layout = await workspace.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const parent = element.parentElement?.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      display: style.display,
+      flexGrow: style.flexGrow,
+      width: rect.width,
+      parentWidth: parent?.width ?? 0,
+    };
+  });
+  expect(layout.display).toBe('flex');
+  expect(layout.flexGrow).toBe('1');
+  expect(layout.width).toBeGreaterThanOrEqual(layout.parentWidth - 2);
+});
+
 test('five main views remain reachable through the real interface', async ({ page }) => {
   for (const title of ['每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
     await page.getByTitle(title).click();

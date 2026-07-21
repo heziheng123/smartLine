@@ -1,0 +1,10 @@
+.auth-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #f5f7fb; color: #172033; }
+.auth-card { width: min(420px, 100%); padding: 40px 34px; border: 1px solid #e3e8f0; border-radius: 22px; background: #fff; box-shadow: 0 18px 50px rgba(31, 46, 77, .1); text-align: center; }
+.auth-card h1 { margin: 14px 0 8px; font-size: 28px; }
+.auth-card p { margin: 10px 0 24px; color: #5d687c; line-height: 1.6; }
+.auth-card small { display: block; margin-top: 18px; color: #7a8495; line-height: 1.5; }
+.auth-logo { width: 58px; height: 58px; display: grid; place-items: center; margin: 0 auto; border-radius: 17px; color: #3568e8; background: #edf3ff; }
+.auth-primary { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 20px; border: 0; border-radius: 12px; background: #172033; color: #fff; font: inherit; font-weight: 650; text-decoration: none; cursor: pointer; }
+.auth-primary:hover { background: #28344b; }
+.auth-spin { margin: 22px auto 2px; animation: auth-spin .8s linear infinite; }
+@keyframes auth-spin { to { transform: rotate(360deg); } }
