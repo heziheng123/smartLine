@@ -136,3 +136,27 @@ test('EBB safe mode keeps recovery controls usable and disables the high-load bo
   await expect(page.getByRole('tab', { name: '看板视图' })).toBeDisabled();
   await expect(page.getByRole('button', { name: '退出安全模式' })).toBeVisible();
 });
+
+test('EBB complexity settings can be edited, saved and reset without closing the panel', async ({ page }) => {
+  await page.getByTitle('艾宾浩斯复习').click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+
+  const panel = page.locator('.eb-panel--settings');
+  const section = panel.locator('.eb-settings-section').filter({ hasText: '复杂度配置' });
+  const easyRow = section.locator('.eb-complexity-row').filter({ hasText: '🟢 简单' });
+
+  await easyRow.getByRole('button', { name: '编辑' }).click();
+  await expect(panel).toBeVisible();
+  const editor = easyRow.getByRole('group', { name: '🟢 简单复杂度编辑器' });
+  await expect(editor).toBeVisible();
+
+  await editor.getByLabel('间隔序列').fill('1, 4, 9');
+  await editor.getByRole('button', { name: '保存' }).click();
+  await expect(easyRow).toContainText('间隔：1, 4, 9');
+  await expect(panel).toBeVisible();
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await easyRow.getByRole('button', { name: '重置🟢 简单复杂度配置' }).click();
+  await expect(easyRow).toContainText('间隔：1, 3, 7, 15, 30');
+  await expect(panel).toBeVisible();
+});

@@ -63,7 +63,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
   const tagEntries = useMemo(() => Object.entries(s.tagColors), [s.tagColors]);
 
   const content = (
-    <div className={inline ? 'eb-inline-panel' : 'eb-panel eb-panel--settings'} onClick={inline ? undefined : undefined}>
+    <div className={inline ? 'eb-inline-panel' : 'eb-panel eb-panel--settings'}>
       <div className="eb-panel-header">
         <h3 className="eb-panel-title">复习设置</h3>
         <button type="button" className="eb-panel-close" onClick={onClose}><X size={16} /></button>
@@ -176,15 +176,27 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
                       <span className="eb-complexity-row-intervals">间隔：{formatIntervals(cfg.intervals)}</span>
                     </div>
                     <div className="eb-complexity-row-actions">
-                      <button type="button" className="eb-text-btn" onClick={() => setEditingComplexity(editingComplexity === level ? null : level)}>
+                      <button
+                        type="button"
+                        className="eb-text-btn"
+                        aria-expanded={editingComplexity === level}
+                        aria-controls={`ebb-complexity-editor-${level}`}
+                        onClick={() => setEditingComplexity(editingComplexity === level ? null : level)}
+                      >
                         {editingComplexity === level ? '收起' : '编辑'}
                       </button>
-                      <button type="button" className="eb-text-btn eb-text-btn--danger" onClick={() => handleResetComplexity(level)}>
+                      <button
+                        type="button"
+                        className="eb-text-btn eb-text-btn--danger"
+                        aria-label={`重置${cfg.label}复杂度配置`}
+                        onClick={() => handleResetComplexity(level)}
+                      >
                         重置
                       </button>
                     </div>
                     {editingComplexity === level && (
                       <ComplexityEditor
+                        id={`ebb-complexity-editor-${level}`}
                         level={level}
                         settings={s}
                         onSave={(intervals, weights) => {
@@ -320,7 +332,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
   if (inline) return content;
 
   return createPortal(
-    <div className="eb-panel-overlay" onClick={onClose}>
+    <div
+      className="eb-panel-overlay"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       {content}
     </div>,
     document.body,
@@ -329,12 +346,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
 
 // 复杂度编辑器子组件
 interface ComplexityEditorProps {
+  id: string;
   level: ComplexityLevel;
   settings: EbbSettings;
   onSave: (intervals: number[], weights: Record<number, number>) => void;
 }
 
-const ComplexityEditor: React.FC<ComplexityEditorProps> = ({ level, settings, onSave }) => {
+const ComplexityEditor: React.FC<ComplexityEditorProps> = ({ id, level, settings, onSave }) => {
   const cfg = settings.complexityConfigs[level];
   const [intervalsText, setIntervalsText] = useState(formatIntervals(cfg.intervals));
   const [weightsText, setWeightsText] = useState(
@@ -358,7 +376,7 @@ const ComplexityEditor: React.FC<ComplexityEditorProps> = ({ level, settings, on
   };
 
   return (
-    <div className="eb-complexity-editor">
+    <div id={id} className="eb-complexity-editor" role="group" aria-label={`${cfg.label}复杂度编辑器`}>
       <label className="eb-field">
         <span className="eb-field-label">间隔序列</span>
         <input
