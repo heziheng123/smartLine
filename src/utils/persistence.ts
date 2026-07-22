@@ -1,12 +1,121 @@
 import localforage from 'localforage';
 
 const STORAGE_DB_NAME = 'smart-timeline';
+const STORAGE_SCHEMA_LOCK = 'smart-line-storage-schema-v1';
+const storageSchemaStores = new Set<string>([
+  'timeline_data',
+  'daily_schedule_data',
+  'ebb_data',
+  'graph_data',
+  'workspace_snapshots',
+  'workspace_snapshot_chunks',
+  'workspace_sync_queue',
+  // localForage uses this private store when it checks Blob support.
+  'local-forage-detect-blob-support',
+]);
+
+let storageSchemaReady: Promise<void> | null = null;
+
+function createMissingStores(database: IDBDatabase): void {
+  for (const storeName of storageSchemaStores) {
+    if (!database.objectStoreNames.contains(storeName)) database.createObjectStore(storeName);
+  }
+}
+
+function openCurrentDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(STORAGE_DB_NAME);
+    request.onupgradeneeded = () => createMissingStores(request.result);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB 打开失败。'));
+  });
+}
+
+function upgradeDatabase(version: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(STORAGE_DB_NAME, version);
+    request.onupgradeneeded = () => createMissingStores(request.result);
+    request.onsuccess = () => {
+      const database = request.result;
+      const missing = [...storageSchemaStores].filter((storeName) => !database.objectStoreNames.contains(storeName));
+      database.close();
+      if (missing.length) reject(new Error(`IndexedDB 对象仓库初始化不完整：${missing.join(', ')}`));
+      else resolve();
+    };
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB 升级失败。'));
+  });
+}
+
+async function initializeStorageSchema(): Promise<void> {
+  // localForage will select its next available driver in restricted browsers.
+  if (typeof indexedDB === 'undefined') return;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const database = await openCurrentDatabase();
+      const missing = [...storageSchemaStores].filter((storeName) => !database.objectStoreNames.contains(storeName));
+      const nextVersion = database.version + 1;
+      database.close();
+      if (!missing.length) return;
+      await upgradeDatabase(nextVersion);
+      return;
+    } catch (error) {
+      // Another tab may have completed the same upgrade between our read and open.
+      if (!(error instanceof DOMException) || error.name !== 'VersionError' || attempt === 3) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, 40 * (attempt + 1)));
+    }
+  }
+}
+
+function ensureStorageSchema(): Promise<void> {
+  if (!storageSchemaReady) {
+    const initialize = async () => {
+      if (typeof navigator !== 'undefined' && navigator.locks) {
+        await navigator.locks.request(STORAGE_SCHEMA_LOCK, { mode: 'exclusive' }, initializeStorageSchema);
+      } else {
+        await initializeStorageSchema();
+      }
+    };
+    storageSchemaReady = initialize().catch((error) => {
+      storageSchemaReady = null;
+      throw error;
+    });
+  }
+  return storageSchemaReady;
+}
+
+function isRetryableStorageError(error: unknown): boolean {
+  return error instanceof DOMException
+    && ['VersionError', 'AbortError', 'InvalidStateError', 'NotFoundError'].includes(error.name);
+}
 
 export function createScopedStorage(storeName: string) {
-  return localforage.createInstance({
-    name: STORAGE_DB_NAME,
-    storeName,
-  });
+  if (!storageSchemaStores.has(storeName)) {
+    storageSchemaStores.add(storeName);
+    storageSchemaReady = null;
+  }
+  let storage = localforage.createInstance({ name: STORAGE_DB_NAME, storeName });
+
+  const execute = async <T>(operation: (current: LocalForage) => Promise<T>): Promise<T> => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await ensureStorageSchema();
+        return await operation(storage);
+      } catch (error) {
+        if (!isRetryableStorageError(error) || attempt === 2) throw error;
+        storageSchemaReady = null;
+        storage = localforage.createInstance({ name: STORAGE_DB_NAME, storeName });
+        await new Promise((resolve) => window.setTimeout(resolve, 50 * (attempt + 1)));
+      }
+    }
+    throw new Error('IndexedDB 操作重试失败。');
+  };
+
+  return {
+    getItem: <T>(key: string) => execute((current) => current.getItem<T>(key)),
+    setItem: <T>(key: string, value: T) => execute((current) => current.setItem(key, value)),
+    removeItem: (key: string) => execute((current) => current.removeItem(key)),
+    keys: () => execute((current) => current.keys()),
+  };
 }
 
 export function readJsonStorage<T>(key: string): T | null {

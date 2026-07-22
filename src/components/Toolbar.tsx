@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Archive, History, ListTodo, Check, ChevronUp } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { ArchiveLibraryModal } from './GlobalSearch';
 import { useOperationHistory } from '@/services/operationHistory';
 
@@ -131,7 +131,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
           layout: { type: "spring", stiffness: 350, damping: 30 }
         }}
       >
-        <AnimatePresence mode="popLayout" initial={false}>
+        <>
           {/* ── 视图导航 ── */}
         {NAV_ITEMS.map((item) => {
           const active = currentView === item.module;
@@ -399,7 +399,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
             </button>
           </motion.div>
         )}
-        </AnimatePresence>
+        </>
       </motion.div>
 
       <ArchiveLibraryModal isOpen={isArchiveLibraryOpen} onClose={() => setIsArchiveLibraryOpen(false)} />
