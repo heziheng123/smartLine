@@ -13,6 +13,12 @@ import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import type { TaskActions } from './MatrixView';
 import { useGraphStore } from '@/graph/store';
+import {
+  buildRootNodeMap,
+  getReviewCategoryColor,
+  resolveReviewCategory,
+  type ReviewCategory,
+} from '../category';
 
 // ── 错误边界（捕获渲染异常，避免白屏）──────────────────────
 class BoardErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -51,6 +57,7 @@ interface TopicCardData {
   topicKey: string;
   topicName: string;
   tag?: string;
+  category: ReviewCategory | null;
   complexity?: ComplexityLevel;
   group: ReviewTask[];
   totalRounds: number;
@@ -72,7 +79,8 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
   const [groupByType, setGroupByType] = useState<'none' | 'tag' | 'rootNode'>('none');
 
   const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
-  const getNodeById = useGraphStore((s) => s.getNodeById);
+  const graphNodes = useGraphStore((state) => state.nodes);
+  const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
 
   // 按主题聚合 + 三列拆分
   const columns = useMemo(() => {
@@ -112,10 +120,12 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
       }
 
       const firstTask = group[0];
+      const category = firstTask ? resolveReviewCategory(firstTask, rootByNodeId) : null;
       topicCards.push({
         topicKey,
         topicName,
-        tag: firstTask?.tag,
+        tag: category?.label,
+        category,
         complexity: firstTask?.complexity,
         group,
         totalRounds,
@@ -160,7 +170,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
     });
 
     return { pending, progress, done };
-  }, [tasks, roundMap, totalRoundsMap, settings.complexityConfigs]);
+  }, [tasks, roundMap, totalRoundsMap, settings.complexityConfigs, rootByNodeId]);
 
   // 筛选（memo 化：避免每次渲染都重新创建闭包）
   const filterTasks = useMemo(
@@ -184,15 +194,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
         if (groupByType === 'tag') {
           groupKey = t.tag || '无标签';
         } else if (groupByType === 'rootNode') {
-          if (t.graphNodeId) {
-            let current = getNodeById(t.graphNodeId);
-            while (current && current.parentId) {
-              current = getNodeById(current.parentId);
-            }
-            groupKey = current ? current.name : '无大盘关联';
-          } else {
-            groupKey = '无大盘关联';
-          }
+          groupKey = t.category?.kind === 'root' ? t.category.label : '无大盘关联';
         }
 
         if (!map.has(groupKey)) map.set(groupKey, []);
@@ -200,7 +202,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
       }
       return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     },
-    [groupByType, getNodeById],
+    [groupByType],
   );
 
   // colConfig 包含已筛选列表，依赖 query 和 columns
@@ -268,7 +270,15 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) =
                             className={`eb-board-lane ${laneSnapshot.isDraggingOver ? 'eb-board-lane--over' : ''}`}
                           >
                             <div className="eb-board-lane-header">
-                              <span className="eb-board-lane-dot" style={{ backgroundColor: settings.tagColors[groupKey] || '#9CA3AF' }} />
+                              <span
+                                className="eb-board-lane-dot"
+                                style={{
+                                  backgroundColor: getReviewCategoryColor(
+                                    tagTasks[0]?.category ?? null,
+                                    settings.tagColors,
+                                  ) ?? '#9CA3AF',
+                                }}
+                              />
                               <span className="eb-board-lane-name">{groupKey}</span>
                               <span className="eb-board-lane-count">{tagTasks.length}</span>
                             </div>
@@ -340,7 +350,7 @@ interface BoardCardProps {
         .pop() || '');
   const dateLabel = dateForLabel ? getDateLabel(dateForLabel, isAllDone) : null;
 
-  const tagColor = card.tag ? settings.tagColors[card.tag] : undefined;
+  const tagColor = getReviewCategoryColor(card.category, settings.tagColors);
 
   // 优先级圆点
   const priorityColor = isAllDone

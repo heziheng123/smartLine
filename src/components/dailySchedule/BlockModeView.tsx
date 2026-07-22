@@ -12,6 +12,7 @@ import { getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
+import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '@/ebb/category';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
@@ -83,6 +84,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   );
 
   const graphNodes = useGraphStore((state) => state.nodes);
+  const ebbRootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
 
   const archivedNodeIds = useMemo(() => new Set(graphNodes.filter(n => n.isArchived).map(n => n.id)), [graphNodes]);
 
@@ -140,7 +142,10 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         ? ebbReviewTasks.find((task) => task.id === parsed.reviewId)
         : undefined;
       const reviewCategoryColor = reviewTask
-        ? ebbSettingsData.tagColors[reviewTask.tag ?? '']
+        ? getReviewCategoryColor(
+            resolveReviewCategory(reviewTask, ebbRootByNodeId),
+            ebbSettingsData.tagColors,
+          )
         : undefined;
       return {
         ...b,
@@ -150,7 +155,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         categoryColor: appearance?.categoryColor ?? reviewCategoryColor ?? b.categoryColor,
       };
     });
-  }, [daySchedule.blocks, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData, selectedDate]);
+  }, [daySchedule.blocks, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewTasks, ebbSettingsData, selectedDate, ebbRootByNodeId]);
 
   // ── 判断是否未绑定节点 ──────────────────────────────────
   const checkIsUnlinkedTask = useCallback((sourceId: string) => {
@@ -292,8 +297,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         id: `pool-review-${task.id}`,
         name: task.topicName,
         source: 'review',
-        color: ebbSettingsData.tagColors[task.tag ?? ''] ?? '#8B9DC3',
-        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
+        color: getReviewCategoryColor(
+          resolveReviewCategory(task, ebbRootByNodeId),
+          ebbSettingsData.tagColors,
+        ) ?? '#8B9DC3',
+        categoryColor: getReviewCategoryColor(
+          resolveReviewCategory(task, ebbRootByNodeId),
+          ebbSettingsData.tagColors,
+        ),
         detail: `第${round}/${total}轮`,
         sourceId: getReviewSourceId(task.id),
         duration: 30,
@@ -301,7 +312,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     }
 
     return items;
-  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData]);
+  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData, ebbRootByNodeId]);
 
   const completedPoolItems = useMemo(() => {
     const items: PoolItem[] = [];
@@ -327,11 +338,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         name: task.topicName,
         source: 'review',
         sourceId,
-        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
+        categoryColor: getReviewCategoryColor(
+          resolveReviewCategory(task, ebbRootByNodeId),
+          ebbSettingsData.tagColors,
+        ),
       });
     }
     return items;
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, ebbSettingsData]);
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, ebbSettingsData, ebbRootByNodeId]);
 
   // ── 拖拽状态（纯 HTML5 DnD） ──────────────────────────
   const [draggedPoolItemId, setDraggedPoolItemId] = useState<string | null>(null);

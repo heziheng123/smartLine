@@ -98,9 +98,13 @@ function ensureTagColors(tasks: ReviewTask[], settings: EbbSettings): EbbSetting
   const newColors = { ...settings.tagColors };
   let paletteIdx = existingTags.size % TAG_COLOR_PALETTE.length;
   for (const t of tasks) {
-    const tag = t.tag || '';
-    if (tag && !newColors[tag]) {
-      newColors[tag] = TAG_COLOR_PALETTE[paletteIdx % TAG_COLOR_PALETTE.length];
+    // Graph-linked reviews are categorised dynamically by their root node.
+    // Do not create stale colour entries from the source project-task title.
+    if (t.graphNodeId) continue;
+    const tag = t.tag?.trim() || '';
+    const categoryKey = tag ? `manual:${tag}` : '';
+    if (categoryKey && !newColors[categoryKey] && !newColors[tag]) {
+      newColors[categoryKey] = TAG_COLOR_PALETTE[paletteIdx % TAG_COLOR_PALETTE.length];
       paletteIdx++;
     }
   }
@@ -473,7 +477,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             originalDueDate: dueDate,
             roundOrder: index + 1,
             isCompleted: false,
-            tag: template.tag,
+            tag: template.graphNodeId ? undefined : template.tag,
             outlineNodeId: template.outlineNodeId,
             graphNodeId: template.graphNodeId,
             complexity: template.complexity,
@@ -1090,7 +1094,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               action = 'add',
               graphNodeId,
               topicName,
-              tag,
               triggerSchedule = true,
               sourceTaskId,
               sourceBlockId,
@@ -1186,7 +1189,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               const generated: ReviewTask[] = intervals.map((_, index) => ({
                   id: genId('rt'),
                   topicName,
-                  tag,
                   graphNodeId,
                   dueDate: dueDates[index],
                   originalDueDate: dueDates[index],
@@ -1256,7 +1258,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
                 newReviewTasks.push({
                   id: genId('rt'),
                   topicName,
-                  tag,
                   graphNodeId,
                   dueDate,
                   originalDueDate: dueDate,

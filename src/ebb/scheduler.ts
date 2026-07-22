@@ -185,7 +185,7 @@ export function buildNextRoundTask(
     originalDueDate: dueDate,
     roundOrder: Math.max(0, ...activeTasks.map((task) => task.roundOrder ?? 0)) + 1,
     isCompleted: false,
-    tag: lastTask.tag,
+    tag: lastTask.graphNodeId ? undefined : lastTask.tag,
     outlineNodeId: lastTask.outlineNodeId,
     graphNodeId: lastTask.graphNodeId,
     complexity: lastTask.complexity,

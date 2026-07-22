@@ -15,6 +15,12 @@ import {
 } from '../scheduler';
 import { useGraphStore } from '../../graph/store';
 import { todayStr } from '../../utils/dateSafe';
+import {
+  buildRootNodeMap,
+  getReviewCategoryColor,
+  resolveReviewCategory,
+  type ReviewCategory,
+} from '../category';
 
 export interface TaskActions {
   onToggle: (id: string) => void;
@@ -46,32 +52,24 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
 
   const nodes = useGraphStore((state) => state.nodes);
 
-  // 计算节点到根节点的映射
-  const rootNameMap = useMemo(() => {
-    const map = new Map<string, string>();
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    for (const node of nodes) {
-      let current = node;
-      const visited = new Set<string>();
-      while (current.parentId && nodeMap.has(current.parentId)) {
-        if (visited.has(current.id)) break; // 防御循环引用
-        visited.add(current.id);
-        current = nodeMap.get(current.parentId)!;
-      }
-      map.set(node.id, current.name);
-    }
-    return map;
-  }, [nodes]);
+  const rootByNodeId = useMemo(() => buildRootNodeMap(nodes), [nodes]);
 
-  // 动态注入根节点作为标签
+  // 所有 EBB 视图共用同一分类规则：知识节点取大盘根节点，独立内容取手动标签。
   const enhancedTasks = useMemo(() => {
     return tasks.map(task => {
-      if (task.graphNodeId && rootNameMap.has(task.graphNodeId)) {
-        return { ...task, tag: rootNameMap.get(task.graphNodeId) };
-      }
-      return task;
+      const category = resolveReviewCategory(task, rootByNodeId);
+      return category ? { ...task, tag: category.label } : task;
     });
-  }, [tasks, rootNameMap]);
+  }, [tasks, rootByNodeId]);
+
+  const categoryByLabel = useMemo(() => {
+    const map = new Map<string, ReviewCategory>();
+    for (const task of tasks) {
+      const category = resolveReviewCategory(task, rootByNodeId);
+      if (category) map.set(category.label, category);
+    }
+    return map;
+  }, [tasks, rootByNodeId]);
 
   const tagStats = useMemo(() => computeTagStats(enhancedTasks), [enhancedTasks]);
 
@@ -161,7 +159,9 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
       {tagStats.length > 0 && (
         <div className="eb-tag-stats">
           {tagStats.map((ts) => {
-            const color = ts.tag ? settings.tagColors[ts.tag] : '#9CA3AF';
+            const color = ts.tag
+              ? getReviewCategoryColor(categoryByLabel.get(ts.tag) ?? null, settings.tagColors)
+              : '#9CA3AF';
             return (
               <button
                 key={ts.tag || '__none__'}
@@ -190,15 +190,21 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
             <p className="eb-empty-hint">点击右上角「快速添加」创建第一个复习任务</p>
           </div>
         ) : (
-          visibleTopicStats.map((stat) => (
-            <TopicRow
-              key={stat.topicKey}
-              stat={stat}
-              settings={settings}
-              topicTasks={topicTasksMap.get(stat.topicKey) ?? []}
-              taskActions={taskActions}
-            />
-          ))
+          visibleTopicStats.map((stat) => {
+            const topicTasks = topicTasksMap.get(stat.topicKey) ?? [];
+            const category = topicTasks[0]
+              ? resolveReviewCategory(topicTasks[0], rootByNodeId)
+              : null;
+            return (
+              <TopicRow
+                key={stat.topicKey}
+                stat={stat}
+                tagColor={getReviewCategoryColor(category, settings.tagColors)}
+                topicTasks={topicTasks}
+                taskActions={taskActions}
+              />
+            );
+          })
         )}
         {visibleCount < topicStats.length && (
           <div ref={loadMoreRef} className="py-4 text-center text-xs text-slate-400" role="status">
@@ -213,15 +219,14 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
 // ── 主题行（圆形进度环 + 任务卡片）──────────────────────────
 interface TopicRowProps {
   stat: TopicStat;
-  settings: EbbSettings;
+  tagColor?: string;
   topicTasks: ReviewTask[];
   taskActions: TaskActions;
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, settings, topicTasks, taskActions }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, taskActions }) => {
   const [expanded, setExpanded] = useState(false);
 
-  const tagColor = stat.tag ? settings.tagColors[stat.tag] : undefined;
   const ratio = stat.ratio;
   // 进度环颜色：100% 绿色 / 50-99% 蓝色 / <50% 红色
   const ringColor = ratio >= 1 ? '#10B981' : ratio >= 0.5 ? '#3B82F6' : '#EF4444';

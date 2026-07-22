@@ -37,6 +37,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { buildNextRoundTask, getReviewTopicKey, computeRounds, isOverdue, isDueToday, calcTodayPoints, calcWeekPoints } from '../scheduler';
 import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
+import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '../category';
 import { normalizeLegacyEbbData } from '../migration';
 import { getDateLabel } from '../scheduler';
 import type { ReviewTask, EbbSettings } from '../types';
@@ -648,6 +649,8 @@ interface DayTaskListProps {
 }
 
 const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate, taskActions }) => {
+  const graphNodes = useGraphStore((state) => state.nodes);
+  const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
   const dayTasks = useMemo(
     () => tasks.filter((t) => t.dueDate === selectedDate).sort((a, b) => {
       if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
@@ -752,7 +755,18 @@ const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate
                   <span className={`eb-cal-task-date-badge eb-cal-task-date-badge--${dateLabel.cls}`}>
                     {dateLabel.text}
                   </span>
-                  {t.tag && <span className="eb-cal-task-card-tag">{t.tag}</span>}
+                  {(() => {
+                    const category = resolveReviewCategory(t, rootByNodeId);
+                    const color = getReviewCategoryColor(category, settings.tagColors);
+                    return category ? (
+                      <span
+                        className="eb-cal-task-card-tag"
+                        style={color ? { backgroundColor: `${color}40`, color: '#374151' } : undefined}
+                      >
+                        {category.label}
+                      </span>
+                    ) : null;
+                  })()}
                   <span className="eb-cal-task-card-points">+{points}分</span>
                 </div>
                 <div className="eb-cal-task-card-progress">

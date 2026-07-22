@@ -30,6 +30,7 @@ import {
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
+import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '@/ebb/category';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
 import BlockModeView from './BlockModeView';
@@ -141,6 +142,7 @@ const DailyScheduleView: React.FC = () => {
   );
 
   const graphNodes = useGraphStore((state) => state.nodes);
+  const ebbRootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
 
   // 过滤冷数据（已归档节点关联的任务/块）
   const archivedNodeIds = useMemo(() => new Set(graphNodes.filter(n => n.isArchived).map(n => n.id)), [graphNodes]);
@@ -386,7 +388,10 @@ const DailyScheduleView: React.FC = () => {
         name: task.topicName,
         source: 'review',
         sourceId,
-        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
+        categoryColor: getReviewCategoryColor(
+          resolveReviewCategory(task, ebbRootByNodeId),
+          ebbSettingsData.tagColors,
+        ),
       });
     }
     return filterSource === 'all'
@@ -394,7 +399,7 @@ const DailyScheduleView: React.FC = () => {
       : items.filter((item) => filterSource === 'quantity'
         ? isQuantityTask({ taskKind: item.taskKind })
         : item.source === filterSource && !isQuantityTask({ taskKind: item.taskKind }));
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData, selectedDate, getProjectBlockFromSource]);
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData, selectedDate, getProjectBlockFromSource, ebbRootByNodeId]);
 
   // ── 构建右侧任务池列表（时段模式用） ─────────────────────
   const poolItems = useMemo(() => {
@@ -441,8 +446,14 @@ const DailyScheduleView: React.FC = () => {
         id: `pool-review-${task.id}`,
         name: task.topicName,
         source: 'review',
-        color: ebbSettingsData.tagColors[task.tag ?? ''] ?? '#8B9DC3',
-        categoryColor: ebbSettingsData.tagColors[task.tag ?? ''],
+        color: getReviewCategoryColor(
+          resolveReviewCategory(task, ebbRootByNodeId),
+          ebbSettingsData.tagColors,
+        ) ?? '#8B9DC3',
+        categoryColor: getReviewCategoryColor(
+          resolveReviewCategory(task, ebbRootByNodeId),
+          ebbSettingsData.tagColors,
+        ),
         detail: `第${round}/${total}轮`,
         sourceId: getReviewSourceId(task.id),
         duration: 30,
@@ -450,7 +461,7 @@ const DailyScheduleView: React.FC = () => {
     }
 
     return items;
-  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData, getProjectBlockFromSource, selectedDate]);
+  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData, getProjectBlockFromSource, selectedDate, ebbRootByNodeId]);
 
   const poolOpen = poolPreference === 'open'
     || (poolPreference === 'auto' && !isCompactLayout && poolItems.length > 0);
@@ -469,7 +480,10 @@ const DailyScheduleView: React.FC = () => {
             ? ebbReviewById.get(parsed.reviewId)
             : undefined;
           const reviewCategoryColor = reviewTask
-            ? ebbSettingsData.tagColors[reviewTask.tag ?? '']
+            ? getReviewCategoryColor(
+                resolveReviewCategory(reviewTask, ebbRootByNodeId),
+                ebbSettingsData.tagColors,
+              )
             : undefined;
           const projectSource = getProjectBlockFromSource(i.sourceId);
           const quantityHeader = projectSource && isQuantityTask(projectSource.block.header)
@@ -500,7 +514,7 @@ const DailyScheduleView: React.FC = () => {
 
       return normalItems;
     },
-    [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewById, ebbSettingsData, getProjectBlockFromSource, selectedDate],
+    [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewById, ebbSettingsData, getProjectBlockFromSource, selectedDate, ebbRootByNodeId],
   );
 
   // ── 拖拽处理（时段模式） ─────────────────────────────────

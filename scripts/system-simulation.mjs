@@ -56,6 +56,7 @@ try {
     projectAppearance,
     blocksModule,
     persistenceModule,
+    categoryModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -72,12 +73,104 @@ try {
     load('/src/components/dailySchedule/projectAppearance.ts'),
     load('/src/utils/blocks.ts'),
     load('/src/utils/persistence.ts'),
+    load('/src/ebb/category.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
   const { useGraphStore } = graphModule;
   const { useEbbStore } = ebbModule;
   const { useDailyScheduleStore } = dailyModule;
+  const {
+    buildRootNodeMap,
+    collectReviewCategories,
+    getReviewCategoryColor,
+    resolveReviewCategory,
+  } = categoryModule;
+
+  check('EBB分类统一使用知识大盘根节点，独立内容保留手动标签', () => {
+    const nodes = [
+      { id: 'root-a', name: '教育学', parentId: null, createdAt: 1 },
+      { id: 'child-a', name: '战国教育', parentId: 'root-a', createdAt: 2 },
+    ];
+    const rootMap = buildRootNodeMap(nodes);
+    const linked = resolveReviewCategory(
+      { graphNodeId: 'child-a', tag: '来源项目任务标题' },
+      rootMap,
+    );
+    const manual = resolveReviewCategory({ tag: '手动标签' }, rootMap);
+    assert.deepEqual(linked, {
+      key: 'root:root-a',
+      label: '教育学',
+      kind: 'root',
+      rootNodeId: 'root-a',
+    });
+    assert.deepEqual(manual, {
+      key: 'manual:手动标签',
+      label: '手动标签',
+      kind: 'manual',
+    });
+    const categories = collectReviewCategories([
+      { id: 'r1', topicName: '战国教育', dueDate: '2026-07-22', isCompleted: false, graphNodeId: 'child-a', tag: '来源项目任务标题' },
+      { id: 'r2', topicName: '独立主题', dueDate: '2026-07-22', isCompleted: false, tag: '手动标签' },
+    ], rootMap);
+    assert.deepEqual(categories.map((category) => category.label), ['教育学', '手动标签']);
+  });
+
+  check('EBB根节点改名和换父级立即更新分类，颜色按稳定根ID保留', () => {
+    const task = { graphNodeId: 'leaf', tag: '旧项目标题' };
+    const before = buildRootNodeMap([
+      { id: 'root-a', name: '教育学', parentId: null, createdAt: 1 },
+      { id: 'root-b', name: '心理学', parentId: null, createdAt: 2 },
+      { id: 'leaf', name: '学习理论', parentId: 'root-a', createdAt: 3 },
+    ]);
+    const originalCategory = resolveReviewCategory(task, before);
+    assert.equal(originalCategory?.label, '教育学');
+    assert.equal(getReviewCategoryColor(originalCategory, { 'root:root-a': '#123456' }), '#123456');
+
+    const renamed = buildRootNodeMap([
+      { id: 'root-a', name: '教育学原理', parentId: null, createdAt: 1 },
+      { id: 'root-b', name: '心理学', parentId: null, createdAt: 2 },
+      { id: 'leaf', name: '学习理论', parentId: 'root-a', createdAt: 3 },
+    ]);
+    const renamedCategory = resolveReviewCategory(task, renamed);
+    assert.equal(renamedCategory?.label, '教育学原理');
+    assert.equal(getReviewCategoryColor(renamedCategory, { 'root:root-a': '#123456' }), '#123456');
+
+    const moved = buildRootNodeMap([
+      { id: 'root-a', name: '教育学原理', parentId: null, createdAt: 1 },
+      { id: 'root-b', name: '心理学', parentId: null, createdAt: 2 },
+      { id: 'leaf', name: '学习理论', parentId: 'root-b', createdAt: 3 },
+    ]);
+    assert.equal(resolveReviewCategory(task, moved)?.label, '心理学');
+  });
+
+  check('知识节点复习续轮不再复制旧项目标题，独立复习保留手动标签', () => {
+    const linkedNext = scheduler.buildNextRoundTask([{
+      id: 'linked-old',
+      topicName: '战国教育',
+      dueDate: '2026-07-20',
+      originalDueDate: '2026-07-20',
+      roundOrder: 1,
+      isCompleted: true,
+      graphNodeId: 'child-a',
+      tag: '旧项目任务标题',
+      complexity: 'normal',
+    }], ebbConstants.DEFAULT_EBB_SETTINGS);
+    const manualNext = scheduler.buildNextRoundTask([{
+      id: 'manual-old',
+      topicName: '独立主题',
+      dueDate: '2026-07-20',
+      originalDueDate: '2026-07-20',
+      roundOrder: 1,
+      isCompleted: true,
+      tag: '手动标签',
+      complexity: 'normal',
+    }], ebbConstants.DEFAULT_EBB_SETTINGS);
+
+    assert.equal(linkedNext?.tag, undefined);
+    assert.equal(linkedNext?.graphNodeId, 'child-a');
+    assert.equal(manualNext?.tag, '手动标签');
+  });
   const baseSettings = ebbConstants.getDefaultEbbData().ebbSettings;
 
   const resetStores = ({ nodes = [], tasks = [], groups = [], reviewTasks = [], schedules = {} } = {}) => {
@@ -179,6 +272,7 @@ try {
     assert.ok(getBlock('p1', 'b1').header.completedDate);
     assert.equal(useGraphStore.getState().nodes[0].status, 'activated');
     assert.ok(useEbbStore.getState().reviewTasks.length > 0);
+    assert.ok(useEbbStore.getState().reviewTasks.every((task) => task.tag === undefined));
 
     useTimelineStore.getState().updateBlockHeader('p1', 'b1', { isCompleted: false });
     assert.equal(getBlock('p1', 'b1').header.isCompleted, false);

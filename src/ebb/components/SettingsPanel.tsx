@@ -7,8 +7,10 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useEbbStore } from '../store';
+import { useGraphStore } from '@/graph/store';
 import { TAG_COLOR_PALETTE, DEFAULT_COMPLEXITY_CONFIGS } from '../constants';
 import { parseIntervals, formatIntervals } from '../complexity';
+import { buildRootNodeMap, collectReviewCategories, getReviewCategoryColor } from '../category';
 import type { ComplexityLevel, EbbSettings } from '../types';
 
 interface SettingsPanelProps {
@@ -19,6 +21,7 @@ interface SettingsPanelProps {
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }) => {
   const store = useEbbStore();
   const s = store.ebbSettings;
+  const graphNodes = useGraphStore((state) => state.nodes);
 
   const [customIntervals, setCustomIntervals] = useState(s.customIntervals);
   const [dailyTaskLimit, setDailyTaskLimit] = useState(s.dailyTaskLimit);
@@ -59,8 +62,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
     store.updateSettings({ complexityConfigs: newConfigs });
   }, [s.complexityConfigs, store]);
 
-  // 标签颜色
-  const tagEntries = useMemo(() => Object.entries(s.tagColors), [s.tagColors]);
+  // 分类颜色：知识节点任务按大盘根节点归类，独立内容保留手动标签。
+  const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
+  const categoryEntries = useMemo(
+    () => collectReviewCategories(store.reviewTasks, rootByNodeId),
+    [store.reviewTasks, rootByNodeId],
+  );
 
   const content = (
     <div className={inline ? 'eb-inline-panel' : 'eb-panel eb-panel--settings'}>
@@ -294,29 +301,34 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
             </div>
           </section>
 
-          {/* 标签颜色 */}
+          {/* 分类颜色 */}
           <section className="eb-settings-section">
-            <h4 className="eb-settings-section-title">标签颜色</h4>
-            {tagEntries.length === 0 ? (
-              <p className="eb-settings-empty">暂无标签（添加带标签的学习内容后自动生成）</p>
+            <h4 className="eb-settings-section-title">分类颜色</h4>
+            <p className="eb-field-hint">关联知识节点的内容按知识大盘根节点归类；独立内容使用手动标签。</p>
+            {categoryEntries.length === 0 ? (
+              <p className="eb-settings-empty">暂无可配置分类</p>
             ) : (
               <div className="eb-tag-color-list">
-                {tagEntries.map(([tag, color]) => (
-                  <div key={tag} className="eb-tag-color-row">
-                    <span className="eb-tag-color-name">{tag || '未分组'}</span>
-                    <div className="eb-tag-color-palette">
-                      {TAG_COLOR_PALETTE.map((c) => (
-                        <button
-                          key={c}
-                          type="button"
-                          className={`eb-tag-color-swatch ${color === c ? 'eb-tag-color-swatch--active' : ''}`}
-                          style={{ backgroundColor: c }}
-                          onClick={() => store.setTagColor(tag, c)}
-                        />
-                      ))}
+                {categoryEntries.map((category) => {
+                  const color = getReviewCategoryColor(category, s.tagColors);
+                  return (
+                    <div key={category.key} className="eb-tag-color-row">
+                      <span className="eb-tag-color-name">{category.label}</span>
+                      <div className="eb-tag-color-palette">
+                        {TAG_COLOR_PALETTE.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            className={`eb-tag-color-swatch ${color === c ? 'eb-tag-color-swatch--active' : ''}`}
+                            style={{ backgroundColor: c }}
+                            aria-label={`将${category.label}设为${c}`}
+                            onClick={() => store.setTagColor(category.key, c)}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>

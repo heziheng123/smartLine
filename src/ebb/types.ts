@@ -51,7 +51,6 @@ export interface SyncTaskToEbbPayload {
   action?: 'add' | 'remove' | 'revert-source';
   graphNodeId: string;
   topicName: string;
-  tag?: string;
   triggerSchedule?: boolean;
   sourceTaskId?: string;
   sourceBlockId?: string;

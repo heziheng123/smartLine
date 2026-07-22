@@ -699,7 +699,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     action: 'add',
                     graphNodeId: nodeId,
                     topicName: graphNode.name,
-                    tag: header.title,
                     triggerSchedule: shouldScheduleEbbForNode(header, nodeId),
                   });
                 });
@@ -722,7 +721,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       action: 'remove',
                       graphNodeId: nodeId,
                       topicName: graphNode.name,
-                      tag: targetBlock.header.title,
                     });
                   }
                 });
@@ -740,7 +738,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     action: 'add',
                     graphNodeId: nodeId,
                     topicName: graphNode.name,
-                    tag: header.title,
                     triggerSchedule: shouldScheduleEbbForNode(header, nodeId),
                   });
                 });
@@ -762,7 +759,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       action: 'remove',
                       graphNodeId: nodeId,
                       topicName: graphNode.name,
-                      tag: targetBlock.header.title,
                     });
                   }
                 });
@@ -782,7 +778,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       action: 'add',
                       graphNodeId: nodeId,
                       topicName: graphNode.name,
-                      tag: header.title,
                       triggerSchedule: isLeafGraphNode(useGraphStore.getState().nodes, nodeId),
                     });
                   } else if (!hasOtherCompletedBinding(nodeId, true)) {
@@ -790,7 +785,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       action: 'remove',
                       graphNodeId: nodeId,
                       topicName: graphNode.name,
-                      tag: targetBlock.header.title,
                     });
                   }
                 });
@@ -821,7 +815,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                       action: 'add',
                       graphNodeId: nodeId,
                       topicName: actualTopicName,
-                      tag: header.title,
                       triggerSchedule: shouldScheduleEbbForNode(header, nodeId)
                     });
                   });
@@ -852,7 +845,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                         action: 'remove',
                         graphNodeId: nodeId,
                         topicName: actualTopicName,
-                        tag: block.header.title,
                       });
                     }
                   });
@@ -876,7 +868,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                         action: 'add',
                         graphNodeId: nodeId,
                         topicName: actualTopicName,
-                        tag: header.title,
                         triggerSchedule: shouldScheduleEbbForNode(header, nodeId)
                       });
                     });
@@ -907,7 +898,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                           action: 'remove',
                           graphNodeId: nodeId,
                           topicName: actualTopicName,
-                          tag: block.header.title,
                         });
                       }
                     });
@@ -928,7 +918,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                         action: 'add',
                         graphNodeId: nodeId,
                         topicName: graphNode.name,
-                        tag: header.title,
                         triggerSchedule: isLeafGraphNode(useGraphStore.getState().nodes, nodeId),
                       });
                     } else if (!hasOtherCompletedBinding(nodeId, true)) {
@@ -936,7 +925,6 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                         action: 'remove',
                         graphNodeId: nodeId,
                         topicName: graphNode.name,
-                        tag: block.header.title,
                       });
                     }
                   });
