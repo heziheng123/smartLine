@@ -352,7 +352,12 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const handleBatchEditConfirm = useCallback(
     (rows: ParsedRow[]) => {
       // 批量编辑目前只处理 smart-task，我们需要保留原来的 text blocks
-      const currentBlocks = useTimelineStore.getState().tasks.find(t => t.id === task.id)?.blocks ?? [];
+      const timelineState = useTimelineStore.getState();
+      const latestTask = timelineState.tasks.find((candidate) => candidate.id === task.id)
+        ?? timelineState.groups
+          .flatMap((group) => group.children)
+          .find((candidate) => candidate.id === task.id);
+      const currentBlocks = latestTask?.blocks ?? [];
       const currentSmartBlocks = currentBlocks.filter((block): block is SmartTaskBlock => block.type === 'smart-task');
       const editedSmartBlocks = mergeBatchEditRows(rows, currentSmartBlocks);
       const editedById = new Map(editedSmartBlocks.map((block) => [block.id, block]));

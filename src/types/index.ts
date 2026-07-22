@@ -23,7 +23,7 @@ export interface SmartTaskHeader {
   title: string;
   tag: string;
   tagColor: string;
-  date: string;           // 📅 计划执行日 YYYY-MM-DD
+  date?: string;          // 📅 计划执行日 YYYY-MM-DD；未设置表示未排期
   deadline?: string;      // 🎯 独立截止日 YYYY-MM-DD
   duration: number;       // ⏳ 预估时长（分钟）
   isCompleted: boolean;

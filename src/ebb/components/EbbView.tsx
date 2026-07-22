@@ -29,6 +29,7 @@ import {
   Target,
   ChartNoAxesColumn,
   ShieldCheck,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -48,6 +49,7 @@ import RoundsPanel from './RoundsPanel';
 import OverdueAlertModal from './OverdueAlertModal';
 import MatrixView from './MatrixView';
 import BoardView from './BoardView';
+import BatchAdjustPanel from './BatchAdjustPanel';
 
 type ViewTab = 'matrix' | 'board';
 
@@ -74,6 +76,7 @@ const EbbView: React.FC = () => {
     importEbbData,
     clearAllTasks,
     popUndo,
+    applyBatchReviewAdjustment,
   } = useEbbStore(
     useShallow((s) => ({
       isHydrated: s.isHydrated,
@@ -91,6 +94,7 @@ const EbbView: React.FC = () => {
       importEbbData: s.importEbbData,
       clearAllTasks: s.clearAllTasks,
       popUndo: s.popUndo,
+      applyBatchReviewAdjustment: s.applyBatchReviewAdjustment,
     })),
   );
 
@@ -128,6 +132,7 @@ const EbbView: React.FC = () => {
       importEbbData,
       clearAllTasks,
       popUndo,
+      applyBatchReviewAdjustment,
     }),
     [
       reviewTasks,
@@ -143,6 +148,7 @@ const EbbView: React.FC = () => {
       importEbbData,
       clearAllTasks,
       popUndo,
+      applyBatchReviewAdjustment,
     ],
   );
   const [activeTab, setActiveTab] = useState<ViewTab>('matrix');
@@ -154,6 +160,7 @@ const EbbView: React.FC = () => {
   const [toast, setToast] = useState<string>('');
   const [overdueAlertOpen, setOverdueAlertOpen] = useState(false);
   const [timelineTopic, setTimelineTopic] = useState<string | null>(null);
+  const [batchAdjustOpen, setBatchAdjustOpen] = useState(false);
   const toastTimer = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -413,6 +420,15 @@ const EbbView: React.FC = () => {
             <button
               type="button"
               className="eb-nav-btn"
+              onClick={() => setBatchAdjustOpen(true)}
+              disabled={reviewTasks.length === 0}
+            >
+              <SlidersHorizontal size={15} />
+              批量调整
+            </button>
+            <button
+              type="button"
+              className="eb-nav-btn"
               onClick={() => setModal('settings')}
             >
               <SettingsIcon size={15} />
@@ -585,6 +601,19 @@ const EbbView: React.FC = () => {
         {/* ── 模态弹窗 ────────────────────────────────────── */}
         {modal === 'settings' && (
           <SettingsPanel onClose={() => setModal('none')} />
+        )}
+
+        {batchAdjustOpen && (
+          <BatchAdjustPanel
+            reviewTasks={reviewTasks}
+            settings={store.ebbSettings}
+            onApply={(request) => {
+              const result = applyBatchReviewAdjustment(request);
+              showToast(`已调整 ${result.affectedTopics} 个复习计划，可在最近操作中撤销`);
+              return result;
+            }}
+            onClose={() => setBatchAdjustOpen(false)}
+          />
         )}
 
         {/* 添加内容弹窗 */}

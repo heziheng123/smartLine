@@ -340,7 +340,7 @@ export function validateWorkspaceBackup(value: unknown): {
           if (block.header.isCompleted !== (learned >= (total as number))) issues.push(`数量任务“${title}”的完成状态与数量不一致`);
         }
       }
-      if (!isDate(block.header.date)) issues.push(`任务“${title}”的计划日期无效`);
+      if (block.header.date !== undefined && !isDate(block.header.date)) issues.push(`任务“${title}”的计划日期无效`);
       if (block.header.deadline !== undefined && !isDate(block.header.deadline)) issues.push(`任务“${title}”的截止日期无效`);
       if (block.header.completedDate !== undefined && !isDate(block.header.completedDate)) issues.push(`任务“${title}”的完成日期无效`);
       if (block.header.isCompleted === true && !block.header.completedDate) issues.push(`任务“${title}”已完成但缺少完成日期`);

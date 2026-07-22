@@ -259,7 +259,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   const handleQuantityDeadlineChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    if (!value || value >= header.date) onUpdateHeader(block.id, { deadline: value || undefined });
+    if (!value || !header.date || value >= header.date) onUpdateHeader(block.id, { deadline: value || undefined });
   }, [block.id, header.date, onUpdateHeader]);
 
   const handleQuantityUnitChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

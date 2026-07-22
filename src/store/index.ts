@@ -655,6 +655,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               headerPatch = { ...headerPatch, completedDate: undefined };
             }
           }
+          const datePatched = Object.prototype.hasOwnProperty.call(headerPatch, 'date');
 
           set((state) => {
             const allTasks = getUniqueTasks(state.tasks, state.groups);
@@ -951,7 +952,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           // projection consistent no matter which UI invoked this store action.
           if (currentBlock?.type === 'smart-task') {
             const sourceId = getProjectBlockSourceId(taskId, blockId);
-            if (headerPatch.date !== undefined && headerPatch.date !== currentBlock.header.date) {
+            if (datePatched && headerPatch.date !== currentBlock.header.date) {
               useDailyScheduleStore.getState().removeBySourceIds([sourceId]);
             } else if (headerPatch.title !== undefined || headerPatch.duration !== undefined) {
               useDailyScheduleStore.getState().updateBySourceId(sourceId, {
@@ -985,7 +986,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
           if (currentBlock?.type === 'smart-task' && !isOperationRecordingSuppressed()) {
             const completionChanged = headerPatch.isCompleted !== undefined && headerPatch.isCompleted !== currentBlock.header.isCompleted;
-            const dateChanged = headerPatch.date !== undefined && headerPatch.date !== currentBlock.header.date;
+            const dateChanged = datePatched && headerPatch.date !== currentBlock.header.date;
             const vocabularyChanged = headerPatch.vocabularyRecords !== undefined
               && !headerValueEquals(headerPatch.vocabularyRecords, currentBlock.header.vocabularyRecords);
             const quantityChanged = headerPatch.quantityRecords !== undefined

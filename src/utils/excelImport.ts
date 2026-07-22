@@ -55,6 +55,8 @@ export interface ParsedRow {
   graphNodeName?: string;
   /** Original plain-text remark, used to preserve rich text unless the cell changed. */
   _originalRemark?: string;
+  /** Original schedule date, used to distinguish unchanged from explicitly cleared. */
+  _originalDate?: string;
   /** Original graph-node display value, used to preserve the exact node IDs unless edited. */
   _originalGraphNodeName?: string;
   /** 校验错误信息（空字符串表示通过） */
@@ -446,6 +448,7 @@ export function blocksToRows(blocks: SmartTaskBlock[]): ParsedRow[] {
       graphNodeIds: graphNodeIds,
       graphNodeName: graphNodeName,
       _originalRemark: remark,
+      _originalDate: b.header.date || '',
       _originalGraphNodeName: graphNodeName,
       _error: '',
     };
@@ -486,7 +489,7 @@ export function mapRowsToBlocks(rows: ParsedRow[]): SmartTaskBlock[] {
         title: r.title,
         tag: r.tag,
         tagColor: getTagColor(r.tag),
-        date: r.date || formatDateLocal(new Date()),
+        date: r.date || undefined,
         deadline: r.deadline || undefined,
         duration: r.duration,
         isCompleted: false,
@@ -534,7 +537,9 @@ export function mergeBatchEditRows(rows: ParsedRow[], existingBlocks: SmartTaskB
         title: row.title,
         tag: row.tag,
         tagColor: row.tag === existing.header.tag ? existing.header.tagColor : getTagColor(row.tag),
-        date: row.date || existing.header.date || formatDateLocal(new Date()),
+        date: row.date === row._originalDate
+          ? existing.header.date
+          : row.date || undefined,
         deadline: row.deadline || undefined,
         duration: row.duration,
         complexity: row.complexity,

@@ -80,6 +80,39 @@ test('task overview aggregates project tasks and edits the original task block',
   await expect(card).not.toHaveClass(/is-completed/);
 });
 
+test('batch edit can explicitly clear a schedule date and keep the task unscheduled', async ({ page }) => {
+  await page.getByTitle('项目规划').click();
+  await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
+
+  await page.getByTitle('更多操作').click();
+  await page.getByRole('button', { name: '批量编辑' }).click();
+  const dialog = page.locator('.bi-dialog');
+  const taskRow = dialog.locator('tbody tr').first();
+  const scheduleDate = taskRow.locator('input[type="date"]').first();
+  await expect(scheduleDate).toHaveValue(testDate);
+  await dialog.getByRole('button', { name: /确认修改/ }).click();
+
+  await page.getByTitle('更多操作').click();
+  await page.getByRole('button', { name: '批量编辑' }).click();
+  const unchangedDate = page.locator('.bi-dialog tbody tr').first().locator('input[type="date"]').first();
+  await expect(unchangedDate).toHaveValue(testDate);
+  await unchangedDate.fill('');
+  await page.locator('.bi-dialog').getByRole('button', { name: /确认修改/ }).click();
+
+  const projectCard = page.locator('.stb-card').filter({ hasText: 'E2E完成撤销任务' });
+  await expect(projectCard).toContainText('未排期');
+
+  await page.getByTitle('更多操作').click();
+  await page.getByRole('button', { name: '批量编辑' }).click();
+  const reopenedRow = page.locator('.bi-dialog tbody tr').first();
+  await expect(reopenedRow.locator('input[type="date"]').first()).toHaveValue('');
+  await page.locator('.bi-dialog').getByRole('button', { name: '取消' }).click();
+
+  await page.getByLabel('关闭项目文档').click();
+  await page.getByTitle('每日安排').click();
+  await expect(page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toHaveCount(0);
+});
+
 test('latest undo survives page refresh and remains executable', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   const card = page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' });

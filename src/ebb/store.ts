@@ -30,8 +30,17 @@ import {
 } from './constants';
 import { liveblocksClient } from '@/store/client';
 import { genId, getReviewTopicKey, checkCanComplete, normalizeReviewRoundOrders } from './scheduler';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import {
+  captureDailySourceSnapshots,
+  useDailyScheduleStore,
+  type DailySourceSnapshot,
+} from '@/components/dailySchedule/store';
 import { getReviewSourceId } from '@/components/dailySchedule/sourceIds';
+import {
+  planBatchReviewAdjustment,
+  type BatchReviewPlan,
+  type BatchReviewRequest,
+} from './batchAdjust';
 
 const ebbStorage = createScopedStorage('ebb_data');
 
@@ -90,6 +99,18 @@ function buildAbsoluteScheduleDates(baseDate: string, intervals: number[], count
     return addDays(baseDate, interval);
   });
 }
+
+interface BatchReviewUndoPayload {
+  topicKeys: string[];
+  previousTasks: ReviewTask[];
+  expectedTasks: ReviewTask[];
+  undoSourceIdsToClear: string[];
+  dailySnapshots: DailySourceSnapshot[];
+}
+
+const serializeReviewTasks = (tasks: ReviewTask[]) => JSON.stringify(
+  [...tasks].sort((a, b) => a.id.localeCompare(b.id)),
+);
 
 // ── 标签颜色自动分配 ────────────────────────────────────────
 
@@ -269,6 +290,8 @@ interface EbbStore extends EbbData {
   addReviewTasks: (tasks: ReviewTask[]) => void;
   updateReviewTask: (id: string, patch: Partial<ReviewTask>) => void;
   rescheduleReviewRounds: (updates: Array<{ id: string; dueDate: string }>) => void;
+  applyBatchReviewAdjustment: (request: BatchReviewRequest) => BatchReviewPlan;
+  restoreBatchReviewAdjustment: (payload: BatchReviewUndoPayload) => string | null;
   restartReviewCycle: (topicKey: string, startDate: string) => boolean;
   deleteReviewTask: (id: string) => void;
   toggleReviewTask: (id: string) => string | null; // 返回错误消息，null 表示成功
@@ -383,6 +406,103 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+        },
+
+        applyBatchReviewAdjustment: (request) => {
+          const before = get();
+          const plan = planBatchReviewAdjustment(before.reviewTasks, before.ebbSettings, request);
+          if (plan.affectedTopics === 0) return plan;
+
+          const changedKeys = new Set(
+            plan.results.filter((result) => result.status === 'changed').map((result) => result.topicKey),
+          );
+          const previousTasks = plan.previousTasks.filter((task) => changedKeys.has(getReviewTopicKey(task)));
+          const expectedTasks = plan.nextTasks.filter((task) => changedKeys.has(getReviewTopicKey(task)));
+          const previousById = new Map(previousTasks.map((task) => [task.id, task]));
+          const undoSourceIdsToClear = expectedTasks
+            .filter((task) => {
+              const previous = previousById.get(task.id);
+              return !previous || previous.dueDate !== task.dueDate;
+            })
+            .map((task) => getReviewSourceId(task.id));
+          const sourceIds = plan.sourceIdsToClear.map((id) => getReviewSourceId(id));
+          const dailyState = useDailyScheduleStore.getState();
+          const dailySnapshots = dailyState.isHydrated
+            ? captureDailySourceSnapshots(dailyState.schedules, sourceIds)
+            : [];
+
+          set((state) => {
+            const reviewTasks = normalizeReviewRoundOrders([
+              ...state.reviewTasks.filter((task) => task.isArchived || !changedKeys.has(getReviewTopicKey(task))),
+              ...expectedTasks,
+            ]);
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: ensureTagColors(reviewTasks, state.ebbSettings),
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          if (sourceIds.length > 0) dailyState.removeBySourceIds(sourceIds);
+
+          if (!isOperationRecordingSuppressed()) {
+            const actionLabel = request.action.kind === 'shift'
+              ? '批量调整复习日期'
+              : request.action.kind === 'trim'
+                ? '批量精简复习轮次'
+                : request.action.kind === 'append'
+                  ? '批量追加复习轮次'
+                  : '批量套用复习模板';
+            const detailParts = [
+              `${plan.affectedTopics} 个计划`,
+              plan.rescheduledRounds > 0 ? `改期 ${plan.rescheduledRounds} 轮` : '',
+              plan.removedRounds > 0 ? `删除 ${plan.removedRounds} 轮` : '',
+              plan.addedRounds > 0 ? `新增 ${plan.addedRounds} 轮` : '',
+              plan.skippedTopics > 0 ? `跳过 ${plan.skippedTopics} 个` : '',
+            ].filter(Boolean);
+            const payload: BatchReviewUndoPayload = {
+              topicKeys: [...changedKeys],
+              previousTasks,
+              expectedTasks,
+              undoSourceIdsToClear,
+              dailySnapshots,
+            };
+            recordOperation({
+              label: actionLabel,
+              detail: detailParts.join(' · '),
+              modules: ['EBB', '每日安排', '知识大盘'],
+              undoSpec: { kind: 'ebb-batch-adjust', payload },
+            }, () => get().restoreBatchReviewAdjustment(payload) ?? undefined);
+          }
+          return plan;
+        },
+
+        restoreBatchReviewAdjustment: (payload) => {
+          const topicKeys = new Set(payload.topicKeys);
+          const currentTasks = get().reviewTasks.filter((task) => !task.isArchived && topicKeys.has(getReviewTopicKey(task)));
+          if (serializeReviewTasks(currentTasks) !== serializeReviewTasks(payload.expectedTasks)) {
+            return '复习计划在此操作后又被修改';
+          }
+          set((state) => {
+            const reviewTasks = normalizeReviewRoundOrders([
+              ...state.reviewTasks.filter((task) => task.isArchived || !topicKeys.has(getReviewTopicKey(task))),
+              ...payload.previousTasks,
+            ]);
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: ensureTagColors(reviewTasks, state.ebbSettings),
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          const dailyState = useDailyScheduleStore.getState();
+          dailyState.removeBySourceIds(payload.undoSourceIdsToClear);
+          dailyState.restoreSourceSnapshots(payload.dailySnapshots);
+          return null;
         },
 
         updateReviewTask: (id, patch) => {
@@ -1313,6 +1433,9 @@ registerUndoExecutor('ebb-reschedule', (raw) => {
   const state = useEbbStore.getState();
   if (payload.expected.some((item) => state.reviewTasks.find((task) => task.id === item.id)?.dueDate !== item.dueDate)) return '复习轮次在此操作后又被修改';
   state.rescheduleReviewRounds(payload.previous);
+});
+registerUndoExecutor('ebb-batch-adjust', (raw) => {
+  return useEbbStore.getState().restoreBatchReviewAdjustment(raw as BatchReviewUndoPayload) ?? undefined;
 });
 
 // 远端 Liveblocks 推送同步落盘，同时为刷新前的瞬时写入提供本地镜像兜底。

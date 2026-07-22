@@ -114,6 +114,23 @@ function saveSchedules(schedules: Record<string, DaySchedule>) {
 
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
+export type DailySourceSnapshot =
+  | { kind: 'item'; date: string; item: ScheduledItem }
+  | { kind: 'block'; date: string; block: TimeBlock };
+
+export function captureDailySourceSnapshots(
+  schedules: Record<string, DaySchedule>,
+  sourceIds: string[],
+): DailySourceSnapshot[] {
+  const ids = new Set(sourceIds);
+  const snapshots: DailySourceSnapshot[] = [];
+  for (const [date, day] of Object.entries(schedules)) {
+    day.items.forEach((item) => { if (ids.has(item.sourceId)) snapshots.push({ kind: 'item', date, item: { ...item } }); });
+    day.blocks.forEach((block) => { if (ids.has(block.sourceId)) snapshots.push({ kind: 'block', date, block: { ...block } }); });
+  }
+  return snapshots;
+}
+
 interface DailyScheduleStore {
   isHydrated: boolean;
   hydrateStore: () => Promise<void>;
@@ -165,6 +182,8 @@ interface DailyScheduleStore {
 
   /** 根据源任务 ID 批量清理失效的排期项和时间块 */
   removeBySourceIds: (sourceIds: string[]) => void;
+  /** 恢复批量调整前被清理的排期项和时间块。 */
+  restoreSourceSnapshots: (snapshots: DailySourceSnapshot[]) => void;
   /** 同步来源任务的展示信息，不改变其已安排的时间段。 */
   updateBySourceId: (sourceId: string, patch: { name?: string; duration?: number }) => void;
   replaceSchedules: (schedules: Record<string, DaySchedule>) => void;
@@ -463,6 +482,31 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             const otherItems = day.items.filter((candidate) => candidate.timeSlot !== item.timeSlot);
             schedules[date] = { ...day, items: [...otherItems, ...slotItems] };
             reorderSlotItems(schedules, date);
+            saveSchedules(schedules);
+            return { schedules };
+          });
+        },
+
+        restoreSourceSnapshots: (snapshots) => {
+          if (snapshots.length === 0) return;
+          set((state) => {
+            const schedules = { ...state.schedules };
+            let changed = false;
+            for (const snapshot of snapshots) {
+              const day = schedules[snapshot.date] ?? { date: snapshot.date, items: [], blocks: [] };
+              if (snapshot.kind === 'item') {
+                const exists = day.items.some((item) => item.id === snapshot.item.id || item.sourceId === snapshot.item.sourceId);
+                if (exists) continue;
+                schedules[snapshot.date] = { ...day, items: [...day.items, { ...snapshot.item }] };
+              } else {
+                const exists = day.blocks.some((block) => block.id === snapshot.block.id || block.sourceId === snapshot.block.sourceId);
+                if (exists) continue;
+                schedules[snapshot.date] = { ...day, blocks: [...day.blocks, { ...snapshot.block }] };
+              }
+              changed = true;
+            }
+            if (!changed) return state;
+            Object.keys(schedules).forEach((date) => reorderSlotItems(schedules, date));
             saveSchedules(schedules);
             return { schedules };
           });

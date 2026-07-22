@@ -397,7 +397,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                     <AnimatePresence mode="popLayout">
                     {blocks.map((block) => {
                       const header = block.header;
-                      const isOverdue = !header.isCompleted && isBeforeDay(header.date, todayString);
+                      const isOverdue = !!header.date && !header.isCompleted && isBeforeDay(header.date, todayString);
                       const isDragging = draggingId === block.id;
 
                       return (
@@ -476,7 +476,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                           </div>
 
                           <div className="wmv-block-meta">
-                            <span>{isQuantityTask(header) ? <><Hash size={12} />{getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}% · 当日 {getQuantityDailyStatus(header, header.date).actual}/{getQuantityDailyStatus(header, header.date).target}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
+                            <span>{isQuantityTask(header) && header.date ? <><Hash size={12} />{getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}% · 当日 {getQuantityDailyStatus(header, header.date).actual}/{getQuantityDailyStatus(header, header.date).target}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
                           </div>
 
                           {block.body && (
