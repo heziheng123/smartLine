@@ -6,45 +6,40 @@ import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from './client';
-import { createCoalescedPersistence, createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
-
 import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
-import { migrateMarkdownToBlocks, updateBlockHeader, deleteBlock, appendBlock, getValidGraphNodeIds, shouldAutoSyncEbb } from '@/utils/blocks';
-import { useEbbStore } from '@/ebb/store';
+import {
+  updateBlockHeader,
+  deleteBlock,
+  appendBlock,
+  isQuantityTask,
+  recoverRequiredTaskStartDate,
+} from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
-import { isLeafGraphNode } from '@/graph/activation';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
 import { todayStr } from '@/utils/dateSafe';
-import type { SyncTaskToEbbPayload } from '@/ebb/types';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
-
-const STORAGE_KEY = 'smart-timeline-data';
-const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
-const SYNC_SETTINGS_KEY = 'smart-timeline-liveblocks';
-const timelineStorage = createScopedStorage('timeline_data');
-
-const headerValueEquals = (left: unknown, right: unknown) =>
-  typeof left === 'object' || typeof right === 'object'
-    ? JSON.stringify(left) === JSON.stringify(right)
-    : left === right;
-
-interface SyncSettings {
-  roomCode: string;
-  enabled: boolean;
-}
-
-function loadSyncSettings(): SyncSettings {
-  try {
-    const raw = localStorage.getItem(SYNC_SETTINGS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  return { roomCode: '', enabled: false };
-}
-
-function saveSyncSettings(settings: SyncSettings) {
-  localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(settings));
-}
+import {
+  planProjectTaskEffects,
+  type CompletedTaskBindingStrategy,
+} from '@/domain/projectTaskEffects';
+import {
+  commitProjectTaskEffects,
+  EMPTY_PROJECT_TASK_EFFECT_COMMIT,
+  type ProjectTaskEffectCommitReport,
+} from '@/services/projectTaskEffectCommit';
+import {
+  getAllGraphNodeIds,
+  getUniqueTasks,
+  headerValueEquals,
+  normalizeTimelineData,
+} from './timelineData';
+import {
+  loadTimelineData,
+  loadTimelineSyncSettings,
+  saveTimelineData,
+  saveTimelineSyncSettings,
+} from './timelinePersistence';
 
 function getDefaultData(): TimelineData {
   const y = new Date().getFullYear();
@@ -116,163 +111,11 @@ function getInitialSyncData(): TimelineData {
   return getDefaultData();
 }
 
-function normalizeTask(task: Task): Task {
-  const normalizedTask = { ...task } as Task & { markdown?: string };
-  if (normalizedTask.markdown && (!normalizedTask.blocks || normalizedTask.blocks.length === 0)) {
-    const blocks = migrateMarkdownToBlocks(task);
-    delete normalizedTask.markdown;
-    return { ...normalizedTask, blocks };
-  }
-
-  delete normalizedTask.markdown;
-  return {
-    ...normalizedTask,
-    blocks: Array.isArray(normalizedTask.blocks)
-      ? normalizedTask.blocks.map((block) => (
-        block.type === 'smart-task'
-          ? {
-            ...block,
-            header: {
-              ...block.header,
-              autoSyncEbb: shouldAutoSyncEbb(block.header),
-            },
-          }
-          : block
-      ))
-      : [],
-  };
-}
-
-function isValidTask(task: unknown): task is Task {
-  if (!task || typeof task !== 'object') return false;
-  const record = task as Record<string, unknown>;
-  return typeof record.id === 'string'
-    && typeof record.name === 'string'
-    && typeof record.start === 'string'
-    && typeof record.end === 'string';
-}
-
-function isValidNote(note: unknown): note is Note {
-  if (!note || typeof note !== 'object') return false;
-  const record = note as Record<string, unknown>;
-  return typeof record.id === 'string'
-    && typeof record.name === 'string'
-    && typeof record.date === 'string'
-    && (record.type === 'pin' || record.type === 'range');
-}
-
-function isValidMilestone(milestone: unknown): milestone is Milestone {
-  if (!milestone || typeof milestone !== 'object') return false;
-  const record = milestone as Record<string, unknown>;
-  return typeof record.id === 'string'
-    && typeof record.name === 'string'
-    && typeof record.date === 'string';
-}
-
-function isValidGroup(group: unknown): group is TaskGroup {
-  if (!group || typeof group !== 'object') return false;
-  const record = group as Record<string, unknown>;
-  return typeof record.id === 'string'
-    && typeof record.name === 'string'
-    && typeof record.start === 'string'
-    && typeof record.end === 'string'
-    && Array.isArray(record.children);
-}
-
-function normalizeTimelineData(data: TimelineData): TimelineData {
-  const tasks = Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask).map(normalizeTask) : [];
-  const groups = Array.isArray(data?.groups)
-      ? data.groups
-        .filter(isValidGroup)
-        .map((group) => ({
-          ...group,
-          children: Array.isArray(group.children)
-            ? group.children.filter(isValidTask).map((child) => ({
-              ...normalizeTask(child),
-              groupId: group.id,
-            }))
-            : [],
-        }))
-      : [];
-  const canonicalTasks = new Map(tasks.map((task) => [task.id, task]));
-  for (const group of groups) {
-    for (const child of group.children) {
-      canonicalTasks.set(child.id, {
-        ...(canonicalTasks.get(child.id) ?? child),
-        groupId: group.id,
-      });
-    }
-  }
-  const reconciledGroups = groups.map((group) => ({
-    ...group,
-    children: group.children.map((child) => ({
-      ...(canonicalTasks.get(child.id) ?? child),
-      groupId: group.id,
-    })),
-  }));
-  return {
-    tasks: [...canonicalTasks.values()],
-    notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
-    milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
-    groups: reconciledGroups,
-  };
-}
-
-function getAllGraphNodeIds(header: SmartTaskHeader): string[] {
-  const ids = new Set(getValidGraphNodeIds(header));
-  if (typeof header.graphNodeId === 'string' && header.graphNodeId.trim()) {
-    ids.add(header.graphNodeId);
-  }
-  return [...ids];
-}
-
-function getUniqueTasks(tasks: Task[], groups: TaskGroup[]): Task[] {
-  const byId = new Map<string, Task>();
-  for (const task of tasks) byId.set(task.id, task);
-  for (const group of groups) {
-    for (const child of group.children) {
-      if (!byId.has(child.id)) byId.set(child.id, child);
-    }
-  }
-  return [...byId.values()];
-}
-
-function shouldScheduleEbbForNode(header: SmartTaskHeader, nodeId: string): boolean {
-  return shouldAutoSyncEbb(header)
-    && isLeafGraphNode(useGraphStore.getState().nodes, nodeId);
-}
-
-async function saveDataAsync(data: TimelineData) {
-  try {
-    await timelineStorage.setItem(STORAGE_KEY, data);
-  } catch (e) {
-    console.warn('[smart-timeline] IndexedDB 写入失败：', e);
-    throw e;
-  }
-}
-
-function toTimelineData(data: TimelineData): TimelineData {
-  return {
-    tasks: Array.isArray(data.tasks) ? data.tasks : [],
-    groups: Array.isArray(data.groups) ? data.groups : [],
-    notes: Array.isArray(data.notes) ? data.notes : [],
-    milestones: Array.isArray(data.milestones) ? data.milestones : [],
-  };
-}
-
-const timelinePersistence = createCoalescedPersistence<TimelineData>({
-  mirrorKey: STORAGE_MIRROR_KEY,
-  label: 'smart-timeline',
-  writeAsync: saveDataAsync,
-});
-
-export async function persistTimelineData(data: TimelineData): Promise<void> {
-  await timelinePersistence.writeNow(toTimelineData(data));
-}
-
 export function saveData(data: TimelineData) {
-  timelinePersistence.schedule(toTimelineData(data));
+  saveTimelineData(data);
 }
+
+export { persistTimelineData } from './timelinePersistence';
 
 // ── Liveblocks 客户端初始化 ───────────────────────────────────
 
@@ -281,6 +124,15 @@ export { liveblocksClient } from './client';
 // ── Store 接口定义 ─────────────────────────────────────────────
 
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface ProjectTaskHeaderUpdateResult extends ProjectTaskEffectCommitReport {
+  changed: boolean;
+  error?: string;
+}
+
+export interface ProjectTaskHeaderUpdateOptions {
+  bindingStrategy?: CompletedTaskBindingStrategy;
+}
 
 interface TimelineStore extends TimelineData {
   isHydrated: boolean;
@@ -310,7 +162,12 @@ interface TimelineStore extends TimelineData {
   removeGraphNodeReferences: (graphNodeIds: string[]) => void;
 
   /** 更新指定 block 的 header 属性 */
-  updateBlockHeader: (taskId: string, blockId: string, headerPatch: Partial<SmartTaskHeader>) => void;
+  updateBlockHeader: (
+    taskId: string,
+    blockId: string,
+    headerPatch: Partial<SmartTaskHeader>,
+    options?: ProjectTaskHeaderUpdateOptions,
+  ) => ProjectTaskHeaderUpdateResult;
 
   /** 更新指定 SmartTaskBlock 的 body（局部 patch，避免整体覆盖 blocks） */
   updateBlockBody: (taskId: string, blockId: string, body: string) => void;
@@ -349,30 +206,17 @@ interface TimelineStore extends TimelineData {
 export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
   liveblocks(
     (set, get) => {
-      const initialSyncSettings = loadSyncSettings();
+      const initialSyncSettings = loadTimelineSyncSettings();
 
       return {
         ...getInitialSyncData(),
         isHydrated: false,
         hydrateStore: async () => {
           try {
-            const mirror = readJsonStorage<TimelineData>(STORAGE_MIRROR_KEY);
-            let raw = mirror ?? await timelineStorage.getItem<TimelineData>(STORAGE_KEY);
-            if (!raw) {
-              const lsRaw = readJsonStorage<TimelineData>(STORAGE_KEY);
-              if (lsRaw) {
-                raw = lsRaw;
-                await timelineStorage.setItem(STORAGE_KEY, raw);
-                writeJsonStorage(STORAGE_MIRROR_KEY, raw, 'smart-timeline');
-                localStorage.removeItem(STORAGE_KEY);
-              }
-            } else if (typeof raw === 'string') {
-              raw = JSON.parse(raw) as TimelineData;
-            }
-
-            if (raw) {
+            const normalized = await loadTimelineData();
+            if (normalized) {
               set({
-                ...normalizeTimelineData(raw),
+                ...normalized,
                 isHydrated: true,
               });
               return;
@@ -388,13 +232,13 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         enableSync: (roomCode: string) => {
           const settings = { roomCode, enabled: true };
-          saveSyncSettings(settings);
+          saveTimelineSyncSettings(settings);
           set({ syncEnabled: true, syncRoomCode: roomCode });
         },
 
         disableSync: () => {
           const settings = { roomCode: '', enabled: false };
-          saveSyncSettings(settings);
+          saveTimelineSyncSettings(settings);
           set({ syncEnabled: false, syncRoomCode: '', syncStatus: 'disconnected' });
         },
 
@@ -491,8 +335,19 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               .filter((block) => block.type === 'smart-task')
               .map((block) => [block.id, block]),
           );
+          const guardedBlocks = blocks.map((block) => {
+            if (block.type !== 'smart-task' || !isQuantityTask(block.header) || block.header.date) {
+              return block;
+            }
+            const previousDate = oldSmartBlocks.get(block.id)?.header.date;
+            const recoveredDate = previousDate
+              ?? recoverRequiredTaskStartDate(block.header, oldTask.start);
+            return recoveredDate
+              ? { ...block, header: { ...block.header, date: recoveredDate } }
+              : block;
+          });
           const newSmartBlocks = new Map(
-            blocks
+            guardedBlocks
               .filter((block) => block.type === 'smart-task')
               .map((block) => [block.id, block]),
           );
@@ -525,7 +380,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               .filter(([blockId, block]) => !oldSmartBlocks.has(blockId) && block.header.isCompleted)
               .map(([blockId]) => blockId),
           );
-          const stagedBlocks = blocks.map((block) =>
+          const stagedBlocks = guardedBlocks.map((block) =>
             block.type === 'smart-task' && newCompletedIds.has(block.id)
               ? {
                   ...block,
@@ -639,352 +494,79 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           });
         },
 
-        updateBlockHeader: (taskId, blockId, headerPatch) => {
+        updateBlockHeader: (taskId, blockId, headerPatch, options) => {
           const now = new Date().toISOString();
-          const syncPayloads: SyncTaskToEbbPayload[] = [];
-          const nodesToActivate: string[] = [];
-          const nodesToDeactivate: string[] = [];
           const currentTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
           const currentBlock = currentTask?.blocks.find(
             (candidate) => candidate.type === 'smart-task' && candidate.id === blockId,
           );
-          if (currentBlock?.type === 'smart-task') {
-            if (headerPatch.isCompleted === true && !currentBlock.header.isCompleted && !headerPatch.completedDate) {
-              headerPatch = { ...headerPatch, completedDate: todayStr() };
-            } else if (headerPatch.isCompleted === false) {
-              headerPatch = { ...headerPatch, completedDate: undefined };
-            }
+          if (currentBlock?.type !== 'smart-task') {
+            return {
+              ...EMPTY_PROJECT_TASK_EFFECT_COMMIT,
+              changed: false,
+              error: '任务已经不存在或不再是项目任务。',
+            };
           }
+
+          const candidateHeader = { ...currentBlock.header, ...headerPatch };
+          if (isQuantityTask(candidateHeader) && !candidateHeader.date) {
+            console.warn('[smart-timeline] 数量任务必须保留开始日期，已忽略无效更新。');
+            return {
+              ...EMPTY_PROJECT_TASK_EFFECT_COMMIT,
+              changed: false,
+              error: '数量任务必须保留开始日期。',
+            };
+          }
+          if (headerPatch.isCompleted === true && !currentBlock.header.isCompleted && !headerPatch.completedDate) {
+            headerPatch = { ...headerPatch, completedDate: todayStr() };
+          } else if (headerPatch.isCompleted === false) {
+            headerPatch = { ...headerPatch, completedDate: undefined };
+          }
+          const changed = Object.entries(headerPatch).some(([key, value]) =>
+            !headerValueEquals(currentBlock.header[key as keyof SmartTaskHeader], value),
+          );
+          if (!changed) return { ...EMPTY_PROJECT_TASK_EFFECT_COMMIT, changed: false };
+
           const datePatched = Object.prototype.hasOwnProperty.call(headerPatch, 'date');
+          const nextHeader = { ...currentBlock.header, ...headerPatch };
+          const effectPlan = planProjectTaskEffects({
+            tasks: getUniqueTasks(get().tasks, get().groups),
+            taskId,
+            blockId,
+            currentHeader: currentBlock.header,
+            nextHeader,
+            graphNodes: useGraphStore.getState().nodes,
+            bindingStrategy: options?.bindingStrategy,
+          });
 
           set((state) => {
-            const allTasks = getUniqueTasks(state.tasks, state.groups);
-            const hasOtherCompletedBinding = (nodeId: string, requireEbbSync = false) =>
-              allTasks.some((otherTask) =>
-                otherTask.blocks.some(
-                  (otherBlock) =>
-                    otherBlock.type === 'smart-task'
-                    && !(otherTask.id === taskId && otherBlock.id === blockId)
-                    && otherBlock.header.isCompleted
-                    && (!requireEbbSync || shouldAutoSyncEbb(otherBlock.header))
-                    && getValidGraphNodeIds(otherBlock.header).includes(nodeId),
-                ),
-              );
-            const topLevelTargetBlock = state.tasks
-              .find((task) => task.id === taskId)
-              ?.blocks.find(
-                (candidate) => candidate.type === 'smart-task' && candidate.id === blockId,
-              );
-            const groupedTargetBlock = state.groups
-              .flatMap((group) => group.children)
-              .find((task) => task.id === taskId)
-              ?.blocks.find(
-                (candidate) => candidate.type === 'smart-task' && candidate.id === blockId,
-              );
-            const targetBlock = topLevelTargetBlock ?? groupedTargetBlock;
-            const targetExistsOnlyInGroup = !topLevelTargetBlock && !!groupedTargetBlock;
-
-            if (targetExistsOnlyInGroup && targetBlock?.type === 'smart-task') {
-              const header = { ...targetBlock.header, ...headerPatch };
-              const oldGraphNodeIds = getValidGraphNodeIds(targetBlock.header);
-              const newGraphNodeIds = getValidGraphNodeIds(header);
-              const isNewlyCompleted = headerPatch.isCompleted === true && !targetBlock.header.isCompleted;
-              const isNewlyUncompleted = headerPatch.isCompleted === false && targetBlock.header.isCompleted;
-              const isAlreadyCompleted = targetBlock.header.isCompleted && headerPatch.isCompleted !== false;
-              if (isNewlyCompleted) {
-                nodesToActivate.push(...newGraphNodeIds);
-                newGraphNodeIds.forEach((nodeId) => {
-                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                  if (!graphNode) return;
-                  syncPayloads.push({
-                    action: 'add',
-                    graphNodeId: nodeId,
-                    topicName: graphNode.name,
-                    triggerSchedule: shouldScheduleEbbForNode(header, nodeId),
-                  });
-                });
-              } else if (isNewlyUncompleted) {
-                oldGraphNodeIds.forEach((nodeId) => {
-                  syncPayloads.push({
-                    action: 'revert-source',
-                    graphNodeId: nodeId,
-                    topicName: useGraphStore.getState().getNodeById(nodeId)?.name ?? targetBlock.header.title,
-                  });
-                  const shouldReleaseNode = !hasOtherCompletedBinding(nodeId);
-                  if (shouldReleaseNode) nodesToDeactivate.push(nodeId);
-                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                  if (!graphNode) return;
-                  const shouldRemoveEbb =
-                    shouldAutoSyncEbb(targetBlock.header)
-                    && !hasOtherCompletedBinding(nodeId, true);
-                  if (shouldRemoveEbb) {
-                    syncPayloads.push({
-                      action: 'remove',
-                      graphNodeId: nodeId,
-                      topicName: graphNode.name,
-                    });
-                  }
-                });
-              } else if (
-                isAlreadyCompleted
-                && (headerPatch.graphNodeIds !== undefined || headerPatch.graphNodeId !== undefined)
-              ) {
-                const addedNodes = newGraphNodeIds.filter((id) => !oldGraphNodeIds.includes(id));
-                const removedNodes = oldGraphNodeIds.filter((id) => !newGraphNodeIds.includes(id));
-                addedNodes.forEach((nodeId) => {
-                  nodesToActivate.push(nodeId);
-                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                  if (!graphNode) return;
-                  syncPayloads.push({
-                    action: 'add',
-                    graphNodeId: nodeId,
-                    topicName: graphNode.name,
-                    triggerSchedule: shouldScheduleEbbForNode(header, nodeId),
-                  });
-                });
-                removedNodes.forEach((nodeId) => {
-                  syncPayloads.push({
-                    action: 'revert-source',
-                    graphNodeId: nodeId,
-                    topicName: useGraphStore.getState().getNodeById(nodeId)?.name ?? targetBlock.header.title,
-                  });
-                  const shouldReleaseNode = !hasOtherCompletedBinding(nodeId);
-                  if (shouldReleaseNode) nodesToDeactivate.push(nodeId);
-                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                  if (!graphNode) return;
-                  const shouldRemoveEbb =
-                    shouldAutoSyncEbb(targetBlock.header)
-                    && !hasOtherCompletedBinding(nodeId, true);
-                  if (shouldRemoveEbb) {
-                    syncPayloads.push({
-                      action: 'remove',
-                      graphNodeId: nodeId,
-                      topicName: graphNode.name,
-                    });
-                  }
-                });
-              }
-
-              if (
-                isAlreadyCompleted
-                && headerPatch.autoSyncEbb !== undefined
-                && shouldAutoSyncEbb(targetBlock.header) !== shouldAutoSyncEbb(header)
-              ) {
-                const unchangedNodeIds = newGraphNodeIds.filter((id) => oldGraphNodeIds.includes(id));
-                unchangedNodeIds.forEach((nodeId) => {
-                  const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                  if (!graphNode) return;
-                  if (shouldAutoSyncEbb(header)) {
-                    syncPayloads.push({
-                      action: 'add',
-                      graphNodeId: nodeId,
-                      topicName: graphNode.name,
-                      triggerSchedule: isLeafGraphNode(useGraphStore.getState().nodes, nodeId),
-                    });
-                  } else if (!hasOtherCompletedBinding(nodeId, true)) {
-                    syncPayloads.push({
-                      action: 'remove',
-                      graphNodeId: nodeId,
-                      topicName: graphNode.name,
-                    });
-                  }
-                });
-              }
-            }
-
-            const tasks = state.tasks.map((t) => {
-              if (t.id !== taskId) return t;
-              
-              const block = t.blocks.find(b => b.type === 'smart-task' && b.id === blockId);
-              if (block && block.type === 'smart-task') {
-                const header = { ...block.header, ...headerPatch };
-                const oldGraphNodeIds = getValidGraphNodeIds(block.header);
-                const newGraphNodeIds = getValidGraphNodeIds(header);
-                
-                const isNewlyCompleted = headerPatch.isCompleted === true && !block.header.isCompleted;
-                const isNewlyUncompleted = headerPatch.isCompleted === false && block.header.isCompleted;
-                const isAlreadyCompleted = block.header.isCompleted && headerPatch.isCompleted !== false;
-
-                // 1. 如果触发了完成（从 false 变成 true）
-                if (isNewlyCompleted && newGraphNodeIds.length > 0) {
-                  nodesToActivate.push(...newGraphNodeIds);
-                  newGraphNodeIds.forEach(nodeId => {
-                    const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                    if (!graphNode) return; // 如果节点已被删除，不再生成复习任务
-                    const actualTopicName = graphNode.name;
-                    syncPayloads.push({
-                      action: 'add',
-                      graphNodeId: nodeId,
-                      topicName: actualTopicName,
-                      triggerSchedule: shouldScheduleEbbForNode(header, nodeId)
-                    });
-                  });
-                } 
-                // 2. 如果取消了完成（从 true 变成 false）
-                else if (isNewlyUncompleted && oldGraphNodeIds.length > 0) {
-                  oldGraphNodeIds.forEach(nodeId => {
-                    syncPayloads.push({
-                      action: 'revert-source',
-                      graphNodeId: nodeId,
-                      topicName: useGraphStore.getState().getNodeById(nodeId)?.name ?? block.header.title,
-                    });
-                    // 检查是否还有其他已完成的任务绑定了同一个节点
-                    const hasOtherCompleted = hasOtherCompletedBinding(nodeId);
-
-                    if (!hasOtherCompleted) {
-                      nodesToDeactivate.push(nodeId);
-                    }
-
-                    const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                    if (!graphNode) return;
-                    const actualTopicName = graphNode.name;
-                    const shouldRemoveEbb =
-                      shouldAutoSyncEbb(block.header)
-                      && !hasOtherCompletedBinding(nodeId, true);
-                    if (shouldRemoveEbb) {
-                      syncPayloads.push({
-                        action: 'remove',
-                        graphNodeId: nodeId,
-                        topicName: actualTopicName,
-                      });
-                    }
-                  });
-                }
-                // 3. 如果在已完成的状态下，修改了绑定的节点（例如新增或删除了某个节点的绑定）
-                else if (
-                  isAlreadyCompleted
-                  && (headerPatch.graphNodeIds !== undefined || headerPatch.graphNodeId !== undefined)
-                ) {
-                  const addedNodes = newGraphNodeIds.filter(id => !oldGraphNodeIds.includes(id));
-                  const removedNodes = oldGraphNodeIds.filter(id => !newGraphNodeIds.includes(id));
-
-                  // 处理新增的绑定
-                  if (addedNodes.length > 0) {
-                    nodesToActivate.push(...addedNodes);
-                    addedNodes.forEach(nodeId => {
-                      const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                      if (!graphNode) return;
-                      const actualTopicName = graphNode.name;
-                      syncPayloads.push({
-                        action: 'add',
-                        graphNodeId: nodeId,
-                        topicName: actualTopicName,
-                        triggerSchedule: shouldScheduleEbbForNode(header, nodeId)
-                      });
-                    });
-                  }
-
-                  // 处理移除的绑定
-                  if (removedNodes.length > 0) {
-                    removedNodes.forEach(nodeId => {
-                      syncPayloads.push({
-                        action: 'revert-source',
-                        graphNodeId: nodeId,
-                        topicName: useGraphStore.getState().getNodeById(nodeId)?.name ?? block.header.title,
-                      });
-                      const hasOtherCompleted = hasOtherCompletedBinding(nodeId);
-
-                      if (!hasOtherCompleted) {
-                        nodesToDeactivate.push(nodeId);
-                      }
-
-                      const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                      if (!graphNode) return;
-                      const actualTopicName = graphNode.name;
-                      const shouldRemoveEbb =
-                        shouldAutoSyncEbb(block.header)
-                        && !hasOtherCompletedBinding(nodeId, true);
-                      if (shouldRemoveEbb) {
-                        syncPayloads.push({
-                          action: 'remove',
-                          graphNodeId: nodeId,
-                          topicName: actualTopicName,
-                        });
-                      }
-                    });
-                  }
-                }
-
-                if (
-                  isAlreadyCompleted
-                  && headerPatch.autoSyncEbb !== undefined
-                  && shouldAutoSyncEbb(block.header) !== shouldAutoSyncEbb(header)
-                ) {
-                  const unchangedNodeIds = newGraphNodeIds.filter((id) => oldGraphNodeIds.includes(id));
-                  unchangedNodeIds.forEach((nodeId) => {
-                    const graphNode = useGraphStore.getState().getNodeById(nodeId);
-                    if (!graphNode) return;
-                    if (shouldAutoSyncEbb(header)) {
-                      syncPayloads.push({
-                        action: 'add',
-                        graphNodeId: nodeId,
-                        topicName: graphNode.name,
-                        triggerSchedule: isLeafGraphNode(useGraphStore.getState().nodes, nodeId),
-                      });
-                    } else if (!hasOtherCompletedBinding(nodeId, true)) {
-                      syncPayloads.push({
-                        action: 'remove',
-                        graphNodeId: nodeId,
-                        topicName: graphNode.name,
-                      });
-                    }
-                  });
-                }
-              }
-
-              const newBlocks = updateBlockHeader(t.blocks, blockId, headerPatch);
-              return { ...t, blocks: newBlocks, blocksUpdatedAt: now };
-            });
-            const groups = state.groups.map((g) => ({
-              ...g,
-              children: g.children.map((c) => {
-                if (c.id !== taskId) return c;
-                const newBlocks = updateBlockHeader(c.blocks, blockId, headerPatch);
-                return { ...c, blocks: newBlocks, blocksUpdatedAt: now };
-              }),
+            const tasks = state.tasks.map((task) =>
+              task.id === taskId
+                ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
+                : task,
+            );
+            const groups = state.groups.map((group) => ({
+              ...group,
+              children: group.children.map((task) =>
+                task.id === taskId
+                  ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
+                  : task,
+              ),
             }));
             const newData = { ...state, tasks, groups };
             saveData(newData);
             return newData;
           });
 
-          // Daily Schedule stores references to the project block. Keep that
-          // projection consistent no matter which UI invoked this store action.
-          if (currentBlock?.type === 'smart-task') {
-            const sourceId = getProjectBlockSourceId(taskId, blockId);
-            if (datePatched && headerPatch.date !== currentBlock.header.date) {
-              useDailyScheduleStore.getState().removeBySourceIds([sourceId]);
-            } else if (headerPatch.title !== undefined || headerPatch.duration !== undefined) {
-              useDailyScheduleStore.getState().updateBySourceId(sourceId, {
-                ...(headerPatch.title !== undefined ? { name: headerPatch.title } : {}),
-                ...(headerPatch.duration !== undefined ? { duration: headerPatch.duration } : {}),
-              });
-            }
-          }
-
-          // 执行 Ebb 拦截同步（在 set 之外调用，避免 store 嵌套更新问题）
-          syncPayloads.forEach(payload => {
-            useEbbStore.getState().syncTaskToEbb({
-              ...payload,
-              sourceTaskId: taskId,
-              sourceBlockId: blockId,
-            });
+          const commitReport = commitProjectTaskEffects({
+            taskId,
+            blockId,
+            currentHeader: currentBlock.header,
+            nextHeader,
+            effectPlan,
           });
 
-          nodesToActivate.forEach(nodeId => {
-            const graphState = useGraphStore.getState();
-            if (isLeafGraphNode(graphState.nodes, nodeId)) {
-              graphState.updateNode(nodeId, { status: 'activated' });
-            }
-          });
-          nodesToDeactivate.forEach(nodeId => {
-            const graphState = useGraphStore.getState();
-            if (isLeafGraphNode(graphState.nodes, nodeId)) {
-              graphState.updateNode(nodeId, { status: 'unactivated' });
-            }
-          });
-
-          if (currentBlock?.type === 'smart-task' && !isOperationRecordingSuppressed()) {
+          if (!isOperationRecordingSuppressed()) {
             const completionChanged = headerPatch.isCompleted !== undefined && headerPatch.isCompleted !== currentBlock.header.isCompleted;
             const dateChanged = datePatched && headerPatch.date !== currentBlock.header.date;
             const vocabularyChanged = headerPatch.vocabularyRecords !== undefined
@@ -1039,6 +621,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               });
             }
           }
+          return { ...commitReport, changed: true };
         },
 
         updateBlockBody: (taskId, blockId, body) => {

@@ -23,7 +23,11 @@ export interface SmartTaskHeader {
   title: string;
   tag: string;
   tagColor: string;
-  date?: string;          // 📅 计划执行日 YYYY-MM-DD；未设置表示未排期
+  /**
+   * Standard task: optional scheduled day. Quantity/vocabulary task: required
+   * availability start day (enforced by shared domain guards).
+   */
+  date?: string;
   deadline?: string;      // 🎯 独立截止日 YYYY-MM-DD
   duration: number;       // ⏳ 预估时长（分钟）
   isCompleted: boolean;
@@ -51,16 +55,6 @@ export interface SmartTaskHeader {
   quantityInitialCompleted?: number;
   /** 通用数量任务每日新增完成量，键为 YYYY-MM-DD */
   quantityRecords?: Record<string, number>;
-  /** R2附件仅保存引用，不在Liveblocks中保存Base64内容 */
-  attachments?: AttachmentReference[];
-}
-
-export interface AttachmentReference {
-  id: string;
-  name: string;
-  type: string;
-  size: number;
-  createdAt: string;
 }
 
 /** 智能任务块（核心：Header + Body 双层结构） */

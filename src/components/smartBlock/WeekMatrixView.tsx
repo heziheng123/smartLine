@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, Hash, Clock3 } from 'lucide-react';
-import type { Task, SmartTaskBlock, SmartTaskHeader, SmartBlockDragPayload } from '@/types';
+import type { Task, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
+import { isTaskOverdueOnDate } from '@/domain/taskRules';
+import { rescheduleProjectTask, setProjectTaskCompletion } from '@/services/projectTaskCommands';
 import {
   todayStr,
   addDays,
@@ -18,7 +20,6 @@ import {
 
 interface WeekMatrixViewProps {
   tasks: Task[];
-  onUpdateBlockHeader: (taskId: string, blockId: string, patch: Partial<SmartTaskHeader>) => void;
 }
 
 interface ViewBlock extends SmartTaskBlock {
@@ -42,7 +43,7 @@ function addMonths(dateStr: string, months: number): string {
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 }
 
-const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHeader }) => {
+const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
   const [cursor, setCursor] = useState(() => todayStr());
   const [mode, setMode] = useState<'week' | 'month'>('week');
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -161,12 +162,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
   const handleToggle = useCallback(
     (taskId: string, blockId: string, isCompleted: boolean) => {
       const now = todayStr();
-      onUpdateBlockHeader(taskId, blockId, {
-        isCompleted: !isCompleted,
-        completedDate: !isCompleted ? now : undefined,
-      });
+      const result = setProjectTaskCompletion(taskId, blockId, !isCompleted, now);
+      if ('error' in result) showToast(result.error);
     },
-    [onUpdateBlockHeader],
+    [showToast],
   );
 
   const handleDragStart = useCallback((block: ViewBlock) => {
@@ -233,12 +232,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
         return;
       }
 
-      onUpdateBlockHeader(draggedData.taskId, draggedData.blockId, { date: targetDate });
-      
-      showToast(`已将“${draggedData.title}”改期到 ${targetDate}`);
+      const result = rescheduleProjectTask(draggedData.taskId, draggedData.blockId, targetDate);
+      showToast('error' in result ? result.error : `已将“${draggedData.title}”改期到 ${targetDate}`);
       clearDragState();
     },
-    [clearDragState, onUpdateBlockHeader, showToast],
+    [clearDragState, showToast],
   );
 
   const jumpTo = useCallback((dateStr: string) => {
@@ -397,7 +395,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, onUpdateBlockHea
                     <AnimatePresence mode="popLayout">
                     {blocks.map((block) => {
                       const header = block.header;
-                      const isOverdue = !!header.date && !header.isCompleted && isBeforeDay(header.date, todayString);
+                      const isOverdue = isTaskOverdueOnDate(header, todayString);
                       const isDragging = draggingId === block.id;
 
                       return (

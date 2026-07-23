@@ -233,8 +233,8 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
   // ── 渲染 ──────────────────────────────────────────────────
 
   return (
-    <div className="tl-dialog-overlay bi-overlay" onClick={handleOverlayClick}>
-      <div className="tl-dialog bi-dialog">
+    <div className="tl-dialog-overlay tl-dialog-overlay--workspace bi-overlay" onClick={handleOverlayClick}>
+      <div className="tl-dialog tl-dialog--workspace bi-dialog" role="dialog" aria-modal="true" aria-label="批量导入任务">
         <div className="tl-dialog-header bi-header">
           <div className="bi-header-titles">
             <h3>批量导入任务</h3>

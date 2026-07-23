@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSessionCookie, SESSION_COOKIE } from '../../functions/_lib/session.ts';
-import { onRequestPost as createUploadToken } from '../../functions/api/files/token.ts';
-import { onRequestPut as uploadFile } from '../../functions/api/files/upload.ts';
+import { onRequestPut as saveArchive } from '../../functions/api/archives/[period].ts';
 import type { StorageEnv, SmartLineR2Bucket } from '../../functions/_lib/r2.ts';
 
 const sessionEnv = {
@@ -14,7 +13,7 @@ async function cookie(): Promise<string> {
   return value.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1] ?? '';
 }
 
-test('R2 upload grants are authenticated, scoped and never expose the binding', async () => {
+test('R2 archives are authenticated and scoped to the signed-in user', async () => {
   const writes: Array<{ key: string; metadata?: Record<string, string> }> = [];
   const bucket: SmartLineR2Bucket = {
     async put(key, _value, options) { writes.push({ key, metadata: options?.customMetadata }); },
@@ -23,53 +22,49 @@ test('R2 upload grants are authenticated, scoped and never expose the binding', 
   };
   const env: StorageEnv = { ...sessionEnv, SMARTLINE_R2: bucket };
   const sessionCookie = await cookie();
-  const headers = { Cookie: `${SESSION_COOKIE}=${sessionCookie}`, Origin: 'https://smartline.example', 'Content-Type': 'application/json' };
-  const grantResponse = await createUploadToken({
+  const response = await saveArchive({
     env,
-    request: new Request('https://smartline.example/api/files/token', {
-      method: 'POST', headers, body: JSON.stringify({ name: 'notes.png', type: 'image/png', size: 4 }),
-    }),
-  });
-  assert.equal(grantResponse.status, 200);
-  const grant = await grantResponse.json() as { id: string; token: string; uploadUrl: string };
-  assert.equal(grant.uploadUrl, '/api/files/upload');
-  assert.ok(grant.token);
-
-  const uploadResponse = await uploadFile({
-    env,
-    request: new Request('https://smartline.example/api/files/upload', {
+    params: { period: '2026-07' },
+    request: new Request('https://smartline.example/api/archives/2026-07', {
       method: 'PUT',
-      headers: { Cookie: `${SESSION_COOKIE}=${sessionCookie}`, Origin: 'https://smartline.example', Authorization: `Bearer ${grant.token}`, 'Content-Length': '4' },
-      body: new Uint8Array([1, 2, 3, 4]),
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${sessionCookie}`,
+        Origin: 'https://smartline.example',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ version: 1 }),
     }),
   });
-  assert.equal(uploadResponse.status, 200);
+  assert.equal(response.status, 200);
   assert.equal(writes.length, 1);
-  assert.match(writes[0].key, /^users\/12345\/attachments\//);
-  assert.equal(writes[0].metadata?.name, 'notes.png');
+  assert.equal(writes[0].key, 'users/12345/archives/2026-07.json');
+  assert.equal(writes[0].metadata?.owner, '12345');
 
-  const tampered = await uploadFile({
+  const crossOrigin = await saveArchive({
     env,
-    request: new Request('https://smartline.example/api/files/upload', {
+    params: { period: '2026-07' },
+    request: new Request('https://smartline.example/api/archives/2026-07', {
       method: 'PUT',
-      headers: { Cookie: `${SESSION_COOKIE}=${sessionCookie}`, Origin: 'https://smartline.example', Authorization: `Bearer ${grant.token}x` },
-      body: new Uint8Array([1]),
+      headers: { Cookie: `${SESSION_COOKIE}=${sessionCookie}`, Origin: 'https://attacker.example' },
+      body: JSON.stringify({ version: 1 }),
     }),
   });
-  assert.equal(tampered.status, 403);
+  assert.equal(crossOrigin.status, 403);
 });
 
-test('R2 endpoints fail closed when login or binding is missing', async () => {
-  const unauthenticated = await createUploadToken({
+test('R2 archive endpoints fail closed when login or binding is missing', async () => {
+  const unauthenticated = await saveArchive({
     env: { ...sessionEnv, SMARTLINE_R2: { put: async () => undefined, get: async () => null, delete: async () => undefined } },
-    request: new Request('https://smartline.example/api/files/token', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'a', size: 1 }),
+    params: { period: '2026-07' },
+    request: new Request('https://smartline.example/api/archives/2026-07', {
+      method: 'PUT', headers: { Origin: 'https://smartline.example' }, body: JSON.stringify({ version: 1 }),
     }),
   });
   assert.equal(unauthenticated.status, 401);
-  const unavailable = await createUploadToken({
+  const unavailable = await saveArchive({
     env: sessionEnv,
-    request: new Request('https://smartline.example/api/files/token', { method: 'POST' }),
+    params: { period: '2026-07' },
+    request: new Request('https://smartline.example/api/archives/2026-07', { method: 'PUT' }),
   });
   assert.equal(unavailable.status, 503);
 });

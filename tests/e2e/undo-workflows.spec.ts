@@ -66,7 +66,10 @@ test('task overview aggregates project tasks and edits the original task block',
   await expect(card).toBeVisible();
   await expect(card).toContainText('E2E项目');
   await card.click();
-  await expect(page.getByRole('dialog', { name: '任务详情' })).toBeVisible();
+  const taskDialog = page.getByRole('dialog', { name: '任务详情' });
+  await expect(taskDialog).toBeVisible();
+  await expect(taskDialog.getByLabel('任务附件')).toHaveCount(0);
+  await expect(taskDialog.getByRole('button', { name: '上传附件' })).toHaveCount(0);
   await page.getByLabel('关闭任务详情').click();
 
   await card.getByRole('button', { name: /完成/ }).click();
@@ -109,8 +112,52 @@ test('batch edit can explicitly clear a schedule date and keep the task unschedu
   await page.locator('.bi-dialog').getByRole('button', { name: '取消' }).click();
 
   await page.getByLabel('关闭项目文档').click();
-  await page.getByTitle('每日安排').click();
+  await page.getByRole('tab', { name: '每日安排' }).click();
   await expect(page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toHaveCount(0);
+});
+
+test('legacy quantity task without a start date is repaired and returns to the daily pool', async ({ page }) => {
+  await page.addInitScript(({ recoveredStart }) => {
+    const key = 'smart-timeline-data:mirror';
+    const data = JSON.parse(localStorage.getItem(key) ?? '{}');
+    if (data.tasks?.[0]?.blocks?.some((block: { id?: string }) => block.id === 'legacy-quantity-without-date')) return;
+    data.tasks[0].blocks.push({
+      type: 'smart-task',
+      id: 'legacy-quantity-without-date',
+      header: {
+        taskKind: 'quantity',
+        title: '待恢复背诵任务',
+        tag: '背诵',
+        tagColor: '#60a5fa',
+        duration: 0,
+        isCompleted: false,
+        quantityUnit: '章',
+        quantityTotal: 20,
+        quantityInitialCompleted: 0,
+        quantityRecords: {},
+      },
+      body: '',
+    });
+    data.tasks[0].start = recoveredStart;
+    localStorage.setItem(key, JSON.stringify(data));
+  }, { recoveredStart: addTestDays(testDate, -10) });
+  await page.reload();
+
+  await page.getByTitle('项目规划').click();
+  await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
+  const projectCard = page.locator('.stb-card').filter({ hasText: '待恢复背诵任务' });
+  await expect(projectCard).toBeVisible();
+  await expect(projectCard).not.toContainText('未排期');
+  await page.getByRole('button', { name: '关闭项目文档' }).click();
+
+  await openTaskOverview(page);
+  const overviewCard = page.locator('[data-block-id="legacy-quantity-without-date"]');
+  await expect(overviewCard).toBeVisible();
+  await expect(overviewCard).not.toHaveClass(/is-overdue/);
+  await expect(overviewCard).toContainText('开始');
+
+  await page.getByRole('tab', { name: '每日安排' }).click();
+  await expect(page.locator('.ds-pool-item').filter({ hasText: '待恢复背诵任务' })).toBeVisible();
 });
 
 test('latest undo survives page refresh and remains executable', async ({ page }) => {
@@ -237,6 +284,30 @@ test('project quantity task suggests a daily target and records progress without
   await expect(projectCard).toContainText('剩余 800 题');
   await expect(projectCard).toContainText('建议今天 80 题');
   await expect(projectCard).not.toContainText('min');
+
+  await page.getByTitle('更多操作').click();
+  await page.getByRole('button', { name: '批量编辑' }).click();
+  const batchDialog = page.locator('.bi-dialog');
+  const batchDialogLayout = await batchDialog.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, right: innerWidth - rect.right, top: rect.top, width: rect.width, viewportWidth: innerWidth };
+  });
+  expect(Math.abs(batchDialogLayout.left - batchDialogLayout.right)).toBeLessThanOrEqual(2);
+  expect(batchDialogLayout.top).toBeGreaterThanOrEqual(0);
+  expect(batchDialogLayout.width).toBeLessThanOrEqual(batchDialogLayout.viewportWidth);
+  const quantityRow = batchDialog.locator('tbody tr').nth(1);
+  await expect(quantityRow.locator('input').first()).toHaveValue('考研数学题库');
+  const quantityStartDate = quantityRow.locator('input[type="date"]').first();
+  await expect(quantityStartDate).toHaveValue(testDate);
+  await expect(quantityStartDate).toHaveAttribute('required', '');
+  await expect(quantityStartDate).toHaveAttribute('title', '数量任务从开始日期起每天生效，不能清除');
+  await quantityStartDate.fill('');
+  await expect(quantityRow).toHaveClass(/bi-row--error/);
+  await expect(quantityRow.locator('[title="数量任务必须保留开始日期"]')).toBeVisible();
+  await expect(batchDialog.getByRole('button', { name: /确认修改/ })).toBeDisabled();
+  await quantityStartDate.fill(testDate);
+  await expect(quantityRow).not.toHaveClass(/bi-row--error/);
+  await batchDialog.getByRole('button', { name: '取消' }).click();
   await page.getByRole('button', { name: '关闭项目文档' }).click();
 
   await page.getByRole('tab', { name: '每日安排' }).click();
@@ -245,6 +316,16 @@ test('project quantity task suggests a daily target and records progress without
   await expect(poolCard).toContainText('剩余 800 题');
   await expect(poolCard).toContainText('今日目标 80 题');
   await expect(poolCard).not.toContainText('min');
+
+  // The two daily presentations must consume the same projection. Continuous
+  // quantity tasks used to disappear entirely after switching to time blocks.
+  await page.getByRole('tab', { name: '时间块' }).click();
+  const timeBlockPoolCard = page.locator('.ds-pool-item').filter({ hasText: '考研数学题库' });
+  await expect(timeBlockPoolCard).toBeVisible();
+  await expect(timeBlockPoolCard).toContainText('今日 0/80 题');
+  await expect(timeBlockPoolCard).toContainText('总进度 200/1000 题');
+  await page.getByRole('tab', { name: '时段' }).click();
+
   const draggableId = await poolCard.evaluate((element) => {
     const attribute = [...element.attributes].find((candidate) => candidate.name.endsWith('draggable-id'));
     return attribute?.value;
@@ -315,6 +396,25 @@ test('project task duration accepts any positive minute value', async ({ page })
   await createDialog.getByRole('button', { name: '创建任务' }).click();
   await expect(createDialog).toBeHidden();
   await expect(page.locator('.stb-card').filter({ hasText: '任意分钟任务' })).toBeVisible();
+});
+
+test('standard project task can be created unscheduled while quantity start remains required', async ({ page }) => {
+  await page.getByTitle('项目规划').click();
+  await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
+  await page.getByRole('button', { name: '添加任务卡片' }).click();
+  const createDialog = page.getByRole('dialog', { name: '新建项目任务' });
+  await createDialog.getByLabel('任务名称').fill('新建未排期任务');
+  const optionalDate = createDialog.getByLabel('计划日期（可选）');
+  await optionalDate.fill('');
+  await createDialog.getByRole('button', { name: '创建任务' }).click();
+  const card = page.locator('.stb-card').filter({ hasText: '新建未排期任务' });
+  await expect(card).toContainText('未排期');
+
+  await page.getByRole('button', { name: '添加任务卡片' }).click();
+  const quantityDialog = page.getByRole('dialog', { name: '新建项目任务' });
+  await quantityDialog.getByRole('button', { name: '按数量推进' }).click();
+  await expect(quantityDialog.getByLabel('开始日期（必填）')).toHaveAttribute('required', '');
+  await quantityDialog.getByRole('button', { name: '取消' }).click();
 });
 
 test('knowledge binding actions stay inside an iPad Air viewport', async ({ page }) => {

@@ -8,7 +8,8 @@ import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
-import { todayStr, formatDate, getDayOfWeek, isBeforeDay, makeLocalDayjs } from '@/utils/dateSafe';
+import { todayStr, formatDate, getDayOfWeek, makeLocalDayjs } from '@/utils/dateSafe';
+import { isTaskOverdueOnDate } from '@/domain/taskRules';
 import {
   Check,
   Clock,
@@ -36,6 +37,9 @@ import {
   shouldAutoSyncEbb,
 } from '@/utils/blocks';
 import { useGraphBindingStore } from '@/graph/bindingStore';
+import { requestCompletedBindingStrategy } from '@/graph/bindingDecision';
+import type { CompletedTaskBindingStrategy } from '@/domain/projectTaskEffects';
+import { useTimelineStore } from '@/store';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SmartTaskBlockCardProps {
@@ -88,6 +92,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const [editingBody, setEditingBody] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showGraphPicker, setShowGraphPicker] = useState(false);
+  const graphBindingStrategyRef = useRef<CompletedTaskBindingStrategy | null>(null);
   const startGraphBinding = useGraphBindingStore((state) => state.start);
   const [showTagPicker, setShowTagPicker] = useState(false);
   const [dateAnchor, setDateAnchor] = useState<HTMLElement | null>(null);
@@ -126,6 +131,10 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   useEffect(() => () => {
     if (titleSaveTimerRef.current) window.clearTimeout(titleSaveTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!showGraphPicker) graphBindingStrategyRef.current = null;
+  }, [showGraphPicker]);
 
   const { nodes, getNodeById } = useGraphStore(
     useShallow((state) => ({ nodes: state.nodes, getNodeById: state.getNodeById })),
@@ -207,13 +216,45 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   }, [block.id, onUpdateHeader]);
 
   // 知识节点选择
-  const handleGraphNodeSelect = useCallback((nodeIds: string[]) => {
-    onUpdateHeader(block.id, { 
-      graphNodeIds: nodeIds, 
+  const handleGraphNodeSelect = useCallback(async (nodeIds: string[]) => {
+    const nextNodeIds = [...new Set(nodeIds)];
+    const bindingChanged = (
+      nextNodeIds.some((id) => !validGraphNodeIds.includes(id))
+      || validGraphNodeIds.some((id) => !nextNodeIds.includes(id))
+    );
+    if (header.isCompleted && bindingChanged) {
+      const bindingStrategy = graphBindingStrategyRef.current
+        ?? await requestCompletedBindingStrategy({
+          currentNodeIds: validGraphNodeIds,
+          nextNodeIds,
+          graphNodes: nodes,
+        });
+      if (!bindingStrategy) return;
+      graphBindingStrategyRef.current = bindingStrategy;
+      useTimelineStore.getState().updateBlockHeader(
+        parentTaskId,
+        block.id,
+        {
+          graphNodeIds: nextNodeIds,
+          autoSyncEbb: shouldAutoSyncEbb(header),
+        },
+        { bindingStrategy },
+      );
+      return;
+    }
+    onUpdateHeader(block.id, {
+      graphNodeIds: nextNodeIds,
       autoSyncEbb: shouldAutoSyncEbb(header),
     });
     // 不自动关闭，支持连续点选
-  }, [block.id, header, onUpdateHeader]);
+  }, [
+    block.id,
+    header,
+    nodes,
+    onUpdateHeader,
+    parentTaskId,
+    validGraphNodeIds,
+  ]);
 
   const handleOpenGraphBinding = useCallback(() => {
     setShowGraphPicker(false);
@@ -259,7 +300,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   const handleQuantityDeadlineChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    if (!value || !header.date || value >= header.date) onUpdateHeader(block.id, { deadline: value || undefined });
+    if (!value || (header.date && value >= header.date)) {
+      onUpdateHeader(block.id, { deadline: value || undefined });
+    }
   }, [block.id, header.date, onUpdateHeader]);
 
   const handleQuantityUnitChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -269,9 +312,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
   const dateLabel = header.date
     ? `${formatDate(header.date, 'M.D')} 周${WEEKDAY_SHORT[getDayOfWeek(header.date)]}`
-    : '未排期';
+    : (isQuantity ? '需要开始日期' : '未排期');
 
-  const isOverdue = header.date && !header.isCompleted && isBeforeDay(header.date, todayStr());
+  const isOverdue = isTaskOverdueOnDate(header, todayStr());
   const isToday = header.date === todayStr();
 
   // 左侧高亮条颜色

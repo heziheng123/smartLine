@@ -5,6 +5,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import '@/styles/ebb.css';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
@@ -30,6 +31,7 @@ import {
   ChartNoAxesColumn,
   ShieldCheck,
   SlidersHorizontal,
+  MoreHorizontal,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -368,8 +370,14 @@ const EbbView: React.FC = () => {
     e.target.value = '';
   }, [store, showToast]);
 
-  const handleClearAll = useCallback(() => {
-    if (!confirm(`确认清空所有 ${store.reviewTasks.length} 个复习任务？可通过撤销恢复。`)) return;
+  const handleClearAll = useCallback(async () => {
+    if (!await requestConfirmation({
+      title: '清空全部复习任务？',
+      message: `即将清空 ${store.reviewTasks.length} 个复习任务。`,
+      impact: ['复习轮次会从当前列表移除', '完成后仍可通过撤销恢复'],
+      confirmLabel: '清空任务',
+      tone: 'danger',
+    })) return;
     store.clearAllTasks();
     showToast('已清空（可撤销）');
   }, [store, showToast]);
@@ -417,23 +425,40 @@ const EbbView: React.FC = () => {
             </button>
           </div>
           <div className="eb-nav-right">
-            <button
-              type="button"
-              className="eb-nav-btn"
-              onClick={() => setBatchAdjustOpen(true)}
-              disabled={reviewTasks.length === 0}
-            >
-              <SlidersHorizontal size={15} />
-              批量调整
-            </button>
-            <button
-              type="button"
-              className="eb-nav-btn"
-              onClick={() => setModal('settings')}
-            >
-              <SettingsIcon size={15} />
-              设置
-            </button>
+            <details className="eb-more-menu">
+              <summary className="eb-nav-btn" aria-label="复习更多操作">
+                <MoreHorizontal size={15} />
+                更多
+              </summary>
+              <div className="eb-more-menu-popover" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => setBatchAdjustOpen(true)}
+                  disabled={reviewTasks.length === 0}
+                >
+                  <SlidersHorizontal size={15} />
+                  批量调整
+                </button>
+                <button type="button" role="menuitem" onClick={() => setModal('settings')}>
+                  <SettingsIcon size={15} />
+                  设置
+                </button>
+                <button type="button" role="menuitem" onClick={handleExport}>
+                  <Download size={15} />
+                  导出数据
+                </button>
+                <button type="button" role="menuitem" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={15} />
+                  导入数据
+                </button>
+                <button type="button" role="menuitem" className="is-danger" onClick={handleClearAll}>
+                  <Trash2 size={15} />
+                  清空所有任务
+                </button>
+                <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} hidden />
+              </div>
+            </details>
           </div>
         </header>
 
@@ -490,18 +515,6 @@ const EbbView: React.FC = () => {
             <div className="eb-stats-progress-bar">
               <div className="eb-stats-progress-fill" style={{ width: `${stats.ratio * 100}%` }} />
             </div>
-          </div>
-          <div className="eb-stats-actions">
-            <button type="button" className="eb-stats-action" onClick={handleExport} title="导出数据">
-              <Download size={14} />
-            </button>
-            <button type="button" className="eb-stats-action" onClick={() => fileInputRef.current?.click()} title="导入数据">
-              <Upload size={14} />
-            </button>
-            <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
-            <button type="button" className="eb-stats-action eb-stats-action--danger" onClick={handleClearAll} title="清空所有任务">
-              <Trash2 size={14} />
-            </button>
           </div>
         </section>
 

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useTimelineStore } from '@/store';
 import { getSmartTaskBlocks } from '@/utils/blocks';
 import { todayStr, splitDate } from '@/utils/dateSafe';
+import { isContinuousTask } from '@/domain/taskRules';
 
 function subtractDays(dateStr: string, days: number): string {
   const { year, month, day } = splitDate(dateStr);
@@ -25,7 +26,9 @@ export function useIceboxMonitor() {
       tasks.forEach(task => {
         const blocks = getSmartTaskBlocks(task.blocks ?? []);
         blocks.forEach(block => {
-          if (!block.header.isCompleted && block.header.date) {
+          // Continuous tasks keep their start date for their whole lifetime;
+          // only one-day standard tasks are eligible for automatic un-scheduling.
+          if (!isContinuousTask(block.header) && !block.header.isCompleted && block.header.date) {
             // 如果日期早于 T-2
             if (block.header.date < thresholdDate) {
               console.log(`[Icebox] Freezing overdue block: ${block.header.title}`);

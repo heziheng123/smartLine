@@ -4,6 +4,7 @@
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import type { Task } from '@/types';
 import { TASK_BG_PRESET } from '@/utils/timeline-utils';
 
@@ -249,8 +250,14 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
           <button
             type="button"
             className="tl-meta-delete-btn"
-            onClick={() => {
-              if (confirm(`确定删除任务「${task.name}」？此操作不可撤销。`)) {
+            onClick={async () => {
+              if (await requestConfirmation({
+                title: '删除项目任务？',
+                message: `任务「${task.name}」将从项目中移除。`,
+                impact: ['相关日程投影会同步移除', '此操作不可撤销'],
+                confirmLabel: '删除任务',
+                tone: 'danger',
+              })) {
                 onDelete(task.id);
               }
             }}

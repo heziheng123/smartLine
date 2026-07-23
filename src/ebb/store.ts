@@ -7,10 +7,9 @@
 import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
-import { createCoalescedPersistence, createScopedStorage, readJsonStorage } from '@/utils/persistence';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
 
-import { todayStr, addDays, diffDays } from '@/utils/dateSafe';
+import { todayStr, addDays } from '@/utils/dateSafe';
 import type {
   ReviewTask,
   InboxItem,
@@ -21,12 +20,8 @@ import type {
   SyncTaskToEbbPayload,
 } from './types';
 import {
-  EBB_STORAGE_KEY,
-  EBB_SYNC_SETTINGS_KEY,
   EBB_ROOM_PREFIX,
-  DEFAULT_EBB_SETTINGS,
   getDefaultEbbData,
-  TAG_COLOR_PALETTE,
 } from './constants';
 import { liveblocksClient } from '@/store/client';
 import { genId, getReviewTopicKey, checkCanComplete, normalizeReviewRoundOrders } from './scheduler';
@@ -41,63 +36,20 @@ import {
   type BatchReviewPlan,
   type BatchReviewRequest,
 } from './batchAdjust';
-
-const ebbStorage = createScopedStorage('ebb_data');
-
-// ── 同步设置持久化 ──────────────────────────────────────────
-
-interface EbbSyncSettings {
-  roomCode: string;
-  enabled: boolean;
-}
-
-function loadEbbSyncSettings(): EbbSyncSettings {
-  try {
-    const raw = localStorage.getItem(EBB_SYNC_SETTINGS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  return { roomCode: '', enabled: false };
-}
-
-function saveEbbSyncSettings(settings: EbbSyncSettings) {
-  localStorage.setItem(EBB_SYNC_SETTINGS_KEY, JSON.stringify(settings));
-}
+import {
+  buildAbsoluteScheduleDates,
+  ensureTagColors,
+  normalizeEbbData,
+  serializeReviewTasks,
+} from './dataNormalization';
+export { normalizeEbbData } from './dataNormalization';
+import { loadEbbData, loadEbbSyncSettings, saveEbbData, saveEbbSyncSettings } from './persistence';
+import { planEbbTaskSync } from './taskSyncPlanner';
 
 // ── 数据加载/保存 ───────────────────────────────────────────
 
 function getInitialEbbData(): EbbData {
   return getDefaultEbbData();
-}
-
-const EBB_STORAGE_MIRROR_KEY = `${EBB_STORAGE_KEY}:mirror`;
-
-async function saveEbbDataAsync(data: EbbData) {
-  try {
-    await ebbStorage.setItem(EBB_STORAGE_KEY, data);
-  } catch (e) {
-    console.warn('[smart-ebb] IndexedDB 写入失败：', e);
-    throw e;
-  }
-}
-
-const ebbPersistence = createCoalescedPersistence<EbbData>({
-  mirrorKey: EBB_STORAGE_MIRROR_KEY,
-  label: 'smart-ebb',
-  writeAsync: saveEbbDataAsync,
-});
-
-function saveEbbData(data: EbbData) {
-  ebbPersistence.schedule(data);
-}
-
-function buildAbsoluteScheduleDates(baseDate: string, intervals: number[], count = intervals.length): string[] {
-  if (intervals.length === 0 || count <= 0) return [];
-  const lastIndex = intervals.length - 1;
-  return Array.from({ length: count }, (_, index) => {
-    const overflowDays = Math.max(0, index - lastIndex);
-    const interval = intervals[Math.min(index, lastIndex)] + overflowDays;
-    return addDays(baseDate, interval);
-  });
 }
 
 interface BatchReviewUndoPayload {
@@ -106,167 +58,6 @@ interface BatchReviewUndoPayload {
   expectedTasks: ReviewTask[];
   undoSourceIdsToClear: string[];
   dailySnapshots: DailySourceSnapshot[];
-}
-
-const serializeReviewTasks = (tasks: ReviewTask[]) => JSON.stringify(
-  [...tasks].sort((a, b) => a.id.localeCompare(b.id)),
-);
-
-// ── 标签颜色自动分配 ────────────────────────────────────────
-
-function ensureTagColors(tasks: ReviewTask[], settings: EbbSettings): EbbSettings {
-  const existingTags = new Set(Object.keys(settings.tagColors));
-  const newColors = { ...settings.tagColors };
-  let paletteIdx = existingTags.size % TAG_COLOR_PALETTE.length;
-  for (const t of tasks) {
-    // Graph-linked reviews are categorised dynamically by their root node.
-    // Do not create stale colour entries from the source project-task title.
-    if (t.graphNodeId) continue;
-    const tag = t.tag?.trim() || '';
-    const categoryKey = tag ? `manual:${tag}` : '';
-    if (categoryKey && !newColors[categoryKey] && !newColors[tag]) {
-      newColors[categoryKey] = TAG_COLOR_PALETTE[paletteIdx % TAG_COLOR_PALETTE.length];
-      paletteIdx++;
-    }
-  }
-  return { ...settings, tagColors: newColors };
-}
-
-function isValidDateString(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
-
-function isValidReviewTask(value: unknown): value is ReviewTask {
-  if (!value || typeof value !== 'object') return false;
-  const task = value as Record<string, unknown>;
-  return typeof task.id === 'string' && task.id.trim().length > 0
-    && typeof task.topicName === 'string'
-    && isValidDateString(task.dueDate)
-    && typeof task.isCompleted === 'boolean';
-}
-
-function isValidInboxItem(value: unknown): value is InboxItem {
-  if (!value || typeof value !== 'object') return false;
-  const item = value as Record<string, unknown>;
-  return typeof item.id === 'string' && item.id.trim().length > 0
-    && typeof item.topicName === 'string'
-    && typeof item.createdAt === 'string'
-    && (item.status === 'draft' || item.status === 'staged');
-}
-
-function isValidOutlineNode(value: unknown): value is StudyOutlineNode {
-  if (!value || typeof value !== 'object') return false;
-  const node = value as Record<string, unknown>;
-  return typeof node.id === 'string' && node.id.trim().length > 0
-    && typeof node.name === 'string'
-    && (node.type === 'book' || node.type === 'chapter' || node.type === 'section')
-    && (node.parentId === null || typeof node.parentId === 'string')
-    && Number.isFinite(node.orderIndex);
-}
-
-function deduplicateById<T extends { id: string }>(values: T[]): T[] {
-  const byId = new Map<string, T>();
-  values.forEach((value) => byId.set(value.id, value));
-  return [...byId.values()];
-}
-
-function normalizeOutlineNodes(values: unknown[]): StudyOutlineNode[] {
-  const nodes = deduplicateById(values.filter(isValidOutlineNode).map((node) => ({ ...node })));
-  const ids = new Set(nodes.map((node) => node.id));
-  nodes.forEach((node) => {
-    if (!node.parentId || node.parentId === node.id || !ids.has(node.parentId)) node.parentId = null;
-  });
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const state = new Map<string, 'visiting' | 'visited'>();
-  const breakCycles = (id: string) => {
-    const node = byId.get(id);
-    if (!node || state.get(id) === 'visited') return;
-    state.set(id, 'visiting');
-    if (node.parentId) {
-      if (state.get(node.parentId) === 'visiting') node.parentId = null;
-      else breakCycles(node.parentId);
-    }
-    state.set(id, 'visited');
-  };
-  nodes.forEach((node) => breakCycles(node.id));
-  nodes.forEach((node) => { node.childrenIds = []; });
-  nodes.forEach((node) => {
-    if (node.parentId) byId.get(node.parentId)?.childrenIds.push(node.id);
-  });
-  nodes.forEach((node) => {
-    node.childrenIds.sort((a, b) => (byId.get(a)?.orderIndex ?? 0) - (byId.get(b)?.orderIndex ?? 0));
-  });
-  return nodes.sort((a, b) => a.orderIndex - b.orderIndex);
-}
-
-export function normalizeEbbData(data: Partial<EbbData> | null | undefined): EbbData {
-  const rawTasks = Array.isArray(data?.reviewTasks) ? data.reviewTasks : [];
-  let reviewTasks = normalizeReviewRoundOrders(
-    deduplicateById(rawTasks.filter(isValidReviewTask).map((task) => ({
-      ...task,
-      originalDueDate: isValidDateString(task.originalDueDate) ? task.originalDueDate : task.dueDate,
-      completedDate: isValidDateString(task.completedDate)
-        ? task.completedDate
-        : task.isCompleted ? task.dueDate : undefined,
-      isCompleted: task.isCompleted,
-      scheduleCreatedDate: isValidDateString(task.scheduleCreatedDate) ? task.scheduleCreatedDate : undefined,
-      scheduleSourceTaskId: typeof task.scheduleSourceTaskId === 'string' ? task.scheduleSourceTaskId : undefined,
-      scheduleSourceBlockId: typeof task.scheduleSourceBlockId === 'string' ? task.scheduleSourceBlockId : undefined,
-      completionSource: task.isCompleted && (task.completionSource === 'manual' || task.completionSource === 'project-task')
-        ? task.completionSource
-        : undefined,
-      completionSourceTaskId: task.isCompleted && typeof task.completionSourceTaskId === 'string'
-        ? task.completionSourceTaskId
-        : undefined,
-      completionSourceBlockId: task.isCompleted && typeof task.completionSourceBlockId === 'string'
-        ? task.completionSourceBlockId
-        : undefined,
-      previousSchedule: task.isCompleted && Array.isArray(task.previousSchedule)
-        ? task.previousSchedule.filter((entry) =>
-            !!entry
-            && typeof entry.reviewTaskId === 'string'
-            && isValidDateString(entry.dueDate),
-          )
-        : undefined,
-    }))),
-  );
-  const inboxItems = deduplicateById(
-    (Array.isArray(data?.inboxItems) ? data.inboxItems : []).filter(isValidInboxItem),
-  );
-  const outlineNodes = normalizeOutlineNodes(
-    Array.isArray(data?.outlineNodes) ? data.outlineNodes : [],
-  );
-  const outlineIds = new Set(outlineNodes.map((node) => node.id));
-  reviewTasks = reviewTasks.map((task) =>
-    task.outlineNodeId && !outlineIds.has(task.outlineNodeId)
-      ? { ...task, outlineNodeId: undefined }
-      : task,
-  );
-  const incomingSettings = data?.ebbSettings;
-  const ebbSettings: EbbSettings = {
-    ...DEFAULT_EBB_SETTINGS,
-    ...(incomingSettings ?? {}),
-    complexityConfigs: {
-      ...DEFAULT_EBB_SETTINGS.complexityConfigs,
-      ...(incomingSettings?.complexityConfigs ?? {}),
-    },
-    tagColors: { ...(incomingSettings?.tagColors ?? {}) },
-    collapsedGroups: Array.isArray(incomingSettings?.collapsedGroups)
-      ? incomingSettings.collapsedGroups
-      : [],
-    loadThresholds: Array.isArray(incomingSettings?.loadThresholds)
-      && incomingSettings.loadThresholds.length === 4
-      ? incomingSettings.loadThresholds
-      : DEFAULT_EBB_SETTINGS.loadThresholds,
-  };
-  return {
-    reviewTasks,
-    inboxItems,
-    outlineNodes,
-    ebbSettings: ensureTagColors(reviewTasks, ebbSettings),
-  };
 }
 
 // ── Store 接口 ──────────────────────────────────────────────
@@ -343,21 +134,8 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         isHydrated: false,
         hydrateStore: async () => {
           try {
-            let raw = readJsonStorage<EbbData>(EBB_STORAGE_MIRROR_KEY)
-              ?? await ebbStorage.getItem<EbbData>(EBB_STORAGE_KEY);
-            if (!raw) {
-              const lsRaw = readJsonStorage<EbbData>(EBB_STORAGE_KEY);
-              if (lsRaw) {
-                raw = lsRaw;
-                await ebbStorage.setItem(EBB_STORAGE_KEY, raw);
-                localStorage.removeItem(EBB_STORAGE_KEY);
-              }
-            } else if (typeof raw === 'string') {
-              raw = JSON.parse(raw) as EbbData;
-            }
-
-            if (raw) {
-              const normalized = normalizeEbbData(raw);
+            const normalized = await loadEbbData();
+            if (normalized) {
               set({
                 ...normalized,
                 isHydrated: true,
@@ -1208,201 +986,25 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         // ── 自动同步任务到 Ebb 复习流 ─────────────────────────────────
 
         syncTaskToEbb: (payload) => {
-          const dailySourceIdsToRemove: string[] = [];
+          const before = get();
+          const plan = planEbbTaskSync({
+            reviewTasks: before.reviewTasks,
+            ebbSettings: before.ebbSettings,
+            payload,
+          });
+          if (!plan.changed) return;
+
           set((state) => {
-            const {
-              action = 'add',
-              graphNodeId,
-              topicName,
-              triggerSchedule = true,
-              sourceTaskId,
-              sourceBlockId,
-            } = payload;
-            const existingTasks = state.reviewTasks
-              .filter((task) => !task.isArchived && task.graphNodeId === graphNodeId)
-              .sort((a, b) =>
-                (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER),
-              );
-
-            if (action === 'revert-source') {
-              if (!sourceTaskId || !sourceBlockId) return state;
-
-              const supplementalIds = new Set(
-                existingTasks
-                  .filter((task) =>
-                    task.isSupplemental
-                    && !task.isCompleted
-                    && task.scheduleSourceTaskId === sourceTaskId
-                    && task.scheduleSourceBlockId === sourceBlockId,
-                  )
-                  .map((task) => task.id),
-              );
-              const target = existingTasks.find((task) =>
-                task.completionSource === 'project-task'
-                && task.completionSourceTaskId === sourceTaskId
-                && task.completionSourceBlockId === sourceBlockId,
-              );
-              const targetOrder = target?.roundOrder ?? Number.MAX_SAFE_INTEGER;
-              const hasLaterCompletedRound = !!target && existingTasks.some((task) =>
-                task.isCompleted && (task.roundOrder ?? 0) > targetOrder,
-              );
-              if (!target && supplementalIds.size === 0) return state;
-
-              const previousSchedule = !hasLaterCompletedRound
-                ? new Map((target?.previousSchedule ?? []).map((entry) => [entry.reviewTaskId, entry.dueDate]))
-                : new Map<string, string>();
-              const changedScheduleIds = new Set(previousSchedule.keys());
-              supplementalIds.forEach((id) => changedScheduleIds.add(id));
-              dailySourceIdsToRemove.push(
-                ...[...changedScheduleIds].map((id) => getReviewSourceId(id)),
-              );
-
-              const reviewTasks = state.reviewTasks
-                .filter((task) => !supplementalIds.has(task.id))
-                .map((task) => {
-                  if (previousSchedule.has(task.id)) {
-                    return { ...task, dueDate: previousSchedule.get(task.id)! };
-                  }
-                  if (target && task.id === target.id && !hasLaterCompletedRound) {
-                    return {
-                      ...task,
-                      isCompleted: false,
-                      completedDate: undefined,
-                      smStatus: 'scheduled' as const,
-                      completionSource: undefined,
-                      completionSourceTaskId: undefined,
-                      completionSourceBlockId: undefined,
-                      previousSchedule: undefined,
-                    };
-                  }
-                  return task;
-                });
-              const newData: EbbData = { ...state, reviewTasks };
-              saveEbbData(newData);
-              return newData;
-            }
-
-            if (action === 'remove') {
-              const hasCompletedReview = existingTasks.some((task) => task.isCompleted);
-              if (!hasCompletedReview) {
-                dailySourceIdsToRemove.push(...existingTasks.map((task) => getReviewSourceId(task.id)));
-                const newReviewTasks = state.reviewTasks.filter(
-                  (task) => task.isArchived || task.graphNodeId !== graphNodeId,
-                );
-                const newData: EbbData = {
-                  ...state,
-                  reviewTasks: newReviewTasks,
-                };
-                saveEbbData(newData);
-                return newData;
-              }
-              return state;
-            }
-
-            let newReviewTasks = [...state.reviewTasks];
-            const nowStr = todayStr();
-            if (!triggerSchedule) return state;
-
-            if (existingTasks.length === 0) {
-              const intervals = state.ebbSettings.complexityConfigs['normal'].intervals;
-              const dueDates = buildAbsoluteScheduleDates(nowStr, intervals);
-              const generated: ReviewTask[] = intervals.map((_, index) => ({
-                  id: genId('rt'),
-                  topicName,
-                  graphNodeId,
-                  dueDate: dueDates[index],
-                  originalDueDate: dueDates[index],
-                  roundOrder: index + 1,
-                  isCompleted: false,
-                  complexity: 'normal',
-                  smStatus: 'scheduled',
-                  scheduleCreatedDate: nowStr,
-                  scheduleSourceTaskId: sourceTaskId,
-                  scheduleSourceBlockId: sourceBlockId,
-                }));
-              newReviewTasks.push(...generated);
-            } else {
-              const sourceAlreadyHandled = !!sourceTaskId && !!sourceBlockId && existingTasks.some((task) =>
-                (task.completionSourceTaskId === sourceTaskId && task.completionSourceBlockId === sourceBlockId)
-                || (task.scheduleSourceTaskId === sourceTaskId && task.scheduleSourceBlockId === sourceBlockId),
-              );
-              if (sourceAlreadyHandled) return state;
-
-              const hasReviewCompletedToday = existingTasks.some((task) =>
-                task.isCompleted && task.completedDate === nowStr,
-              );
-              const planCreatedToday = existingTasks.some((task) => task.scheduleCreatedDate === nowStr);
-              const uncompletedTasks = existingTasks.filter((task) => !task.isCompleted);
-
-              if (uncompletedTasks.length > 0) {
-                if (hasReviewCompletedToday || planCreatedToday) return state;
-                const candidate = uncompletedTasks[0];
-                if (candidate.dueDate > addDays(nowStr, 1)) return state;
-
-                const delayDays = Math.max(0, diffDays(nowStr, candidate.dueDate));
-                const laterTasks = uncompletedTasks.slice(1);
-                const previousSchedule = delayDays > 0
-                  ? laterTasks.map((task) => ({ reviewTaskId: task.id, dueDate: task.dueDate }))
-                  : [];
-                if (delayDays > 0) {
-                  dailySourceIdsToRemove.push(...laterTasks.map((task) => getReviewSourceId(task.id)));
-                }
-                const laterIds = new Set(laterTasks.map((task) => task.id));
-                newReviewTasks = newReviewTasks.map((task) => {
-                  if (task.id === candidate.id) {
-                    return {
-                      ...task,
-                      isCompleted: true,
-                      completedDate: nowStr,
-                      smStatus: 'confirmed' as const,
-                      completionSource: 'project-task' as const,
-                      completionSourceTaskId: sourceTaskId,
-                      completionSourceBlockId: sourceBlockId,
-                      previousSchedule: previousSchedule.length > 0 ? previousSchedule : undefined,
-                    };
-                  }
-                  if (delayDays > 0 && laterIds.has(task.id)) {
-                    return {
-                      ...task,
-                      dueDate: addDays(task.dueDate, delayDays),
-                      originalDueDate: task.originalDueDate ?? task.dueDate,
-                      smStatus: 'scheduled' as const,
-                    };
-                  }
-                  return task;
-                });
-              } else {
-                if (hasReviewCompletedToday || planCreatedToday) return state;
-                const nextRoundOrder = Math.max(0, ...existingTasks.map((task) => task.roundOrder ?? 0)) + 1;
-                const dueDate = addDays(nowStr, 1);
-                newReviewTasks.push({
-                  id: genId('rt'),
-                  topicName,
-                  graphNodeId,
-                  dueDate,
-                  originalDueDate: dueDate,
-                  roundOrder: nextRoundOrder,
-                  isCompleted: false,
-                  complexity: 'normal',
-                  smStatus: 'scheduled',
-                  scheduleCreatedDate: nowStr,
-                  scheduleSourceTaskId: sourceTaskId,
-                  scheduleSourceBlockId: sourceBlockId,
-                  isSupplemental: true,
-                });
-              }
-            }
-
             const newData: EbbData = {
               ...state,
-              reviewTasks: newReviewTasks,
+              reviewTasks: plan.reviewTasks,
             };
             saveEbbData(newData);
             return newData;
           });
-          if (dailySourceIdsToRemove.length > 0) {
+          if (plan.dailySourceIdsToRemove.length > 0) {
             setTimeout(() => {
-              useDailyScheduleStore.getState().removeBySourceIds(dailySourceIdsToRemove);
+              useDailyScheduleStore.getState().removeBySourceIds(plan.dailySourceIdsToRemove);
             }, 0);
           }
         },

@@ -4,6 +4,7 @@
 // ============================================================
 
 import type { Block, SmartTaskBlock, SmartTaskHeader, Task } from '@/types';
+import { isContinuousTask, requiresTaskStartDate } from '@/domain/taskRules';
 import { extractTodos, type TodoItem } from './markdown';
 import { diffDays } from './dateSafe';
 
@@ -73,7 +74,30 @@ export function isVocabularyTask(header: Partial<SmartTaskHeader> | undefined | 
  * 数量任务统一入口。旧版 vocabulary 数据也属于数量任务，确保升级后无需迁移。
  */
 export function isQuantityTask(header: Partial<SmartTaskHeader> | undefined | null): boolean {
-  return header?.taskKind === 'quantity' || isVocabularyTask(header);
+  return isContinuousTask(header);
+}
+
+export { requiresTaskStartDate } from '@/domain/taskRules';
+
+/**
+ * Repairs legacy quantity/vocabulary tasks whose start date was cleared by an
+ * older editor. A recorded progress date is the strongest available signal;
+ * otherwise the parent project's start date is the safest deterministic
+ * fallback. The deadline is used only when the project starts after it.
+ */
+export function recoverRequiredTaskStartDate(
+  header: Partial<SmartTaskHeader> | undefined | null,
+  projectStart: string,
+): string | undefined {
+  if (!requiresTaskStartDate(header)) return header?.date;
+  if (header?.date) return header.date;
+
+  const recordDates = Object.keys(getQuantityRecords(header))
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort();
+  if (recordDates[0]) return recordDates[0];
+  if (header?.deadline && projectStart > header.deadline) return header.deadline;
+  return projectStart || header?.deadline;
 }
 
 export function getQuantityUnit(header: Partial<SmartTaskHeader> | undefined | null): string {
@@ -342,9 +366,11 @@ export function appendBlock(blocks: Block[] | undefined, block: Block): Block[] 
 export function updateBlockHeader(blocks: Block[] | undefined, blockId: string, headerPatch: Partial<SmartTaskHeader>): Block[] {
   return (blocks ?? []).map(b => {
     if (b.type !== 'smart-task' || b.id !== blockId) return b;
+    const nextHeader = { ...b.header, ...headerPatch };
+    if (requiresTaskStartDate(nextHeader) && !nextHeader.date) return b;
     return {
       ...b,
-      header: { ...b.header, ...headerPatch },
+      header: nextHeader,
     };
   });
 }

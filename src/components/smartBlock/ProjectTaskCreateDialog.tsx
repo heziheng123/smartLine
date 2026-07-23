@@ -6,16 +6,16 @@ import type { SmartTaskBlock } from '@/types';
 import { genBlockId, getQuantityDailySuggestion, getTagColor } from '@/utils/blocks';
 import { todayStr } from '@/utils/dateSafe';
 import { PROJECT_TASK_CREATE_EVENT, type ProjectTaskCreateDetail } from './projectTaskCreate';
+import { createProjectTask } from '@/services/projectTaskCommands';
 
 type ProgressMode = 'binary' | 'quantity';
 
 const UNIT_OPTIONS = ['个', '题', '页', '节', '章'] as const;
 
 const ProjectTaskCreateDialog: React.FC = () => {
-  const { tasks, groups, appendBlock } = useTimelineStore(useShallow((state) => ({
+  const { tasks, groups } = useTimelineStore(useShallow((state) => ({
     tasks: state.tasks,
     groups: state.groups,
-    appendBlock: state.appendBlock,
   })));
   const projects = useMemo(() => {
     const byId = new Map(tasks.map((task) => [task.id, task]));
@@ -64,7 +64,7 @@ const ProjectTaskCreateDialog: React.FC = () => {
   const suggestion = useMemo(() => {
     const parsedTotal = Number(total);
     const parsedInitial = Number(initialCompleted);
-    if (mode !== 'quantity' || !deadline || !Number.isInteger(parsedTotal) || parsedTotal <= 0
+    if (mode !== 'quantity' || !date || !deadline || !Number.isInteger(parsedTotal) || parsedTotal <= 0
       || !Number.isInteger(parsedInitial) || parsedInitial < 0 || parsedInitial > parsedTotal) return null;
     return getQuantityDailySuggestion({
       taskKind: 'quantity', date, deadline,
@@ -80,7 +80,7 @@ const ProjectTaskCreateDialog: React.FC = () => {
     event.preventDefault();
     if (!projectId || !projects.some((task) => task.id === projectId)) return setError('请选择所属项目。');
     if (!title.trim()) return setError('请输入任务名称。');
-    if (!date) return setError('请选择计划日期。');
+    if (mode === 'quantity' && !date) return setError('请选择开始日期。');
 
     let block: SmartTaskBlock;
     if (mode === 'quantity') {
@@ -108,11 +108,12 @@ const ProjectTaskCreateDialog: React.FC = () => {
         type: 'smart-task', id: genBlockId(), body: '',
         header: {
           taskKind: 'standard', title: title.trim(), tag: '默认', tagColor: getTagColor('默认'),
-          date, duration: parsedDuration, isCompleted: false, autoSyncEbb: true,
+          date: date || undefined, duration: parsedDuration, isCompleted: false, autoSyncEbb: true,
         },
       };
     }
-    appendBlock(projectId, block);
+    const result = createProjectTask(projectId, block);
+    if ('error' in result) return setError(result.error);
     setOpen(false);
   };
 
@@ -126,7 +127,7 @@ const ProjectTaskCreateDialog: React.FC = () => {
         <form className="ds-vocab-form" onSubmit={create}>
           <label>所属项目<select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((task) => <option key={task.id} value={task.id}>{task.name}</option>)}</select></label>
           <label>任务名称<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={mode === 'quantity' ? '例如：考研数学题库' : '例如：整理本章笔记'} /></label>
-          <label>计划日期<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          <label>{mode === 'quantity' ? '开始日期（必填）' : '计划日期（可选）'}<input type="date" required={mode === 'quantity'} value={date} onChange={(event) => setDate(event.target.value)} /></label>
           <fieldset className="task-create-mode">
             <legend>完成方式</legend>
             <div>
@@ -153,7 +154,7 @@ const ProjectTaskCreateDialog: React.FC = () => {
                   <label>截止日期（可选）<input type="date" min={date} value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
                 </div>
               </details>
-              {suggestion && <div className="ds-quantity-suggestion" aria-label="每日建议预览"><span>从计划日到截止日还有 {suggestion.daysRemaining} 天</span><strong>建议首日完成 {suggestion.suggested} {unit}</strong></div>}
+              {suggestion && <div className="ds-quantity-suggestion" aria-label="每日建议预览"><span>从开始日到截止日还有 {suggestion.daysRemaining} 天</span><strong>建议首日完成 {suggestion.suggested} {unit}</strong></div>}
             </>
           )}
           {error && <div className="ds-vocab-error" role="alert">{error}</div>}

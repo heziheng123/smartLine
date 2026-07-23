@@ -24,10 +24,6 @@ export function safeObjectId(value: string): string | null {
   return /^[a-zA-Z0-9_-]{8,128}$/.test(value) ? value : null;
 }
 
-export function attachmentKey(userId: string, id: string): string {
-  return `users/${userId}/attachments/${id}`;
-}
-
 export function archiveKey(userId: string, period: string): string {
   return `users/${userId}/archives/${period}.json`;
 }

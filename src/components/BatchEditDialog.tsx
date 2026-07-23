@@ -9,8 +9,6 @@ import {
   CalendarDays,
   Sparkles,
   Trash2,
-  Maximize2,
-  Minimize2,
 } from 'lucide-react';
 import type { Task, SmartTaskBlock } from '@/types';
 import {
@@ -21,7 +19,7 @@ import {
   type ParsedRow,
   type BatchScheduleConfig,
 } from '@/utils/excelImport';
-import { DEFAULT_TAGS } from '@/utils/blocks';
+import { DEFAULT_TAGS, requiresTaskStartDate } from '@/utils/blocks';
 import { todayStr, isBeforeDay } from '@/utils/dateSafe';
 
 import { useGraphStore } from '@/graph/store';
@@ -50,7 +48,6 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
 }) => {
   const [rows, setRows] = useState<ParsedRow[]>([]);
   const [initialized, setInitialized] = useState(false);
-  const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
     if (!initialized) {
@@ -172,18 +169,15 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   };
 
   return (
-    <div className="tl-dialog-overlay bi-overlay">
-      <div className={`tl-dialog bi-dialog ${isMaximized ? 'bi-dialog--maximized' : ''}`}>
+    <div className="tl-dialog-overlay tl-dialog-overlay--workspace bi-overlay">
+      <div className="tl-dialog tl-dialog--workspace bi-dialog" role="dialog" aria-modal="true" aria-label={`批量编辑任务：${task.name}`}>
         {/* ── 头部 ── */}
         <div className="tl-dialog-header bi-header">
           <h2 className="tl-dialog-title">
             批量编辑任务：{task.name}
           </h2>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="tl-dialog-close" onClick={() => setIsMaximized(!isMaximized)} type="button">
-              {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </button>
-            <button className="tl-dialog-close" onClick={onClose} type="button">×</button>
+            <button className="tl-dialog-close" onClick={onClose} type="button" aria-label="关闭批量编辑">×</button>
           </div>
         </div>
 
@@ -345,6 +339,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                 {rows.map((r) => {
                   const isEmpty = !r.title;
                   const hasError = !!r._error && !isEmpty;
+                  const requiresStartDate = requiresTaskStartDate({ taskKind: r._taskKind });
                   
                   // 幽灵文本（知识节点）
                   let nodeGhost = '';
@@ -433,6 +428,9 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                           type="date"
                           className="bi-edit-input"
                           value={r.date}
+                          required={requiresStartDate}
+                          aria-label={requiresStartDate ? '数量任务开始日期（必填）' : '任务排期日期'}
+                          title={requiresStartDate ? '数量任务从开始日期起每天生效，不能清除' : '可清除为未排期'}
                           onChange={(e) => {
                             handleRowChange(r._rowId, 'date', e.target.value);
                             handleRowChange(r._rowId, 'dateRaw', e.target.value);
@@ -444,6 +442,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                           type="date"
                           className="bi-edit-input"
                           value={r.deadline}
+                          min={r.date || undefined}
                           onChange={(e) => {
                             handleRowChange(r._rowId, 'deadline', e.target.value);
                             handleRowChange(r._rowId, 'deadlineRaw', e.target.value);

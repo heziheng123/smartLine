@@ -2781,6 +2781,39 @@
   margin-bottom: 2px;
 }
 
+.eb-more-menu { position: relative; }
+.eb-more-menu > summary { list-style: none; }
+.eb-more-menu > summary::-webkit-details-marker { display: none; }
+.eb-more-menu-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 80;
+  width: 152px;
+  padding: 6px;
+  border: 1px solid var(--ui-border, #e2e8f0);
+  border-radius: 11px;
+  background: var(--ui-surface, #fff);
+  box-shadow: var(--ui-dialog-shadow, 0 14px 34px rgba(15, 23, 42, .14));
+}
+.eb-more-menu-popover button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+  cursor: pointer;
+}
+.eb-more-menu-popover button:hover { background: #f1f5f9; color: #1e293b; }
+.eb-more-menu-popover button:disabled { cursor: not-allowed; opacity: .42; }
+.eb-more-menu-popover button.is-danger { color: #dc2626; }
+.eb-more-menu-popover button.is-danger:hover { background: #fef2f2; color: #b91c1c; }
+
 .eb-stat-card--warn .eb-stat-icon { color: #B45309; }
 .eb-stat-card--danger .eb-stat-icon { color: #DC2626; }
 
@@ -5364,8 +5397,8 @@
   }
 }
 /* ── 批量调整复习计划 ─────────────────────────────────── */
-.eb-batch-overlay { z-index: 10050; display: flex; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(2px); }
-.eb-panel.eb-batch-panel { position: relative; inset: auto; width: min(960px, calc(100vw - 48px)); height: min(680px, calc(100dvh - 48px)); max-width: 960px; max-height: 680px; border: 1px solid rgba(226,232,240,.9); border-radius: 18px; box-shadow: 0 24px 70px rgba(15,23,42,.2); display: flex; flex-direction: column; }
+.eb-batch-overlay { z-index: 10050; display: flex; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(4px); }
+.eb-panel.eb-batch-panel { position: relative; inset: auto; width: min(900px, calc(100vw - 48px)); height: min(680px, calc(100dvh - 48px)); max-width: 900px; max-height: 680px; border: 1px solid rgba(226,232,240,.9); border-radius: 18px; box-shadow: 0 24px 70px rgba(15,23,42,.2); display: flex; flex-direction: column; }
 .eb-batch-subtitle { margin: 3px 0 0; color: #94a3b8; font-size: 12px; }
 .eb-batch-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(220px, .85fr) minmax(300px, 1fr) minmax(330px, 1.25fr); gap: 14px; padding: 14px 16px; overflow: hidden; background: #f8fafc; }
 .eb-batch-section { min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 15px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import { useShallow } from 'zustand/react/shallow';
 import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
@@ -769,14 +770,18 @@ export const KnowledgeGraphView: React.FC = () => {
             <div className="flex shrink-0 items-center justify-end gap-2">
               <button onClick={bindingSession.cancel} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">取消</button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setBindingError('');
-                  if (!bindingSession.confirm()) setBindingError('原任务已不存在或任务块已被删除，无法保存；你可以取消返回。');
+                  const result = await bindingSession.confirm();
+                  if (result === 'missing') {
+                    setBindingError('原任务已不存在或任务块已被删除，无法保存；你可以取消返回。');
+                  }
                 }}
-                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
+                disabled={bindingSession.isConfirming}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
                 aria-label="完成知识节点选择"
               >
-                <Check size={14} /> 完成选择
+                <Check size={14} /> {bindingSession.isConfirming ? '等待选择…' : '完成选择'}
               </button>
             </div>
           </div>
@@ -1098,11 +1103,11 @@ export const KnowledgeGraphView: React.FC = () => {
                       <Zap size={13} className={selectedActivationState?.isActivated ? 'fill-blue-500' : ''} />
                     </button>
                     <div className={styles.actionDivider}></div>
-                    <button onClick={() => { if(confirm('确定归档吗？')) { archiveNodeCascade(selectedNode.id, true); setSelectedNodeId(null); } }} className={styles.actionBtn}>
+                    <button onClick={async () => { if(await requestConfirmation('确定归档吗？')) { archiveNodeCascade(selectedNode.id, true); setSelectedNodeId(null); } }} className={styles.actionBtn}>
                       <Archive size={13} />
                     </button>
                     <div className={styles.actionDivider}></div>
-                    <button onClick={() => { if(confirm('确定删除吗？')) { deleteNode(selectedNode.id); setSelectedNodeId(null); } }} className={`${styles.actionBtn} ${styles.danger}`}>
+                    <button onClick={async () => { if(await requestConfirmation({ title: '删除知识节点？', message: `节点「${selectedNode.name}」将被永久删除。`, confirmLabel: '删除节点', tone: 'danger' })) { deleteNode(selectedNode.id); setSelectedNodeId(null); } }} className={`${styles.actionBtn} ${styles.danger}`}>
                       <Trash2 size={13} />
                     </button>
                   </div>

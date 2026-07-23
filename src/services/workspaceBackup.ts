@@ -9,6 +9,7 @@ import { persistDailySchedules, useDailyScheduleStore } from '@/components/daily
 import { parseSourceId } from '@/components/dailySchedule/conversion';
 import { getReviewTopicKey } from '@/ebb/scheduler';
 import { createScopedStorage } from '@/utils/persistence';
+import { isContinuousTask } from '@/domain/taskRules';
 
 export const WORKSPACE_SCHEMA_VERSION = 1;
 const snapshotStorage = createScopedStorage('workspace_snapshots');
@@ -312,7 +313,7 @@ export function validateWorkspaceBackup(value: unknown): {
       }
       const title = typeof block.header.title === 'string' ? block.header.title : block.id;
       if (typeof block.header.isCompleted !== 'boolean') issues.push(`任务“${title}”的完成状态无效`);
-      const isQuantity = block.header.taskKind === 'quantity' || block.header.taskKind === 'vocabulary';
+      const isQuantity = isContinuousTask(block.header);
       if (typeof block.header.duration !== 'number' || !Number.isFinite(block.header.duration)
         || (isQuantity ? block.header.duration < 0 : block.header.duration <= 0)) {
         issues.push(`任务“${title}”的时长无效`);
@@ -340,7 +341,11 @@ export function validateWorkspaceBackup(value: unknown): {
           if (block.header.isCompleted !== (learned >= (total as number))) issues.push(`数量任务“${title}”的完成状态与数量不一致`);
         }
       }
-      if (block.header.date !== undefined && !isDate(block.header.date)) issues.push(`任务“${title}”的计划日期无效`);
+      if (isQuantity && !isDate(block.header.date)) {
+        issues.push(`数量任务“${title}”缺少有效的开始日期`);
+      } else if (block.header.date !== undefined && !isDate(block.header.date)) {
+        issues.push(`任务“${title}”的计划日期无效`);
+      }
       if (block.header.deadline !== undefined && !isDate(block.header.deadline)) issues.push(`任务“${title}”的截止日期无效`);
       if (block.header.completedDate !== undefined && !isDate(block.header.completedDate)) issues.push(`任务“${title}”的完成日期无效`);
       if (block.header.isCompleted === true && !block.header.completedDate) issues.push(`任务“${title}”已完成但缺少完成日期`);

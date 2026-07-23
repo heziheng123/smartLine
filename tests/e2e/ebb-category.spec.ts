@@ -71,7 +71,8 @@ test('EBB uses the knowledge root as the category while preserving standalone ma
   await expect(manualRow.locator('.eb-topic-row-tag')).toHaveText('手动标签');
   await expect(page.getByText('战国后期教育论著 导学', { exact: true })).toHaveCount(0);
 
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByLabel('复习更多操作').click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   const categorySection = page.locator('.eb-settings-section').filter({ hasText: '分类颜色' });
   await expect(categorySection).toContainText('教育学');
   await expect(categorySection).toContainText('手动标签');

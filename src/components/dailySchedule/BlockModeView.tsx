@@ -11,17 +11,16 @@ import { useEbbStore } from '@/ebb/store';
 import { getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
-import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
 import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '@/ebb/category';
-import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
-import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
-import { setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { removeQuantityProgress, setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
 import TimeGrid from './TimeGrid';
 import { BlockEditor, QuickCreateInput } from './TimeBlockOverlays';
-import type { TimeBlock, TaskSource } from './types';
+import type { SmartTaskBlock } from '@/types';
+import type { TimeBlock } from './types';
+import type { CompletedDailyPoolItem, DailyPoolItem } from './DailyTaskPool';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import {
   projectBadgeStyle,
@@ -39,34 +38,25 @@ import {
 
 // ── 任务池项类型 ────────────────────────────────────────────
 
-interface PoolItem {
-  id: string;
-  name: string;
-  source: TaskSource;
-  color?: string;
-  categoryColor?: string;
-  detail?: string;
-  duration?: number;
-  sourceId: string;
-}
-
 // ── Props ───────────────────────────────────────────────────
 
 interface BlockModeViewProps {
   selectedDate: string;
-  /** 已安排的 sourceId 集合（来自 items + blocks，由父组件计算） */
-  scheduledSourceIds: Set<string>;
+  poolItems: DailyPoolItem[];
+  completedPoolItems: CompletedDailyPoolItem[];
   onReviewToggleError: (error: string | null) => void;
+  onOpenQuantityProgress: (taskId: string, block: SmartTaskBlock) => void;
 }
 
 // ── 主组件 ──────────────────────────────────────────────────
 
 const BlockModeView: React.FC<BlockModeViewProps> = ({
   selectedDate,
-  scheduledSourceIds,
+  poolItems,
+  completedPoolItems,
   onReviewToggleError,
+  onOpenQuantityProgress,
 }) => {
-  const today = todayStr();
   const [showCompletedPool, setShowCompletedPool] = useState(false);
   const { tasks: rawTlTasks, groups: rawTlGroups } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
@@ -232,121 +222,6 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     return [...new Set(ids)];
   }, [blocks]);
 
-  // ── 项目任务来源：SmartTaskBlock（与时段模式一致） ──────────
-  const allTodos = useSmartTaskTodos(tlTasks, rawTlGroups);
-
-  const todayProjectTasks = useMemo(() => {
-    return allTodos.filter((todo) => {
-      if (isQuantityTask({ taskKind: todo._taskKind })) return false;
-      if (todo.checked) return false;
-      // 只有精确指定了排期日或截止日为当天的任务才会被纳入任务池
-      if (todo.scheduled && todo.scheduled === selectedDate) return true;
-      if (todo.due && todo.due === selectedDate) return true;
-      return false;
-    });
-  }, [allTodos, selectedDate]);
-
-  const completedProjectTasks = useMemo(() => {
-    return allTodos.filter((todo) => {
-      if (isQuantityTask({ taskKind: todo._taskKind })) return false;
-      if (!todo.checked) return false;
-      return todo.scheduled === selectedDate || todo.due === selectedDate;
-    });
-  }, [allTodos, selectedDate]);
-
-  const todayReviewTasks = useMemo(() => {
-    return ebbReviewTasks.filter((t) => {
-      if (t.isCompleted) return false;
-      return t.dueDate === selectedDate || (isOverdue(t) && selectedDate === today);
-    });
-  }, [ebbReviewTasks, selectedDate, today]);
-
-  const completedReviewTasks = useMemo(
-    () => ebbReviewTasks.filter((task) => task.isCompleted && task.dueDate === selectedDate),
-    [ebbReviewTasks, selectedDate],
-  );
-
-  // ── 任务池列表（sourceId 格式与 DailyScheduleView 完全一致） ──
-  const poolItems = useMemo(() => {
-    const items: PoolItem[] = [];
-
-    for (const todo of todayProjectTasks) {
-      // sourceId 格式必须与 DailyScheduleView 保持一致，否则两模式间已安排状态不互通
-      const sourceId = todo._blockId
-        ? getProjectBlockSourceId(todo.parentTaskId, todo._blockId)
-        : `project-md:${todo.id}`;
-      if (scheduledSourceIds.has(sourceId)) continue;
-      items.push({
-        id: `pool-project-${todo.id}`,
-        name: todo.text,
-        source: 'project',
-        color: todo.parentTaskColor,
-        categoryColor: todo._tagColor,
-        detail: todo.parentTaskTitle,
-        sourceId,
-        duration: todo._duration,
-      });
-    }
-
-    const { roundMap, totalRoundsMap } = computeRounds(ebbReviewTasks);
-    for (const task of todayReviewTasks) {
-      if (scheduledSourceIds.has(getReviewSourceId(task.id))) continue;
-      const round = roundMap.get(task.id) ?? 1;
-      const total = totalRoundsMap.get(getReviewTopicKey(task)) ?? 1;
-      items.push({
-        id: `pool-review-${task.id}`,
-        name: task.topicName,
-        source: 'review',
-        color: getReviewCategoryColor(
-          resolveReviewCategory(task, ebbRootByNodeId),
-          ebbSettingsData.tagColors,
-        ) ?? '#8B9DC3',
-        categoryColor: getReviewCategoryColor(
-          resolveReviewCategory(task, ebbRootByNodeId),
-          ebbSettingsData.tagColors,
-        ),
-        detail: `第${round}/${total}轮`,
-        sourceId: getReviewSourceId(task.id),
-        duration: 30,
-      });
-    }
-
-    return items;
-  }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData, ebbRootByNodeId]);
-
-  const completedPoolItems = useMemo(() => {
-    const items: PoolItem[] = [];
-    for (const todo of completedProjectTasks) {
-      if (!todo._blockId) continue;
-      const sourceId = getProjectBlockSourceId(todo.parentTaskId, todo._blockId);
-      if (scheduledSourceIds.has(sourceId)) continue;
-      items.push({
-        id: `completed-project-${todo.id}`,
-        name: todo.text,
-        source: 'project',
-        sourceId,
-        detail: todo.parentTaskTitle,
-        color: todo.parentTaskColor,
-        categoryColor: todo._tagColor,
-      });
-    }
-    for (const task of completedReviewTasks) {
-      const sourceId = getReviewSourceId(task.id);
-      if (scheduledSourceIds.has(sourceId)) continue;
-      items.push({
-        id: `completed-review-${task.id}`,
-        name: task.topicName,
-        source: 'review',
-        sourceId,
-        categoryColor: getReviewCategoryColor(
-          resolveReviewCategory(task, ebbRootByNodeId),
-          ebbSettingsData.tagColors,
-        ),
-      });
-    }
-    return items;
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, ebbSettingsData, ebbRootByNodeId]);
-
   // ── 拖拽状态（纯 HTML5 DnD） ──────────────────────────
   const [draggedPoolItemId, setDraggedPoolItemId] = useState<string | null>(null);
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
@@ -430,15 +305,20 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         if (!parentTask) return;
 
         if (parsed.blockId) {
+          const currentBlock = parentTask.blocks.find((candidate) => candidate.id === parsed.blockId);
+          if (currentBlock?.type === 'smart-task' && isQuantityTask(currentBlock.header)) {
+            onOpenQuantityProgress(parsed.parentTaskId, currentBlock);
+            return;
+          }
           const result = toggleProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, todayStr());
           if ('error' in result) onReviewToggleError(result.error);
         }
       }
     },
-    [blocks, ebbToggleReviewTask, onReviewToggleError, tlTasks],
+    [blocks, ebbToggleReviewTask, onOpenQuantityProgress, onReviewToggleError, tlTasks],
   );
 
-  const handleUndoCompletedPoolItem = useCallback((item: PoolItem) => {
+  const handleUndoCompletedPoolItem = useCallback((item: CompletedDailyPoolItem) => {
     if (item.source === 'review') {
       const parsed = parseSourceId(item.sourceId);
       if (parsed?.source === 'review') onReviewToggleError(ebbToggleReviewTask(parsed.reviewId));
@@ -449,10 +329,16 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     if (!parsed || parsed.source !== 'project' || !parsed.blockId) return;
     const parentTask = tlTasks.find((task) => task.id === parsed.parentTaskId);
     const currentBlock = parentTask?.blocks.find((block) => block.id === parsed.blockId);
-    if (currentBlock?.type !== 'smart-task' || !currentBlock.header.isCompleted) return;
+    if (currentBlock?.type !== 'smart-task') return;
+    if (isQuantityTask(currentBlock.header)) {
+      const result = removeQuantityProgress(parsed.parentTaskId, parsed.blockId, selectedDate);
+      if ('error' in result) onReviewToggleError(result.error);
+      return;
+    }
+    if (!currentBlock.header.isCompleted) return;
     const result = setProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, false);
     if ('error' in result) onReviewToggleError(result.error);
-  }, [ebbToggleReviewTask, onReviewToggleError, tlTasks]);
+  }, [ebbToggleReviewTask, onReviewToggleError, selectedDate, tlTasks]);
 
   const handleRemove = useCallback(
     (blockId: string) => {
@@ -733,6 +619,12 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                         </span>
                       )}
                     </span>
+                    {isQuantityTask({ taskKind: item.taskKind }) && (
+                      <span className="ds-pool-quantity-summary">
+                        今日 {item.quantityActual ?? 0}/{item.quantityTarget ?? 0} {item.quantityUnit}
+                        {' · '}总进度 {item.quantityCompleted ?? 0}/{item.quantityTotal ?? 0} {item.quantityUnit}
+                      </span>
+                    )}
                   </div>
                   <span
                     className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge"

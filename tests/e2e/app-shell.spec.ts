@@ -139,7 +139,8 @@ test('EBB safe mode keeps recovery controls usable and disables the high-load bo
 
 test('EBB complexity settings can be edited, saved and reset without closing the panel', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByLabel('复习更多操作').click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
 
   const panel = page.locator('.eb-panel--settings');
   const section = panel.locator('.eb-settings-section').filter({ hasText: '复杂度配置' });
@@ -155,8 +156,10 @@ test('EBB complexity settings can be edited, saved and reset without closing the
   await expect(easyRow).toContainText('间隔：1, 4, 9');
   await expect(panel).toBeVisible();
 
-  page.once('dialog', (dialog) => dialog.accept());
   await easyRow.getByRole('button', { name: '重置🟢 简单复杂度配置' }).click();
+  const confirmation = page.getByRole('alertdialog');
+  await expect(confirmation).toContainText('重置');
+  await confirmation.getByRole('button', { name: '继续' }).click();
   await expect(easyRow).toContainText('间隔：1, 3, 7, 15, 30');
   await expect(panel).toBeVisible();
 });

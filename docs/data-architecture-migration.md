@@ -19,7 +19,7 @@ GitHub OAuth 负责用户身份，Cloudflare Pages Functions 使用服务器端 
 
 ## R2（可选）
 
-在 Cloudflare 创建 Production 和 Preview 两个不同的 R2 Bucket，并分别以 `SMARTLINE_R2` 绑定到对应环境。任务附件最大15MB，Liveblocks中只保存附件ID、名称、类型和大小，不保存Base64内容。未绑定R2时附件和历史归档接口返回503，但其他功能不受影响。
+在 Cloudflare 创建 Production 和 Preview 两个不同的 R2 Bucket，并分别以 `SMARTLINE_R2` 绑定到对应环境。R2仅用于保存历史归档；未绑定R2时历史归档接口返回503，但其他功能不受影响。
 
 ## 最终停用旧同步的条件
 

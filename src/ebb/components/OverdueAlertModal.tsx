@@ -3,7 +3,7 @@
 // 启动时检测逾期任务，提示用户顺延或忽略
 // ============================================================
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Calendar, SkipForward, X } from 'lucide-react';
 import { useEbbStore } from '../store';
@@ -12,6 +12,7 @@ import { getReviewTopicKey, isOverdue, computeRounds } from '../scheduler';
 import { ROUND_COLORS } from '../constants';
 import { diffDays, todayStr } from '@/utils/dateSafe';
 import type { ReviewTask } from '../types';
+import { useSelectionSet } from '@/hooks/useSelectionSet';
 
 interface OverdueAlertModalProps {
   onClose: () => void;
@@ -21,7 +22,8 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
   const { reviewTasks, rescheduleOverdue } = useEbbStore(
     useShallow((s) => ({ reviewTasks: s.reviewTasks, rescheduleOverdue: s.rescheduleOverdue })),
   );
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selection = useSelectionSet();
+  const { selectedIds } = selection;
 
   // 所有逾期未完成任务
   const overdueTasks = useMemo(() => {
@@ -48,20 +50,13 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
   const allSelected = overdueTasks.length > 0 && selectedIds.size === overdueTasks.length;
   const toggleAll = useCallback(() => {
     if (allSelected) {
-      setSelectedIds(new Set());
+      selection.clear();
     } else {
-      setSelectedIds(new Set(overdueTasks.map((t) => t.id)));
+      selection.replace(overdueTasks.map((t) => t.id));
     }
-  }, [allSelected, overdueTasks]);
+  }, [allSelected, overdueTasks, selection]);
 
-  const toggleOne = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+  const toggleOne = selection.toggle;
 
   // 顺延选中任务到今天
   const handleReschedule = useCallback(() => {
@@ -105,13 +100,11 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
                     }}
                     onChange={() => {
                       const allChecked = tasks.every((t) => selectedIds.has(t.id));
-                      setSelectedIds((prev) => {
-                        const next = new Set(prev);
+                      selection.mutate((next) => {
                         for (const t of tasks) {
                           if (allChecked) next.delete(t.id);
                           else next.add(t.id);
                         }
-                        return next;
                       });
                     }}
                     className="eb-round-check"

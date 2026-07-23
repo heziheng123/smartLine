@@ -4,6 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, useCallback } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import { createPortal } from 'react-dom';
 import { todayStr, getDayOfWeek } from '@/utils/dateSafe';
 import { X, Eye, Check } from 'lucide-react';
@@ -45,9 +46,9 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
   const intervals = useMemo(() => parseIntervals(intervalsText), [intervalsText]);
 
   const handleComplexityChange = useCallback(
-    (level: ComplexityLevel) => {
+    async (level: ComplexityLevel) => {
       if (intervalsDirty && !isDefaultIntervals(intervals ?? [], complexity, ebbSettings.complexityConfigs)) {
-        if (!confirm('已手动修改间隔，切换复杂度将覆盖当前间隔，是否继续？')) return;
+        if (!await requestConfirmation('已手动修改间隔，切换复杂度将覆盖当前间隔，是否继续？')) return;
       }
       setComplexity(level);
       setIntervalsText(formatIntervals(getIntervalsForComplexity(level, ebbSettings.complexityConfigs)));

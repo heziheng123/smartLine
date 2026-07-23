@@ -4,6 +4,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useEbbStore } from '../store';
@@ -56,8 +57,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
   // 复杂度配置编辑
   const [editingComplexity, setEditingComplexity] = useState<ComplexityLevel | null>(null);
 
-  const handleResetComplexity = useCallback((level: ComplexityLevel) => {
-    if (!confirm(`重置「${level}」复杂度为默认配置？`)) return;
+  const handleResetComplexity = useCallback(async (level: ComplexityLevel) => {
+    if (!await requestConfirmation(`重置「${level}」复杂度为默认配置？`)) return;
     const newConfigs = { ...s.complexityConfigs, [level]: DEFAULT_COMPLEXITY_CONFIGS[level] };
     store.updateSettings({ complexityConfigs: newConfigs });
   }, [s.complexityConfigs, store]);

@@ -4,6 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, useCallback, memo } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import { createPortal } from 'react-dom';
 import {
   Search, ChevronRight, BookOpen, Plus, Trash2, Edit3,
@@ -699,8 +700,13 @@ const ManageOutlineModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setEditingId(null);
   }, [editingId, editName, editTag, updateOutlineNode]);
 
-  const handleDelete = useCallback((id: string) => {
-    if (!confirm('确认删除该节点及其所有子节点？')) return;
+  const handleDelete = useCallback(async (id: string) => {
+    if (!await requestConfirmation({
+      title: '删除目录节点？',
+      message: '该节点及其全部子节点都会被删除。',
+      confirmLabel: '删除节点',
+      tone: 'danger',
+    })) return;
     deleteOutlineNode(id);
   }, [deleteOutlineNode]);
 

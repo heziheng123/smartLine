@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import { ArrowRightLeft, Check, Cloud, Copy, Database, Download, Eye, EyeOff, Link, LogOut, RefreshCw, Unlink, Upload } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
@@ -209,7 +210,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         const issueText = result.summary.issues.length > 0
           ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
           : '';
-        const confirmed = window.confirm(
+        const confirmed = await requestConfirmation(
           `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
         );
         if (!confirmed) return;
@@ -243,7 +244,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, []);
 
   const handleRestoreSnapshot = useCallback(async (snapshot: WorkspaceSnapshot) => {
-    if (!window.confirm(`确定恢复 ${new Date(snapshot.createdAt).toLocaleString('zh-CN')} 的本地快照吗？当前工作区会先自动保存快照。`)) return;
+    if (!await requestConfirmation(`确定恢复 ${new Date(snapshot.createdAt).toLocaleString('zh-CN')} 的本地快照吗？当前工作区会先自动保存快照。`)) return;
     try {
       await restoreLocalSnapshot(snapshot);
       setRestoreMessage('本地快照恢复成功。');
@@ -286,7 +287,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       return;
     }
     const summary = migrationCheck.summary;
-    if (!window.confirm(`将旧四房间复制到一个认证工作区：\n任务 ${summary.tasks}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
+    if (!await requestConfirmation(`将旧四房间复制到一个认证工作区：\n任务 ${summary.tasks}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
     setMigrationBusy(true);
     setMigrationStatus('正在创建快照、复制并校验数据；完成前请不要刷新或关闭页面…');
     try {
@@ -305,8 +306,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     }
   }, [activeCode, auth.login, auth.userId, migrationCheck]);
 
-  const handleLegacyFallback = useCallback(() => {
-    if (!activeCode || !window.confirm('确定暂时返回旧四房间吗？统一工作区数据不会删除。')) return;
+  const handleLegacyFallback = useCallback(async () => {
+    if (!activeCode || !await requestConfirmation('确定暂时返回旧四房间吗？统一工作区数据不会删除。')) return;
     resetToLegacyArchitecture(activeCode);
     setArchitecture(readWorkspaceSyncSettings());
     setRestoreMessage('已切回旧四房间恢复通道。');
@@ -341,7 +342,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   return (
     <div className="tl-dialog-overlay" onClick={onClose}>
-      <div className="tl-dialog" role="dialog" aria-modal="true" aria-label="云同步与完整备份" onClick={(event) => event.stopPropagation()} style={{ maxWidth: 520 }}>
+      <div className="tl-dialog tl-dialog--standard" role="dialog" aria-modal="true" aria-label="云同步与完整备份" onClick={(event) => event.stopPropagation()}>
         <h3 className="tl-dialog-title"><Cloud size={18} />云同步与完整备份</h3>
 
         <div className="tl-sync-status">
@@ -353,8 +354,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           {auth.login ? ` · GitHub：${auth.login}` : ''}
         </p>
         <p className="tl-dialog-hint">待补传字段：{pendingFieldCount} · 冲突副本：{syncConflicts.length}</p>
-        {syncConflicts[0] && <button type="button" className="tl-sync-backup-btn" onClick={() => {
-          if (!window.confirm('应用最近的离线冲突副本吗？恢复内容会重新进入待同步队列。')) return;
+        {syncConflicts[0] && <button type="button" className="tl-sync-backup-btn" onClick={async () => {
+          if (!await requestConfirmation('应用最近的离线冲突副本吗？恢复内容会重新进入待同步队列。')) return;
           void restoreWorkspaceConflict(syncConflicts[0].id)
             .then(() => setRestoreMessage('冲突副本已恢复并进入待同步队列。'))
             .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '冲突恢复失败。'));
@@ -387,8 +388,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           <span className="tl-dialog-hint">{architecture.architecture === 'unified' ? `当前使用一个认证工作区房间：${architecture.unifiedRoomId}` : '当前仍使用旧四房间；完成检查后可复制迁移到统一工作区。'}</span>
         </label>
 
-        {liveblocksAuthMode === 'authenticated' && enabledCount > 0 && (
-          <div className="tl-sync-backup-section" style={{ marginBottom: 14 }}>
+        {enabledCount > 0 && (
+          <details className="tl-settings-disclosure" style={{ marginBottom: 14 }}>
+            <summary><Database size={15} />同步高级设置</summary>
+          <div className="tl-sync-backup-section tl-settings-disclosure-content">
             <h4 className="tl-sync-backup-title"><Database size={15} />同步架构</h4>
             {architecture.architecture === 'legacy' ? <>
               <p className="tl-sync-backup-hint">迁移采用“读取旧房间 → 本地快照 → 复制 → 数量和 SHA-256 校验 → 切换”，不会删除旧数据。</p>
@@ -404,6 +407,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               {migrationReport && <button type="button" className="tl-sync-backup-btn" onClick={() => downloadMigrationReport(migrationReport)} style={{ marginLeft: 8 }}><Download size={14} />下载迁移报告</button>}
             </>}
           </div>
+          </details>
         )}
 
         <div className="tl-sync-info">
@@ -442,7 +446,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         )}
 
         <div className="tl-sync-divider" />
-        <div className="tl-sync-backup-section">
+        <details className="tl-settings-disclosure">
+          <summary><Database size={15} />数据、备份与恢复</summary>
+        <div className="tl-sync-backup-section tl-settings-disclosure-content">
           <h4 className="tl-sync-backup-title">完整工作区备份与恢复</h4>
           <div className="tl-sync-backup-actions">
             <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => fileInputRef.current?.click()}>
@@ -457,7 +463,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           </div>
           <p className="tl-sync-backup-hint">包含时间轴、项目文档、EBB、每日安排、知识大盘和应用设置。恢复前会校验数据并自动创建本地快照。</p>
           {snapshotStats && <p className="tl-sync-backup-hint">快照：{snapshotStats.snapshotCount} 份、{snapshotStats.chunkCount} 个去重数据块、约 {(snapshotStats.snapshotBytes / 1024).toFixed(1)} KB。</p>}
-          {auth.enabled && <p className="tl-sync-backup-hint">R2附件与历史归档：{r2Configured === null ? '检测中' : r2Configured ? '已启用' : '尚未绑定 SMARTLINE_R2（不影响现有数据）'}。</p>}
+          {auth.enabled && <p className="tl-sync-backup-hint">R2历史归档：{r2Configured === null ? '检测中' : r2Configured ? '已启用' : '尚未绑定 SMARTLINE_R2（不影响现有数据）'}。</p>}
           {r2Configured && <div className="tl-sync-backup-actions">
             <input className="tl-dialog-input" type="month" value={archivePeriod} onChange={(event) => setArchivePeriod(event.target.value)} style={{ maxWidth: 150 }} />
             <button type="button" className="tl-sync-backup-btn" onClick={() => void handleArchivePeriod()}><Upload size={14} />保存月度归档</button>
@@ -481,6 +487,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             </div>
           )}
         </div>
+        </details>
 
         <div className="tl-dialog-actions">
           <button type="button" className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>关闭</button>

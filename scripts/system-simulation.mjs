@@ -18,6 +18,12 @@ globalThis.sessionStorage = new MemoryStorage();
 globalThis.crypto ??= webcrypto;
 globalThis.navigator ??= { onLine: true };
 globalThis.window = globalThis;
+globalThis.CustomEvent ??= class CustomEvent extends Event {
+  constructor(type, init = {}) {
+    super(type);
+    this.detail = init.detail;
+  }
+};
 globalThis.addEventListener = (type, listener) => {
   const values = listeners.get(type) ?? new Set();
   values.add(listener);
@@ -57,6 +63,17 @@ try {
     blocksModule,
     persistenceModule,
     categoryModule,
+    excelImportModule,
+    taskRulesModule,
+    dailyTaskProjection,
+    timelineDataModule,
+    ebbDataModule,
+    projectTaskCommands,
+    projectTaskQuery,
+    projectTaskEffects,
+    ebbTaskSyncPlanner,
+    graphBindingModule,
+    choiceModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -74,12 +91,24 @@ try {
     load('/src/utils/blocks.ts'),
     load('/src/utils/persistence.ts'),
     load('/src/ebb/category.ts'),
+    load('/src/utils/excelImport.ts'),
+    load('/src/domain/taskRules.ts'),
+    load('/src/domain/dailyTaskProjection.ts'),
+    load('/src/store/timelineData.ts'),
+    load('/src/ebb/dataNormalization.ts'),
+    load('/src/services/projectTaskCommands.ts'),
+    load('/src/domain/projectTaskQuery.ts'),
+    load('/src/domain/projectTaskEffects.ts'),
+    load('/src/ebb/taskSyncPlanner.ts'),
+    load('/src/graph/bindingStore.ts'),
+    load('/src/services/choice.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
   const { useGraphStore } = graphModule;
   const { useEbbStore } = ebbModule;
   const { useDailyScheduleStore } = dailyModule;
+  const { useGraphBindingStore } = graphBindingModule;
   const {
     buildRootNodeMap,
     collectReviewCategories,
@@ -951,6 +980,567 @@ try {
     assert.equal(blocksModule.isQuantityTask(header), true);
     assert.equal(blocksModule.getQuantityUnit(header), '个');
     assert.equal(blocksModule.getQuantityCompleted(header), 1330);
+  });
+
+  check('数量任务的开始日期不可清除，批量编辑与保存层均保留业务约束', () => {
+    const quantity = smartBlock('quantity-start', '专业课背诵', [], false);
+    quantity.header = {
+      ...quantity.header,
+      taskKind: 'quantity',
+      date: '2026-07-10',
+      duration: 0,
+      quantityUnit: '章',
+      quantityTotal: 30,
+      quantityInitialCompleted: 0,
+      quantityRecords: {},
+    };
+    const sourceId = sourceIds.getProjectBlockSourceId('p1', quantity.id);
+    resetStores({
+      tasks: [project('p1', [quantity])],
+      schedules: {
+        '2026-07-10': {
+          date: '2026-07-10',
+          items: [{ id: 'quantity-item', sourceId, name: quantity.header.title, source: 'project', timeSlot: 'morning', order: 0 }],
+          blocks: [],
+        },
+      },
+    });
+
+    useTimelineStore.getState().updateBlockHeader('p1', quantity.id, { date: undefined });
+    assert.equal(getBlock('p1', quantity.id).header.date, '2026-07-10');
+    assert.equal(useDailyScheduleStore.getState().schedules['2026-07-10'].items.length, 1);
+
+    const [row] = excelImportModule.blocksToRows([quantity]);
+    const [cleared] = excelImportModule.cleanseRows([{ ...row, date: '', dateRaw: '' }]);
+    assert.match(cleared._error, /开始日期/);
+    const [merged] = excelImportModule.mergeBatchEditRows([{ ...row, date: '', dateRaw: '', _error: '' }], [quantity]);
+    assert.equal(merged.header.date, '2026-07-10');
+  });
+
+  check('普通任务与持续任务共享统一时间语义，不再把持续任务的开始日判为逾期', () => {
+    assert.equal(taskRulesModule.getTaskTemporalState({ date: undefined, isCompleted: false }, '2026-07-20'), 'unscheduled');
+    assert.equal(taskRulesModule.getTaskTemporalState({ taskKind: 'quantity', isCompleted: false }, '2026-07-20'), 'invalid');
+    const continuous = {
+      taskKind: 'quantity',
+      date: '2026-07-01',
+      deadline: '2026-07-31',
+      isCompleted: false,
+    };
+    assert.equal(taskRulesModule.getTaskTemporalState(continuous, '2026-07-20'), 'active');
+    assert.equal(taskRulesModule.isTaskAvailableOnDate(continuous, '2026-07-20'), true);
+    assert.equal(taskRulesModule.getTaskPlanningDate(continuous, '2026-07-20'), '2026-07-20');
+    assert.equal(taskRulesModule.getTaskTemporalState(continuous, '2026-08-01'), 'overdue');
+    assert.equal(taskRulesModule.isTaskAvailableOnDate({ ...continuous, isCompleted: true }, '2026-07-20'), false);
+  });
+
+  check('每日安排的时段和时间块模式共享同一任务投影', () => {
+    const quantityTodo = {
+      id: 'quantity-projection', text: '背诵单词', checked: false,
+      parentTaskId: 'p1', parentTaskTitle: '英语', scheduled: '2026-07-01', due: '2026-07-31',
+      _blockId: 'quantity', _taskKind: 'quantity', _quantityTotal: 100,
+      _quantityInitialCompleted: 0, _quantityRecords: { '2026-07-20': 5 },
+    };
+    const standardTodo = {
+      id: 'standard-projection', text: '普通任务', checked: false,
+      parentTaskId: 'p1', parentTaskTitle: '英语', scheduled: '2026-07-20', _blockId: 'standard',
+      _taskKind: 'standard',
+    };
+    let projected = dailyTaskProjection.projectTasksForDate(
+      [quantityTodo, standardTodo],
+      '2026-07-20',
+    );
+    assert.deepEqual(projected.pending.map((task) => task.id), ['quantity-projection', 'standard-projection']);
+    assert.deepEqual(projected.completed, []);
+
+    projected = dailyTaskProjection.projectTasksForDate(
+      [{ ...quantityTodo, _quantityRecords: { '2026-07-20': 100 } }],
+      '2026-07-20',
+    );
+    assert.deepEqual(projected.pending, []);
+    assert.equal(projected.completed[0].id, 'quantity-projection');
+
+    const reviews = dailyTaskProjection.reviewTasksForDate([
+      { id: 'overdue-review', topicName: '逾期复习', dueDate: '2026-07-19', isCompleted: false },
+      { id: 'today-review', topicName: '今日复习', dueDate: '2026-07-20', isCompleted: false },
+    ], '2026-07-20', '2026-07-20');
+    assert.deepEqual(reviews.pending.map((task) => task.id), ['overdue-review', 'today-review']);
+  });
+
+  check('大型 Store 拆分后的纯数据层保持旧数据修复和规范化契约', () => {
+    const legacyQuantity = smartBlock('legacy-quantity', '旧数量任务', [], false);
+    legacyQuantity.header = {
+      ...legacyQuantity.header,
+      taskKind: 'quantity',
+      date: undefined,
+      quantityTotal: 20,
+      quantityRecords: { '2026-07-10': 2 },
+    };
+    const timeline = timelineDataModule.normalizeTimelineData({
+      tasks: [{ id: 'p1', name: '项目', start: '2026-07-01', end: '2026-07-31', blocks: [legacyQuantity] }],
+      groups: [{
+        id: 'g1', name: '分组', start: '2026-07-01', end: '2026-07-31', color: '#fff', autoDate: true,
+        children: [{ id: 'p1', name: '项目', start: '2026-07-01', end: '2026-07-31', blocks: [legacyQuantity] }],
+      }],
+      notes: [{ id: 'invalid-note' }],
+      milestones: [],
+    });
+    assert.equal(timeline.tasks.length, 1);
+    assert.equal(timeline.groups[0].children[0].groupId, 'g1');
+    assert.equal(timeline.tasks[0].blocks[0].header.date, '2026-07-10');
+    assert.equal(timeline.notes.length, 0);
+
+    const ebb = ebbDataModule.normalizeEbbData({
+      reviewTasks: [
+        { id: 'r1', topicName: '主题', dueDate: '2026-07-20', isCompleted: false, roundOrder: 2 },
+        { id: 'r1', topicName: '主题', dueDate: '2026-07-20', isCompleted: false, roundOrder: 2 },
+      ],
+      inboxItems: [],
+      outlineNodes: [
+        { id: 'a', name: 'A', type: 'chapter', parentId: 'b', childrenIds: ['b'], orderIndex: 0 },
+        { id: 'b', name: 'B', type: 'section', parentId: 'a', childrenIds: ['a'], orderIndex: 1 },
+      ],
+      ebbSettings: ebbConstants.DEFAULT_EBB_SETTINGS,
+    });
+    assert.equal(ebb.reviewTasks.length, 1);
+    assert.equal(ebb.reviewTasks[0].originalDueDate, '2026-07-20');
+    assert.ok(ebb.outlineNodes.some((node) => node.parentId === null));
+  });
+
+  check('项目任务创建、改期、完成、归档和删除统一经过命令边界', () => {
+    resetStores({ tasks: [project('command-project', [])] });
+    const block = smartBlock('command-task', '命令任务', [], false);
+    const created = projectTaskCommands.createProjectTask('command-project', block);
+    assert.equal(created.ok, true);
+    assert.equal(created.impact.operation, 'create');
+    assert.ok(created.impact.affectedDomains.includes('daily-schedule'));
+    assert.equal(getBlock('command-project', block.id).header.date, '2026-07-17');
+    assert.equal(projectTaskCommands.rescheduleProjectTask('command-project', block.id, '2026-07-23').ok, true);
+    assert.equal(getBlock('command-project', block.id).header.date, '2026-07-23');
+    assert.equal(projectTaskCommands.setProjectTaskCompletion('command-project', block.id, true, '2026-07-23').ok, true);
+    assert.equal(getBlock('command-project', block.id).header.isCompleted, true);
+    assert.equal(projectTaskCommands.setProjectTaskArchived('command-project', block.id, true, '2026-07-23T08:00:00.000Z').ok, true);
+    assert.equal(getBlock('command-project', block.id).header.isArchived, true);
+    assert.equal(projectTaskCommands.deleteProjectTask('command-project', block.id).ok, true);
+    assert.equal(useTimelineStore.getState().tasks[0].blocks.length, 0);
+
+    const invalidQuantity = smartBlock('invalid-command-task', '缺少开始日期', [], false);
+    invalidQuantity.header = { ...invalidQuantity.header, taskKind: 'quantity', date: undefined, duration: 0, quantityTotal: 10 };
+    const rejected = projectTaskCommands.createProjectTask('command-project', invalidQuantity);
+    assert.equal(rejected.ok, false);
+  });
+
+  check('项目任务重复保存会返回无变化结果，不写盘也不生成伪撤销能力', () => {
+    const block = smartBlock('same-task', '保持不变', [], false);
+    resetStores({ tasks: [project('p1', [block])] });
+    const taskBefore = useTimelineStore.getState().tasks[0];
+    const directResult = useTimelineStore.getState().updateBlockHeader('p1', 'same-task', {
+      title: '保持不变',
+      duration: 30,
+    });
+    assert.equal(directResult.changed, false);
+    assert.deepEqual(directResult.affectedDomains, []);
+    assert.equal(useTimelineStore.getState().tasks[0], taskBefore);
+
+    const commandResult = projectTaskCommands.updateProjectTask('p1', 'same-task', {
+      title: '保持不变',
+    });
+    assert.equal(commandResult.ok, true);
+    assert.equal(commandResult.impact.changed, false);
+    assert.equal(commandResult.impact.undoable, false);
+    assert.deepEqual(commandResult.impact.affectedDomains, ['project']);
+  });
+
+  check('项目任务提交报告准确描述每日安排清理，归档不会遗留已安排卡片', () => {
+    const block = smartBlock('archive-task', '待归档任务', [], false);
+    const sourceId = sourceIds.getProjectBlockSourceId('p1', 'archive-task');
+    resetStores({
+      tasks: [project('p1', [block])],
+      schedules: {
+        '2026-07-17': {
+          date: '2026-07-17',
+          items: [{
+            id: 'scheduled-project-task',
+            sourceId,
+            name: '待归档任务',
+            source: 'project',
+            timeSlot: 'morning',
+            order: 0,
+          }],
+          blocks: [],
+        },
+      },
+    });
+    const result = useTimelineStore.getState().updateBlockHeader('p1', 'archive-task', {
+      isArchived: true,
+    });
+    assert.equal(result.changed, true);
+    assert.equal(result.dailyScheduleAction, 'removed');
+    assert.ok(result.affectedDomains.includes('daily-schedule'));
+    assert.ok(result.affectedDomains.includes('week-matrix'));
+    assert.equal(
+      useDailyScheduleStore.getState().schedules['2026-07-17'].items.length,
+      0,
+    );
+  });
+
+  check('知识大盘可以确认分组内项目任务的节点绑定', async () => {
+    const groupedTask = { ...project('grouped-task', [smartBlock('grouped-block', '分组任务', [])]), groupId: 'g1' };
+    resetStores({
+      groups: [{
+        id: 'g1',
+        name: '分组',
+        start: '2026-07-01',
+        end: '2026-08-31',
+        color: '#60A5FA',
+        children: [groupedTask],
+      }],
+      nodes: [node('node-a')],
+    });
+    useGraphBindingStore.setState({
+      active: true,
+      taskId: 'grouped-task',
+      blockId: 'grouped-block',
+      taskTitle: '分组任务',
+      originalNodeIds: [],
+      selectedNodeIds: ['node-a'],
+    });
+    assert.equal(await useGraphBindingStore.getState().confirm(), 'saved');
+    const storedBlock = useTimelineStore.getState().groups[0].children[0].blocks[0];
+    assert.deepEqual(storedBlock.header.graphNodeIds, ['node-a']);
+  });
+
+  check('已完成任务改绑会要求明确选择复习策略，取消时不提交修改', async () => {
+    const completedBlock = smartBlock('binding-block', '已完成任务', ['node-a']);
+    completedBlock.header = {
+      ...completedBlock.header,
+      isCompleted: true,
+      completedDate: '2026-07-23',
+    };
+    const oldReview = {
+      id: 'old-review',
+      topicName: '旧节点',
+      graphNodeId: 'node-a',
+      dueDate: '2026-07-25',
+      originalDueDate: '2026-07-25',
+      roundOrder: 1,
+      isCompleted: false,
+      complexity: 'normal',
+      smStatus: 'scheduled',
+    };
+    resetStores({
+      tasks: [project('p1', [completedBlock])],
+      nodes: [
+        node('node-a', null, 'activated', { name: '旧节点' }),
+        node('node-b', null, 'unactivated', { name: '新节点' }),
+      ],
+      reviewTasks: [oldReview],
+    });
+    useGraphBindingStore.setState({
+      active: true,
+      isConfirming: false,
+      taskId: 'p1',
+      blockId: 'binding-block',
+      taskTitle: '已完成任务',
+      originalNodeIds: ['node-a'],
+      selectedNodeIds: ['node-b'],
+    });
+
+    let presentedChoices = [];
+    const removeHandler = choiceModule.setChoiceHandler(async (options) => {
+      presentedChoices = options.choices.map((choice) => choice.value);
+      return null;
+    });
+    try {
+      assert.equal(await useGraphBindingStore.getState().confirm(), 'cancelled');
+    } finally {
+      removeHandler();
+    }
+    assert.deepEqual(presentedChoices, [
+      'transfer',
+      'association-only',
+      'keep-existing-reviews',
+    ]);
+    assert.equal(useGraphBindingStore.getState().active, true);
+    assert.deepEqual(getBlock('p1', 'binding-block').header.graphNodeIds, ['node-a']);
+    assert.deepEqual(useEbbStore.getState().reviewTasks, [oldReview]);
+  });
+
+  check('已完成任务选择仅修改关联时更新节点但不改动复习计划', async () => {
+    const completedBlock = smartBlock('binding-block', '已完成任务', ['node-a']);
+    completedBlock.header = {
+      ...completedBlock.header,
+      isCompleted: true,
+      completedDate: '2026-07-23',
+    };
+    const oldReview = {
+      id: 'old-review',
+      topicName: '旧节点',
+      graphNodeId: 'node-a',
+      dueDate: '2026-07-25',
+      originalDueDate: '2026-07-25',
+      roundOrder: 1,
+      isCompleted: false,
+      complexity: 'normal',
+      smStatus: 'scheduled',
+    };
+    resetStores({
+      tasks: [project('p1', [completedBlock])],
+      nodes: [node('node-a', null, 'activated'), node('node-b')],
+      reviewTasks: [oldReview],
+    });
+    useGraphBindingStore.setState({
+      active: true,
+      isConfirming: false,
+      taskId: 'p1',
+      blockId: 'binding-block',
+      taskTitle: '已完成任务',
+      originalNodeIds: ['node-a'],
+      selectedNodeIds: ['node-b'],
+    });
+    const removeHandler = choiceModule.setChoiceHandler(
+      async () => 'association-only',
+    );
+    try {
+      assert.equal(await useGraphBindingStore.getState().confirm(), 'saved');
+    } finally {
+      removeHandler();
+    }
+    assert.deepEqual(getBlock('p1', 'binding-block').header.graphNodeIds, ['node-b']);
+    assert.equal(useGraphStore.getState().nodes.find((item) => item.id === 'node-a').status, 'unactivated');
+    assert.equal(useGraphStore.getState().nodes.find((item) => item.id === 'node-b').status, 'activated');
+    assert.deepEqual(useEbbStore.getState().reviewTasks, [oldReview]);
+  });
+
+  check('项目任务跨模块影响由统一规划器处理完成、撤销、改绑和自动复习', () => {
+    const graphNodes = [
+      { id: 'node-a', name: '教育学', parentId: null, createdAt: 1 },
+      { id: 'node-b', name: '心理学', parentId: null, createdAt: 2 },
+    ];
+    const pending = smartBlock('target', '学习理论', ['node-a'], true);
+    const completed = {
+      ...pending,
+      header: { ...pending.header, isCompleted: true, completedDate: '2026-07-23' },
+    };
+
+    const completePlan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('p1', [pending])],
+      taskId: 'p1',
+      blockId: 'target',
+      currentHeader: pending.header,
+      nextHeader: completed.header,
+      graphNodes,
+    });
+    assert.deepEqual(completePlan.graphNodeIdsToActivate, ['node-a']);
+    assert.deepEqual(completePlan.graphNodeIdsToDeactivate, []);
+    assert.deepEqual(
+      completePlan.ebbPayloads.map(({ action, graphNodeId, triggerSchedule }) => ({
+        action, graphNodeId, triggerSchedule,
+      })),
+      [{ action: 'add', graphNodeId: 'node-a', triggerSchedule: true }],
+    );
+
+    const undoPlan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('p1', [completed])],
+      taskId: 'p1',
+      blockId: 'target',
+      currentHeader: completed.header,
+      nextHeader: pending.header,
+      graphNodes,
+    });
+    assert.deepEqual(undoPlan.graphNodeIdsToDeactivate, ['node-a']);
+    assert.deepEqual(undoPlan.ebbPayloads.map(({ action }) => action), ['revert-source', 'remove']);
+
+    const anotherCompleted = smartBlock('other', '另一来源', ['node-a'], true);
+    anotherCompleted.header = { ...anotherCompleted.header, isCompleted: true };
+    const sharedNodePlan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('p1', [completed, anotherCompleted])],
+      taskId: 'p1',
+      blockId: 'target',
+      currentHeader: completed.header,
+      nextHeader: pending.header,
+      graphNodes,
+    });
+    assert.deepEqual(sharedNodePlan.graphNodeIdsToDeactivate, []);
+    assert.deepEqual(sharedNodePlan.ebbPayloads.map(({ action }) => action), ['revert-source']);
+
+    const reboundPlan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('p1', [completed])],
+      taskId: 'p1',
+      blockId: 'target',
+      currentHeader: completed.header,
+      nextHeader: { ...completed.header, graphNodeIds: ['node-b'] },
+      graphNodes,
+    });
+    assert.deepEqual(reboundPlan.graphNodeIdsToActivate, ['node-b']);
+    assert.deepEqual(reboundPlan.graphNodeIdsToDeactivate, ['node-a']);
+    assert.deepEqual(
+      reboundPlan.ebbPayloads.map(({ action, graphNodeId }) => ({ action, graphNodeId })),
+      [
+        { action: 'add', graphNodeId: 'node-b' },
+        { action: 'revert-source', graphNodeId: 'node-a' },
+        { action: 'remove', graphNodeId: 'node-a' },
+      ],
+    );
+
+    const associationOnlyPlan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('p1', [completed])],
+      taskId: 'p1',
+      blockId: 'target',
+      currentHeader: completed.header,
+      nextHeader: { ...completed.header, graphNodeIds: ['node-b'] },
+      graphNodes,
+      bindingStrategy: 'association-only',
+    });
+    assert.deepEqual(associationOnlyPlan.graphNodeIdsToActivate, ['node-b']);
+    assert.deepEqual(associationOnlyPlan.graphNodeIdsToDeactivate, ['node-a']);
+    assert.deepEqual(associationOnlyPlan.ebbPayloads, []);
+
+    const keepExistingPlan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('p1', [completed])],
+      taskId: 'p1',
+      blockId: 'target',
+      currentHeader: completed.header,
+      nextHeader: { ...completed.header, graphNodeIds: ['node-b'] },
+      graphNodes,
+      bindingStrategy: 'keep-existing-reviews',
+    });
+    assert.deepEqual(keepExistingPlan.graphNodeIdsToActivate, ['node-b']);
+    assert.deepEqual(keepExistingPlan.graphNodeIdsToDeactivate, ['node-a']);
+    assert.deepEqual(
+      keepExistingPlan.ebbPayloads.map(({ action, graphNodeId }) => ({ action, graphNodeId })),
+      [{ action: 'add', graphNodeId: 'node-b' }],
+    );
+
+    const disableAutoSyncPlan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('p1', [completed])],
+      taskId: 'p1',
+      blockId: 'target',
+      currentHeader: completed.header,
+      nextHeader: { ...completed.header, autoSyncEbb: false },
+      graphNodes,
+    });
+    assert.deepEqual(disableAutoSyncPlan.ebbPayloads.map(({ action }) => action), ['remove']);
+  });
+
+  check('项目任务触发的 EBB 推进、顺延和撤销由纯事务规划器稳定计算', () => {
+    const reviewTasks = [
+      {
+        id: 'round-1', topicName: '学习理论', graphNodeId: 'node-a',
+        dueDate: '2026-07-20', originalDueDate: '2026-07-20',
+        roundOrder: 1, isCompleted: false, complexity: 'normal', smStatus: 'scheduled',
+      },
+      {
+        id: 'round-2', topicName: '学习理论', graphNodeId: 'node-a',
+        dueDate: '2026-07-22', originalDueDate: '2026-07-22',
+        roundOrder: 2, isCompleted: false, complexity: 'normal', smStatus: 'scheduled',
+      },
+    ];
+    const payload = {
+      action: 'add',
+      graphNodeId: 'node-a',
+      topicName: '学习理论',
+      sourceTaskId: 'p1',
+      sourceBlockId: 'b1',
+    };
+    const progressed = ebbTaskSyncPlanner.planEbbTaskSync({
+      reviewTasks,
+      ebbSettings: ebbConstants.DEFAULT_EBB_SETTINGS,
+      payload,
+      today: '2026-07-23',
+    });
+    assert.equal(progressed.changed, true);
+    assert.equal(progressed.reviewTasks[0].isCompleted, true);
+    assert.equal(progressed.reviewTasks[0].completionSource, 'project-task');
+    assert.deepEqual(progressed.reviewTasks[0].previousSchedule, [
+      { reviewTaskId: 'round-2', dueDate: '2026-07-22' },
+    ]);
+    assert.equal(progressed.reviewTasks[1].dueDate, '2026-07-25');
+    assert.deepEqual(progressed.dailySourceIdsToRemove, [
+      sourceIds.getReviewSourceId('round-2'),
+    ]);
+
+    const reverted = ebbTaskSyncPlanner.planEbbTaskSync({
+      reviewTasks: progressed.reviewTasks,
+      ebbSettings: ebbConstants.DEFAULT_EBB_SETTINGS,
+      payload: { ...payload, action: 'revert-source' },
+      today: '2026-07-23',
+    });
+    assert.equal(reverted.reviewTasks[0].isCompleted, false);
+    assert.equal(reverted.reviewTasks[0].completionSource, undefined);
+    assert.equal(reverted.reviewTasks[1].dueDate, '2026-07-22');
+    assert.deepEqual(reverted.dailySourceIdsToRemove, [
+      sourceIds.getReviewSourceId('round-2'),
+    ]);
+
+    const completedHistory = reviewTasks.map((task, index) => ({
+      ...task,
+      isCompleted: true,
+      completedDate: `2026-07-${20 + index}`,
+    }));
+    const supplemental = ebbTaskSyncPlanner.planEbbTaskSync({
+      reviewTasks: completedHistory,
+      ebbSettings: ebbConstants.DEFAULT_EBB_SETTINGS,
+      payload,
+      today: '2026-07-23',
+      createReviewTaskId: () => 'supplemental-3',
+    });
+    assert.equal(supplemental.reviewTasks.at(-1).id, 'supplemental-3');
+    assert.equal(supplemental.reviewTasks.at(-1).roundOrder, 3);
+    assert.equal(supplemental.reviewTasks.at(-1).dueDate, '2026-07-24');
+    assert.equal(supplemental.reviewTasks.at(-1).isSupplemental, true);
+  });
+
+  check('任务总览筛选、排序和统计共享同一查询规则', () => {
+    const records = [
+      { id: 'overdue', header: { ...smartBlock('a', '逾期', [], false).header, date: '2026-07-10' } },
+      { id: 'today', header: { ...smartBlock('b', '今天', [], false).header, date: '2026-07-23' } },
+      { id: 'unscheduled', header: { ...smartBlock('c', '未排期', [], false).header, date: undefined } },
+      { id: 'completed', header: { ...smartBlock('d', '完成', [], false).header, date: '2026-07-23', isCompleted: true } },
+    ];
+    const toRecord = (item) => ({
+      projectId: 'p1', tag: item.header.tag, title: item.header.title,
+      searchableText: item.header.title, header: item.header,
+    });
+    const pending = projectTaskQuery.filterAndSortProjectTasks(
+      records,
+      toRecord,
+      { query: '', projectId: 'all', tag: 'all', status: 'pending', date: 'all' },
+      '2026-07-23',
+    );
+    assert.deepEqual(pending.map((item) => item.id), ['overdue', 'today', 'unscheduled']);
+    const stats = projectTaskQuery.summarizeProjectTasks(records, (item) => item.header, '2026-07-23');
+    assert.deepEqual(stats, { total: 4, pending: 3, today: 1, overdue: 1, unscheduled: 1, completed: 1 });
+  });
+
+  check('旧数量任务缺少日期时按进度记录或项目开始日恢复，并能被备份校验识别', () => {
+    const missingWithRecord = {
+      taskKind: 'vocabulary',
+      vocabularyRecords: { '2026-07-12': 10, '2026-07-15': 20 },
+    };
+    assert.equal(
+      blocksModule.recoverRequiredTaskStartDate(missingWithRecord, '2026-07-01'),
+      '2026-07-12',
+    );
+    assert.equal(
+      blocksModule.recoverRequiredTaskStartDate({ taskKind: 'quantity', quantityRecords: {} }, '2026-07-01'),
+      '2026-07-01',
+    );
+
+    const quantity = smartBlock('invalid-quantity', '缺少日期的背诵任务', [], false);
+    quantity.header = {
+      ...quantity.header,
+      taskKind: 'quantity',
+      date: undefined,
+      duration: 0,
+      quantityUnit: '章',
+      quantityTotal: 10,
+      quantityInitialCompleted: 0,
+      quantityRecords: {},
+    };
+    resetStores({ tasks: [project('p1', [quantity])] });
+    const backup = backupModule.createWorkspaceBackup();
+    const validation = backupModule.validateWorkspaceBackup(backup);
+    assert.ok(validation.summary.issues.some((issue) => /开始日期/.test(issue)));
   });
 
   check('通用数量任务支持自定义单位，并按剩余量和截止日动态调整每日建议', () => {

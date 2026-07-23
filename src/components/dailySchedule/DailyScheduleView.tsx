@@ -6,6 +6,7 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { todayStr } from '@/utils/dateSafe';
+import { projectTasksForDate, reviewTasksForDate } from '@/domain/dailyTaskProjection';
 import {
   DragDropContext,
   type DropResult,
@@ -29,7 +30,7 @@ import {
 } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
-import { getReviewTopicKey, isOverdue, computeRounds } from '@/ebb/scheduler';
+import { getReviewTopicKey, computeRounds } from '@/ebb/scheduler';
 import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '@/ebb/category';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
@@ -264,54 +265,20 @@ const DailyScheduleView: React.FC = () => {
   // 数据来源已统一为 SmartTaskBlock，不再走 markdown 待办
   const mergedTodos = allSmartTaskTodos;
 
-  const todayProjectTasks = useMemo(() => {
-    return mergedTodos.filter((todo) => {
-      if (isQuantityTask({ taskKind: todo._taskKind })) {
-        const status = getQuantityDailyStatus({
-          taskKind: 'quantity', date: todo.scheduled, deadline: todo.due,
-          quantityTotal: todo._quantityTotal,
-          quantityInitialCompleted: todo._quantityInitialCompleted,
-          quantityRecords: todo._quantityRecords,
-        }, selectedDate);
-        if (todo.checked || status.state === 'achieved' || status.state === 'recorded') return false;
-        return Boolean(todo.scheduled && todo.scheduled <= selectedDate);
-      }
-      if (todo.checked) return false;
-      // 只有精确指定了排期日或截止日为当天的任务才会被纳入任务池
-      if (todo.scheduled && todo.scheduled === selectedDate) return true;
-      if (todo.due && todo.due === selectedDate) return true;
-      return false;
-    });
-  }, [mergedTodos, selectedDate]);
-
-  const completedProjectTasks = useMemo(() => {
-    return mergedTodos.filter((todo) => {
-      if (isQuantityTask({ taskKind: todo._taskKind })) {
-        const status = getQuantityDailyStatus({
-          taskKind: 'quantity', date: todo.scheduled, deadline: todo.due,
-          quantityTotal: todo._quantityTotal,
-          quantityInitialCompleted: todo._quantityInitialCompleted,
-          quantityRecords: todo._quantityRecords,
-        }, selectedDate);
-        return status.state === 'achieved' || status.state === 'recorded';
-      }
-      if (!todo.checked) return false;
-      return todo.scheduled === selectedDate || todo.due === selectedDate;
-    });
-  }, [mergedTodos, selectedDate]);
+  const projectProjection = useMemo(
+    () => projectTasksForDate(mergedTodos, selectedDate),
+    [mergedTodos, selectedDate],
+  );
+  const todayProjectTasks = projectProjection.pending;
+  const completedProjectTasks = projectProjection.completed;
 
   // ── 获取今日复习任务 ─────────────────────────────────────
-  const todayReviewTasks = useMemo(() => {
-    return ebbReviewTasks.filter((t) => {
-      if (t.isCompleted) return false;
-      return t.dueDate === selectedDate || (isOverdue(t) && selectedDate === today);
-    });
-  }, [ebbReviewTasks, selectedDate, today]);
-
-  const completedReviewTasks = useMemo(
-    () => ebbReviewTasks.filter((task) => task.isCompleted && task.dueDate === selectedDate),
-    [ebbReviewTasks, selectedDate],
+  const reviewProjection = useMemo(
+    () => reviewTasksForDate(ebbReviewTasks, selectedDate, today),
+    [ebbReviewTasks, selectedDate, today],
   );
+  const todayReviewTasks = reviewProjection.pending;
+  const completedReviewTasks = reviewProjection.completed;
 
   // ── 判断是否未绑定节点 ──────────────────────────────────
   const checkIsUnlinkedTask = useCallback((sourceId: string) => {
@@ -355,7 +322,7 @@ const DailyScheduleView: React.FC = () => {
     return ids;
   }, [daySchedule.items, daySchedule.blocks]);
 
-  const completedPoolItems = useMemo(() => {
+  const allCompletedPoolItems = useMemo(() => {
     const items: CompletedDailyPoolItem[] = [];
     for (const todo of completedProjectTasks) {
       if (!todo._blockId) continue;
@@ -394,12 +361,15 @@ const DailyScheduleView: React.FC = () => {
         ),
       });
     }
-    return filterSource === 'all'
-      ? items
-      : items.filter((item) => filterSource === 'quantity'
-        ? isQuantityTask({ taskKind: item.taskKind })
-        : item.source === filterSource && !isQuantityTask({ taskKind: item.taskKind }));
-  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, filterSource, ebbSettingsData, selectedDate, getProjectBlockFromSource, ebbRootByNodeId]);
+    return items;
+  }, [completedProjectTasks, completedReviewTasks, scheduledSourceIds, ebbSettingsData, selectedDate, getProjectBlockFromSource, ebbRootByNodeId]);
+
+  const completedPoolItems = useMemo(() => filterSource === 'all'
+    ? allCompletedPoolItems
+    : allCompletedPoolItems.filter((item) => filterSource === 'quantity'
+      ? isQuantityTask({ taskKind: item.taskKind })
+      : item.source === filterSource && !isQuantityTask({ taskKind: item.taskKind })),
+  [allCompletedPoolItems, filterSource]);
 
   // ── 构建右侧任务池列表（时段模式用） ─────────────────────
   const poolItems = useMemo(() => {
@@ -909,8 +879,10 @@ const DailyScheduleView: React.FC = () => {
         {viewMode === 'blocks' && (
           <BlockModeView
             selectedDate={selectedDate}
-            scheduledSourceIds={scheduledSourceIds}
+            poolItems={poolItems}
+            completedPoolItems={allCompletedPoolItems}
             onReviewToggleError={setOperationError}
+            onOpenQuantityProgress={(taskId, block) => setProgressTask({ taskId, block })}
           />
         )}
         {progressTask && (

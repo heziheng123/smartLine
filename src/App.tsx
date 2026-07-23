@@ -20,9 +20,13 @@ import { IceboxPalette } from '@/components/smartBlock/IceboxPalette';
 import ProjectTaskBlockModal from '@/components/smartBlock/ProjectTaskBlockModal';
 import ProjectTaskCreateDialog from '@/components/smartBlock/ProjectTaskCreateDialog';
 import ViewErrorBoundary from '@/components/ViewErrorBoundary';
+import ConfirmationDialogHost from '@/components/ConfirmationDialogHost';
+import ChoiceDialogHost from '@/components/ChoiceDialogHost';
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
 import { AnimatePresence, motion } from 'framer-motion';
 
+import '@/styles/design-tokens.css';
+import '@/styles/confirmation.css';
 import '@/styles/timeline.css';
 import '@/styles/daily-schedule.css';
 import '@/styles/smart-block.css';
@@ -798,7 +802,6 @@ const App: React.FC = () => {
               <Suspense fallback={<ViewFallback />}>
                 <WeekMatrixView
                   tasks={weekMatrixTasks}
-                  onUpdateBlockHeader={store.updateBlockHeader}
                 />
               </Suspense>
             </div>
@@ -955,6 +958,8 @@ const App: React.FC = () => {
       </ViewErrorBoundary>
       <ProjectTaskCreateDialog />
       <ProjectTaskBlockModal />
+      <ConfirmationDialogHost />
+      <ChoiceDialogHost />
     </div>
   );
 };

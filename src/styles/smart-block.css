@@ -2319,11 +2319,3 @@
   .ptm-footer-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .ptm-footer .ptm-done-btn { grid-column: 1 / -1; }
 }
-.ptm-attachments { margin-top: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 12px; background: #fafbfc; }
-.ptm-attachments-head, .ptm-attachment-row { display: flex; align-items: center; gap: 10px; }
-.ptm-attachments-head { justify-content: space-between; margin-bottom: 8px; }
-.ptm-attachments-head strong { display: inline-flex; align-items: center; gap: 6px; }
-.ptm-attachment-row { min-height: 34px; border-top: 1px solid #edf0f4; }
-.ptm-attachment-row a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #2563eb; }
-.ptm-attachment-row span, .ptm-attachments p { color: #7a8495; font-size: 12px; }
-.ptm-attachment-row button { border: 0; background: transparent; color: #9ca3af; cursor: pointer; }

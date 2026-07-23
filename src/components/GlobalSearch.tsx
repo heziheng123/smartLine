@@ -5,6 +5,7 @@ import { useTimelineStore } from '@/store';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getValidGraphNodeIds } from '@/utils/blocks';
+import { requestConfirmation } from '@/services/confirmation';
 
 // 时光胶囊模态框：展示归档节点的内容
 export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose: () => void }) => {
@@ -59,8 +60,8 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => {
-                  if (confirm('确定解冻该节点及其附属的所有节点吗？它们将重新回到图谱主视区。')) {
+                onClick={async () => {
+                  if (await requestConfirmation('确定解冻该节点及其附属的所有节点吗？它们将重新回到图谱主视区。')) {
                     archiveNodeCascade(node.id, false);
                     onClose();
                   }

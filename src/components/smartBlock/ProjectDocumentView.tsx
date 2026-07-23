@@ -73,6 +73,9 @@ import BatchEditDialog from '@/components/BatchEditDialog';
 import { openProjectTaskCreate } from './projectTaskCreate';
 import ProjectDocumentControls from './ProjectDocumentControls';
 import { mergeBatchEditRows, type ParsedRow } from '@/utils/excelImport';
+import { deleteProjectTask, updateProjectTask } from '@/services/projectTaskCommands';
+import { requestCompletedBindingStrategy } from '@/graph/bindingDecision';
+import type { CompletedTaskBindingStrategy } from '@/domain/projectTaskEffects';
 
 interface ProjectDocumentViewProps {
   task: Task;
@@ -93,18 +96,14 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 }) => {
   const {
     tasks: storeTasks,
-    updateBlockHeader,
     updateBlockBody,
-    removeBlock,
     updateTextBlockContent,
     extendTaskBlocks,
     updateTaskBlocks,
   } = useTimelineStore(
     useShallow((s) => ({
       tasks: s.tasks,
-      updateBlockHeader: s.updateBlockHeader,
       updateBlockBody: s.updateBlockBody,
-      removeBlock: s.removeBlock,
       updateTextBlockContent: s.updateTextBlockContent,
       extendTaskBlocks: s.extendTaskBlocks,
       updateTaskBlocks: s.updateTaskBlocks,
@@ -304,9 +303,9 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   const handleUpdateHeader = useCallback(
     (blockId: string, patch: Partial<SmartTaskHeader>) => {
-      updateBlockHeader(task.id, blockId, patch);
+      updateProjectTask(task.id, blockId, patch);
     },
-    [updateBlockHeader, task.id],
+    [task.id],
   );
 
   const handleUpdateBody = useCallback(
@@ -319,9 +318,9 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   const handleDeleteBlock = useCallback(
     (blockId: string) => {
-      removeBlock(task.id, blockId);
+      deleteProjectTask(task.id, blockId);
     },
-    [removeBlock, task.id],
+    [task.id],
   );
 
   const handleUpdateTextBlock = useCallback(
@@ -350,7 +349,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   // ── 批量编辑确认：将修改后的 blocks 整体合并回 task ──
   const handleBatchEditConfirm = useCallback(
-    (rows: ParsedRow[]) => {
+    async (rows: ParsedRow[]) => {
       // 批量编辑目前只处理 smart-task，我们需要保留原来的 text blocks
       const timelineState = useTimelineStore.getState();
       const latestTask = timelineState.tasks.find((candidate) => candidate.id === task.id)
@@ -368,17 +367,50 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       });
       const existingIds = new Set(currentSmartBlocks.map((block) => block.id));
       mergedBlocks.push(...editedSmartBlocks.filter((block) => !existingIds.has(block.id)));
-      
+
+      const completedBindingChanges = currentSmartBlocks.flatMap((currentBlock) => {
+        const editedBlock = editedById.get(currentBlock.id);
+        if (!editedBlock || !currentBlock.header.isCompleted) return [];
+        const currentNodeIds = getValidGraphNodeIds(currentBlock.header);
+        const nextNodeIds = getValidGraphNodeIds(editedBlock.header);
+        const changed = (
+          currentNodeIds.some((id) => !nextNodeIds.includes(id))
+          || nextNodeIds.some((id) => !currentNodeIds.includes(id))
+        );
+        return changed ? [{ currentBlock, editedBlock, currentNodeIds, nextNodeIds }] : [];
+      });
+      let bindingStrategy: CompletedTaskBindingStrategy | null = null;
+      if (completedBindingChanges.length > 0) {
+        const firstChange = completedBindingChanges[0];
+        bindingStrategy = await requestCompletedBindingStrategy({
+          currentNodeIds: firstChange.currentNodeIds,
+          nextNodeIds: firstChange.nextNodeIds,
+          graphNodes: nodes,
+        });
+        if (!bindingStrategy) return;
+        completedBindingChanges.forEach(({ editedBlock }) => {
+          useTimelineStore.getState().updateBlockHeader(
+            task.id,
+            editedBlock.id,
+            {
+              graphNodeId: editedBlock.header.graphNodeId,
+              graphNodeIds: editedBlock.header.graphNodeIds,
+            },
+            { bindingStrategy: bindingStrategy! },
+          );
+        });
+      }
+
       updateTaskBlocks(task.id, mergedBlocks);
       setShowBatchEdit(false);
     },
-    [updateTaskBlocks, task.id]
+    [nodes, updateTaskBlocks, task.id]
   );
 
   // ── 拖拽排序 & 跨日排期 ──
 
   const handleDragEnd = useCallback(
-    (result: DropResult) => {
+    async (result: DropResult) => {
       const { source, destination, draggableId } = result;
       if (!destination) return;
       if (source.droppableId === destination.droppableId && source.index === destination.index) return;
@@ -392,6 +424,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       const newBlocks = [...currentBlocks];
       const blockIndex = newBlocks.findIndex(b => b.id === blockId);
       if (blockIndex === -1 || newBlocks[blockIndex].type !== 'smart-task') return;
+      let bindingStrategy: CompletedTaskBindingStrategy | null = null;
 
       // 跨组：更新日期或图谱节点
       if (sourceGroupKey !== destGroupKey) {
@@ -400,10 +433,19 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           if (destGroupKey !== '__unlinked__') {
             newGraphNodeIds = [destGroupKey]; // 拖拽到一个节点组时，覆盖为其单一节点
           }
+          const currentBlock = newBlocks[blockIndex] as SmartTaskBlock;
+          if (currentBlock.header.isCompleted) {
+            bindingStrategy = await requestCompletedBindingStrategy({
+              currentNodeIds: getValidGraphNodeIds(currentBlock.header),
+              nextNodeIds: newGraphNodeIds,
+              graphNodes: nodes,
+            });
+            if (!bindingStrategy) return;
+          }
           (newBlocks[blockIndex] as SmartTaskBlock) = {
-            ...newBlocks[blockIndex] as SmartTaskBlock,
+            ...currentBlock,
             header: {
-              ...(newBlocks[blockIndex] as SmartTaskBlock).header,
+              ...currentBlock.header,
               graphNodeId: newGraphNodeIds[0],
               graphNodeIds: newGraphNodeIds,
             },
@@ -493,9 +535,21 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       const insertIdx = findInsertIndex(destGroupKey, destination.index);
       newBlocks.splice(insertIdx, 0, moved);
 
+      if (bindingStrategy) {
+        const movedTask = moved as SmartTaskBlock;
+        useTimelineStore.getState().updateBlockHeader(
+          task.id,
+          movedTask.id,
+          {
+            graphNodeId: movedTask.header.graphNodeId,
+            graphNodeIds: movedTask.header.graphNodeIds,
+          },
+          { bindingStrategy },
+        );
+      }
       updateTaskBlocks(task.id, newBlocks);
     },
-    [task.id, groupByWeek, groupDimension, updateTaskBlocks, activeTag, hideCompleted],
+    [task.id, groupByWeek, groupDimension, updateTaskBlocks, activeTag, hideCompleted, nodes],
   );
 
   // ── Slash 命令 ──

@@ -4,6 +4,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useRef, useMemo } from 'react';
+import { requestConfirmation } from '@/services/confirmation';
 import { createPortal } from 'react-dom';
 import { X, Trash2, ArrowRight, Check } from 'lucide-react';
 import { todayStr } from '@/utils/dateSafe';
@@ -13,6 +14,7 @@ import { genId } from '../scheduler';
 import { getIntervalsForComplexity, formatIntervals, parseIntervals } from '../complexity';
 import { COMPLEXITY_LEVELS } from '../constants';
 import type { ComplexityLevel, InboxItem } from '../types';
+import { useSelectionSet } from '@/hooks/useSelectionSet';
 
 interface InboxPanelProps {
   onClose: () => void;
@@ -39,7 +41,8 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
   );
   const [topicInput, setTopicInput] = useState('');
   const [tagInput, setTagInput] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selection = useSelectionSet();
+  const { selectedIds } = selection;
   const inputRef = useRef<HTMLInputElement>(null);
 
   // 快速添加（回车连续创建，光标不离开输入框）
@@ -71,12 +74,8 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
 
   const handleDelete = useCallback((id: string) => {
     deleteInboxItem(id);
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }, [deleteInboxItem]);
+    selection.remove(id);
+  }, [deleteInboxItem, selection]);
 
   const handleStage = useCallback((id: string) => {
     // 升级为暂存：默认复杂度 normal + 默认间隔 + 今天起
@@ -90,32 +89,30 @@ const InboxPanel: React.FC<InboxPanelProps> = ({ onClose, inline = false }) => {
     });
   }, [inboxItems, updateInboxItem, ebbSettings.complexityConfigs]);
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const toggleSelect = selection.toggle;
 
   const handleBatchGenerate = useCallback(() => {
     if (selectedIds.size === 0) return;
     const ids = Array.from(selectedIds);
     const generated = generateTasksFromInbox(ids);
     if (generated.length > 0) {
-      setSelectedIds(new Set());
+      selection.clear();
     }
-  }, [selectedIds, generateTasksFromInbox]);
+  }, [selectedIds, generateTasksFromInbox, selection]);
 
-  const handleBatchDelete = useCallback(() => {
+  const handleBatchDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`确认删除 ${selectedIds.size} 个收件箱项？`)) return;
+    if (!await requestConfirmation({
+      title: '批量删除收件箱内容？',
+      message: `已选择 ${selectedIds.size} 个收件箱项。`,
+      confirmLabel: `删除 ${selectedIds.size} 项`,
+      tone: 'danger',
+    })) return;
     for (const id of selectedIds) {
       deleteInboxItem(id);
     }
-    setSelectedIds(new Set());
-  }, [selectedIds, deleteInboxItem]);
+    selection.clear();
+  }, [selectedIds, deleteInboxItem, selection]);
 
   const content = (
     <div className={inline ? 'eb-inline-panel' : 'eb-panel eb-panel--inbox'} onClick={inline ? undefined : undefined}>

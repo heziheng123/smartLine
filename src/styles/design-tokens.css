@@ -1,0 +1,14 @@
+:root {
+  --ui-surface: #ffffff;
+  --ui-surface-subtle: #f9fafb;
+  --ui-border: #e5e7eb;
+  --ui-text: #1f2937;
+  --ui-text-muted: #6b7280;
+  --ui-primary: #5b6af0;
+  --ui-danger: #dc2626;
+  --ui-control-radius: 8px;
+  --ui-dialog-radius: 16px;
+  --ui-overlay: rgba(15, 23, 42, 0.38);
+  --ui-dialog-shadow: 0 24px 64px -16px rgba(15, 23, 42, 0.24);
+  --ui-motion-standard: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}

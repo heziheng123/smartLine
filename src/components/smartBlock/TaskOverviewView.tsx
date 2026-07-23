@@ -16,16 +16,28 @@ import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import type { SmartTaskBlock, Task, TaskGroup } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
-import { addDays, getDayOfWeek, isAfterDay, isBeforeDay, splitDate, todayStr } from '@/utils/dateSafe';
+import { addDays, getDayOfWeek, splitDate, todayStr } from '@/utils/dateSafe';
+import {
+  getTaskPlanningDate,
+  getTaskTemporalState,
+  isContinuousTask,
+  isTaskOverdueOnDate,
+} from '@/domain/taskRules';
 import { resolveTaskTheme } from '@/utils/timeline-utils';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { openProjectTaskModal } from './projectTaskModal';
 import { toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
 import { openProjectTaskCreate } from './projectTaskCreate';
+import {
+  filterAndSortProjectTasks,
+  PROJECT_TASK_DATE_FILTERS,
+  PROJECT_TASK_STATUS_FILTERS,
+  summarizeProjectTasks,
+  type ProjectTaskDateFilter as DateFilter,
+  type ProjectTaskStatusFilter as StatusFilter,
+} from '@/domain/projectTaskQuery';
 
 type GroupMode = 'date' | 'project' | 'tag';
-type StatusFilter = 'all' | 'pending' | 'completed' | 'overdue' | 'unscheduled';
-type DateFilter = 'all' | 'today' | 'week' | 'month';
 
 interface OverviewPreferences {
   query: string;
@@ -52,8 +64,6 @@ interface OverviewGroup {
 
 const PREFERENCES_KEY = 'task-overview-preferences-v1';
 const GROUP_MODES: GroupMode[] = ['date', 'project', 'tag'];
-const STATUS_FILTERS: StatusFilter[] = ['all', 'pending', 'completed', 'overdue', 'unscheduled'];
-const DATE_FILTERS: DateFilter[] = ['all', 'today', 'week', 'month'];
 
 function loadPreferences(): OverviewPreferences {
   const defaults: OverviewPreferences = {
@@ -70,8 +80,8 @@ function loadPreferences(): OverviewPreferences {
       query: typeof parsed.query === 'string' ? parsed.query : defaults.query,
       projectId: typeof parsed.projectId === 'string' ? parsed.projectId : defaults.projectId,
       tag: typeof parsed.tag === 'string' ? parsed.tag : defaults.tag,
-      status: STATUS_FILTERS.includes(parsed.status as StatusFilter) ? parsed.status as StatusFilter : defaults.status,
-      dateFilter: DATE_FILTERS.includes(parsed.dateFilter as DateFilter) ? parsed.dateFilter as DateFilter : defaults.dateFilter,
+      status: PROJECT_TASK_STATUS_FILTERS.includes(parsed.status as StatusFilter) ? parsed.status as StatusFilter : defaults.status,
+      dateFilter: PROJECT_TASK_DATE_FILTERS.includes(parsed.dateFilter as DateFilter) ? parsed.dateFilter as DateFilter : defaults.dateFilter,
       groupMode: GROUP_MODES.includes(parsed.groupMode as GroupMode) ? parsed.groupMode as GroupMode : defaults.groupMode,
     };
   } catch {
@@ -85,20 +95,18 @@ function formatShortDate(date: string): string {
   return `${month}月${day}日 ${weekday}`;
 }
 
-function weekEnd(date: string): string {
-  const day = getDayOfWeek(date);
-  return addDays(date, day === 0 ? 0 : 7 - day);
-}
-
 function buildDateGroup(item: OverviewItem, today: string): Omit<OverviewGroup, 'items'> {
   const { header } = item.block;
-  if (header.isCompleted) return { key: '__completed__', label: '已完成', order: '9' };
-  if (!header.date) return { key: '__unscheduled__', label: '未安排日期', order: '8' };
-  if (isBeforeDay(header.date, today)) return { key: '__overdue__', label: '已逾期', order: '0' };
-  if (header.date === today) return { key: today, label: '今天', order: `1-${today}` };
+  const state = getTaskTemporalState(header, today);
+  if (state === 'completed') return { key: '__completed__', label: '已完成', order: '9' };
+  if (state === 'invalid') return { key: '__invalid__', label: '需要修复', order: '7' };
+  if (state === 'unscheduled') return { key: '__unscheduled__', label: '未安排日期', order: '8' };
+  if (state === 'overdue') return { key: '__overdue__', label: '已逾期', order: '0' };
+  const planningDate = getTaskPlanningDate(header, today);
+  if (!planningDate || state === 'active') return { key: today, label: '今天', order: `1-${today}` };
   const tomorrow = addDays(today, 1);
-  if (header.date === tomorrow) return { key: tomorrow, label: '明天', order: `2-${tomorrow}` };
-  return { key: header.date, label: formatShortDate(header.date), order: `3-${header.date}` };
+  if (planningDate === tomorrow) return { key: tomorrow, label: '明天', order: `2-${tomorrow}` };
+  return { key: planningDate, label: formatShortDate(planningDate), order: `3-${planningDate}` };
 }
 
 function stripHtml(value: string): string {
@@ -173,45 +181,24 @@ const TaskOverviewView: React.FC = () => {
     if (tag !== 'all' && !tags.includes(tag)) setTag('all');
   }, [tag, tags]);
 
-  const stats = useMemo(() => {
-    const result = { total: allItems.length, pending: 0, today: 0, overdue: 0, unscheduled: 0, completed: 0 };
-    for (const item of allItems) {
-      const header = item.block.header;
-      if (header.isCompleted) { result.completed++; continue; }
-      result.pending++;
-      if (header.date === today) result.today++;
-      if (!header.date) result.unscheduled++;
-      else if (isBeforeDay(header.date, today)) result.overdue++;
-    }
-    return result;
-  }, [allItems, today]);
+  const stats = useMemo(
+    () => summarizeProjectTasks(allItems, (item) => item.block.header, today),
+    [allItems, today],
+  );
 
   const filtered = useMemo(() => {
-    const normalizedQuery = deferredQuery.trim().toLocaleLowerCase('zh-CN');
-    const endOfWeek = weekEnd(today);
-    const thisMonth = today.slice(0, 7);
-    return allItems.filter((item) => {
-      const { header } = item.block;
-      if (projectId !== 'all' && item.task.id !== projectId) return false;
-      if (tag !== 'all' && header.tag !== tag) return false;
-      if (normalizedQuery) {
-        const searchable = `${header.title} ${stripHtml(item.block.body)} ${item.projectLabel} ${header.tag}`.toLocaleLowerCase('zh-CN');
-        if (!searchable.includes(normalizedQuery)) return false;
-      }
-      if (status === 'pending' && header.isCompleted) return false;
-      if (status === 'completed' && !header.isCompleted) return false;
-      if (status === 'overdue' && (header.isCompleted || !header.date || !isBeforeDay(header.date, today))) return false;
-      if (status === 'unscheduled' && (header.isCompleted || Boolean(header.date))) return false;
-      if (dateFilter === 'today' && header.date !== today) return false;
-      if (dateFilter === 'week' && (!header.date || isBeforeDay(header.date, today) || isAfterDay(header.date, endOfWeek))) return false;
-      if (dateFilter === 'month' && (!header.date || header.date.slice(0, 7) !== thisMonth)) return false;
-      return true;
-    }).sort((a, b) => {
-      if (a.block.header.isCompleted !== b.block.header.isCompleted) return Number(a.block.header.isCompleted) - Number(b.block.header.isCompleted);
-      const dateA = a.block.header.date || '9999-12-31';
-      const dateB = b.block.header.date || '9999-12-31';
-      return dateA.localeCompare(dateB) || a.block.header.title.localeCompare(b.block.header.title, 'zh-CN');
-    });
+    return filterAndSortProjectTasks(
+      allItems,
+      (item) => ({
+        projectId: item.task.id,
+        tag: item.block.header.tag,
+        title: item.block.header.title,
+        searchableText: `${item.block.header.title} ${stripHtml(item.block.body)} ${item.projectLabel} ${item.block.header.tag}`,
+        header: item.block.header,
+      }),
+      { query: deferredQuery, projectId, tag, status, date: dateFilter },
+      today,
+    );
   }, [allItems, dateFilter, deferredQuery, projectId, status, tag, today]);
 
   const grouped = useMemo(() => {
@@ -297,7 +284,8 @@ const TaskOverviewView: React.FC = () => {
               </button>
               {!isCollapsed && <div className="task-overview-list">{group.items.map((item) => {
                 const { header } = item.block;
-                const overdue = !header.isCompleted && Boolean(header.date) && isBeforeDay(header.date, today);
+                const overdue = isTaskOverdueOnDate(header, today);
+                const continuous = isContinuousTask(header);
                 const category = resolveTaskCategoryTheme(header.tagColor);
                 const graphCount = getValidGraphNodeIds(header).length;
                 const quantityStatus = isQuantityTask(header) ? getQuantityDailyStatus(header, today) : null;
@@ -323,8 +311,8 @@ const TaskOverviewView: React.FC = () => {
                       <div className="task-overview-card-meta">
                         <span className="task-overview-project-badge" style={{ backgroundColor: item.projectColor }}><FolderOpen size={12} />{item.projectLabel}</span>
                         <span className="task-overview-tag" style={{ borderColor: category.accentColor, color: category.accentColor }}>{header.tag || '未分类'}</span>
-                        {header.date && <span className={overdue ? 'is-danger' : ''}><CalendarDays size={13} />{formatShortDate(header.date)}</span>}
-                        {!header.date && <span><CalendarDays size={13} />未排期</span>}
+                        {header.date && <span className={overdue ? 'is-danger' : ''}><CalendarDays size={13} />{continuous ? '开始 ' : ''}{formatShortDate(header.date)}</span>}
+                        {!header.date && <span><CalendarDays size={13} />{continuous ? '需要开始日期' : '未排期'}</span>}
                         {header.deadline && <span><Target size={13} />截止 {formatShortDate(header.deadline)}</span>}
                         {isQuantityTask(header)
                           ? <><span><Hash size={13} />进度 {getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}%</span><span>今日 {quantityStatus?.actual ?? 0}{quantityStatus?.target !== undefined ? `/${quantityStatus.target}` : ''} {getQuantityUnit(header)}</span></>

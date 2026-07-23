@@ -5,8 +5,8 @@
 // ============================================================
 
 import dayjs from 'dayjs';
-import type { SmartTaskBlock, Task } from '@/types';
-import { genBlockId, getTagColor, getValidGraphNodeIds } from './blocks';
+import type { SmartTaskBlock, SmartTaskHeader, Task } from '@/types';
+import { genBlockId, getTagColor, getValidGraphNodeIds, isQuantityTask } from './blocks';
 import { makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
 
 import { useGraphStore } from '@/graph/store';
@@ -57,6 +57,8 @@ export interface ParsedRow {
   _originalRemark?: string;
   /** Original schedule date, used to distinguish unchanged from explicitly cleared. */
   _originalDate?: string;
+  /** Hidden business type retained during batch editing. */
+  _taskKind?: SmartTaskHeader['taskKind'];
   /** Original graph-node display value, used to preserve the exact node IDs unless edited. */
   _originalGraphNodeName?: string;
   /** 校验错误信息（空字符串表示通过） */
@@ -275,6 +277,8 @@ export function cleanseRows(rows: ParsedRow[]): ParsedRow[] {
       error = '任务名称不能为空';
     } else if (r.dateRaw && !date) {
       error = `日期格式无法识别：${r.dateRaw}`;
+    } else if (isQuantityTask({ taskKind: r._taskKind }) && !date) {
+      error = '数量任务必须保留开始日期';
     } else if (r.deadlineRaw && !deadline) {
       error = `截止日期格式无法识别：${r.deadlineRaw}`;
     } else if (date && deadline && deadline < date) {
@@ -449,6 +453,7 @@ export function blocksToRows(blocks: SmartTaskBlock[]): ParsedRow[] {
       graphNodeName: graphNodeName,
       _originalRemark: remark,
       _originalDate: b.header.date || '',
+      _taskKind: b.header.taskKind,
       _originalGraphNodeName: graphNodeName,
       _error: '',
     };
@@ -530,6 +535,13 @@ export function mergeBatchEditRows(rows: ParsedRow[], existingBlocks: SmartTaskB
       ? existing.body
       : row.remark ? `<p>${escapeHtml(row.remark)}</p>` : '';
 
+    const requestedDate = row.date === row._originalDate
+      ? existing.header.date
+      : row.date || undefined;
+    const protectedDate = isQuantityTask(existing.header)
+      ? requestedDate || existing.header.date
+      : requestedDate;
+
     merged.push({
       ...existing,
       header: {
@@ -537,9 +549,7 @@ export function mergeBatchEditRows(rows: ParsedRow[], existingBlocks: SmartTaskB
         title: row.title,
         tag: row.tag,
         tagColor: row.tag === existing.header.tag ? existing.header.tagColor : getTagColor(row.tag),
-        date: row.date === row._originalDate
-          ? existing.header.date
-          : row.date || undefined,
+        date: protectedDate,
         deadline: row.deadline || undefined,
         duration: row.duration,
         complexity: row.complexity,
