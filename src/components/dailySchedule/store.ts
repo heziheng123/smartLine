@@ -10,6 +10,7 @@ import { liveblocksClient } from '@/store/client';
 import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
 import { createCoalescedPersistence, createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 import { registerUndoExecutor } from '@/services/operationHistory';
+import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
 
 const STORAGE_KEY = 'daily-schedule-data';
 const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
@@ -199,7 +200,8 @@ function genScheduleId(): string {
 
 export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>()(
   liveblocks(
-    (set, get) => {
+    (setState, get) => {
+      const set = createWorkspaceTrackedSet(setState, get, ['schedules']);
       const initialSyncSettings = loadSyncSettings();
 
       return {

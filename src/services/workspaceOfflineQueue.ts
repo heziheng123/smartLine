@@ -1,147 +1,124 @@
-import { createScopedStorage } from '@/utils/persistence';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
-import { hashWorkspaceValue } from './workspaceSyncCore';
+import {
+  isWorkspaceQueueSuppressed,
+  listWorkspaceConflicts,
+  queueWorkspaceFields,
+  removeWorkspaceConflict,
+  setWorkspaceQueueSuppressed,
+  WORKSPACE_QUEUE_EVENT,
+  workspaceQueueChannel,
+  workspaceQueueTabId,
+  type WorkspaceStorageField,
+} from './workspaceSyncQueueCore';
 
-export type WorkspaceStorageField =
-  | 'tasks' | 'groups' | 'notes' | 'milestones'
-  | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
-  | 'schedules' | 'nodes';
+export {
+  clearPendingWorkspaceSync,
+  listWorkspaceConflicts,
+  preserveWorkspaceConflict,
+  queueWorkspaceFields,
+  readPendingWorkspaceSync,
+  setWorkspaceQueueSuppressed,
+  WORKSPACE_QUEUE_EVENT,
+  type PendingWorkspaceSync,
+  type WorkspaceConflictRecord,
+  type WorkspaceStorageField,
+} from './workspaceSyncQueueCore';
 
-export interface PendingWorkspaceSync {
-  version: 1;
-  deviceId: string;
-  createdAt: string;
-  updatedAt: string;
-  fields: Partial<Record<WorkspaceStorageField, unknown>>;
-  /** 每个字段第一次离线修改前的内容哈希，用于多设备逐字段冲突检测 */
-  baseHashes?: Partial<Record<WorkspaceStorageField, string>>;
-}
+function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
+  const timelinePatch: Record<string, unknown> = {};
+  for (const key of ['tasks', 'groups', 'notes', 'milestones'] as const) {
+    if (fields[key] !== undefined) timelinePatch[key] = fields[key];
+  }
+  if (Object.keys(timelinePatch).length) {
+    useTimelineStore.setState(timelinePatch as never);
+  }
 
-export interface WorkspaceConflictRecord {
-  id: string;
-  detectedAt: string;
-  remoteUpdatedAt: string;
-  pending: PendingWorkspaceSync;
-}
+  const ebbPatch: Record<string, unknown> = {};
+  for (const key of ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings'] as const) {
+    if (fields[key] !== undefined) ebbPatch[key] = fields[key];
+  }
+  if (Object.keys(ebbPatch).length) {
+    useEbbStore.setState(ebbPatch as never);
+  }
 
-const queueStorage = createScopedStorage('workspace_sync_queue');
-const QUEUE_KEY = 'pending-v1';
-const CONFLICTS_KEY = 'conflicts-v1';
-const DEVICE_KEY = 'smart-line-device-id';
-export const WORKSPACE_QUEUE_EVENT = 'smartline:workspace-queue';
-let writeChain = Promise.resolve();
-let trackingSuppressed = false;
-const tabId = crypto.randomUUID();
-const crossTabChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('smartline-workspace-v1');
-
-export function setWorkspaceQueueSuppressed(value: boolean): void {
-  trackingSuppressed = value;
-}
-
-function deviceId(): string {
-  const existing = localStorage.getItem(DEVICE_KEY);
-  if (existing) return existing;
-  const created = crypto.randomUUID();
-  localStorage.setItem(DEVICE_KEY, created);
-  return created;
-}
-
-export function queueWorkspaceFields(
-  fields: Partial<Record<WorkspaceStorageField, unknown>>,
-  baseFields: Partial<Record<WorkspaceStorageField, unknown>> = {},
-): void {
-  if (trackingSuppressed) return;
-  crossTabChannel?.postMessage({ type: 'fields', source: tabId, fields });
-  writeChain = writeChain.then(async () => {
-    const existing = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
-    const now = new Date().toISOString();
-    const baseHashes = { ...(existing?.baseHashes ?? {}) };
-    for (const [key, value] of Object.entries(baseFields) as Array<[WorkspaceStorageField, unknown]>) {
-      if (!baseHashes[key]) baseHashes[key] = await hashWorkspaceValue(value);
-    }
-    const next: PendingWorkspaceSync = {
-      version: 1,
-      deviceId: existing?.deviceId || deviceId(),
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
-      fields: { ...(existing?.fields ?? {}), ...fields },
-      baseHashes,
-    };
-    await queueStorage.setItem(QUEUE_KEY, next);
-    window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
-    crossTabChannel?.postMessage({ type: 'queue-ready', source: tabId });
-  }).catch((error) => console.warn('[workspace-queue] 保存待同步变更失败：', error));
+  if (fields.schedules !== undefined) {
+    useDailyScheduleStore.setState({ schedules: fields.schedules } as never);
+  }
+  if (fields.nodes !== undefined) {
+    useGraphStore.setState({ nodes: fields.nodes } as never);
+  }
 }
 
 export function startWorkspaceCrossTabDataSync(): () => void {
-  if (!crossTabChannel) return () => undefined;
-  const handler = (event: MessageEvent<{ type?: string; source?: string; fields?: Partial<Record<WorkspaceStorageField, unknown>> }>) => {
-    if (event.data?.source === tabId) return;
+  if (!workspaceQueueChannel) return () => undefined;
+
+  const handler = (event: MessageEvent<{
+    type?: string;
+    source?: string;
+    fields?: Partial<Record<WorkspaceStorageField, unknown>>;
+  }>) => {
+    if (event.data?.source === workspaceQueueTabId) return;
     if (event.data?.type === 'queue-ready') {
       window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
       return;
     }
     if (event.data?.type !== 'fields' || !event.data.fields) return;
-    const fields = event.data.fields;
+
     setWorkspaceQueueSuppressed(true);
     try {
-      applyWorkspaceFields(fields);
+      applyWorkspaceFields(event.data.fields);
     } finally {
       window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
     }
   };
-  crossTabChannel.addEventListener('message', handler);
-  return () => crossTabChannel.removeEventListener('message', handler);
-}
 
-export async function readPendingWorkspaceSync(): Promise<PendingWorkspaceSync | null> {
-  await writeChain;
-  return await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
-}
-
-export async function clearPendingWorkspaceSync(expectedUpdatedAt?: string): Promise<void> {
-  await writeChain;
-  const current = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
-  if (!current || (expectedUpdatedAt && current.updatedAt !== expectedUpdatedAt)) return;
-  await queueStorage.removeItem(QUEUE_KEY);
-}
-
-export async function preserveWorkspaceConflict(pending: PendingWorkspaceSync, remoteUpdatedAt: string): Promise<void> {
-  const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
-  const record: WorkspaceConflictRecord = {
-    id: crypto.randomUUID(), detectedAt: new Date().toISOString(), remoteUpdatedAt, pending,
-  };
-  await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts].slice(0, 20));
-  await clearPendingWorkspaceSync(pending.updatedAt);
-}
-
-export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[]> {
-  return await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
-}
-
-function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
-  const timelinePatch: Record<string, unknown> = {};
-  for (const key of ['tasks', 'groups', 'notes', 'milestones'] as const) if (fields[key] !== undefined) timelinePatch[key] = fields[key];
-  if (Object.keys(timelinePatch).length) useTimelineStore.setState(timelinePatch as never);
-  const ebbPatch: Record<string, unknown> = {};
-  for (const key of ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings'] as const) if (fields[key] !== undefined) ebbPatch[key] = fields[key];
-  if (Object.keys(ebbPatch).length) useEbbStore.setState(ebbPatch as never);
-  if (fields.schedules !== undefined) useDailyScheduleStore.setState({ schedules: fields.schedules } as never);
-  if (fields.nodes !== undefined) useGraphStore.setState({ nodes: fields.nodes } as never);
+  workspaceQueueChannel.addEventListener('message', handler);
+  return () => workspaceQueueChannel.removeEventListener('message', handler);
 }
 
 export async function restoreWorkspaceConflict(id: string): Promise<void> {
   const conflicts = await listWorkspaceConflicts();
   const conflict = conflicts.find((item) => item.id === id);
   if (!conflict) throw new Error('冲突副本不存在。');
+
   setWorkspaceQueueSuppressed(true);
-  try { applyWorkspaceFields(conflict.pending.fields); }
-  finally { setWorkspaceQueueSuppressed(false); }
+  try {
+    applyWorkspaceFields(conflict.pending.fields);
+  } finally {
+    setWorkspaceQueueSuppressed(false);
+  }
+
   queueWorkspaceFields(conflict.pending.fields);
-  await queueStorage.setItem(CONFLICTS_KEY, conflicts.filter((item) => item.id !== id));
+  await removeWorkspaceConflict(id);
+}
+
+function isUnifiedWorkspaceConfigured(): boolean {
+  try {
+    const settings = JSON.parse(
+      localStorage.getItem('smart-line-sync-architecture-v1') ?? 'null',
+    ) as { architecture?: string } | null;
+    return settings?.architecture === 'unified';
+  } catch {
+    return false;
+  }
+}
+
+function isWorkspaceStorageReady(): boolean {
+  if (!isUnifiedWorkspaceConfigured()) return true;
+  const stores = [
+    useTimelineStore.getState(),
+    useEbbStore.getState(),
+    useDailyScheduleStore.getState(),
+    useGraphStore.getState(),
+  ];
+  return stores.every((state) => (
+    state.liveblocks?.room?.getStatus() === 'connected'
+    && state.liveblocks?.status === 'connected'
+    && !state.liveblocks?.isStorageLoading
+  ));
 }
 
 export function startWorkspaceQueueTracking(): () => void {
@@ -150,53 +127,99 @@ export function startWorkspaceQueueTracking(): () => void {
   let daily = useDailyScheduleStore.getState();
   let graph = useGraphStore.getState();
 
-  const shouldQueue = () => {
-    try {
-      const settings = JSON.parse(localStorage.getItem('smart-line-sync-architecture-v1') ?? 'null') as { architecture?: string } | null;
-      if (settings?.architecture !== 'unified') return false;
-    } catch { return false; }
-    const rooms = [
-      useTimelineStore.getState().liveblocks?.room,
-      useEbbStore.getState().liveblocks?.room,
-      useDailyScheduleStore.getState().liveblocks?.room,
-      useGraphStore.getState().liveblocks?.room,
-    ];
-    return !rooms.some((room) => room?.getStatus() === 'connected');
-  };
+  const shouldQueue = () => (
+    isUnifiedWorkspaceConfigured()
+    && !isWorkspaceStorageReady()
+  );
 
   const unsubscribers = [
     useTimelineStore.subscribe((state) => {
       const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
       const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
-      if (state.tasks !== timeline.tasks) { changed.tasks = state.tasks; base.tasks = timeline.tasks; }
-      if (state.groups !== timeline.groups) { changed.groups = state.groups; base.groups = timeline.groups; }
-      if (state.notes !== timeline.notes) { changed.notes = state.notes; base.notes = timeline.notes; }
-      if (state.milestones !== timeline.milestones) { changed.milestones = state.milestones; base.milestones = timeline.milestones; }
+      if (state.tasks !== timeline.tasks) {
+        changed.tasks = state.tasks;
+        base.tasks = timeline.tasks;
+      }
+      if (state.groups !== timeline.groups) {
+        changed.groups = state.groups;
+        base.groups = timeline.groups;
+      }
+      if (state.notes !== timeline.notes) {
+        changed.notes = state.notes;
+        base.notes = timeline.notes;
+      }
+      if (state.milestones !== timeline.milestones) {
+        changed.milestones = state.milestones;
+        base.milestones = timeline.milestones;
+      }
       timeline = state;
-      if (!trackingSuppressed && shouldQueue() && Object.keys(changed).length) queueWorkspaceFields(changed, base);
+      if (
+        !isWorkspaceQueueSuppressed()
+        && shouldQueue()
+        && Object.keys(changed).length
+      ) {
+        queueWorkspaceFields(changed, base, { preservePendingFields: true });
+      }
     }),
     useEbbStore.subscribe((state) => {
       const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
       const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
-      if (state.reviewTasks !== ebb.reviewTasks) { changed.reviewTasks = state.reviewTasks; base.reviewTasks = ebb.reviewTasks; }
-      if (state.inboxItems !== ebb.inboxItems) { changed.inboxItems = state.inboxItems; base.inboxItems = ebb.inboxItems; }
-      if (state.outlineNodes !== ebb.outlineNodes) { changed.outlineNodes = state.outlineNodes; base.outlineNodes = ebb.outlineNodes; }
-      if (state.ebbSettings !== ebb.ebbSettings) { changed.ebbSettings = state.ebbSettings; base.ebbSettings = ebb.ebbSettings; }
+      if (state.reviewTasks !== ebb.reviewTasks) {
+        changed.reviewTasks = state.reviewTasks;
+        base.reviewTasks = ebb.reviewTasks;
+      }
+      if (state.inboxItems !== ebb.inboxItems) {
+        changed.inboxItems = state.inboxItems;
+        base.inboxItems = ebb.inboxItems;
+      }
+      if (state.outlineNodes !== ebb.outlineNodes) {
+        changed.outlineNodes = state.outlineNodes;
+        base.outlineNodes = ebb.outlineNodes;
+      }
+      if (state.ebbSettings !== ebb.ebbSettings) {
+        changed.ebbSettings = state.ebbSettings;
+        base.ebbSettings = ebb.ebbSettings;
+      }
       ebb = state;
-      if (!trackingSuppressed && shouldQueue() && Object.keys(changed).length) queueWorkspaceFields(changed, base);
+      if (
+        !isWorkspaceQueueSuppressed()
+        && shouldQueue()
+        && Object.keys(changed).length
+      ) {
+        queueWorkspaceFields(changed, base, { preservePendingFields: true });
+      }
     }),
     useDailyScheduleStore.subscribe((state) => {
-      if (!trackingSuppressed && shouldQueue() && state.schedules !== daily.schedules) {
-        queueWorkspaceFields({ schedules: state.schedules }, { schedules: daily.schedules });
-      }
+      const previous = daily;
       daily = state;
+      if (
+        !isWorkspaceQueueSuppressed()
+        && shouldQueue()
+        && state.schedules !== previous.schedules
+      ) {
+        queueWorkspaceFields(
+          { schedules: state.schedules },
+          { schedules: previous.schedules },
+          { preservePendingFields: true },
+        );
+      }
     }),
     useGraphStore.subscribe((state) => {
-      if (!trackingSuppressed && shouldQueue() && state.nodes !== graph.nodes) {
-        queueWorkspaceFields({ nodes: state.nodes }, { nodes: graph.nodes });
-      }
+      const previous = graph;
       graph = state;
+      if (
+        !isWorkspaceQueueSuppressed()
+        && shouldQueue()
+        && state.nodes !== previous.nodes
+      ) {
+        queueWorkspaceFields(
+          { nodes: state.nodes },
+          { nodes: previous.nodes },
+          { preservePendingFields: true },
+        );
+      }
     }),
   ];
+
   return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
 }

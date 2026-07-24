@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
+import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
 
 import { todayStr, addDays } from '@/utils/dateSafe';
 import type {
@@ -165,7 +166,13 @@ interface EbbStore extends EbbData {
 
 export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
   liveblocks(
-    (set, get) => {
+    (setState, get) => {
+      const set = createWorkspaceTrackedSet(setState, get, [
+        'reviewTasks',
+        'inboxItems',
+        'outlineNodes',
+        'ebbSettings',
+      ]);
       const initial = getInitialEbbData();
       const initialSync = loadEbbSyncSettings();
 

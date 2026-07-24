@@ -23,6 +23,7 @@ import {
 import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
 import { todayStr } from '@/utils/dateSafe';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
+import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
 import {
   planProjectTaskEffects,
   type CompletedTaskBindingStrategy,
@@ -209,7 +210,13 @@ interface TimelineStore extends TimelineData {
 
 export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
   liveblocks(
-    (set, get) => {
+    (setState, get) => {
+      const set = createWorkspaceTrackedSet(setState, get, [
+        'tasks',
+        'groups',
+        'notes',
+        'milestones',
+      ]);
       const initialSyncSettings = loadTimelineSyncSettings();
 
       return {

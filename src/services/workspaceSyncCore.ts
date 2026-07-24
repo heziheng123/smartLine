@@ -1,5 +1,42 @@
 import type { WorkspaceBackup } from './workspaceBackup.ts';
 
+export interface WorkspaceStoreReadiness {
+  syncEnabled?: boolean;
+  isHydrated?: boolean;
+  liveblocks?: {
+    room?: { getStatus: () => string } | null;
+    status?: string;
+    isStorageLoading?: boolean;
+  };
+}
+
+export interface WorkspaceFieldChangeSet {
+  fields: Record<string, unknown>;
+  baseFields: Record<string, unknown>;
+}
+
+export function isWorkspaceStoreStorageReady(state: WorkspaceStoreReadiness): boolean {
+  return state.syncEnabled === true
+    && state.liveblocks?.room?.getStatus() === 'connected'
+    && state.liveblocks?.status === 'connected'
+    && !state.liveblocks?.isStorageLoading;
+}
+
+export function collectWorkspaceFieldChanges(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  fieldNames: readonly string[],
+): WorkspaceFieldChangeSet {
+  const fields: Record<string, unknown> = {};
+  const baseFields: Record<string, unknown> = {};
+  for (const fieldName of fieldNames) {
+    if (before[fieldName] === after[fieldName]) continue;
+    fields[fieldName] = after[fieldName];
+    baseFields[fieldName] = before[fieldName];
+  }
+  return { fields, baseFields };
+}
+
 function sanitizeRoomPart(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
 }

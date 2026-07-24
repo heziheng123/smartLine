@@ -5,6 +5,7 @@ import { GraphNode, GraphData } from './types';
 import { genId } from '@/ebb/scheduler';
 import { liveblocksClient } from '@/store/client';
 import { createCoalescedPersistence, createScopedStorage, readJsonStorage } from '@/utils/persistence';
+import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
 
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
@@ -151,7 +152,8 @@ interface GraphStore extends GraphData {
 
 export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
   liveblocks(
-    (set, get) => {
+    (setState, get) => {
+      const set = createWorkspaceTrackedSet(setState, get, ['nodes']);
       const initial = getInitialGraphData();
       const initialSync = loadGraphSyncSettings();
 
