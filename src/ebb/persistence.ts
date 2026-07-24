@@ -1,7 +1,7 @@
 import { createCoalescedPersistence, createScopedStorage, readJsonStorage } from '@/utils/persistence';
 import type { EbbData } from './types';
 import { EBB_STORAGE_KEY, EBB_SYNC_SETTINGS_KEY } from './constants';
-import { normalizeEbbData } from './dataNormalization';
+import { normalizeEbbData, toEbbData } from './dataNormalization';
 
 const EBB_STORAGE_MIRROR_KEY = `${EBB_STORAGE_KEY}:mirror`;
 const ebbStorage = createScopedStorage('ebb_data');
@@ -25,7 +25,7 @@ export function saveEbbSyncSettings(settings: EbbSyncSettings): void {
 
 async function saveEbbDataAsync(data: EbbData): Promise<void> {
   try {
-    await ebbStorage.setItem(EBB_STORAGE_KEY, data);
+    await ebbStorage.setItem(EBB_STORAGE_KEY, toEbbData(data));
   } catch (error) {
     console.warn('[smart-ebb] IndexedDB 写入失败：', error);
     throw error;
@@ -55,5 +55,5 @@ export async function loadEbbData(): Promise<EbbData | null> {
 }
 
 export function saveEbbData(data: EbbData): void {
-  ebbPersistence.schedule(data);
+  ebbPersistence.schedule(toEbbData(data));
 }

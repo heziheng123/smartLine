@@ -1,6 +1,7 @@
 const CACHE_PREFIX = 'smartline-shell-';
 const META_CACHE = 'smartline-shell-meta-v1';
 const ACTIVE_CACHE_KEY = '/__smartline_active_cache__';
+const RELOAD_CLIENTS_KEY = '/__smartline_reload_clients__';
 const APP_SHELL_URL = '/';
 const MAX_ASSET_COUNT = 160;
 const STATIC_URLS = [
@@ -74,6 +75,22 @@ async function writeCacheState(state) {
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
     }),
   );
+}
+
+async function setReloadClientsFlag(value) {
+  const cache = await caches.open(META_CACHE);
+  if (!value) {
+    await cache.delete(RELOAD_CLIENTS_KEY);
+    return;
+  }
+  await cache.put(RELOAD_CLIENTS_KEY, new Response('1'));
+}
+
+async function takeReloadClientsFlag() {
+  const cache = await caches.open(META_CACHE);
+  const shouldReload = Boolean(await cache.match(RELOAD_CLIENTS_KEY));
+  if (shouldReload) await cache.delete(RELOAD_CLIENTS_KEY);
+  return shouldReload;
 }
 
 async function fetchAndCache(cache, url) {
@@ -215,9 +232,12 @@ async function cacheRuntimeResponse(request, response) {
 self.addEventListener('install', (event) => {
   // Do not catch this promise: a failed install must leave the existing worker
   // and its complete offline cache in control.
-  event.waitUntil(
-    refreshAppShell().then(() => self.skipWaiting()),
-  );
+  event.waitUntil((async () => {
+    const previousState = await readCacheState();
+    await refreshAppShell();
+    if (previousState.active) await setReloadClientsFlag(true);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -225,6 +245,14 @@ self.addEventListener('activate', (event) => {
     const state = await readCacheState();
     if (state.active) await removeObsoleteCaches(new Set(state.history));
     await self.clients.claim();
+    if (await takeReloadClientsFlag()) {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      await Promise.all(windows.map((client) =>
+        Promise.resolve(client.navigate(client.url)).catch((error) => {
+          console.warn('[service-worker] client refresh failed:', error);
+        }),
+      ));
+    }
   })());
 });
 
@@ -247,25 +275,21 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
-      const cached = await matchFromShellCaches(APP_SHELL_URL);
-      if (cached) {
+      try {
+        const networkResponse = await fetch(request, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        });
+        if (!networkResponse.ok) throw new Error(`Navigation request failed: ${networkResponse.status}`);
         event.waitUntil(
           refreshAppShell().catch((error) => {
             console.warn('[service-worker] background shell refresh failed:', error);
           }),
         );
-        return cached;
-      }
-
-      try {
-        const networkResponse = await fetch(request);
-        event.waitUntil(
-          refreshAppShell().catch((error) => {
-            console.warn('[service-worker] initial shell refresh failed:', error);
-          }),
-        );
         return networkResponse;
       } catch {
+        const cached = await matchFromShellCaches(APP_SHELL_URL);
+        if (cached) return cached;
         return new Response(
           '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="theme-color" content="#f5f7fb"><title>Smart Timeline</title><body style="font-family:system-ui;padding:32px;background:#f5f7fb;color:#172033"><h1>Smart Timeline</h1><p>首次启动需要连接网络，请联网后重试。</p><button onclick="location.reload()">重新加载</button></body>',
           { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } },

@@ -801,6 +801,19 @@ try {
     }
   });
 
+  check('EBB 持久化投影会剔除 Store 方法并保持 IndexedDB 可克隆', () => {
+    const runtimeState = {
+      ...ebbConstants.getDefaultEbbData(),
+      isHydrated: true,
+      hydrateStore: async () => {},
+      syncTaskToEbb: () => {},
+    };
+    const persisted = ebbDataModule.toEbbData(runtimeState);
+    assert.equal('hydrateStore' in persisted, false);
+    assert.equal('syncTaskToEbb' in persisted, false);
+    assert.doesNotThrow(() => structuredClone(persisted));
+  });
+
   check('积分按实际完成日期统计，而不是计划日期', () => {
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;

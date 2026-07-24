@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test:auth": "node --experimental-strip-types --test tests/auth/github-auth.test.ts tests/auth/storage-auth.test.ts",
-    "test:sync": "node --experimental-strip-types --test tests/sync/workspace-sync.test.ts",
+    "test:sync": "node --experimental-strip-types --test tests/sync/workspace-sync.test.ts tests/sync/service-worker-policy.test.ts",
     "test:security": "node scripts/security-check.mjs",
     "test:system": "node scripts/system-simulation.mjs",
     "test:e2e": "playwright test",

@@ -175,3 +175,17 @@ export function normalizeEbbData(data: Partial<EbbData> | null | undefined): Ebb
     ebbSettings: ensureTagColors(reviewTasks, ebbSettings),
   };
 }
+
+/**
+ * Projects a Zustand/Liveblocks state back to the four serializable EBB fields.
+ * Callers may pass a structurally compatible store object containing actions;
+ * those runtime functions must never reach IndexedDB.
+ */
+export function toEbbData(data: EbbData): EbbData {
+  return normalizeEbbData({
+    reviewTasks: Array.isArray(data.reviewTasks) ? data.reviewTasks : [],
+    inboxItems: Array.isArray(data.inboxItems) ? data.inboxItems : [],
+    outlineNodes: Array.isArray(data.outlineNodes) ? data.outlineNodes : [],
+    ebbSettings: data.ebbSettings,
+  });
+}

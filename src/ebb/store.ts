@@ -1204,8 +1204,10 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
           set((state) => {
             const newData: EbbData = {
-              ...state,
               reviewTasks: plan.reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: state.ebbSettings,
             };
             saveEbbData(newData);
             return newData;

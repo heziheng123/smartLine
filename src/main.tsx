@@ -47,9 +47,14 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     registrationStarted = true
     if (registrationTimer !== undefined) window.clearTimeout(registrationTimer)
     if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer)
-    void navigator.serviceWorker.register('/service-worker.js').catch((error) => {
-      console.warn('[service-worker] registration failed:', error)
-    })
+    void navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
+      .then(async (registration) => {
+        await registration.update()
+        registration.active?.postMessage({ type: 'REFRESH_APP_SHELL' })
+      })
+      .catch((error) => {
+        console.warn('[service-worker] registration failed:', error)
+      })
   }
 
   const scheduleServiceWorkerRegistration = () => {

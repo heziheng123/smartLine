@@ -27,7 +27,7 @@ const project = {
       duration: 30,
       isCompleted: true,
       completedDate: today,
-      autoSyncEbb: false,
+      autoSyncEbb: true,
       graphNodeIds: ['completion-node'],
     },
     body: '',
@@ -128,6 +128,10 @@ async function readNodeStatus(page: Page) {
 }
 
 test('grouped project can complete and cancel repeatedly without refresh', async ({ page }) => {
+  const persistenceErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().includes('DataCloneError')) persistenceErrors.push(message.text());
+  });
   const card = await openProjectDocument(page);
   await card.locator('.stb-check').click();
   await expect(card).not.toHaveClass(/stb-card--done/);
@@ -143,6 +147,8 @@ test('grouped project can complete and cancel repeatedly without refresh', async
   await expect(card).not.toHaveClass(/stb-card--done/);
   await expect.poll(() => readCompletionCopies(page)).toEqual({ task: false, group: false });
   await expect.poll(() => readNodeStatus(page)).toBe('unactivated');
+  await page.waitForTimeout(800);
+  expect(persistenceErrors).toEqual([]);
 
   await page.reload();
   const reloadedCard = await openProjectDocument(page);
