@@ -4,11 +4,12 @@ import { useRecycleBin, type RecycledTask } from '@/services/recycleBin';
 import { useTimelineStore } from '@/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { registerUndoExecutor, runWithoutOperationRecording } from '@/services/operationHistory';
+import { getUniqueTasks } from '@/store/timelineData';
 
 const timeLabel = (value: number) => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 const restoreRecycledTask = (item: RecycledTask) => {
   const timeline = useTimelineStore.getState();
-  if ([...timeline.tasks, ...timeline.groups.flatMap((group) => group.children)].some((task) => task.id === item.task.id)) return '同一任务已经存在，未覆盖当前数据';
+  if (getUniqueTasks(timeline.tasks, timeline.groups).some((task) => task.id === item.task.id)) return '同一任务已经存在，未覆盖当前数据';
   runWithoutOperationRecording(() => useTimelineStore.getState().restoreTask(item.task, item.groupId));
   if (item.placements?.length) useDailyScheduleStore.setState((state) => {
     const schedules = { ...state.schedules };

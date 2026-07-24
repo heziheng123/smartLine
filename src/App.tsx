@@ -7,6 +7,7 @@ import dayjs from 'dayjs';
 import { splitDate } from '@/utils/dateSafe';
 import type { Task, TaskGroup, Note, Milestone, ContextMenuItem } from '@/types';
 import { useTimelineStore } from '@/store';
+import { getUniqueTasks } from '@/store/timelineData';
 import { useShallow } from 'zustand/react/shallow';
 // import TimelineView from '@/components/TimelineView';
 import Toolbar, { type AppModule } from '@/components/Toolbar';
@@ -257,11 +258,7 @@ const App: React.FC = () => {
   // projects and projects nested inside groups. IDs are unique in Timeline;
   // de-duplicate defensively to avoid rendering a block twice on imported data.
   const weekMatrixTasks = useMemo(() => {
-    const uniqueTasks = new Map<string, Task>();
-    [...store.tasks, ...store.groups.flatMap((group) => group.children)].forEach((task) => {
-      uniqueTasks.set(task.id, task);
-    });
-    return [...uniqueTasks.values()];
+    return getUniqueTasks(store.tasks, store.groups);
   }, [store.groups, store.tasks]);
 
   // 对话框状态

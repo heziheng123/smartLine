@@ -23,6 +23,7 @@ import styles from './GraphConsole.module.css';
 import { useGraphBindingStore } from '../bindingStore';
 import NodeLearningSummary, { type NodeDetailScope, type NodeLearningSummaryData, type NodeMasteryState } from './NodeLearningSummary';
 import type { SmartTaskBlock, Task } from '@/types';
+import { getUniqueTasks } from '@/store/timelineData';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
 import { zoom, zoomIdentity, ZoomBehavior } from 'd3-zoom';
@@ -591,10 +592,7 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [selectedNodeId, islandsData]);
   
   const allProjectTasks = useMemo(() => {
-    const taskMap = new Map<string, Task>();
-    tasks.forEach(task => taskMap.set(task.id, task));
-    groups.forEach(group => group.children.forEach(task => taskMap.set(task.id, task)));
-    return [...taskMap.values()];
+    return getUniqueTasks(tasks, groups);
   }, [tasks, groups]);
 
   const selectedScopeIds = useMemo(() => {

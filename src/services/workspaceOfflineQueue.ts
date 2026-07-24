@@ -16,6 +16,7 @@ import {
 
 export {
   clearPendingWorkspaceSync,
+  getPendingWorkspaceSyncToken,
   listWorkspaceConflicts,
   preserveWorkspaceConflict,
   queueWorkspaceFields,

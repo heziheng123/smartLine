@@ -38,6 +38,7 @@ import {
   getUniqueTasks,
   headerValueEquals,
   normalizeTimelineData,
+  reconcileTimelineTaskCopies,
 } from './timelineData';
 import {
   loadTimelineData,
@@ -264,7 +265,18 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         addTask: (task) => {
           set((state) => {
-            const newData = { ...state, tasks: [...state.tasks, task] };
+            const tasks = [...state.tasks.filter((item) => item.id !== task.id), task];
+            const groups = state.groups.map((group) => {
+              if (group.id !== task.groupId) return group;
+              return {
+                ...group,
+                children: [
+                  ...group.children.filter((child) => child.id !== task.id),
+                  { ...task, groupId: group.id },
+                ],
+              };
+            });
+            const newData = { ...state, tasks, groups };
             saveData(newData);
             return newData;
           });
@@ -435,16 +447,21 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               : block),
           };
           set((state) => {
-            const tasks = state.tasks.filter((item) => item.id !== task.id);
+            const restoredCanonical = groupId
+              ? { ...restorableTask, groupId }
+              : { ...restorableTask, groupId: undefined };
+            const tasks = [
+              ...state.tasks.filter((item) => item.id !== task.id),
+              restoredCanonical,
+            ];
             const groups = state.groups.map((group) => ({
               ...group,
               children: group.children.filter((item) => item.id !== task.id),
             }));
             if (groupId) {
               const target = groups.find((group) => group.id === groupId);
-              if (target) target.children.push({ ...restorableTask, groupId });
-              else tasks.push(restorableTask);
-            } else tasks.push(restorableTask);
+              if (target) target.children.push(restoredCanonical);
+            }
             const newData = { ...state, tasks, groups };
             saveData(newData);
             return newData;
@@ -802,20 +819,36 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         addGroup: (group) => {
           set((state) => {
             const newChildIds = new Set(group.children.map((c) => c.id));
-            // 更新 tasks：打上 groupId 标记
+            const childById = new Map(group.children.map((child) => [child.id, child]));
+            // 更新 tasks：打上 groupId 标记，并提升仅存在于旧 groups.children
+            // 中的项目，保证 tasks 始终是唯一权威集合。
             const newTasks = state.tasks.map((t) => {
               if (newChildIds.has(t.id)) {
                 return { ...t, groupId: group.id };
               }
               return t;
             });
+            const existingTaskIds = new Set(newTasks.map((task) => task.id));
+            for (const childId of newChildIds) {
+              if (existingTaskIds.has(childId)) continue;
+              const child = childById.get(childId);
+              if (child) newTasks.push({ ...child, groupId: group.id });
+            }
             // 从其他分组的 children 中移除已纳入本分组的任务（保证单一分组）
             const newGroups = state.groups.map((g) => {
               const conflicting = g.children.some((c) => newChildIds.has(c.id));
               if (!conflicting) return g;
               return { ...g, children: g.children.filter((c) => !newChildIds.has(c.id)) };
             });
-            const newData = { ...state, tasks: newTasks, groups: [...newGroups, group] };
+            const canonicalById = new Map(newTasks.map((task) => [task.id, task]));
+            const canonicalGroup = {
+              ...group,
+              children: group.children.map((child) => ({
+                ...(canonicalById.get(child.id) ?? child),
+                groupId: group.id,
+              })),
+            };
+            const newData = { ...state, tasks: newTasks, groups: [...newGroups, canonicalGroup] };
             saveData(newData);
             return newData;
           });
@@ -824,6 +857,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         updateGroup: (group) => {
           set((state) => {
             const newChildIds = new Set(group.children.map((c) => c.id));
+            const childById = new Map(group.children.map((child) => [child.id, child]));
             // 找出从其他分组移入本分组的任务 ID（之前 groupId 不是当前分组，但现在被选中）
             const movedInIds = new Set<string>();
             for (const childId of newChildIds) {
@@ -847,9 +881,23 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               }
               return t;
             });
+            const existingTaskIds = new Set(newTasks.map((task) => task.id));
+            for (const childId of newChildIds) {
+              if (existingTaskIds.has(childId)) continue;
+              const child = childById.get(childId);
+              if (child) newTasks.push({ ...child, groupId: group.id });
+            }
+            const canonicalById = new Map(newTasks.map((task) => [task.id, task]));
+            const canonicalGroup = {
+              ...group,
+              children: group.children.map((child) => ({
+                ...(canonicalById.get(child.id) ?? child),
+                groupId: group.id,
+              })),
+            };
             // 从其他分组的 children 中移除已移入本分组的任务（保证单一分组）
             const groups = state.groups.map((g) => {
-              if (g.id === group.id) return group; // 当前分组用新的替换
+              if (g.id === group.id) return canonicalGroup; // 当前分组用新的替换
               if (movedInIds.size === 0) return g;
               const conflicting = g.children.some((c) => movedInIds.has(c.id));
               if (!conflicting) return g;
@@ -999,12 +1047,10 @@ registerUndoExecutor('timeline-remove-created-block', (raw) => {
 // 仅触发 zustand set()，不会经过本地 saveData，导致 localStorage 落后于
 // 实时状态。这里订阅 store 变化，数据切片引用变化时（含远端推送）防抖落盘。
 //
-// 同时承担 Bug#2 的 groups.children ↔ tasks 一致性修复：
+// 同时承担 groups.children ↔ tasks 一致性修复：
 // tasks 与 groups 是两个独立 Liveblocks storage key，按 LWW 合并。
-// 当两个客户端同时改同组不同任务时，groups.children 中的某份任务副本可能
-// 停留在旧值，与 tasks 中最新值不一致。这里在 tasks 引用变化但 groups
-// 未变（典型的"仅远端推送 tasks"信号）时，主动把 groups.children 中
-// 与 canonical tasks 不一致的子任务刷新为最新值，写回 groups。
+// 无论远端只推送一个字段还是把两个字段同时推送，都以 tasks 为任务权威源，
+// 并把旧 group-only 项目提升到 tasks 后重建 groups.children 兼容投影。
 {
   let lastTasks: unknown = null;
   let lastGroups: unknown = null;
@@ -1040,40 +1086,16 @@ registerUndoExecutor('timeline-remove-created-block', (raw) => {
       });
     }, 500);
 
-    // ── Bug#2 一致性修复 ──
-    // 仅当 tasks 引用变化但 groups 引用未变（典型的"仅远端推送 tasks"信号）
-    // 时触发 reconciliation，避免每次都全量扫描。
-    if (tasksChanged && !groupsChanged && state.groups.length > 0 && state.tasks.length > 0) {
-      const taskMap = new Map(state.tasks.map((t) => [t.id, t]));
-      let needsReconcile = false;
-      const newGroups = state.groups.map((g) => {
-        let groupChanged = false;
-        // 同时处理两类不一致：
-        //   1) canonical 存在但与 c 引用不同 → 用 canonical 替换 c（保留 groupId）
-        //   2) canonical 不存在（孤儿）→ 返回 null 后过滤掉，避免幽灵分组框
-        const newChildren = g.children
-          .map((c): Task | null => {
-            const canonical = taskMap.get(c.id);
-            if (!canonical) {
-              groupChanged = true;
-              return null;
-            }
-            if (canonical !== c) {
-              groupChanged = true;
-              return { ...canonical, groupId: g.id };
-            }
-            return c;
-          })
-          .filter((c): c is Task => c !== null);
-        if (groupChanged) {
-          needsReconcile = true;
-          return { ...g, children: newChildren };
-        }
-        return g;
-      });
-      if (needsReconcile) {
-        // 写回一致后的 groups，下一次 subscribe 调用会发现 tasks/groups 均无变化 → 跳过，无循环风险
-        useTimelineStore.setState({ groups: newGroups });
+    // `tasks` is authoritative. Reconcile after every mapped-field update,
+    // including batches where Liveblocks changes tasks and groups together.
+    // That is the exact case the old one-sided repair missed.
+    if ((tasksChanged || groupsChanged) && (state.tasks.length > 0 || state.groups.length > 0)) {
+      const reconciled = reconcileTimelineTaskCopies(state.tasks, state.groups);
+      if (reconciled.changed) {
+        useTimelineStore.setState({
+          tasks: reconciled.tasks,
+          groups: reconciled.groups,
+        });
       }
     }
   });

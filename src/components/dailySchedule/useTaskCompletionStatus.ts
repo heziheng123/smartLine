@@ -6,21 +6,14 @@ import type { TaskSource } from './types';
 import type { Block } from '@/types';
 import { useShallow } from 'zustand/react/shallow';
 import { getQuantityDailyStatus, isQuantityTask } from '@/utils/blocks';
+import { getUniqueTasks } from '@/store/timelineData';
 
 export function useTaskCompletionStatus() {
   const { tasks, groups } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
   );
   const ebbReviewTasks = useEbbStore((s) => s.reviewTasks);
-  const tlTasks = useMemo(() => {
-    const byId = new Map(tasks.map((task) => [task.id, task]));
-    for (const group of groups) {
-      for (const child of group.children) {
-        if (!byId.has(child.id)) byId.set(child.id, child);
-      }
-    }
-    return [...byId.values()];
-  }, [tasks, groups]);
+  const tlTasks = useMemo(() => getUniqueTasks(tasks, groups), [tasks, groups]);
   const projectBlocks = useMemo(() => {
     const map = new Map<string, Block>();
     for (const task of tlTasks) {

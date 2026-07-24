@@ -14,6 +14,7 @@ import {
 import {
   WORKSPACE_QUEUE_EVENT,
   clearPendingWorkspaceSync,
+  getPendingWorkspaceSyncToken,
   preserveWorkspaceConflict,
   readPendingWorkspaceSync,
   setWorkspaceQueueSuppressed,
@@ -232,6 +233,16 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
     && remoteUpdatedAt > pending.updatedAt
     && remoteDeviceId
     && remoteDeviceId !== pending.deviceId;
+  // Conflict hashing awaits Web Crypto and gives newer user actions time to
+  // enter the queue. Re-read immediately before the synchronous room batch;
+  // if the queue revision changed, restart with the newest snapshot instead
+  // of replaying the stale one we read at the beginning of this flush.
+  const latest = await readPendingWorkspaceSync();
+  if (!latest) return { applied: 0, conflict: false };
+  if (getPendingWorkspaceSyncToken(latest) !== getPendingWorkspaceSyncToken(pending)) {
+    return flushWorkspaceQueue();
+  }
+
   if (fieldConflicts.length > 0 || metadataConflict) {
     await preserveWorkspaceConflict(pending, remoteUpdatedAt);
     window.dispatchEvent(new CustomEvent('smartline:workspace-conflict'));
@@ -252,7 +263,7 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
   } finally {
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
   }
-  await clearPendingWorkspaceSync(pending.updatedAt);
+  await clearPendingWorkspaceSync(pending);
   return { applied: Object.keys(pending.fields).length, conflict: false };
 }
 

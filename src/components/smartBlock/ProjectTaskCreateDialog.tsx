@@ -8,6 +8,7 @@ import { todayStr } from '@/utils/dateSafe';
 import { PROJECT_TASK_CREATE_EVENT, type ProjectTaskCreateDetail } from './projectTaskCreate';
 import { createProjectTask } from '@/services/projectTaskCommands';
 import '@/styles/project-task-create-dialog.css';
+import { getUniqueTasks } from '@/store/timelineData';
 
 type ProgressMode = 'binary' | 'quantity';
 
@@ -19,9 +20,7 @@ const ProjectTaskCreateDialog: React.FC = () => {
     groups: state.groups,
   })));
   const projects = useMemo(() => {
-    const byId = new Map(tasks.map((task) => [task.id, task]));
-    groups.forEach((group) => group.children.forEach((task) => { if (!byId.has(task.id)) byId.set(task.id, task); }));
-    return [...byId.values()];
+    return getUniqueTasks(tasks, groups);
   }, [groups, tasks]);
 
   const [open, setOpen] = useState(false);

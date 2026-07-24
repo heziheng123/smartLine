@@ -11,6 +11,7 @@ import { returnProjectTaskToBacklog } from '@/services/backlogCommands';
 import { useOperationHistory } from '@/services/operationHistory';
 import type { SmartBlockDragPayload } from '@/types';
 import styles from './IceboxPalette.module.css';
+import { getUniqueTasks } from '@/store/timelineData';
 
 interface IceboxPaletteProps {
   layout?: 'overlay' | 'docked';
@@ -31,11 +32,7 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
   );
 
   const allTasks = useMemo(() => {
-    const byId = new Map(tasks.map((task) => [task.id, task]));
-    groups.forEach((group) => group.children.forEach((task) => {
-      if (!byId.has(task.id)) byId.set(task.id, task);
-    }));
-    return [...byId.values()];
+    return getUniqueTasks(tasks, groups);
   }, [groups, tasks]);
   const backlogTasks = useMemo(() => collectBacklogTasks(allTasks), [allTasks]);
 

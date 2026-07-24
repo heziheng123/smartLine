@@ -8,6 +8,8 @@ export type WorkspaceStorageField =
 
 export interface PendingWorkspaceSync {
   version: 1;
+  /** Unique token for this exact queue revision (older records may omit it). */
+  writeId?: string;
   deviceId: string;
   createdAt: string;
   updatedAt: string;
@@ -89,6 +91,7 @@ export function queueWorkspaceFields(
     }
     const next: PendingWorkspaceSync = {
       version: 1,
+      writeId: crypto.randomUUID(),
       deviceId: existing?.deviceId || deviceId(),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -118,10 +121,19 @@ export async function readPendingWorkspaceSync(): Promise<PendingWorkspaceSync |
   return await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
 }
 
-export async function clearPendingWorkspaceSync(expectedUpdatedAt?: string): Promise<void> {
+export function getPendingWorkspaceSyncToken(
+  pending: Pick<PendingWorkspaceSync, 'writeId' | 'updatedAt' | 'deviceId'>,
+): string {
+  return pending.writeId ?? `${pending.deviceId}:${pending.updatedAt}`;
+}
+
+export async function clearPendingWorkspaceSync(
+  expected?: Pick<PendingWorkspaceSync, 'writeId' | 'updatedAt' | 'deviceId'>,
+): Promise<void> {
   await writeChain;
   const current = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
-  if (!current || (expectedUpdatedAt && current.updatedAt !== expectedUpdatedAt)) return;
+  if (!current) return;
+  if (expected && getPendingWorkspaceSyncToken(current) !== getPendingWorkspaceSyncToken(expected)) return;
   await queueStorage.removeItem(QUEUE_KEY);
 }
 
@@ -137,7 +149,7 @@ export async function preserveWorkspaceConflict(
     pending,
   };
   await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts].slice(0, 20));
-  await clearPendingWorkspaceSync(pending.updatedAt);
+  await clearPendingWorkspaceSync(pending);
 }
 
 export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[]> {

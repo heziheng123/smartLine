@@ -15,7 +15,7 @@ import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from 
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
-import { removeQuantityProgress, setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { removeQuantityProgress, setProjectTaskCompletion } from '@/services/projectTaskCommands';
 import { returnProjectTaskToBacklog, scheduleBacklogTaskToTimeBlock } from '@/services/backlogCommands';
 import { requestConfirmation } from '@/services/confirmation';
 import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
@@ -23,6 +23,7 @@ import BacklogTaskList from '@/components/smartBlock/BacklogTaskList';
 import type { BacklogTask } from '@/domain/taskBacklog';
 import TimeGrid from './TimeGrid';
 import { BlockEditor, QuickCreateInput } from './TimeBlockOverlays';
+import { getUniqueTasks } from '@/store/timelineData';
 import type { SmartTaskBlock } from '@/types';
 import type { TimeBlock } from './types';
 import type { CompletedDailyPoolItem, DailyPoolItem } from './DailyTaskPool';
@@ -96,13 +97,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   }, [rawEbbReviewTasks, archivedNodeIds]);
 
   const tlTasks = useMemo(() => {
-    const taskMap = new Map(rawTlTasks.map((task) => [task.id, task]));
-    for (const group of rawTlGroups) {
-      for (const child of group.children) {
-        if (!taskMap.has(child.id)) taskMap.set(child.id, child);
-      }
-    }
-    return [...taskMap.values()].map(task => ({
+    return getUniqueTasks(rawTlTasks, rawTlGroups).map(task => ({
       ...task,
       blocks: task.blocks?.filter(b => {
         if (b.type === 'smart-task') {
@@ -361,7 +356,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
             onOpenQuantityProgress(parsed.parentTaskId, currentBlock);
             return;
           }
-          const result = toggleProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, todayStr());
+          if (currentBlock?.type !== 'smart-task') return;
+          const desired = !currentBlock.header.isCompleted;
+          const result = setProjectTaskCompletion(
+            parsed.parentTaskId,
+            parsed.blockId,
+            desired,
+            desired ? todayStr() : undefined,
+          );
           if ('error' in result) onReviewToggleError(result.error);
         }
       }

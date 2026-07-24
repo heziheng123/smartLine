@@ -54,7 +54,7 @@ import {
   resolveProjectAppearance,
 } from './projectAppearance';
 import { recordOperation, useOperationHistory } from '@/services/operationHistory';
-import { recordQuantityProgress, removeQuantityProgress, rescheduleProjectTask, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { recordQuantityProgress, removeQuantityProgress, rescheduleProjectTask, setProjectTaskCompletion } from '@/services/projectTaskCommands';
 import { returnProjectTaskToBacklog, scheduleBacklogTaskToSlot } from '@/services/backlogCommands';
 import { collectBacklogTasks, type BacklogTask } from '@/domain/taskBacklog';
 import { requestConfirmation } from '@/services/confirmation';
@@ -62,6 +62,7 @@ import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
 import DailySlotSection from './DailySlotSection';
 import DailyTaskPool, { type CompletedDailyPoolItem, type DailyPoolItem } from './DailyTaskPool';
 import TimeSlotIcon from './TimeSlotIcon';
+import { getUniqueTasks } from '@/store/timelineData';
 import {
   DROPPABLE_POOL,
   DROPPABLE_BACKLOG,
@@ -162,13 +163,7 @@ const DailyScheduleView: React.FC = () => {
   }, [rawEbbReviewTasks, archivedNodeIds]);
 
   const tlTasks = useMemo(() => {
-    const taskMap = new Map(rawTlTasks.map((task) => [task.id, task]));
-    for (const group of rawTlGroups) {
-      for (const child of group.children) {
-        if (!taskMap.has(child.id)) taskMap.set(child.id, child);
-      }
-    }
-    return [...taskMap.values()].map(task => ({
+    return getUniqueTasks(rawTlTasks, rawTlGroups).map(task => ({
       ...task,
       blocks: task.blocks?.filter(b => {
         if (b.type === 'smart-task') {
@@ -674,14 +669,22 @@ const DailyScheduleView: React.FC = () => {
   }, [handleDragEnd]);
 
   // ── 完成/删除 操作（时段模式） ──────────────────────────
-  const syncProjectTaskCompletion = useCallback((sourceId: string) => {
+  const syncProjectTaskCompletion = useCallback((sourceId: string, completed?: boolean) => {
     const parsed = parseSourceId(sourceId);
     if (!parsed || parsed.source !== 'project') return false;
     if (!parsed.blockId) return false;
-    const result = toggleProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, todayStr());
+    const projectSource = getProjectBlockFromSource(sourceId);
+    if (!projectSource) return false;
+    const desired = completed ?? !projectSource.block.header.isCompleted;
+    const result = setProjectTaskCompletion(
+      parsed.parentTaskId,
+      parsed.blockId,
+      desired,
+      desired ? todayStr() : undefined,
+    );
     if ('error' in result) setOperationError(result.error);
     return result.ok;
-  }, []);
+  }, [getProjectBlockFromSource]);
 
   const toggleReviewWithFeedback = useCallback(async (reviewId: string) => {
     const result = await requestManualReviewToggle(reviewId);
@@ -697,7 +700,7 @@ const DailyScheduleView: React.FC = () => {
         if ('error' in result) setOperationError(result.error);
         return;
       }
-      syncProjectTaskCompletion(sourceId);
+      syncProjectTaskCompletion(sourceId, false);
       return;
     }
     if (source === 'review') {

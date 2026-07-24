@@ -45,6 +45,70 @@ export function normalizeTimelineTask(task: Task): Task {
   };
 }
 
+function taskCopiesEqual(left: Task, right: Task): boolean {
+  if (left === right) return true;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * `tasks` is the canonical project collection. `groups.children` remains a
+ * compatibility projection for the timeline UI and older stored workspaces.
+ *
+ * Liveblocks synchronizes `tasks` and `groups` as separate root fields, so a
+ * remote batch can temporarily deliver two different copies of the same
+ * project. Always rebuild the compatibility copy from `tasks`; group-only
+ * legacy projects are promoted into `tasks` before rebuilding.
+ */
+export function reconcileTimelineTaskCopies(
+  tasks: Task[],
+  groups: TaskGroup[],
+): { tasks: Task[]; groups: TaskGroup[]; changed: boolean } {
+  const canonicalById = new Map<string, Task>();
+  let tasksChanged = false;
+
+  for (const task of tasks) canonicalById.set(task.id, task);
+
+  // Preserve legacy workspaces whose grouped projects were stored only inside
+  // groups.children, while making the promoted top-level copy authoritative.
+  for (const group of groups) {
+    for (const child of group.children) {
+      const existing = canonicalById.get(child.id);
+      if (!existing) {
+        canonicalById.set(child.id, { ...child, groupId: group.id });
+        tasksChanged = true;
+      } else if (existing.groupId !== group.id) {
+        canonicalById.set(child.id, { ...existing, groupId: group.id });
+        tasksChanged = true;
+      }
+    }
+  }
+
+  const nextTasks = tasksChanged ? [...canonicalById.values()] : tasks;
+  let groupsChanged = false;
+  const nextGroups = groups.map((group) => {
+    let childrenChanged = false;
+    const children = group.children.map((child) => {
+      const canonical = canonicalById.get(child.id);
+      if (!canonical) return child;
+      const projected = canonical.groupId === group.id
+        ? canonical
+        : { ...canonical, groupId: group.id };
+      if (taskCopiesEqual(child, projected)) return child;
+      childrenChanged = true;
+      return projected;
+    });
+    if (!childrenChanged) return group;
+    groupsChanged = true;
+    return { ...group, children };
+  });
+
+  return {
+    tasks: nextTasks,
+    groups: groupsChanged ? nextGroups : groups,
+    changed: tasksChanged || groupsChanged,
+  };
+}
+
 function isValidTask(task: unknown): task is Task {
   if (!task || typeof task !== 'object') return false;
   const record = task as Record<string, unknown>;
@@ -101,27 +165,12 @@ export function normalizeTimelineData(data: TimelineData): TimelineData {
         };
       })
     : [];
-  const canonicalTasks = new Map(tasks.map((task) => [task.id, task]));
-  for (const group of groups) {
-    for (const child of group.children) {
-      canonicalTasks.set(child.id, {
-        ...(canonicalTasks.get(child.id) ?? child),
-        groupId: group.id,
-      });
-    }
-  }
-  const reconciledGroups = groups.map((group) => ({
-    ...group,
-    children: group.children.map((child) => ({
-      ...(canonicalTasks.get(child.id) ?? child),
-      groupId: group.id,
-    })),
-  }));
+  const reconciled = reconcileTimelineTaskCopies(tasks, groups);
   return {
-    tasks: [...canonicalTasks.values()],
+    tasks: reconciled.tasks,
     notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
     milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
-    groups: reconciledGroups,
+    groups: reconciled.groups,
   };
 }
 

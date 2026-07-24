@@ -26,8 +26,9 @@ import {
 import { resolveTaskTheme } from '@/utils/timeline-utils';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { openProjectTaskModal } from './projectTaskModal';
-import { toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { setProjectTaskCompletion } from '@/services/projectTaskCommands';
 import { openProjectTaskCreate } from './projectTaskCreate';
+import { getUniqueTasks } from '@/store/timelineData';
 import {
   filterAndSortProjectTasks,
   PROJECT_TASK_DATE_FILTERS,
@@ -132,17 +133,15 @@ const TaskOverviewView: React.FC = () => {
   const today = todayStr();
 
   const allItems = useMemo(() => {
-    const uniqueTasks = new Map<string, { task: Task; group?: TaskGroup }>();
-    for (const task of tasks) uniqueTasks.set(task.id, { task });
+    const groupByTaskId = new Map<string, TaskGroup>();
     for (const group of groups) {
-      for (const task of group.children) uniqueTasks.set(task.id, { task, group });
+      for (const task of group.children) groupByTaskId.set(task.id, group);
     }
 
     const result: OverviewItem[] = [];
-    for (const { task, group: storedGroup } of uniqueTasks.values()) {
-      const group = storedGroup ?? groups.find((candidate) =>
-        candidate.id === task.groupId || candidate.children.some((child) => child.id === task.id),
-      );
+    for (const task of getUniqueTasks(tasks, groups)) {
+      const group = groupByTaskId.get(task.id)
+        ?? groups.find((candidate) => candidate.id === task.groupId);
       const theme = resolveTaskTheme(task, group?.color);
       const projectLabel = group ? `${group.name} / ${task.name}` : task.name;
       for (const block of getSmartTaskBlocks(task.blocks ?? [])) {
@@ -229,7 +228,12 @@ const TaskOverviewView: React.FC = () => {
 
   const toggleComplete = (item: OverviewItem) => {
     if (isQuantityTask(item.block.header)) return;
-    toggleProjectTaskCompletion(item.task.id, item.block.id, today);
+    setProjectTaskCompletion(
+      item.task.id,
+      item.block.id,
+      !item.block.header.isCompleted,
+      today,
+    );
   };
 
   return (

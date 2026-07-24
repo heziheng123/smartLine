@@ -69,6 +69,22 @@ async function simulateConnectedStorageLoading(page: Page) {
   });
 }
 
+async function simulateConnectedStorageReady(page: Page) {
+  await page.evaluate(async () => {
+    const storeModuleUrl = '/src/store/index.ts';
+    const { useTimelineStore } = await import(storeModuleUrl);
+    const current = useTimelineStore.getState();
+    useTimelineStore.setState({
+      liveblocks: {
+        ...current.liveblocks,
+        room: { getStatus: () => 'connected' },
+        status: 'connected',
+        isStorageLoading: false,
+      },
+    });
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(({ projectData }) => {
     localStorage.clear();
@@ -168,9 +184,6 @@ test('late storage hydration cannot overwrite an explicit pending completion', a
   }).toBe(true);
 
   await page.evaluate(async () => {
-    const queued = new Promise<void>((resolve) => {
-      window.addEventListener('smartline:workspace-queue', () => resolve(), { once: true });
-    });
     const storeModuleUrl = '/src/store/index.ts';
     const { useTimelineStore } = await import(storeModuleUrl);
     useTimelineStore.setState((state) => ({
@@ -181,12 +194,114 @@ test('late storage hydration cannot overwrite an explicit pending completion', a
           : block),
       })),
     }));
-    await queued;
   });
 
-  const pending = await readPendingWorkspaceSync(page);
-  const fields = pending?.fields as {
-    tasks?: Array<{ blocks?: Array<{ header?: { isCompleted?: boolean } }> }>;
-  } | undefined;
-  expect(fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted).toBe(true);
+  await expect.poll(async () => {
+    const pending = await readPendingWorkspaceSync(page);
+    const fields = pending?.fields as {
+      tasks?: Array<{ blocks?: Array<{ header?: { isCompleted?: boolean } }> }>;
+    } | undefined;
+    return fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted;
+  }).toBe(true);
+});
+
+test('connected storage journal keeps the newest cancellation instead of an older completion', async ({ page }) => {
+  await page.getByTitle('项目规划').click();
+  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
+  const card = page.locator('[data-block-id="sync-journal-block"]');
+  await expect(card).toBeVisible();
+  await simulateConnectedStorageReady(page);
+
+  await card.getByRole('button', { name: /^完成：/ }).click();
+  await expect.poll(async () => {
+    const pending = await readPendingWorkspaceSync(page);
+    const fields = pending?.fields as {
+      tasks?: Array<{ blocks?: Array<{ header?: { isCompleted?: boolean } }> }>;
+    } | undefined;
+    return fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted;
+  }).toBe(true);
+
+  await page.locator('.task-overview-stats button').filter({ hasText: '已完成' }).click();
+  await page.locator('.task-overview-section-header').filter({ hasText: '已完成' }).click();
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: /^取消完成：/ }).click();
+
+  await expect.poll(async () => {
+    const pending = await readPendingWorkspaceSync(page);
+    const fields = pending?.fields as {
+      tasks?: Array<{ blocks?: Array<{ header?: { isCompleted?: boolean } }> }>;
+    } | undefined;
+    return fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted;
+  }).toBe(false);
+});
+
+test('an in-flight flush restarts with the newest queue revision', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    const {
+      clearPendingWorkspaceSync,
+      queueWorkspaceFields,
+      readPendingWorkspaceSync,
+    } = await import('/src/services/workspaceOfflineQueue.ts');
+    const { flushWorkspaceQueue } = await import('/src/services/workspaceSync.ts');
+
+    await clearPendingWorkspaceSync();
+    const incomplete = [{ id: 'race-task', isCompleted: false }];
+    const completed = [{ id: 'race-task', isCompleted: true }];
+    const rootData: Record<string, unknown> = { tasks: incomplete };
+    let releaseFirstStorage!: () => void;
+    const firstStorageGate = new Promise<void>((resolve) => {
+      releaseFirstStorage = resolve;
+    });
+    let storageReads = 0;
+    const root = {
+      toJSON: () => ({ ...rootData }),
+      set: (key: string, value: unknown) => {
+        rootData[key] = value;
+      },
+    };
+    const room = {
+      getStatus: () => 'connected',
+      getStorage: async () => {
+        storageReads += 1;
+        if (storageReads === 1) await firstStorageGate;
+        return { root };
+      },
+      batch: (callback: () => void) => callback(),
+    };
+    const current = useTimelineStore.getState();
+    useTimelineStore.setState({
+      liveblocks: {
+        ...current.liveblocks,
+        room,
+        status: 'connected',
+        isStorageLoading: false,
+      },
+    } as never);
+
+    queueWorkspaceFields({ tasks: completed }, { tasks: incomplete });
+    await readPendingWorkspaceSync();
+    const flush = flushWorkspaceQueue();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    // The user cancels while the first flush still holds the older completed
+    // snapshot. The second queue revision must supersede it before root.set.
+    queueWorkspaceFields({ tasks: incomplete }, { tasks: completed });
+    await readPendingWorkspaceSync();
+    releaseFirstStorage();
+    const report = await flush;
+    const pending = await readPendingWorkspaceSync();
+
+    return {
+      tasks: rootData.tasks,
+      pending,
+      report,
+      storageReads,
+    };
+  });
+
+  expect(result.tasks).toEqual([{ id: 'race-task', isCompleted: false }]);
+  expect(result.pending).toBeNull();
+  expect(result.report).toEqual({ applied: 1, conflict: false });
+  expect(result.storageReads).toBe(2);
 });

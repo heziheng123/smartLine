@@ -1,6 +1,5 @@
 import {
   collectWorkspaceFieldChanges,
-  isWorkspaceStoreStorageReady,
   type WorkspaceStoreReadiness,
 } from './workspaceSyncCore';
 import {
@@ -46,8 +45,6 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
     // user mutation and must never overwrite a newer cloud workspace.
     if (!before.isHydrated || !after.isHydrated) return;
     if (!isUnifiedWorkspaceConfigured()) return;
-    if (isWorkspaceStoreStorageReady(after)) return;
-
     const { fields, baseFields } = collectWorkspaceFieldChanges(
       before as Record<string, unknown>,
       after as Record<string, unknown>,
@@ -55,6 +52,9 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
     );
     if (Object.keys(fields).length === 0) return;
 
+    // Keep a write-through journal even after Liveblocks reports storage ready.
+    // A flush that started during hydration must never be allowed to replay an
+    // older completion snapshot over a newer local cancellation.
     queueWorkspaceFields(
       fields as Partial<Record<WorkspaceStorageField, unknown>>,
       baseFields as Partial<Record<WorkspaceStorageField, unknown>>,
