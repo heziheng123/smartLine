@@ -70,7 +70,7 @@ export const useGraphBindingStore = create<GraphBindingSession>((set, get) => ({
       const timeline = useTimelineStore.getState();
       const task = getUniqueTasks(timeline.tasks, timeline.groups)
         .find((item) => item.id === taskId);
-      const block = task?.blocks.find(
+      const block = (Array.isArray(task?.blocks) ? task.blocks : []).find(
         (candidate) => candidate.id === blockId && candidate.type === 'smart-task',
       );
       if (!task || block?.type !== 'smart-task') {

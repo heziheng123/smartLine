@@ -123,6 +123,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [todayOnly, setTodayOnly] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [highlightedBlockId, setHighlightedBlockId] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!focusBlockId) return;
@@ -303,7 +304,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   const handleUpdateHeader = useCallback(
     (blockId: string, patch: Partial<SmartTaskHeader>) => {
-      updateProjectTask(task.id, blockId, patch);
+      const result = updateProjectTask(task.id, blockId, patch);
+      setOperationError('error' in result ? result.error : null);
     },
     [task.id],
   );
@@ -765,6 +767,13 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           </div>
         </div>
       </header>
+
+      {operationError && (
+        <div className="pdv-operation-error" role="alert">
+          <span>{operationError}</span>
+          <button type="button" onClick={() => setOperationError(null)} aria-label="关闭错误提示">×</button>
+        </div>
+      )}
 
       {/* ── 元信息折叠区 ── */}
       {metaExpanded && (

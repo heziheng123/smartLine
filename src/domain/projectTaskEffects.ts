@@ -45,17 +45,23 @@ export function planProjectTaskEffects({
   bindingStrategy = 'transfer',
 }: ProjectTaskEffectInput): ProjectTaskEffectPlan {
   const plan = emptyPlan();
-  const graphNodeById = new Map(graphNodes.map((node) => [node.id, node]));
+  const graphNodeById = new Map(
+    (Array.isArray(graphNodes) ? graphNodes : []).map((node) => [node.id, node]),
+  );
   const currentNodeIds = getValidGraphNodeIds(currentHeader);
   const nextNodeIds = getValidGraphNodeIds(nextHeader);
   const hasOtherCompletedBinding = (nodeId: string, requireEbbSync = false) =>
-    tasks.some((task) => task.blocks.some((block) =>
-      block.type === 'smart-task'
-      && !(task.id === taskId && block.id === blockId)
-      && block.header.isCompleted
-      && (!requireEbbSync || shouldAutoSyncEbb(block.header))
-      && getValidGraphNodeIds(block.header).includes(nodeId),
-    ));
+    (Array.isArray(tasks) ? tasks : []).some((task) => {
+      const blocks = Array.isArray(task?.blocks) ? task.blocks : [];
+      return blocks.some((block) =>
+        block?.type === 'smart-task'
+        && Boolean(block.header)
+        && !(task.id === taskId && block.id === blockId)
+        && block.header.isCompleted
+        && (!requireEbbSync || shouldAutoSyncEbb(block.header))
+        && getValidGraphNodeIds(block.header).includes(nodeId),
+      );
+    });
 
   const addNode = (nodeId: string, syncEbb = true) => {
     plan.graphNodeIdsToActivate.push(nodeId);

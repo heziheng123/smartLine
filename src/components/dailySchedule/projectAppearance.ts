@@ -33,7 +33,8 @@ export function resolveProjectAppearance(
   if (!task) return null;
   const group = findTaskGroup(task, groups);
   const sourceBlock = parsed.blockId
-    ? task.blocks.find((block) => block.id === parsed.blockId)
+    ? (Array.isArray(task.blocks) ? task.blocks : [])
+      .find((block) => block.id === parsed.blockId)
     : undefined;
   const smartBlock = sourceBlock?.type === 'smart-task' ? sourceBlock : undefined;
   return {

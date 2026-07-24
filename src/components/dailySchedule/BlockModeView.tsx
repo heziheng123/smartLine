@@ -164,7 +164,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
     if (parsed.source === 'project') {
       const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-      if (!parentTask || !parentTask.blocks) return false;
+      if (!parentTask || !Array.isArray(parentTask.blocks)) return false;
       
       if (parsed.blockId) {
         const block = parentTask.blocks.find(b => b.id === parsed.blockId);
@@ -189,7 +189,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
     if (parsed.source === 'project') {
       const parentTask = tlTasks.find((t) => t.id === parsed.parentTaskId);
-      if (!parentTask || !parentTask.blocks) return false;
+      if (!parentTask || !Array.isArray(parentTask.blocks)) return false;
       
       if (parsed.blockId) {
         const block = parentTask.blocks.find(b => b.id === parsed.blockId);
@@ -351,7 +351,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         if (!parentTask) return;
 
         if (parsed.blockId) {
-          const currentBlock = parentTask.blocks.find((candidate) => candidate.id === parsed.blockId);
+          const currentBlock = (Array.isArray(parentTask.blocks) ? parentTask.blocks : [])
+            .find((candidate) => candidate.id === parsed.blockId);
           if (currentBlock?.type === 'smart-task' && isQuantityTask(currentBlock.header)) {
             onOpenQuantityProgress(parsed.parentTaskId, currentBlock);
             return;
@@ -385,7 +386,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     const parsed = parseSourceId(item.sourceId);
     if (!parsed || parsed.source !== 'project' || !parsed.blockId) return;
     const parentTask = tlTasks.find((task) => task.id === parsed.parentTaskId);
-    const currentBlock = parentTask?.blocks.find((block) => block.id === parsed.blockId);
+    const currentBlock = (Array.isArray(parentTask?.blocks) ? parentTask.blocks : [])
+      .find((block) => block.id === parsed.blockId);
     if (currentBlock?.type !== 'smart-task') return;
     if (isQuantityTask(currentBlock.header)) {
       const result = removeQuantityProgress(parsed.parentTaskId, parsed.blockId, selectedDate);
@@ -648,7 +650,8 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                 ? tlTasks.find((task) => task.id === parsed.parentTaskId)
                 : undefined;
               const projectBlock = parsed?.blockId
-                ? project?.blocks.find((block) => block.id === parsed.blockId)
+                ? (Array.isArray(project?.blocks) ? project.blocks : [])
+                  .find((block) => block.id === parsed.blockId)
                 : undefined;
               if (parsed?.source !== 'project' || !parsed.parentTaskId || !parsed.blockId || projectBlock?.type !== 'smart-task') {
                 onReviewToggleError('无法识别对应的项目任务。');

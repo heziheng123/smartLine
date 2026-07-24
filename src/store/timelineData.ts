@@ -51,6 +51,21 @@ function taskCopiesEqual(left: Task, right: Task): boolean {
 }
 
 /**
+ * Repairs only the structural invariant required by the live application.
+ * Semantic migrations (for example recovering a quantity start date) remain
+ * part of explicit load/import normalization so remote reconciliation does not
+ * silently change user data or hide backup validation warnings.
+ */
+export function repairTimelineTaskStructure(task: Task): Task {
+  if (Array.isArray(task.blocks)) return task;
+  const legacy = task as Task & { markdown?: string };
+  if (typeof legacy.markdown === 'string' && legacy.markdown.trim()) {
+    return normalizeTimelineTask(task);
+  }
+  return { ...task, blocks: [] };
+}
+
+/**
  * `tasks` is the canonical project collection. `groups.children` remains a
  * compatibility projection for the timeline UI and older stored workspaces.
  *
@@ -66,18 +81,28 @@ export function reconcileTimelineTaskCopies(
   const canonicalById = new Map<string, Task>();
   let tasksChanged = false;
 
-  for (const task of tasks) canonicalById.set(task.id, task);
+  for (const task of tasks) {
+    const repaired = repairTimelineTaskStructure(task);
+    const canonical = taskCopiesEqual(task, repaired) ? task : repaired;
+    if (canonical !== task) tasksChanged = true;
+    canonicalById.set(canonical.id, canonical);
+  }
 
   // Preserve legacy workspaces whose grouped projects were stored only inside
   // groups.children, while making the promoted top-level copy authoritative.
   for (const group of groups) {
-    for (const child of group.children) {
-      const existing = canonicalById.get(child.id);
+    const children = Array.isArray(group.children) ? group.children : [];
+    for (const child of children) {
+      const repairedChild = repairTimelineTaskStructure(child);
+      const groupedChild = repairedChild.groupId === group.id
+        ? repairedChild
+        : { ...repairedChild, groupId: group.id };
+      const existing = canonicalById.get(groupedChild.id);
       if (!existing) {
-        canonicalById.set(child.id, { ...child, groupId: group.id });
+        canonicalById.set(groupedChild.id, groupedChild);
         tasksChanged = true;
       } else if (existing.groupId !== group.id) {
-        canonicalById.set(child.id, { ...existing, groupId: group.id });
+        canonicalById.set(groupedChild.id, { ...existing, groupId: group.id });
         tasksChanged = true;
       }
     }
@@ -86,8 +111,9 @@ export function reconcileTimelineTaskCopies(
   const nextTasks = tasksChanged ? [...canonicalById.values()] : tasks;
   let groupsChanged = false;
   const nextGroups = groups.map((group) => {
-    let childrenChanged = false;
-    const children = group.children.map((child) => {
+    const sourceChildren = Array.isArray(group.children) ? group.children : [];
+    let childrenChanged = sourceChildren !== group.children;
+    const children = sourceChildren.map((child) => {
       const canonical = canonicalById.get(child.id);
       if (!canonical) return child;
       const projected = canonical.groupId === group.id
@@ -184,9 +210,9 @@ export function getAllGraphNodeIds(header: SmartTaskHeader): string[] {
 
 export function getUniqueTasks(tasks: Task[], groups: TaskGroup[]): Task[] {
   const byId = new Map<string, Task>();
-  for (const task of tasks) byId.set(task.id, task);
-  for (const group of groups) {
-    for (const child of group.children) {
+  for (const task of Array.isArray(tasks) ? tasks : []) byId.set(task.id, task);
+  for (const group of Array.isArray(groups) ? groups : []) {
+    for (const child of Array.isArray(group.children) ? group.children : []) {
       if (!byId.has(child.id)) byId.set(child.id, child);
     }
   }

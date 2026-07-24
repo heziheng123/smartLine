@@ -151,6 +151,43 @@ test('grouped project can complete and cancel repeatedly without refresh', async
   await expect.poll(() => readNodeStatus(page)).toBe('unactivated');
 });
 
+test('a remote legacy project without blocks cannot break linked-task cancellation', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  await page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    const state = useTimelineStore.getState();
+    useTimelineStore.setState({
+      tasks: [
+        ...state.tasks,
+        {
+          id: 'remote-legacy-without-blocks',
+          name: 'Remote legacy project',
+          start: '2026-07-01',
+          end: '2026-07-31',
+          completed: false,
+          color: '#e2e8f0',
+        } as Task,
+      ],
+    });
+  });
+
+  const card = await openProjectDocument(page);
+  await card.locator('.stb-check').click();
+  await expect(card).not.toHaveClass(/stb-card--done/);
+  await expect.poll(() => readCompletionCopies(page)).toEqual({ task: false, group: false });
+  await expect.poll(() => readNodeStatus(page)).toBe('unactivated');
+  expect(pageErrors).toEqual([]);
+
+  const repairedBlocks = await page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    return useTimelineStore.getState().tasks
+      .find((task) => task.id === 'remote-legacy-without-blocks')?.blocks;
+  });
+  expect(repairedBlocks).toEqual([]);
+});
+
 test('a divergent Liveblocks batch is repaired before a stale group copy can drive the UI', async ({ page }) => {
   await page.evaluate(async () => {
     const { useTimelineStore } = await import('/src/store/index.ts');

@@ -57,7 +57,8 @@ export function resolveProjectTask(taskId: string, blockId: string): ProjectTask
   const state = useTimelineStore.getState();
   const task = state.tasks.find((candidate) => candidate.id === taskId)
     ?? state.groups.flatMap((group) => group.children).find((candidate) => candidate.id === taskId);
-  const block = task?.blocks.find((candidate) => candidate.id === blockId);
+  const block = (Array.isArray(task?.blocks) ? task.blocks : [])
+    .find((candidate) => candidate.id === blockId);
   return task && block?.type === 'smart-task' ? { task, block } : null;
 }
 
@@ -69,7 +70,8 @@ export function createProjectTask(
   const project = state.tasks.find((candidate) => candidate.id === taskId)
     ?? state.groups.flatMap((group) => group.children).find((candidate) => candidate.id === taskId);
   if (!project) return { ok: false, error: '所属项目已经不存在。' };
-  if (project.blocks.some((candidate) => candidate.id === block.id)) {
+  if ((Array.isArray(project.blocks) ? project.blocks : [])
+    .some((candidate) => candidate.id === block.id)) {
     return { ok: false, error: '任务标识重复，请重新创建。' };
   }
   if (requiresTaskStartDate(block.header) && !block.header.date) {
@@ -96,7 +98,16 @@ export function updateProjectTask(
     && !patch.date) {
     return { ok: false, error: '数量任务必须保留开始日期。' };
   }
-  const commit = useTimelineStore.getState().updateBlockHeader(taskId, blockId, patch);
+  let commit;
+  try {
+    commit = useTimelineStore.getState().updateBlockHeader(taskId, blockId, patch);
+  } catch (error) {
+    console.error('[smart-timeline] 项目任务联动失败：', error);
+    return {
+      ok: false,
+      error: '任务联动遇到旧数据，操作未执行。请刷新后重试；若仍失败，请运行数据修复。',
+    };
+  }
   if (commit.error) return { ok: false, error: commit.error };
   const updated = resolveProjectTask(taskId, blockId);
   if (!updated) return { ok: false, error: '任务更新失败。' };

@@ -38,6 +38,7 @@ import {
   getUniqueTasks,
   headerValueEquals,
   normalizeTimelineData,
+  normalizeTimelineTask,
   reconcileTimelineTaskCopies,
 } from './timelineData';
 import {
@@ -264,15 +265,19 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         setIsDockHovered: (hovered) => set({ isDockHovered: hovered }),
 
         addTask: (task) => {
+          const normalizedTask = normalizeTimelineTask(task);
           set((state) => {
-            const tasks = [...state.tasks.filter((item) => item.id !== task.id), task];
+            const tasks = [
+              ...state.tasks.filter((item) => item.id !== normalizedTask.id),
+              normalizedTask,
+            ];
             const groups = state.groups.map((group) => {
-              if (group.id !== task.groupId) return group;
+              if (group.id !== normalizedTask.groupId) return group;
               return {
                 ...group,
                 children: [
-                  ...group.children.filter((child) => child.id !== task.id),
-                  { ...task, groupId: group.id },
+                  ...group.children.filter((child) => child.id !== normalizedTask.id),
+                  { ...normalizedTask, groupId: group.id },
                 ],
               };
             });
@@ -283,11 +288,14 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         updateTask: (task) => {
+          const normalizedTask = normalizeTimelineTask(task);
           set((state) => {
-            const tasks = state.tasks.map((t) => (t.id === task.id ? task : t));
+            const tasks = state.tasks.map((t) => (t.id === normalizedTask.id ? normalizedTask : t));
             const groups = state.groups.map((g) => ({
               ...g,
-              children: g.children.map((c) => (c.id === task.id ? { ...task, groupId: g.id } : c)),
+              children: g.children.map((c) => (
+                c.id === normalizedTask.id ? { ...normalizedTask, groupId: g.id } : c
+              )),
             }));
             const newData = { ...state, tasks, groups };
             saveData(newData);
@@ -300,7 +308,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const taskToDelete = state.tasks.find((t) => t.id === taskId)
             ?? state.groups.flatMap((group) => group.children).find((task) => task.id === taskId);
           if (taskToDelete) {
-            for (const block of taskToDelete.blocks) {
+            const taskBlocks = Array.isArray(taskToDelete.blocks) ? taskToDelete.blocks : [];
+            for (const block of taskBlocks) {
               if (block.type === 'smart-task' && block.header.isCompleted) {
                 get().updateBlockHeader(taskId, block.id, {
                   isCompleted: false,
@@ -308,7 +317,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 });
               }
             }
-            const sourceIds = taskToDelete.blocks
+            const sourceIds = taskBlocks
               .filter((b) => b.type === 'smart-task')
               .map((b) => getProjectBlockSourceId(taskId, b.id));
             if (sourceIds.length > 0) {
@@ -354,7 +363,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           if (!oldTask) return;
 
           const oldSmartBlocks = new Map(
-            oldTask.blocks
+            (Array.isArray(oldTask.blocks) ? oldTask.blocks : [])
               .filter((block) => block.type === 'smart-task')
               .map((block) => [block.id, block]),
           );
@@ -439,10 +448,11 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         restoreTask: (task, groupId) => {
-          const completedBlocks = task.blocks.filter((block) => block.type === 'smart-task' && block.header.isCompleted);
+          const sourceBlocks = Array.isArray(task.blocks) ? task.blocks : [];
+          const completedBlocks = sourceBlocks.filter((block) => block.type === 'smart-task' && block.header.isCompleted);
           const restorableTask: Task = {
             ...task,
-            blocks: task.blocks.map((block) => block.type === 'smart-task' && block.header.isCompleted
+            blocks: sourceBlocks.map((block) => block.type === 'smart-task' && block.header.isCompleted
               ? { ...block, header: { ...block.header, isCompleted: false, completedDate: undefined } }
               : block),
           };
@@ -486,7 +496,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             let changed = false;
             const stripReferences = (task: Task): Task => {
               let taskChanged = false;
-              const blocks = task.blocks.map((block) => {
+              const sourceBlocks = Array.isArray(task.blocks) ? task.blocks : [];
+              const blocks = sourceBlocks.map((block) => {
                 if (block.type !== 'smart-task') return block;
 
                 const referencedIds = getAllGraphNodeIds(block.header);
@@ -504,7 +515,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 };
               });
 
-              if (!taskChanged) return task;
+              if (!taskChanged && sourceBlocks === task.blocks) return task;
               changed = true;
               return { ...task, blocks, blocksUpdatedAt: now };
             };
@@ -525,7 +536,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         updateBlockHeader: (taskId, blockId, headerPatch, options) => {
           const now = new Date().toISOString();
           const currentTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
-          const currentBlock = currentTask?.blocks.find(
+          const currentBlock = (Array.isArray(currentTask?.blocks) ? currentTask.blocks : []).find(
             (candidate) => candidate.type === 'smart-task' && candidate.id === blockId,
           );
           if (currentBlock?.type !== 'smart-task') {
@@ -666,7 +677,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 },
               }, () => {
                 const latestTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
-                const latestBlock = latestTask?.blocks.find((block) => block.id === blockId);
+                const latestBlock = (Array.isArray(latestTask?.blocks) ? latestTask.blocks : [])
+                  .find((block) => block.id === blockId);
                 if (latestBlock?.type !== 'smart-task') return '任务已经不存在';
                 if (Object.entries(expected).some(([key, value]) => !headerValueEquals(latestBlock.header[key as keyof SmartTaskHeader], value))) return '任务在此操作后又被修改';
                 get().updateBlockHeader(taskId, blockId, previousPatch);
@@ -731,7 +743,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         removeBlock: (taskId, blockId) => {
           const currentTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
-          const currentBlock = currentTask?.blocks.find((block) => block.id === blockId);
+          const currentBlock = (Array.isArray(currentTask?.blocks) ? currentTask.blocks : [])
+            .find((block) => block.id === blockId);
           if (currentBlock?.type === 'smart-task' && currentBlock.header.isCompleted) {
             get().updateBlockHeader(taskId, blockId, {
               isCompleted: false,
@@ -789,7 +802,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             }, () => {
               const latestState = useTimelineStore.getState();
               const latestTask = getUniqueTasks(latestState.tasks, latestState.groups).find((item) => item.id === taskId);
-              if (!latestTask?.blocks.some((item) => item.id === block.id)) return '新建任务已经不存在';
+              if (!(Array.isArray(latestTask?.blocks) ? latestTask.blocks : [])
+                .some((item) => item.id === block.id)) return '新建任务已经不存在';
               latestState.removeBlock(taskId, block.id);
             });
           }
@@ -1027,7 +1041,8 @@ registerUndoExecutor('timeline-header', (raw) => {
   };
   const state = useTimelineStore.getState();
   const task = getUniqueTasks(state.tasks, state.groups).find((item) => item.id === payload.taskId);
-  const block = task?.blocks.find((item) => item.id === payload.blockId);
+  const block = (Array.isArray(task?.blocks) ? task.blocks : [])
+    .find((item) => item.id === payload.blockId);
   if (block?.type !== 'smart-task') return '任务已经不存在';
   if (Object.entries(payload.expected).some(([key, value]) => !headerValueEquals(block.header[key as keyof SmartTaskHeader], value))) return '任务在此操作后又被修改';
   state.updateBlockHeader(payload.taskId, payload.blockId, payload.patch);
@@ -1038,7 +1053,8 @@ registerUndoExecutor('timeline-remove-created-block', (raw) => {
   const payload = raw as { taskId: string; blockId: string };
   const state = useTimelineStore.getState();
   const task = getUniqueTasks(state.tasks, state.groups).find((item) => item.id === payload.taskId);
-  if (!task?.blocks.some((item) => item.id === payload.blockId)) return '新建任务已经不存在';
+  if (!(Array.isArray(task?.blocks) ? task.blocks : [])
+    .some((item) => item.id === payload.blockId)) return '新建任务已经不存在';
   state.removeBlock(payload.taskId, payload.blockId);
 });
 

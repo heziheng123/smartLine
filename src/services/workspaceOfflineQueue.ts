@@ -2,6 +2,7 @@ import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
+import { reconcileTimelineTaskCopies } from '@/store/timelineData';
 import {
   isWorkspaceQueueSuppressed,
   listWorkspaceConflicts,
@@ -34,6 +35,15 @@ function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unkn
     if (fields[key] !== undefined) timelinePatch[key] = fields[key];
   }
   if (Object.keys(timelinePatch).length) {
+    if (fields.tasks !== undefined || fields.groups !== undefined) {
+      const current = useTimelineStore.getState();
+      const reconciled = reconcileTimelineTaskCopies(
+        Array.isArray(fields.tasks) ? fields.tasks as typeof current.tasks : current.tasks,
+        Array.isArray(fields.groups) ? fields.groups as typeof current.groups : current.groups,
+      );
+      timelinePatch.tasks = reconciled.tasks;
+      timelinePatch.groups = reconciled.groups;
+    }
     useTimelineStore.setState(timelinePatch as never);
   }
 

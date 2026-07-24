@@ -624,8 +624,8 @@ export const KnowledgeGraphView: React.FC = () => {
     if (!selectedNodeId) return [];
     const results: Array<{ task: Task; block: SmartTaskBlock }> = [];
     allProjectTasks.forEach(task => {
-      if (!task.blocks) return;
-      task.blocks.forEach(block => {
+      const blocks = Array.isArray(task.blocks) ? task.blocks : [];
+      blocks.forEach(block => {
         if (block.type === 'smart-task' && !block.header.isArchived) {
           const ids = getValidGraphNodeIds(block.header);
           if (ids.some(id => selectedScopeIds.has(id))) results.push({ task, block });

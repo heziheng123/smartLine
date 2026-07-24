@@ -299,7 +299,7 @@ export function validateWorkspaceBackup(value: unknown): {
   for (const task of timelineTaskMap.values()) {
     if (task.start > task.end) issues.push(`项目“${task.name}”的开始日期晚于结束日期`);
     const blockIds = new Set<string>();
-    for (const block of task.blocks) {
+    for (const block of Array.isArray(task.blocks) ? task.blocks : []) {
       if (!isRecord(block) || typeof block.id !== 'string' || (block.type !== 'text' && block.type !== 'smart-task')) {
         issues.push(`项目“${task.name}”包含无效任务块`);
         continue;
@@ -418,7 +418,8 @@ export function validateWorkspaceBackup(value: unknown): {
         issues.push(`每日安排 ${date} 引用的 EBB 轮次不存在`);
       } else if (parsed.source === 'project') {
         const project = parsed.parentTaskId ? timelineTaskMap.get(parsed.parentTaskId) : undefined;
-        const blockExists = project && (!parsed.blockId || project.blocks.some((block) => block.id === parsed.blockId));
+        const projectBlocks = Array.isArray(project?.blocks) ? project.blocks : [];
+        const blockExists = project && (!parsed.blockId || projectBlocks.some((block) => block.id === parsed.blockId));
         if (!blockExists) issues.push(`每日安排 ${date} 引用的项目任务不存在`);
       }
     }

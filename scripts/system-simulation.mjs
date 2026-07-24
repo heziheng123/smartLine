@@ -1428,6 +1428,67 @@ try {
     assert.deepEqual(disableAutoSyncPlan.ebbPayloads.map(({ action }) => action), ['remove']);
   });
 
+  check('节点任务取消完成会忽略缺少 blocks 的旧项目并继续恢复节点', () => {
+    const graphNodes = [
+      { id: 'legacy-safe-node', name: 'Legacy safe node', parentId: null, createdAt: 1 },
+    ];
+    const pending = smartBlock('legacy-safe-target', 'Linked task', ['legacy-safe-node'], false);
+    const completed = {
+      ...pending,
+      header: { ...pending.header, isCompleted: true, completedDate: '2026-07-24' },
+    };
+    const legacyWithoutBlocks = {
+      id: 'legacy-without-blocks',
+      name: 'Legacy project without blocks',
+      start: '2026-07-01',
+      end: '2026-07-31',
+      completed: false,
+    };
+
+    const plan = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('linked-project', [completed]), legacyWithoutBlocks],
+      taskId: 'linked-project',
+      blockId: 'legacy-safe-target',
+      currentHeader: completed.header,
+      nextHeader: pending.header,
+      graphNodes,
+    });
+
+    assert.deepEqual(plan.graphNodeIdsToDeactivate, ['legacy-safe-node']);
+    assert.deepEqual(plan.ebbPayloads.map(({ action }) => action), ['revert-source']);
+  });
+
+  check('实时同步进入的旧项目会被幂等补全 blocks 并重建分组副本', () => {
+    const legacy = {
+      id: 'remote-legacy-project',
+      name: 'Remote legacy project',
+      start: '2026-07-01',
+      end: '2026-07-31',
+      completed: false,
+      groupId: 'remote-legacy-group',
+    };
+    const reconciled = timelineDataModule.reconcileTimelineTaskCopies(
+      [legacy],
+      [{
+        id: 'remote-legacy-group',
+        name: 'Remote legacy group',
+        start: '2026-07-01',
+        end: '2026-07-31',
+        children: [{ ...legacy, groupId: undefined }],
+      }],
+    );
+
+    assert.equal(reconciled.changed, true);
+    assert.deepEqual(reconciled.tasks[0].blocks, []);
+    assert.deepEqual(reconciled.groups[0].children[0].blocks, []);
+    assert.equal(reconciled.groups[0].children[0].groupId, 'remote-legacy-group');
+    const secondPass = timelineDataModule.reconcileTimelineTaskCopies(
+      reconciled.tasks,
+      reconciled.groups,
+    );
+    assert.equal(secondPass.changed, false);
+  });
+
   check('项目任务触发的 EBB 推进、顺延和撤销由纯事务规划器稳定计算', () => {
     const reviewTasks = [
       {

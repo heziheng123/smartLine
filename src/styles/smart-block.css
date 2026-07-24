@@ -2481,3 +2481,28 @@
   .ptm-footer-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .ptm-footer .ptm-done-btn { grid-column: 1 / -1; }
 }
+
+.pdv-operation-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 16px 0;
+  padding: 9px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pdv-operation-error button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
