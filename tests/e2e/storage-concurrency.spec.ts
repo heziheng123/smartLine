@@ -60,8 +60,19 @@ test('storage schema upgrade preserves data written by an older app version', as
       const database = request.result;
       const transaction = database.transaction('timeline_data', 'readwrite');
       transaction.objectStore('timeline_data').put({
-        tasks: [{ id: 'legacy-preserved-project', name: 'legacy-preserved-project', blocks: [] }],
-        groups: [],
+        tasks: [
+          { id: 'legacy-preserved-project', name: 'legacy-preserved-project', blocks: [] },
+          {
+            id: 'legacy-markdown-project',
+            name: 'legacy-markdown-project',
+            markdown: '- [ ] legacy migrated task',
+          },
+        ],
+        groups: [{
+          id: 'legacy-preserved-group',
+          name: 'legacy-preserved-group',
+          children: [{ id: 'legacy-preserved-child', name: 'legacy-preserved-child', blocks: [] }],
+        }],
         notes: [],
         milestones: [],
       }, 'smart-timeline-data');
@@ -77,15 +88,57 @@ test('storage schema upgrade preserves data written by an older app version', as
 
   await page.goto('/');
   await expect(page.locator('.tl-dock')).toBeVisible();
-  const result = await page.evaluate(() => new Promise<{ stores: string[]; taskId?: string }>((resolve, reject) => {
+  const readStoredData = () => page.evaluate(() => new Promise<{
+    stores: string[];
+    taskId?: string;
+    start?: string;
+    end?: string;
+    groupId?: string;
+    groupStart?: string;
+    groupEnd?: string;
+    childId?: string;
+    childStart?: string;
+    childEnd?: string;
+    migratedBlockDate?: string;
+  }>((resolve, reject) => {
     const request = indexedDB.open('smart-timeline');
     request.onsuccess = () => {
       const database = request.result;
       const transaction = database.transaction('timeline_data', 'readonly');
       const getRequest = transaction.objectStore('timeline_data').get('smart-timeline-data');
       getRequest.onsuccess = () => {
-        const value = getRequest.result as { tasks?: Array<{ id?: string }> } | undefined;
-        resolve({ stores: [...database.objectStoreNames], taskId: value?.tasks?.[0]?.id });
+        const value = getRequest.result as {
+          tasks?: Array<{
+            id?: string;
+            start?: string;
+            end?: string;
+            blocks?: Array<{ type?: string; header?: { date?: string } }>;
+          }>;
+          groups?: Array<{
+            id?: string;
+            start?: string;
+            end?: string;
+            children?: Array<{ id?: string; start?: string; end?: string }>;
+          }>;
+        } | undefined;
+        const task = value?.tasks?.find((item) => item.id === 'legacy-preserved-project');
+        const markdownTask = value?.tasks?.find((item) => item.id === 'legacy-markdown-project');
+        const migratedBlock = markdownTask?.blocks?.find((item) => item.type === 'smart-task');
+        const group = value?.groups?.find((item) => item.id === 'legacy-preserved-group');
+        const child = group?.children?.find((item) => item.id === 'legacy-preserved-child');
+        resolve({
+          stores: [...database.objectStoreNames],
+          taskId: task?.id,
+          start: task?.start,
+          end: task?.end,
+          groupId: group?.id,
+          groupStart: group?.start,
+          groupEnd: group?.end,
+          childId: child?.id,
+          childStart: child?.start,
+          childEnd: child?.end,
+          migratedBlockDate: migratedBlock?.header?.date,
+        });
         database.close();
       };
       getRequest.onerror = () => reject(getRequest.error);
@@ -93,6 +146,19 @@ test('storage schema upgrade preserves data written by an older app version', as
     request.onerror = () => reject(request.error);
   }));
 
+  await expect.poll(readStoredData).toMatchObject({
+    taskId: 'legacy-preserved-project',
+    start: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    end: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    groupId: 'legacy-preserved-group',
+    groupStart: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    groupEnd: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    childId: 'legacy-preserved-child',
+    childStart: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    childEnd: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    migratedBlockDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+  });
+  const result = await readStoredData();
   expect(result.stores).toEqual(EXPECTED_STORES);
   expect(result.taskId).toBe('legacy-preserved-project');
 });

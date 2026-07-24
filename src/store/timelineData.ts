@@ -5,6 +5,7 @@ import {
   recoverRequiredTaskStartDate,
   shouldAutoSyncEbb,
 } from '@/utils/blocks';
+import { todayStr } from '@/utils/dateSafe';
 
 export const headerValueEquals = (left: unknown, right: unknown): boolean =>
   typeof left === 'object' || typeof right === 'object'
@@ -12,9 +13,14 @@ export const headerValueEquals = (left: unknown, right: unknown): boolean =>
     : left === right;
 
 export function normalizeTimelineTask(task: Task): Task {
-  const normalizedTask = { ...task } as Task & { markdown?: string };
+  const fallbackDate = todayStr();
+  const start = typeof task.start === 'string' && task.start
+    ? task.start
+    : (typeof task.end === 'string' && task.end ? task.end : fallbackDate);
+  const end = typeof task.end === 'string' && task.end ? task.end : start;
+  const normalizedTask = { ...task, start, end } as Task & { markdown?: string };
   if (normalizedTask.markdown && (!normalizedTask.blocks || normalizedTask.blocks.length === 0)) {
-    const blocks = migrateMarkdownToBlocks(task);
+    const blocks = migrateMarkdownToBlocks(normalizedTask);
     delete normalizedTask.markdown;
     return { ...normalizedTask, blocks };
   }
@@ -43,9 +49,7 @@ function isValidTask(task: unknown): task is Task {
   if (!task || typeof task !== 'object') return false;
   const record = task as Record<string, unknown>;
   return typeof record.id === 'string'
-    && typeof record.name === 'string'
-    && typeof record.start === 'string'
-    && typeof record.end === 'string';
+    && typeof record.name === 'string';
 }
 
 function isValidNote(note: unknown): note is Note {
@@ -70,8 +74,6 @@ function isValidGroup(group: unknown): group is TaskGroup {
   const record = group as Record<string, unknown>;
   return typeof record.id === 'string'
     && typeof record.name === 'string'
-    && typeof record.start === 'string'
-    && typeof record.end === 'string'
     && Array.isArray(record.children);
 }
 
@@ -80,15 +82,24 @@ export function normalizeTimelineData(data: TimelineData): TimelineData {
   const groups = Array.isArray(data?.groups)
     ? data.groups
       .filter(isValidGroup)
-      .map((group) => ({
-        ...group,
-        children: Array.isArray(group.children)
-          ? group.children.filter(isValidTask).map((child) => ({
-            ...normalizeTimelineTask(child),
-            groupId: group.id,
-          }))
-          : [],
-      }))
+      .map((group) => {
+        const fallbackDate = todayStr();
+        const start = typeof group.start === 'string' && group.start
+          ? group.start
+          : (typeof group.end === 'string' && group.end ? group.end : fallbackDate);
+        const end = typeof group.end === 'string' && group.end ? group.end : start;
+        return {
+          ...group,
+          start,
+          end,
+          children: Array.isArray(group.children)
+            ? group.children.filter(isValidTask).map((child) => ({
+              ...normalizeTimelineTask(child),
+              groupId: group.id,
+            }))
+            : [],
+        };
+      })
     : [];
   const canonicalTasks = new Map(tasks.map((task) => [task.id, task]));
   for (const group of groups) {
