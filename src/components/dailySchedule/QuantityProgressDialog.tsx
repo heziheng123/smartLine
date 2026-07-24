@@ -10,6 +10,7 @@ import {
 } from '@/utils/blocks';
 import { recordQuantityProgress, removeQuantityProgress } from '@/services/projectTaskCommands';
 import { todayStr } from '@/utils/dateSafe';
+import '@/styles/daily-schedule.css';
 
 interface QuantityProgressDialogProps {
   taskId: string;

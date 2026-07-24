@@ -4,10 +4,9 @@
 // 纯前端本地处理，无后端依赖
 // ============================================================
 
-import dayjs from 'dayjs';
 import type { SmartTaskBlock, SmartTaskHeader, Task } from '@/types';
 import { genBlockId, getTagColor, getValidGraphNodeIds, isQuantityTask } from './blocks';
-import { makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
+import { isValidCalendarDate, makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
 
 import { useGraphStore } from '@/graph/store';
 
@@ -247,11 +246,14 @@ function readDateCell(row: unknown[], colIndex: number): string {
 }
 
 /** 解析时长：失败时返回默认值 30 */
-function parseDuration(raw: string): number {
+export function parseDuration(raw: string): number {
   if (!raw) return 30;
-  const n = parseInt(raw.replace(/[^\d]/g, ''), 10);
-  if (isNaN(n) || n <= 0) return 30;
-  return n;
+  const match = raw.replace(',', '.').match(/\d+(?:\.\d+)?/);
+  if (!match) return 30;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 30;
+  const usesHours = /小时|小時|hours?|hrs?|h\b/i.test(raw);
+  return usesHours ? parsed * 60 : parsed;
 }
 
 /** 解析复杂度 */
@@ -329,7 +331,8 @@ export function normalizeDate(raw: string | Date | number): string {
   const m1 = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})$/);
   if (m1) {
     const [, y, mo, d] = m1;
-    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    const normalized = `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    return isValidCalendarDate(normalized) ? normalized : '';
   }
 
   // 仅月日：补当前年，直接拼接
@@ -337,14 +340,28 @@ export function normalizeDate(raw: string | Date | number): string {
   if (m2) {
     const year = new Date().getFullYear();
     const [, mo, d] = m2;
-    return `${year}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    const normalized = `${year}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    return isValidCalendarDate(normalized) ? normalized : '';
   }
 
-  // 尝试 dayjs 兜底（仅用于非标准格式如 "Jul 6, 2026"）
-  const dd = dayjs(s);
-  if (!dd.isValid()) return '';
-  // 直接取本地分量，避免 format() 的时区风险
-  return `${dd.year()}-${String(dd.month() + 1).padStart(2, '0')}-${String(dd.date()).padStart(2, '0')}`;
+  // 英文月份格式，例如 "Jul 6, 2026" 或 "6 Jul 2026"。
+  const monthNames: Record<string, number> = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
+    apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
+    aug: 8, august: 8, sep: 9, sept: 9, september: 9,
+    oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+  };
+  const namedMonthFirst = s.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  const dayFirst = s.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})$/);
+  const monthName = (namedMonthFirst?.[1] ?? dayFirst?.[2])?.toLowerCase();
+  const month = monthName ? monthNames[monthName] : undefined;
+  if (month) {
+    const day = Number(namedMonthFirst?.[2] ?? dayFirst?.[1]);
+    const year = Number(namedMonthFirst?.[3] ?? dayFirst?.[3]);
+    const normalized = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return isValidCalendarDate(normalized) ? normalized : '';
+  }
+  return '';
 }
 
 // ── 批量排期（空降排期机制）────────────────────────────────

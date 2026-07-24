@@ -628,6 +628,109 @@
   color: #EF4444;
 }
 
+.ds-item:has(.ds-item-menu[open]) {
+  z-index: 30;
+  overflow: visible;
+}
+
+.ds-item-menu {
+  position: relative;
+  flex: none;
+}
+
+.ds-item-menu summary {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: #9ca3af;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ds-item-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.ds-item-menu summary:hover,
+.ds-item-menu summary:focus-visible,
+.ds-item-menu[open] summary {
+  background: #f1f5f9;
+  color: #334155;
+  outline: none;
+}
+
+.ds-item-menu > div {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 40;
+  width: max-content;
+  min-width: 145px;
+  padding: 5px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+}
+
+.ds-item-menu > div button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 7px 8px;
+  color: #334155;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ds-item-menu > div button:hover,
+.ds-item-menu > div button:focus-visible {
+  background: #eff6ff;
+  color: #1d4ed8;
+  outline: none;
+}
+
+.ds-backlog-feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 20px 0;
+  padding: 9px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+}
+
+.ds-backlog-feedback span {
+  flex: 1;
+}
+
+.ds-backlog-feedback button {
+  flex: none;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  padding: 3px 5px;
+  color: #1d4ed8;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ds-backlog-feedback button:hover,
+.ds-backlog-feedback button:focus-visible {
+  background: #dbeafe;
+  outline: none;
+}
+
 /* ── 右侧任务池 ──────────────────────────────────────────── */
 .ds-pool-header {
   display: flex;

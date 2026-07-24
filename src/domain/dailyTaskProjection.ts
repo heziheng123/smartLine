@@ -71,7 +71,7 @@ export function reviewTasksForDate(
 
   for (const task of tasks) {
     if (task.isCompleted) {
-      if (task.dueDate === date) completed.push(task);
+      if ((task.completedDate ?? task.dueDate) === date) completed.push(task);
       continue;
     }
     if (task.dueDate === date || (date === today && task.dueDate < today)) {

@@ -191,11 +191,17 @@ export function calculateDateWorkloads(input: {
   for (const task of tasks) {
     for (const block of getSmartTaskBlocks(task.blocks ?? [])) {
       const { header } = block;
-      if (header.isArchived || !header.date || !requested.has(header.date)) continue;
+      if (header.isArchived || !header.date) continue;
       const sourceId = getProjectBlockSourceId(task.id, block.id);
       if (isQuantityTask(header)) {
-        getQuantities(header.date).add(sourceId);
+        const lastActiveDate = header.isCompleted ? (header.completedDate ?? header.date) : undefined;
+        for (const date of dates) {
+          if (date >= header.date && (!lastActiveDate || date <= lastActiveDate)) {
+            getQuantities(date).add(sourceId);
+          }
+        }
       } else {
+        if (!requested.has(header.date)) continue;
         getDurations(header.date).set(sourceId, Math.max(5, header.duration || 30));
       }
     }

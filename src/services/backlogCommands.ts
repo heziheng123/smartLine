@@ -9,13 +9,16 @@ import {
   recordOperation,
   registerUndoExecutor,
   runWithoutOperationRecording,
+  useOperationHistory,
 } from '@/services/operationHistory';
 import {
+  rescheduleProjectTask,
   resolveProjectTask,
   updateProjectTask,
   type ProjectTaskCommandResult,
 } from '@/services/projectTaskCommands';
 import type { SmartTaskHeader } from '@/types';
+import { isQuantityTask } from '@/utils/blocks';
 
 interface BacklogDailyUndoPayload {
   taskId: string;
@@ -31,6 +34,49 @@ interface BacklogDailyUndoPayload {
 export type BacklogDailyCommandResult =
   | { ok: true; createdKind: 'item' | 'block'; createdId: string }
   | { ok: false; error: string };
+
+export type ReturnToBacklogCommandResult =
+  | {
+      ok: true;
+      title: string;
+      previousDate: string;
+      operationId?: string;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Clears the canonical planning date for one standard project task.
+ *
+ * The Timeline transaction is deliberately the only writer here. It removes
+ * every Daily Schedule projection for the task and records the date plus those
+ * projections in one persistent undo entry. All other task metadata remains
+ * untouched because the canonical patch only contains date/frozenAt.
+ */
+export function returnProjectTaskToBacklog(
+  taskId: string,
+  blockId: string,
+): ReturnToBacklogCommandResult {
+  const current = resolveProjectTask(taskId, blockId);
+  if (!current) return { ok: false, error: '任务已经不存在或不再是项目任务。' };
+
+  const { header } = current.block;
+  if (header.isArchived) return { ok: false, error: '已归档任务不能移入待排期箱。' };
+  if (header.isCompleted) return { ok: false, error: '已完成任务不能移入待排期箱，请先取消完成。' };
+  if (isQuantityTask(header)) return { ok: false, error: '数量任务必须保留开始日期，不能移入待排期箱。' };
+  if (!header.date) return { ok: false, error: '任务已经在待排期箱中。' };
+
+  const previousOperationId = useOperationHistory.getState().entries[0]?.id;
+  const result = rescheduleProjectTask(taskId, blockId);
+  if ('error' in result) return { ok: false, error: result.error };
+
+  const latestOperation = useOperationHistory.getState().entries[0];
+  return {
+    ok: true,
+    title: header.title,
+    previousDate: header.date,
+    operationId: latestOperation?.id !== previousOperationId ? latestOperation?.id : undefined,
+  };
+}
 
 function restoreBacklogDailyOperation(payload: BacklogDailyUndoPayload): void | string {
   const current = resolveProjectTask(payload.taskId, payload.blockId);

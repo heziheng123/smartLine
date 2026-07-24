@@ -14,6 +14,7 @@ import {
   type AppDomain,
   type OperationImpact,
 } from '@/services/operationResult';
+import { isValidCalendarDate } from '@/utils/dateSafe';
 
 export interface ProjectTaskRef {
   task: Task;
@@ -211,6 +212,10 @@ export function recordQuantityProgress(
   const current = resolveProjectTask(taskId, blockId);
   if (!current) return { ok: false, error: '数量任务已经不存在。' };
   if (!isQuantityTask(current.block.header)) return { ok: false, error: '当前任务不是数量任务。' };
+  if (!isValidCalendarDate(date)) return { ok: false, error: '记录日期无效。' };
+  if (!current.block.header.date || date < current.block.header.date) {
+    return { ok: false, error: '任务开始日期之前不能记录数量进度。' };
+  }
   if (!Number.isInteger(amount) || amount <= 0) {
     return { ok: false, error: '请输入大于 0 的整数。' };
   }

@@ -191,6 +191,7 @@ test('EBB completion from the main matrix uses the same global undo', async ({ p
   const toggle = page.getByLabel('标记第 1 轮完成');
   await expect(toggle).toBeVisible();
   await toggle.click();
+  await page.getByRole('button', { name: '完成并结束计划' }).click();
   await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
   await undoLatestFromHistory(page);
   await expect(page.getByLabel('标记第 1 轮完成')).toBeVisible();
@@ -284,6 +285,12 @@ test('project quantity task suggests a daily target and records progress without
   await expect(projectCard).toContainText('剩余 800 题');
   await expect(projectCard).toContainText('建议今天 80 题');
   await expect(projectCard).not.toContainText('min');
+  const projectProgressButton = projectCard.getByRole('button', { name: /^记录今日完成量：考研数学题库/ });
+  await expect(projectProgressButton).toBeVisible();
+  await expect(projectCard.getByRole('button', { name: '标记完成' })).toHaveCount(0);
+  await projectProgressButton.click();
+  await expect(page.getByRole('dialog', { name: '记录今日完成量' })).toBeVisible();
+  await page.getByRole('dialog', { name: '记录今日完成量' }).getByRole('button', { name: '取消' }).click();
 
   await page.getByTitle('更多操作').click();
   await page.getByRole('button', { name: '批量编辑' }).click();
@@ -382,6 +389,140 @@ test('project quantity task suggests a daily target and records progress without
   await expect(refreshedCard).not.toHaveClass(/ds-item--completed/);
   await expect(refreshedCard).toContainText('今日 35/80 题');
   await expect(refreshedCard).toContainText('235/1000 题');
+});
+
+test('quantity controls open a real progress entry and future tasks stay locked', async ({ page }) => {
+  await page.evaluate(({ today, future }) => {
+    const key = 'smart-timeline-data:mirror';
+    const data = JSON.parse(localStorage.getItem(key) ?? '{}');
+    data.tasks[0].blocks.push(
+      {
+        type: 'smart-task',
+        id: 'compact-quantity-entry',
+        header: {
+          taskKind: 'quantity',
+          title: 'Compact quantity entry',
+          tag: '做题',
+          tagColor: '#60a5fa',
+          date: today,
+          duration: 0,
+          isCompleted: false,
+          autoSyncEbb: false,
+          quantityUnit: '题',
+          quantityTotal: 100,
+          quantityInitialCompleted: 0,
+          quantityRecords: {},
+        },
+        body: '',
+      },
+      {
+        type: 'smart-task',
+        id: 'future-quantity-entry',
+        header: {
+          taskKind: 'quantity',
+          title: 'Future quantity',
+          tag: '做题',
+          tagColor: '#60a5fa',
+          date: future,
+          duration: 0,
+          isCompleted: false,
+          autoSyncEbb: false,
+          quantityUnit: '题',
+          quantityTotal: 100,
+          quantityInitialCompleted: 0,
+          quantityRecords: {},
+        },
+        body: '',
+      },
+    );
+    localStorage.setItem(key, JSON.stringify(data));
+  }, { today: testDate, future: addTestDays(testDate, 1) });
+  await page.reload();
+
+  await openTaskOverview(page);
+  const overviewCard = page.locator('[data-block-id="compact-quantity-entry"]');
+  await overviewCard.getByRole('button', { name: '记录数量进度：Compact quantity entry' }).click();
+  await expect(page.getByRole('dialog', { name: '任务详情' })).toBeVisible();
+  await page.getByLabel('关闭任务详情').click();
+
+  await page.getByTitle('周矩阵').click();
+  const weekCard = page.locator('[data-block-id="compact-quantity-entry"]');
+  await weekCard.getByRole('button', { name: '记录数量进度：Compact quantity entry' }).click();
+  await expect(page.getByRole('dialog', { name: '任务详情' })).toBeVisible();
+  await page.getByLabel('关闭任务详情').click();
+
+  await page.getByTitle('项目规划').click();
+  await page.locator('[data-block-id="future-quantity-entry"]').click();
+  const futureDialog = page.getByRole('dialog', { name: '任务详情' });
+  await expect(futureDialog.getByRole('button', { name: /任务尚未开始：Future quantity/ })).toBeDisabled();
+});
+
+test('direct quantity total and cumulative edits restore their numeric values through persistent undo', async ({ page }) => {
+  await page.evaluate(({ date }) => {
+    const key = 'smart-timeline-data:mirror';
+    const data = JSON.parse(localStorage.getItem(key) ?? '{}');
+    data.tasks[0].blocks.push({
+      type: 'smart-task',
+      id: 'direct-quantity-undo',
+      header: {
+        taskKind: 'quantity',
+        title: '直接编辑撤销数量任务',
+        tag: '做题',
+        tagColor: '#60a5fa',
+        date,
+        duration: 0,
+        isCompleted: false,
+        autoSyncEbb: false,
+        quantityUnit: '题',
+        quantityTotal: 100,
+        quantityInitialCompleted: 90,
+        quantityRecords: {},
+      },
+      body: '',
+    });
+    localStorage.setItem(key, JSON.stringify(data));
+  }, { date: testDate });
+  await page.reload();
+
+  const openQuantityCard = async () => {
+    await page.getByTitle('项目规划').click();
+    await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
+    const card = page.locator('.stb-card').filter({ hasText: '直接编辑撤销数量任务' });
+    await expect(card).toBeVisible();
+    await card.getByTitle('展开详情').click();
+    return card;
+  };
+
+  let card = await openQuantityCard();
+  const completedInput = card.getByTitle('累计已完成题数');
+  await completedInput.press('Control+A');
+  await completedInput.pressSequentially('100');
+  await completedInput.press('Enter');
+  await expect(card).toHaveClass(/stb-card--done/);
+  await expect(card).toContainText('进度 100/100 题');
+
+  await page.reload();
+  card = await openQuantityCard();
+  await expect(card).toHaveClass(/stb-card--done/);
+  await undoLatestFromHistory(page);
+  await expect(card).not.toHaveClass(/stb-card--done/);
+  await expect(card.getByTitle('累计已完成题数')).toHaveValue('90');
+  await expect(card).toContainText('进度 90/100 题');
+
+  const totalInput = card.getByTitle('目标总量');
+  await totalInput.press('Control+A');
+  await totalInput.pressSequentially('90');
+  await totalInput.press('Enter');
+  await expect(card).toHaveClass(/stb-card--done/);
+  await expect(card).toContainText('进度 90/90 题');
+
+  await page.reload();
+  card = await openQuantityCard();
+  await expect(card).toHaveClass(/stb-card--done/);
+  await undoLatestFromHistory(page);
+  await expect(card).not.toHaveClass(/stb-card--done/);
+  await expect(card.getByTitle('目标总量')).toHaveValue('100');
+  await expect(card).toContainText('进度 90/100 题');
 });
 
 test('project task duration accepts any positive minute value', async ({ page }) => {

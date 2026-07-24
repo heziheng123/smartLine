@@ -305,7 +305,22 @@ const TaskOverviewView: React.FC = () => {
                       }
                     }}
                   >
-                    <button type="button" className={`task-overview-check ${header.isCompleted ? 'is-checked' : ''}`} onClick={(event) => { event.stopPropagation(); toggleComplete(item); }} aria-disabled={isQuantityTask(header)} aria-label={isQuantityTask(header) ? `数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `完成：${header.title}`}>{header.isCompleted && <Check size={15} />}</button>
+                    <button
+                      type="button"
+                      className={`task-overview-check ${isQuantityTask(header) ? 'is-quantity' : ''} ${header.isCompleted ? 'is-checked' : ''}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (isQuantityTask(header)) {
+                          openProjectTaskModal(item.task.id, item.block.id, { source: 'task-overview' });
+                        } else {
+                          toggleComplete(item);
+                        }
+                      }}
+                      title={isQuantityTask(header) ? '打开任务并记录数量进度' : undefined}
+                      aria-label={isQuantityTask(header) ? `记录数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `完成：${header.title}`}
+                    >
+                      {isQuantityTask(header) ? <Hash size={14} /> : header.isCompleted && <Check size={15} />}
+                    </button>
                     <div className="task-overview-card-content">
                       <div className="task-overview-card-title">{header.title}</div>
                       <div className="task-overview-card-meta">

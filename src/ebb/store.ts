@@ -24,7 +24,13 @@ import {
   getDefaultEbbData,
 } from './constants';
 import { liveblocksClient } from '@/store/client';
-import { genId, getReviewTopicKey, checkCanComplete, normalizeReviewRoundOrders } from './scheduler';
+import {
+  buildNextRoundTask,
+  genId,
+  getReviewTopicKey,
+  checkCanComplete,
+  normalizeReviewRoundOrders,
+} from './scheduler';
 import {
   captureDailySourceSnapshots,
   useDailyScheduleStore,
@@ -39,6 +45,7 @@ import {
 import {
   buildAbsoluteScheduleDates,
   ensureTagColors,
+  isValidEbbDate,
   normalizeEbbData,
   serializeReviewTasks,
 } from './dataNormalization';
@@ -58,6 +65,37 @@ interface BatchReviewUndoPayload {
   expectedTasks: ReviewTask[];
   undoSourceIdsToClear: string[];
   dailySnapshots: DailySourceSnapshot[];
+}
+
+interface ReviewRescheduleUndoPayload {
+  previous: Array<{ id: string; dueDate: string }>;
+  expected: Array<{ id: string; dueDate: string }>;
+  dailySnapshots: DailySourceSnapshot[];
+}
+
+export type FinalReviewRoundDecision = 'finish' | 'append';
+
+export interface CompleteFinalReviewRoundInput {
+  taskId: string;
+  decision: FinalReviewRoundDecision;
+  nextDueDate?: string;
+}
+
+export type CompleteFinalReviewRoundResult =
+  | {
+      ok: true;
+      decision: FinalReviewRoundDecision;
+      topicName: string;
+      completedRound: number;
+      nextTask?: ReviewTask;
+      operationId: string;
+    }
+  | { ok: false; error: string };
+
+interface FinalReviewRoundUndoPayload {
+  previousTask: ReviewTask;
+  expectedCompletedTask: ReviewTask;
+  appendedTask?: ReviewTask;
 }
 
 // ── Store 接口 ──────────────────────────────────────────────
@@ -81,11 +119,14 @@ interface EbbStore extends EbbData {
   addReviewTasks: (tasks: ReviewTask[]) => void;
   updateReviewTask: (id: string, patch: Partial<ReviewTask>) => void;
   rescheduleReviewRounds: (updates: Array<{ id: string; dueDate: string }>) => void;
+  restoreReviewReschedule: (payload: ReviewRescheduleUndoPayload) => string | null;
   applyBatchReviewAdjustment: (request: BatchReviewRequest) => BatchReviewPlan;
   restoreBatchReviewAdjustment: (payload: BatchReviewUndoPayload) => string | null;
   restartReviewCycle: (topicKey: string, startDate: string) => boolean;
   deleteReviewTask: (id: string) => void;
   toggleReviewTask: (id: string) => string | null; // 返回错误消息，null 表示成功
+  completeFinalReviewRound: (input: CompleteFinalReviewRoundInput) => CompleteFinalReviewRoundResult;
+  restoreFinalReviewRoundCompletion: (payload: FinalReviewRoundUndoPayload) => string | null;
   clearAllTasks: () => void;
   removeGraphNodeReferences: (graphNodeIds: string[]) => void;
   rescheduleOverdue: (taskIds: string[]) => void;
@@ -283,13 +324,40 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           return null;
         },
 
+        restoreReviewReschedule: (payload) => {
+          const current = get().reviewTasks;
+          if (payload.expected.some((item) => current.find((task) => task.id === item.id)?.dueDate !== item.dueDate)) {
+            return '复习轮次在此操作后又被修改';
+          }
+          const previousById = new Map(payload.previous.map((item) => [item.id, item.dueDate]));
+          set((state) => {
+            const reviewTasks = state.reviewTasks.map((task) => {
+              const dueDate = previousById.get(task.id);
+              return dueDate === undefined ? task : { ...task, dueDate };
+            });
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: state.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          const dailyState = useDailyScheduleStore.getState();
+          dailyState.removeBySourceIds(payload.expected.map((item) => getReviewSourceId(item.id)));
+          dailyState.restoreSourceSnapshots(payload.dailySnapshots ?? []);
+          return null;
+        },
+
         updateReviewTask: (id, patch) => {
           const existingTask = get().reviewTasks.find((task) => task.id === id);
-          if (patch.dueDate !== undefined && existingTask?.dueDate !== patch.dueDate) {
-            setTimeout(() => {
-              useDailyScheduleStore.getState().removeBySourceIds([getReviewSourceId(id)]);
-            }, 0);
-          }
+          const dueDateChanged = Boolean(existingTask && patch.dueDate !== undefined && existingTask.dueDate !== patch.dueDate);
+          const sourceIds = dueDateChanged ? [getReviewSourceId(id)] : [];
+          const dailyState = useDailyScheduleStore.getState();
+          const dailySnapshots = dueDateChanged && dailyState.isHydrated
+            ? captureDailySourceSnapshots(dailyState.schedules, sourceIds)
+            : [];
           set((state) => {
             const reviewTasks = state.reviewTasks.map((t) =>
               t.id === id ? {
@@ -309,23 +377,27 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+          if (dueDateChanged) dailyState.removeBySourceIds(sourceIds);
           if (existingTask && patch.dueDate !== undefined && patch.dueDate !== existingTask.dueDate && !isOperationRecordingSuppressed()) {
             const previous = [{ id, dueDate: existingTask.dueDate }];
             const expected = [{ id, dueDate: patch.dueDate }];
-            recordOperation({ label: `改期“${existingTask.topicName}”`, detail: `${existingTask.dueDate} → ${patch.dueDate}`, modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-reschedule', payload: { previous, expected } } },
-              () => { const current = get().reviewTasks.find((task) => task.id === id); if (current?.dueDate !== patch.dueDate) return '复习轮次在此操作后又被修改'; get().rescheduleReviewRounds(previous); });
+            const payload: ReviewRescheduleUndoPayload = { previous, expected, dailySnapshots };
+            recordOperation({ label: `改期“${existingTask.topicName}”`, detail: `${existingTask.dueDate} → ${patch.dueDate}`, modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-reschedule', payload } },
+              () => get().restoreReviewReschedule(payload) ?? undefined);
           }
         },
 
         rescheduleReviewRounds: (updates) => {
           if (updates.length === 0) return;
           const previous = updates.map((update) => ({ id: update.id, dueDate: get().reviewTasks.find((task) => task.id === update.id)?.dueDate ?? update.dueDate }));
-          const updateMap = new Map(updates.map((item) => [item.id, item.dueDate]));
-          setTimeout(() => {
-            useDailyScheduleStore.getState().removeBySourceIds(
-              updates.map((item) => getReviewSourceId(item.id)),
-            );
-          }, 0);
+          const changed = updates.filter((update, index) => update.dueDate !== previous[index]?.dueDate);
+          if (changed.length === 0) return;
+          const updateMap = new Map(changed.map((item) => [item.id, item.dueDate]));
+          const sourceIds = changed.map((item) => getReviewSourceId(item.id));
+          const dailyState = useDailyScheduleStore.getState();
+          const dailySnapshots = dailyState.isHydrated
+            ? captureDailySourceSnapshots(dailyState.schedules, sourceIds)
+            : [];
           set((state) => {
             const reviewTasks = state.reviewTasks.map((task) => {
               const dueDate = updateMap.get(task.id);
@@ -346,12 +418,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
-          const changed = updates.filter((update, index) => update.dueDate !== previous[index]?.dueDate);
+          dailyState.removeBySourceIds(sourceIds);
           if (changed.length > 0 && !isOperationRecordingSuppressed()) {
             const expected = changed;
             const oldValues = previous.filter((item) => changed.some((change) => change.id === item.id));
-            recordOperation({ label: `调整 ${changed.length} 个复习轮次`, detail: `${oldValues.map((item) => item.dueDate).join('、')} → ${expected.map((item) => item.dueDate).join('、')}`, modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-reschedule', payload: { previous: oldValues, expected } } },
-              () => { if (expected.some((item) => get().reviewTasks.find((task) => task.id === item.id)?.dueDate !== item.dueDate)) return '复习轮次在此操作后又被修改'; get().rescheduleReviewRounds(oldValues); });
+            const payload: ReviewRescheduleUndoPayload = { previous: oldValues, expected, dailySnapshots };
+            recordOperation({ label: `调整 ${changed.length} 个复习轮次`, detail: `${oldValues.map((item) => item.dueDate).join('、')} → ${expected.map((item) => item.dueDate).join('、')}`, modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-reschedule', payload } },
+              () => get().restoreReviewReschedule(payload) ?? undefined);
           }
         },
 
@@ -543,6 +616,134 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             return newData;
           });
           if (!isOperationRecordingSuppressed()) recordOperation({ label: `完成复习“${task.topicName}”`, detail: '复习进度、每日安排和知识节点将统一恢复', modules: ['EBB', '每日安排', '知识大盘'], undoSpec: { kind: 'ebb-toggle', payload: { id, expectedCompleted: true } } }, () => get().toggleReviewTask(id) ?? undefined);
+          return null;
+        },
+
+        completeFinalReviewRound: (input) => {
+          const state = get();
+          const task = state.reviewTasks.find((candidate) => candidate.id === input.taskId && !candidate.isArchived);
+          if (!task) return { ok: false, error: '复习轮次已经不存在' };
+          if (task.isCompleted) return { ok: false, error: '这一轮已经在其他位置完成' };
+
+          const orderError = checkCanComplete(task.id, state.reviewTasks);
+          if (orderError) return { ok: false, error: orderError };
+
+          const topicKey = getReviewTopicKey(task);
+          const topicTasks = state.reviewTasks
+            .filter((candidate) => !candidate.isArchived && getReviewTopicKey(candidate) === topicKey)
+            .sort((a, b) =>
+              (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER)
+              || (a.originalDueDate ?? a.dueDate ?? '').localeCompare(b.originalDueDate ?? b.dueDate ?? '')
+              || a.id.localeCompare(b.id),
+            );
+          const currentIndex = topicTasks.findIndex((candidate) => candidate.id === task.id);
+          if (currentIndex !== topicTasks.length - 1) {
+            return { ok: false, error: '复习计划已出现新的后续轮次，请重新完成当前轮次' };
+          }
+
+          let nextTask: ReviewTask | undefined;
+          if (input.decision === 'append') {
+            const built = buildNextRoundTask(topicTasks, state.ebbSettings);
+            if (!built) return { ok: false, error: '无法生成新的复习轮次' };
+            const dueDate = input.nextDueDate ?? built.dueDate;
+            if (!isValidEbbDate(dueDate)) {
+              return { ok: false, error: '新的复习日期无效' };
+            }
+            if (dueDate < todayStr()) return { ok: false, error: '新的复习日期不能早于今天' };
+            if (topicTasks.some((candidate) => candidate.dueDate === dueDate)) {
+              return { ok: false, error: '同一主题在该日期已经有复习轮次' };
+            }
+            nextTask = {
+              ...built,
+              dueDate,
+              originalDueDate: dueDate,
+            };
+          }
+
+          const completedTask: ReviewTask = {
+            ...task,
+            isCompleted: true,
+            completedDate: todayStr(),
+            smStatus: 'confirmed',
+            completionSource: 'manual',
+            completionSourceTaskId: undefined,
+            completionSourceBlockId: undefined,
+            previousSchedule: undefined,
+          };
+          set((current) => {
+            const latest = current.reviewTasks.find((candidate) => candidate.id === task.id);
+            if (!latest || latest.isCompleted) return current;
+            const reviewTasks = normalizeReviewRoundOrders([
+              ...current.reviewTasks.map((candidate) => candidate.id === task.id ? completedTask : candidate),
+              ...(nextTask ? [nextTask] : []),
+            ]);
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: current.inboxItems,
+              outlineNodes: current.outlineNodes,
+              ebbSettings: ensureTagColors(reviewTasks, current.ebbSettings),
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+
+          const payload: FinalReviewRoundUndoPayload = {
+            previousTask: task,
+            expectedCompletedTask: completedTask,
+            appendedTask: nextTask,
+          };
+          const operationId = isOperationRecordingSuppressed()
+            ? ''
+            : recordOperation({
+                label: input.decision === 'append'
+                  ? `完成并追加复习“${task.topicName}”`
+                  : `完成最后一轮复习“${task.topicName}”`,
+                detail: nextTask
+                  ? `完成第 ${topicTasks.length} 轮 · 新增第 ${topicTasks.length + 1} 轮（${nextTask.dueDate}）`
+                  : `完成第 ${topicTasks.length} 轮 · 当前复习计划结束`,
+                modules: ['EBB', '每日安排', '知识大盘'],
+                undoSpec: { kind: 'ebb-final-round', payload },
+              }, () => get().restoreFinalReviewRoundCompletion(payload) ?? undefined);
+
+          return {
+            ok: true,
+            decision: input.decision,
+            topicName: task.topicName,
+            completedRound: topicTasks.length,
+            nextTask,
+            operationId,
+          };
+        },
+
+        restoreFinalReviewRoundCompletion: (payload) => {
+          const state = get();
+          const currentTask = state.reviewTasks.find((task) => task.id === payload.expectedCompletedTask.id);
+          if (!currentTask || serializeReviewTasks([currentTask]) !== serializeReviewTasks([payload.expectedCompletedTask])) {
+            return '已完成轮次在此操作后又被修改';
+          }
+          if (payload.appendedTask) {
+            const currentAppended = state.reviewTasks.find((task) => task.id === payload.appendedTask!.id);
+            if (!currentAppended || serializeReviewTasks([currentAppended]) !== serializeReviewTasks([payload.appendedTask])) {
+              return '新增轮次在此操作后又被修改';
+            }
+          }
+
+          set((current) => {
+            const reviewTasks = normalizeReviewRoundOrders(current.reviewTasks
+              .filter((task) => task.id !== payload.appendedTask?.id)
+              .map((task) => task.id === payload.previousTask.id ? payload.previousTask : task));
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: current.inboxItems,
+              outlineNodes: current.outlineNodes,
+              ebbSettings: ensureTagColors(reviewTasks, current.ebbSettings),
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          if (payload.appendedTask) {
+            useDailyScheduleStore.getState().removeBySourceIds([getReviewSourceId(payload.appendedTask.id)]);
+          }
           return null;
         },
 
@@ -1030,11 +1231,11 @@ registerUndoExecutor('ebb-toggle', (raw) => {
   if (task.isCompleted !== payload.expectedCompleted) return '复习轮次在此操作后又被修改';
   return state.toggleReviewTask(payload.id) ?? undefined;
 });
+registerUndoExecutor('ebb-final-round', (raw) => {
+  return useEbbStore.getState().restoreFinalReviewRoundCompletion(raw as FinalReviewRoundUndoPayload) ?? undefined;
+});
 registerUndoExecutor('ebb-reschedule', (raw) => {
-  const payload = raw as { previous: Array<{ id: string; dueDate: string }>; expected: Array<{ id: string; dueDate: string }> };
-  const state = useEbbStore.getState();
-  if (payload.expected.some((item) => state.reviewTasks.find((task) => task.id === item.id)?.dueDate !== item.dueDate)) return '复习轮次在此操作后又被修改';
-  state.rescheduleReviewRounds(payload.previous);
+  return useEbbStore.getState().restoreReviewReschedule(raw as ReviewRescheduleUndoPayload) ?? undefined;
 });
 registerUndoExecutor('ebb-batch-adjust', (raw) => {
   return useEbbStore.getState().restoreBatchReviewAdjustment(raw as BatchReviewUndoPayload) ?? undefined;

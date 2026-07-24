@@ -41,6 +41,7 @@ import { requestCompletedBindingStrategy } from '@/graph/bindingDecision';
 import type { CompletedTaskBindingStrategy } from '@/domain/projectTaskEffects';
 import { useTimelineStore } from '@/store';
 import { motion, AnimatePresence } from 'framer-motion';
+import QuantityProgressDialog from '@/components/dailySchedule/QuantityProgressDialog';
 
 interface SmartTaskBlockCardProps {
   parentTaskId: string;
@@ -80,8 +81,11 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const quantityDailyStatus = getQuantityDailyStatus(header, todayStr());
   const quantityPercent = getQuantityProgressPercent(header);
   const todayQuantity = quantityRecords[todayStr()] ?? 0;
+  const today = todayStr();
   const hasBody = body && body.trim() !== '';
   const [bodyExpanded, setBodyExpanded] = useState(() => !compact && !!hasBody);
+  const [quantityCompletedDraft, setQuantityCompletedDraft] = useState(() => String(quantityCompleted));
+  const [quantityTotalDraft, setQuantityTotalDraft] = useState(() => String(quantityTotal));
 
   // 响应外部展开/折叠控制
   useEffect(() => {
@@ -92,6 +96,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const [editingBody, setEditingBody] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showGraphPicker, setShowGraphPicker] = useState(false);
+  const [showQuantityProgress, setShowQuantityProgress] = useState(false);
   const graphBindingStrategyRef = useRef<CompletedTaskBindingStrategy | null>(null);
   const startGraphBinding = useGraphBindingStore((state) => state.start);
   const [showTagPicker, setShowTagPicker] = useState(false);
@@ -127,6 +132,14 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
       setTitleDraft(header.title);
     }
   }, [header.title]);
+
+  useEffect(() => {
+    setQuantityCompletedDraft(String(quantityCompleted));
+  }, [quantityCompleted]);
+
+  useEffect(() => {
+    setQuantityTotalDraft(String(quantityTotal));
+  }, [quantityTotal]);
 
   useEffect(() => () => {
     if (titleSaveTimerRef.current) window.clearTimeout(titleSaveTimerRef.current);
@@ -185,6 +198,20 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
       completedDate: !header.isCompleted ? now : undefined,
     });
   }, [block.id, header.isCompleted, isQuantity, onUpdateHeader]);
+
+  const hasQuantityStarted = Boolean(header.date && header.date <= today);
+  const canEditTodayQuantity = isQuantity && hasQuantityStarted && (!header.isCompleted || todayQuantity > 0);
+  const quantityProgressLabel = !hasQuantityStarted
+    ? `任务尚未开始：${header.title}，开始日期 ${header.date ?? '未设置'}`
+    : todayQuantity > 0
+    ? `修改今日完成量：${header.title}，当前 ${quantityCompleted}/${quantityTotal} ${quantityUnit}`
+    : header.isCompleted
+      ? `数量任务已完成：${header.title}，共 ${quantityCompleted}/${quantityTotal} ${quantityUnit}`
+      : `记录今日完成量：${header.title}，当前 ${quantityCompleted}/${quantityTotal} ${quantityUnit}`;
+
+  const handleOpenQuantityProgress = useCallback(() => {
+    if (canEditTodayQuantity) setShowQuantityProgress(true);
+  }, [canEditTodayQuantity]);
 
   // Body 编辑
   const handleBodyBlur = useCallback(() => {
@@ -274,29 +301,39 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     }
   }, [block.id, onUpdateHeader]);
 
-  const handleQuantityTotalChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = Number(e.target.value);
+  const commitQuantityTotal = useCallback(() => {
+    const value = Number(quantityTotalDraft);
     if (Number.isInteger(value) && value > 0 && value >= quantityCompleted) {
       const completed = quantityCompleted >= value;
-      onUpdateHeader(block.id, {
-        ...(isLegacyVocabulary ? { vocabularyTotalWords: value } : { quantityTotal: value }),
-        isCompleted: completed,
-        completedDate: completed ? (header.completedDate ?? todayStr()) : undefined,
-      });
+      if (value !== quantityTotal) {
+        onUpdateHeader(block.id, {
+          ...(isLegacyVocabulary ? { vocabularyTotalWords: value } : { quantityTotal: value }),
+          isCompleted: completed,
+          completedDate: completed ? (header.completedDate ?? today) : undefined,
+        });
+      }
+      setQuantityTotalDraft(String(value));
+      return;
     }
-  }, [block.id, header.completedDate, isLegacyVocabulary, onUpdateHeader, quantityCompleted]);
+    setQuantityTotalDraft(String(quantityTotal));
+  }, [block.id, header.completedDate, isLegacyVocabulary, onUpdateHeader, quantityCompleted, quantityTotal, quantityTotalDraft, today]);
 
-  const handleQuantityCompletedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = Number(e.target.value);
+  const commitQuantityCompleted = useCallback(() => {
+    const value = Number(quantityCompletedDraft);
     const nextInitial = value - quantityRecordTotal;
     if (Number.isInteger(value) && nextInitial >= 0 && value <= quantityTotal) {
-      onUpdateHeader(block.id, {
-        ...(isLegacyVocabulary ? { vocabularyInitialCompletedWords: nextInitial } : { quantityInitialCompleted: nextInitial }),
-        isCompleted: value >= quantityTotal,
-        completedDate: value >= quantityTotal ? todayStr() : undefined,
-      });
+      if (value !== quantityCompleted) {
+        onUpdateHeader(block.id, {
+          ...(isLegacyVocabulary ? { vocabularyInitialCompletedWords: nextInitial } : { quantityInitialCompleted: nextInitial }),
+          isCompleted: value >= quantityTotal,
+          completedDate: value >= quantityTotal ? today : undefined,
+        });
+      }
+      setQuantityCompletedDraft(String(value));
+      return;
     }
-  }, [block.id, isLegacyVocabulary, onUpdateHeader, quantityRecordTotal, quantityTotal]);
+    setQuantityCompletedDraft(String(quantityCompleted));
+  }, [block.id, isLegacyVocabulary, onUpdateHeader, quantityCompleted, quantityCompletedDraft, quantityRecordTotal, quantityTotal, today]);
 
   const handleQuantityDeadlineChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -330,58 +367,75 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   if (compact) {
     // 紧凑模式：单行卡条
     return (
-      <motion.div
-        layout
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ type: "spring", stiffness: 400, damping: 30 }}
-        className={`stb-card stb-card--compact ${header.isCompleted ? 'stb-card--done' : ''}`}
-        style={{ borderLeftColor: leftBarColor }}
-        onClick={() => setBodyExpanded(!bodyExpanded)}
-      >
-        <motion.button
-          whileTap={{ scale: 0.8 }}
-          type="button"
-          className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
-          onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleToggle(); }}
-          title={header.isCompleted ? '取消完成' : '标记完成'}
-          aria-label={header.isCompleted ? '取消完成' : '标记完成'}
+      <>
+        <motion.div
+          layout
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+          className={`stb-card stb-card--compact ${header.isCompleted ? 'stb-card--done' : ''}`}
+          style={{ borderLeftColor: leftBarColor }}
+          onClick={() => setBodyExpanded(!bodyExpanded)}
         >
-          {header.isCompleted && <Check size={12} strokeWidth={3} />}
-        </motion.button>
-        <span className="stb-tag-badge" style={tagBgStyle}>
-          {header.tag}
-        </span>
-        <input
-          type="text"
-          className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
-          value={titleDraft}
-          onChange={(e) => handleTitleChange(e.target.value)}
-          onBlur={commitTitle}
-        />
-        <span className="stb-meta">
-          {isQuantity ? <><Hash size={12} /> {quantityCompleted}/{quantityTotal} {quantityUnit}</> : <><Clock size={12} /> {header.duration}min</>}
-        </span>
-        <AnimatePresence initial={false}>
-          {bodyExpanded && (
-            <motion.div 
-              className="stb-body-compact"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeInOut" }}
-              style={{ overflow: 'hidden', width: '100%' }}
-            >
-              {hasBody ? (
-                <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }} />
-              ) : (
-                <span className="stb-body-empty">点击编辑详情...</span>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+          <motion.button
+            whileTap={{ scale: 0.8 }}
+            type="button"
+            className={`stb-check ${isQuantity ? 'stb-check--quantity' : ''} ${header.isCompleted ? 'stb-check--done' : ''}`}
+            onClick={(event: React.MouseEvent) => {
+              event.stopPropagation();
+              if (isQuantity) handleOpenQuantityProgress();
+              else handleToggle();
+            }}
+            title={isQuantity ? quantityProgressLabel : header.isCompleted ? '取消完成' : '标记完成'}
+            aria-label={isQuantity ? quantityProgressLabel : header.isCompleted ? '取消完成' : '标记完成'}
+            disabled={isQuantity && !canEditTodayQuantity}
+          >
+            {isQuantity
+              ? <Hash size={11} strokeWidth={2.5} />
+              : header.isCompleted && <Check size={12} strokeWidth={3} />}
+          </motion.button>
+          <span className="stb-tag-badge" style={tagBgStyle}>
+            {header.tag}
+          </span>
+          <input
+            type="text"
+            className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
+            value={titleDraft}
+            onChange={(e) => handleTitleChange(e.target.value)}
+            onBlur={commitTitle}
+          />
+          <span className="stb-meta">
+            {isQuantity ? <><Hash size={12} /> {quantityCompleted}/{quantityTotal} {quantityUnit}</> : <><Clock size={12} /> {header.duration}min</>}
+          </span>
+          <AnimatePresence initial={false}>
+            {bodyExpanded && (
+              <motion.div
+                className="stb-body-compact"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+                style={{ overflow: 'hidden', width: '100%' }}
+              >
+                {hasBody ? (
+                  <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }} />
+                ) : (
+                  <span className="stb-body-empty">点击编辑详情...</span>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+        {showQuantityProgress && (
+          <QuantityProgressDialog
+            taskId={parentTaskId}
+            block={block}
+            date={todayStr()}
+            onClose={() => setShowQuantityProgress(false)}
+          />
+        )}
+      </>
     );
   }
 
@@ -407,13 +461,15 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
         <motion.button
           whileTap={{ scale: 0.8 }}
           type="button"
-          className={`stb-check ${header.isCompleted ? 'stb-check--done' : ''}`}
-          onClick={handleToggle}
-          title={isQuantity ? '请在每日安排中记录今日完成量' : header.isCompleted ? '标记未完成' : '标记完成'}
-          aria-label={isQuantity ? '数量任务进度由每日记录完成' : header.isCompleted ? '取消完成' : '标记完成'}
-          aria-disabled={isQuantity}
+          className={`stb-check ${isQuantity ? 'stb-check--quantity' : ''} ${header.isCompleted ? 'stb-check--done' : ''}`}
+          onClick={isQuantity ? handleOpenQuantityProgress : handleToggle}
+          title={isQuantity ? quantityProgressLabel : header.isCompleted ? '标记未完成' : '标记完成'}
+          aria-label={isQuantity ? quantityProgressLabel : header.isCompleted ? '取消完成' : '标记完成'}
+          disabled={isQuantity && !canEditTodayQuantity}
         >
-          {header.isCompleted && <Check size={11} strokeWidth={3} />}
+          {isQuantity
+            ? <Hash size={11} strokeWidth={2.5} />
+            : header.isCompleted && <Check size={11} strokeWidth={3} />}
         </motion.button>
 
         {/* 右侧内容容器：标题 → 元数据 → Body */}
@@ -563,7 +619,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
             {/* Hover 快捷菜单（仅删除） */}
             <div className="stb-actions">
-              {header.isCompleted && (
+              {header.isCompleted && !isQuantity && (
                 <button
                   type="button"
                   className="stb-action-btn"
@@ -610,8 +666,8 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               </div>
               {bodyExpanded && (
                 <div className="stb-quantity-editor" aria-label="数量任务设置">
-                  <label>累计完成<input type="number" min={quantityRecordTotal} max={quantityTotal} step={1} value={quantityCompleted} onChange={handleQuantityCompletedChange} title={`累计已完成${quantityUnit}数`} /></label>
-                  <label>目标总量<input type="number" min={Math.max(1, quantityCompleted)} step={1} value={quantityTotal} onChange={handleQuantityTotalChange} title="目标总量" /></label>
+                  <label>累计完成<input type="number" min={quantityRecordTotal} max={quantityTotal} step={1} value={quantityCompletedDraft} onChange={(event) => setQuantityCompletedDraft(event.target.value)} onBlur={commitQuantityCompleted} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} title={`累计已完成${quantityUnit}数`} /></label>
+                  <label>目标总量<input type="number" min={Math.max(1, quantityCompleted)} step={1} value={quantityTotalDraft} onChange={(event) => setQuantityTotalDraft(event.target.value)} onBlur={commitQuantityTotal} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} title="目标总量" /></label>
                   <label>单位<input type="text" value={quantityUnit} disabled={isLegacyVocabulary} onChange={handleQuantityUnitChange} title="计量单位" /></label>
                   <label>截止日期<input type="date" min={header.date} value={header.deadline ?? ''} onChange={handleQuantityDeadlineChange} title="截止日期（可选）" aria-label="数量任务截止日期" /></label>
                 </div>
@@ -715,6 +771,15 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           </div>
         </div>,
         document.body
+      )}
+
+      {showQuantityProgress && (
+        <QuantityProgressDialog
+          taskId={parentTaskId}
+          block={block}
+          date={todayStr()}
+          onClose={() => setShowQuantityProgress(false)}
+        />
       )}
     </motion.div>
   );

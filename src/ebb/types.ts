@@ -51,6 +51,7 @@ export interface SyncTaskToEbbPayload {
   action?: 'add' | 'remove' | 'revert-source';
   graphNodeId: string;
   topicName: string;
+  complexity?: ComplexityLevel;
   triggerSchedule?: boolean;
   sourceTaskId?: string;
   sourceBlockId?: string;

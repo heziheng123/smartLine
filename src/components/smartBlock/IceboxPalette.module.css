@@ -193,14 +193,37 @@
 }
 
 .message {
-  border: 0;
   border-bottom: 1px solid #dbeafe;
   background: #eff6ff;
   padding: 8px 14px;
   color: #1d4ed8;
   font-size: 11px;
-  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.message span {
+  flex: 1;
+  line-height: 1.45;
+}
+
+.message button {
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #1d4ed8;
+  padding: 3px 5px;
+  font: inherit;
+  font-weight: 700;
   cursor: pointer;
+}
+
+.message button:hover,
+.message button:focus-visible {
+  background: #dbeafe;
+  outline: none;
 }
 
 @media (max-width: 900px) {

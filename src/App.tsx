@@ -16,6 +16,7 @@ import ProjectTaskCreateDialog from '@/components/smartBlock/ProjectTaskCreateDi
 import ViewErrorBoundary from '@/components/ViewErrorBoundary';
 import ConfirmationDialogHost from '@/components/ConfirmationDialogHost';
 import ChoiceDialogHost from '@/components/ChoiceDialogHost';
+import FinalReviewRoundDialogHost from '@/components/FinalReviewRoundDialogHost';
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
 import { AnimatePresence, motion } from 'framer-motion';
 
@@ -1013,6 +1014,7 @@ const App: React.FC = () => {
       <ProjectTaskBlockModal />
       <ConfirmationDialogHost />
       <ChoiceDialogHost />
+      <FinalReviewRoundDialogHost />
     </div>
   );
 };

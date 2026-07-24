@@ -15,9 +15,10 @@ import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from 
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
-import { removeQuantityProgress, rescheduleProjectTask, setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
-import { scheduleBacklogTaskToTimeBlock } from '@/services/backlogCommands';
+import { removeQuantityProgress, setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { returnProjectTaskToBacklog, scheduleBacklogTaskToTimeBlock } from '@/services/backlogCommands';
 import { requestConfirmation } from '@/services/confirmation';
+import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
 import BacklogTaskList from '@/components/smartBlock/BacklogTaskList';
 import type { BacklogTask } from '@/domain/taskBacklog';
 import TimeGrid from './TimeGrid';
@@ -75,12 +76,10 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   const {
     reviewTasks: rawEbbReviewTasks,
     ebbSettings: ebbSettingsData,
-    toggleReviewTask: ebbToggleReviewTask,
   } = useEbbStore(
     useShallow((s) => ({
       reviewTasks: s.reviewTasks,
       ebbSettings: s.ebbSettings,
-      toggleReviewTask: s.toggleReviewTask,
     })),
   );
 
@@ -347,7 +346,9 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
       if (block.source === 'review') {
         const reviewId = block.sourceId.replace('review-', '');
-        onReviewToggleError(ebbToggleReviewTask(reviewId));
+        void requestManualReviewToggle(reviewId).then((result) => {
+          onReviewToggleError(result.cancelled || result.ok ? null : result.message ?? '复习任务操作失败');
+        });
       } else if (block.source === 'project') {
         const parsed = parseSourceId(block.sourceId);
         if (!parsed || parsed.source !== 'project') return;
@@ -365,13 +366,17 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         }
       }
     },
-    [blocks, ebbToggleReviewTask, onOpenQuantityProgress, onReviewToggleError, tlTasks],
+    [blocks, onOpenQuantityProgress, onReviewToggleError, tlTasks],
   );
 
   const handleUndoCompletedPoolItem = useCallback((item: CompletedDailyPoolItem) => {
     if (item.source === 'review') {
       const parsed = parseSourceId(item.sourceId);
-      if (parsed?.source === 'review') onReviewToggleError(ebbToggleReviewTask(parsed.reviewId));
+      if (parsed?.source === 'review') {
+        void requestManualReviewToggle(parsed.reviewId).then((result) => {
+          onReviewToggleError(result.cancelled || result.ok ? null : result.message ?? '复习任务操作失败');
+        });
+      }
       return;
     }
     if (item.source !== 'project') return;
@@ -388,7 +393,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     if (!currentBlock.header.isCompleted) return;
     const result = setProjectTaskCompletion(parsed.parentTaskId, parsed.blockId, false);
     if ('error' in result) onReviewToggleError(result.error);
-  }, [ebbToggleReviewTask, onReviewToggleError, selectedDate, tlTasks]);
+  }, [onReviewToggleError, selectedDate, tlTasks]);
 
   const handleRemove = useCallback(
     (blockId: string) => {
@@ -648,7 +653,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
               } else if (isQuantityTask(projectBlock.header)) {
                 onReviewToggleError('数量任务必须保留开始日期，不能移入待排期箱。');
               } else {
-                const result = rescheduleProjectTask(parsed.parentTaskId, parsed.blockId);
+                const result = returnProjectTaskToBacklog(parsed.parentTaskId, parsed.blockId);
                 onReviewToggleError('error' in result ? result.error : null);
               }
             } else if (activePoolTab === 'backlog') {

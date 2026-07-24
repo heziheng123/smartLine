@@ -157,7 +157,9 @@ export function buildNextRoundTask(
 ): ReviewTask | null {
   const activeTasks = topicTasks.filter((task) => !task.isArchived);
   const sortedTasks = [...activeTasks].sort((a, b) =>
-    (a.dueDate ?? '').localeCompare(b.dueDate ?? '') || a.id.localeCompare(b.id),
+    (a.roundOrder ?? Number.MAX_SAFE_INTEGER) - (b.roundOrder ?? Number.MAX_SAFE_INTEGER)
+    || (a.originalDueDate ?? a.dueDate ?? '').localeCompare(b.originalDueDate ?? b.dueDate ?? '')
+    || a.id.localeCompare(b.id),
   );
   const lastTask = sortedTasks[sortedTasks.length - 1];
   if (!lastTask) return null;

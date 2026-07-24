@@ -13,6 +13,7 @@ import { buildNextRoundTask, computeRounds, getDateLabel, getReviewTopicKey, isO
 import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import EbbDatePicker from './EbbDatePicker';
+import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
 
 interface RoundsPanelProps {
   topicKey: string;
@@ -31,7 +32,6 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     ebbSettings,
     deleteReviewTask,
     addReviewTasks,
-    toggleReviewTask,
     rescheduleReviewRounds,
     restartReviewCycle,
   } = useEbbStore(
@@ -40,7 +40,6 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
       ebbSettings: s.ebbSettings,
       deleteReviewTask: s.deleteReviewTask,
       addReviewTasks: s.addReviewTasks,
-      toggleReviewTask: s.toggleReviewTask,
       rescheduleReviewRounds: s.rescheduleReviewRounds,
       restartReviewCycle: s.restartReviewCycle,
     })),
@@ -190,11 +189,11 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
 
   // 勾选
   const handleToggle = useCallback(
-    (id: string) => {
-      const error = toggleReviewTask(id);
-      setActionError(error ?? '');
+    async (id: string) => {
+      const result = await requestManualReviewToggle(id);
+      setActionError(result.cancelled ? '' : result.ok ? '' : result.message ?? '');
     },
-    [toggleReviewTask],
+    [],
   );
 
   // 当前改期任务的 dueDate

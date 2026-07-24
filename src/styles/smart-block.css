@@ -703,6 +703,20 @@
   background: #f9fafb;
   transform: scale(1.15);
 }
+.stb-check--quantity {
+  border-color: #93c5fd;
+  color: #2563eb;
+  background: #eff6ff;
+}
+.stb-check--quantity:hover {
+  border-color: #60a5fa;
+  background: #dbeafe;
+}
+.stb-check--quantity:disabled {
+  cursor: default;
+  opacity: 0.65;
+  transform: none;
+}
 .stb-check--done {
   background: #22c55e;
   border-color: #22c55e;
@@ -2320,6 +2334,33 @@
 .ptm-body { min-height: 0; overflow-y: auto; padding: 18px 20px; background: #f8fafc; }
 .ptm-body .stb-card { box-shadow: 0 4px 20px rgba(15, 23, 42, 0.07); }
 .ptm-date-change-hint { margin: 12px 4px 0; color: #64748b; font-size: 12px; line-height: 1.55; }
+.ptm-backlog-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid #bfdbfe;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+}
+.ptm-backlog-notice span { flex: 1; line-height: 1.5; }
+.ptm-backlog-notice button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 7px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
 
 .ptm-context-grid {
   display: grid;
@@ -2390,7 +2431,8 @@
 }
 
 .ptm-footer .ptm-done-btn,
-.ptm-footer .ptm-nav-btn {
+.ptm-footer .ptm-nav-btn,
+.ptm-footer .ptm-backlog-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2414,6 +2456,15 @@
   border: 1px solid #dbe2ea;
   background: #fff;
   color: #475569;
+}
+.ptm-footer .ptm-backlog-btn {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.ptm-footer .ptm-backlog-btn:hover {
+  border-color: #93c5fd;
+  background: #dbeafe;
 }
 
 .ptm-footer .ptm-nav-btn:hover {

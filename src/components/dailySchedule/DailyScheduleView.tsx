@@ -53,11 +53,12 @@ import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
 import {
   resolveProjectAppearance,
 } from './projectAppearance';
-import { recordOperation } from '@/services/operationHistory';
+import { recordOperation, useOperationHistory } from '@/services/operationHistory';
 import { recordQuantityProgress, removeQuantityProgress, rescheduleProjectTask, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
-import { scheduleBacklogTaskToSlot } from '@/services/backlogCommands';
+import { returnProjectTaskToBacklog, scheduleBacklogTaskToSlot } from '@/services/backlogCommands';
 import { collectBacklogTasks, type BacklogTask } from '@/domain/taskBacklog';
 import { requestConfirmation } from '@/services/confirmation';
+import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
 import DailySlotSection from './DailySlotSection';
 import DailyTaskPool, { type CompletedDailyPoolItem, type DailyPoolItem } from './DailyTaskPool';
 import TimeSlotIcon from './TimeSlotIcon';
@@ -89,6 +90,8 @@ const DailyScheduleView: React.FC = () => {
   const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
   const [showCompletedPool, setShowCompletedPool] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [backlogFeedback, setBacklogFeedback] = useState<{ text: string; operationId?: string } | null>(null);
+  const undoOperation = useOperationHistory((state) => state.undo);
   const [progressTask, setProgressTask] = useState<{ taskId: string; block: SmartTaskBlock } | null>(null);
   const [poolPreference, setPoolPreference] = useState<'auto' | 'open' | 'closed'>('auto');
   const [isCompactLayout, setIsCompactLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches);
@@ -138,12 +141,10 @@ const DailyScheduleView: React.FC = () => {
   const {
     reviewTasks: rawEbbReviewTasks,
     ebbSettings: ebbSettingsData,
-    toggleReviewTask: ebbToggleReviewTask,
   } = useEbbStore(
     useShallow((s) => ({
       reviewTasks: s.reviewTasks,
       ebbSettings: s.ebbSettings,
-      toggleReviewTask: s.toggleReviewTask,
     })),
   );
 
@@ -566,7 +567,7 @@ const DailyScheduleView: React.FC = () => {
           setOperationError('数量任务必须保留开始日期，不能移入待排期箱。');
           return;
         }
-        const result = rescheduleProjectTask(parsed.parentTaskId, parsed.blockId);
+        const result = returnProjectTaskToBacklog(parsed.parentTaskId, parsed.blockId);
         setOperationError('error' in result ? result.error : null);
         return;
       }
@@ -682,11 +683,11 @@ const DailyScheduleView: React.FC = () => {
     return result.ok;
   }, []);
 
-  const toggleReviewWithFeedback = useCallback((reviewId: string) => {
-    const error = ebbToggleReviewTask(reviewId);
-    setOperationError(error);
-    return error === null;
-  }, [ebbToggleReviewTask]);
+  const toggleReviewWithFeedback = useCallback(async (reviewId: string) => {
+    const result = await requestManualReviewToggle(reviewId);
+    setOperationError(result.cancelled || result.ok ? null : result.message ?? '复习任务操作失败');
+    return result.ok;
+  }, []);
 
   const handleUndoCompletedPoolItem = useCallback((source: TaskSource, sourceId: string) => {
     if (source === 'project') {
@@ -701,7 +702,7 @@ const DailyScheduleView: React.FC = () => {
     }
     if (source === 'review') {
       const parsed = parseSourceId(sourceId);
-      if (parsed?.source === 'review') toggleReviewWithFeedback(parsed.reviewId);
+      if (parsed?.source === 'review') void toggleReviewWithFeedback(parsed.reviewId);
       return;
     }
   }, [syncProjectTaskCompletion, toggleReviewWithFeedback, selectedDate, getProjectBlockFromSource]);
@@ -717,7 +718,7 @@ const DailyScheduleView: React.FC = () => {
 
         if (block.source === 'review') {
           const reviewId = block.sourceId.replace('review-', '');
-          toggleReviewWithFeedback(reviewId);
+          void toggleReviewWithFeedback(reviewId);
         } else if (block.source === 'project') {
           syncProjectTaskCompletion(block.sourceId);
         }
@@ -730,7 +731,7 @@ const DailyScheduleView: React.FC = () => {
 
       if (item.source === 'review') {
         const reviewId = item.sourceId.replace('review-', '');
-        toggleReviewWithFeedback(reviewId);
+        void toggleReviewWithFeedback(reviewId);
       } else if (item.source === 'project') {
         const projectSource = getProjectBlockFromSource(item.sourceId);
         if (projectSource && isQuantityTask(projectSource.block.header)) {
@@ -763,6 +764,33 @@ const DailyScheduleView: React.FC = () => {
     },
     [removeScheduledItem, removeTimeBlock, selectedDate],
   );
+
+  const handleReturnItemToBacklog = useCallback((itemId: string) => {
+    const item = daySchedule.items.find((candidate) => candidate.id === itemId);
+    const parsed = item ? parseSourceId(item.sourceId) : null;
+    if (!item || parsed?.source !== 'project' || !parsed.blockId) {
+      setOperationError('无法识别对应的项目任务。');
+      return;
+    }
+    const result = returnProjectTaskToBacklog(parsed.parentTaskId, parsed.blockId);
+    if ('error' in result) {
+      setOperationError(result.error);
+      return;
+    }
+    setOperationError(null);
+    setBacklogFeedback({
+      text: `已将“${result.title}”移回待排期箱`,
+      operationId: result.operationId,
+    });
+  }, [daySchedule.items]);
+
+  const undoReturnToBacklog = useCallback(async () => {
+    if (!backlogFeedback?.operationId) return;
+    const restored = await undoOperation(backlogFeedback.operationId);
+    setBacklogFeedback({
+      text: restored ? '已撤销，任务已恢复到原排期和时段' : '撤销失败，请在最近操作中查看原因',
+    });
+  }, [backlogFeedback, undoOperation]);
 
   // ── 时间段统计 ──────────────────────────────────────────
   const getSlotStats = useCallback(
@@ -862,6 +890,15 @@ const DailyScheduleView: React.FC = () => {
             </button>
           </div>
         )}
+        {backlogFeedback && (
+          <div className="ds-backlog-feedback" role="status" aria-live="polite">
+            <span>{backlogFeedback.text}</span>
+            {backlogFeedback.operationId && (
+              <button type="button" onClick={() => void undoReturnToBacklog()}>撤销</button>
+            )}
+            <button type="button" onClick={() => setBacklogFeedback(null)} aria-label="关闭移回提示">×</button>
+          </div>
+        )}
 
         {/* ── 时间段设置面板（仅时段模式） ──────────────── */}
         {viewMode === 'slots' && showSlotSettings && (
@@ -928,6 +965,7 @@ const DailyScheduleView: React.FC = () => {
                     onToggleItem={handleToggleItem}
                     onRecordQuantityTarget={handleRecordQuantityTarget}
                     onRemoveItem={handleRemoveItem}
+                    onReturnToBacklog={handleReturnItemToBacklog}
                     onStartAddFree={() => setAddingFreeSlot(config.slot)}
                     onFreeItemNameChange={setFreeItemName}
                     onSubmitFree={() => handleAddFreeSubmit(config.slot)}

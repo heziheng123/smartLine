@@ -605,13 +605,19 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                           <div className="wmv-block-header">
                             <button
                               type="button"
-                              className={`wmv-check ${header.isCompleted ? 'wmv-check--done' : ''}`}
-                              onClick={(event) => { event.stopPropagation(); if (!isQuantityTask(header)) handleToggle(block._taskId, block.id, header.isCompleted); }}
-                              title={isQuantityTask(header) ? '请在每日安排中记录完成数量' : header.isCompleted ? '取消完成' : '标记完成'}
-                              aria-label={isQuantityTask(header) ? `数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
-                              aria-disabled={isQuantityTask(header)}
+                              className={`wmv-check ${isQuantityTask(header) ? 'wmv-check--quantity' : ''} ${header.isCompleted ? 'wmv-check--done' : ''}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (isQuantityTask(header)) {
+                                  openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date });
+                                } else {
+                                  handleToggle(block._taskId, block.id, header.isCompleted);
+                                }
+                              }}
+                              title={isQuantityTask(header) ? '打开任务并记录数量进度' : header.isCompleted ? '取消完成' : '标记完成'}
+                              aria-label={isQuantityTask(header) ? `记录数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
                             >
-                              {header.isCompleted && '✓'}
+                              {isQuantityTask(header) ? <Hash size={12} /> : header.isCompleted && '✓'}
                             </button>
                             <span
                               className={`wmv-block-title ${header.isCompleted ? 'wmv-block-title--done' : ''}`}

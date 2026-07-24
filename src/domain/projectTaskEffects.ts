@@ -66,6 +66,7 @@ export function planProjectTaskEffects({
       action: 'add',
       graphNodeId: nodeId,
       topicName: node.name,
+      complexity: nextHeader.complexity ?? 'normal',
       triggerSchedule: shouldAutoSyncEbb(nextHeader) && isLeafGraphNode(graphNodes, nodeId),
     });
   };
@@ -109,6 +110,7 @@ export function planProjectTaskEffects({
             action: 'add',
             graphNodeId: nodeId,
             topicName: node.name,
+            complexity: nextHeader.complexity ?? 'normal',
             triggerSchedule: isLeafGraphNode(graphNodes, nodeId),
           });
         } else if (!hasOtherCompletedBinding(nodeId, true)) {

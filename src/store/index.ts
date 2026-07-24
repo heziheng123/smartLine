@@ -579,12 +579,23 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           if (!isOperationRecordingSuppressed()) {
             const completionChanged = headerPatch.isCompleted !== undefined && headerPatch.isCompleted !== currentBlock.header.isCompleted;
             const dateChanged = datePatched && headerPatch.date !== currentBlock.header.date;
-            const vocabularyChanged = headerPatch.vocabularyRecords !== undefined
-              && !headerValueEquals(headerPatch.vocabularyRecords, currentBlock.header.vocabularyRecords);
-            const quantityChanged = headerPatch.quantityRecords !== undefined
-              && !headerValueEquals(headerPatch.quantityRecords, currentBlock.header.quantityRecords);
-            const progressChanged = vocabularyChanged || quantityChanged;
+            const progressKeys = [
+              'vocabularyRecords',
+              'vocabularyInitialCompletedWords',
+              'vocabularyTotalWords',
+              'quantityRecords',
+              'quantityInitialCompleted',
+              'quantityTotal',
+            ] as const satisfies readonly (keyof SmartTaskHeader)[];
+            const changedProgressKeys = progressKeys.filter((key) =>
+              Object.prototype.hasOwnProperty.call(headerPatch, key)
+              && !headerValueEquals(headerPatch[key], currentBlock.header[key]),
+            );
+            const progressChanged = changedProgressKeys.length > 0;
             if (completionChanged || dateChanged || progressChanged) {
+              const returnedToBacklog = dateChanged
+                && Boolean(currentBlock.header.date)
+                && !nextHeader.date;
               const previousPatch: Partial<SmartTaskHeader> = {};
               const expected: Partial<SmartTaskHeader> = {};
               if (completionChanged) {
@@ -601,25 +612,25 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   expected.frozenAt = headerPatch.frozenAt;
                 }
               }
-              if (vocabularyChanged) {
-                previousPatch.vocabularyRecords = currentBlock.header.vocabularyRecords;
-                expected.vocabularyRecords = headerPatch.vocabularyRecords;
-              }
-              if (quantityChanged) {
-                previousPatch.quantityRecords = currentBlock.header.quantityRecords;
-                expected.quantityRecords = headerPatch.quantityRecords;
+              for (const key of changedProgressKeys) {
+                Object.assign(previousPatch, { [key]: currentBlock.header[key] });
+                Object.assign(expected, { [key]: headerPatch[key] });
               }
               recordOperation({
                 label: progressChanged
                   ? `更新“${currentBlock.header.title}”的数量进度`
                   : completionChanged
                   ? `${headerPatch.isCompleted ? '完成' : '取消完成'}“${currentBlock.header.title}”`
-                  : `改期“${currentBlock.header.title}”`,
+                  : returnedToBacklog
+                    ? `将“${currentBlock.header.title}”移回待排期箱`
+                    : `改期“${currentBlock.header.title}”`,
                 detail: progressChanged
                   ? '数量进度、完成状态与每日安排将作为一次操作统一恢复'
                   : completionChanged
                     ? '项目文档、每日安排、EBB 与知识节点将统一恢复'
-                    : `${currentBlock.header.date ?? '未排期'} → ${headerPatch.date ?? '未排期'}`,
+                    : returnedToBacklog
+                      ? `已清除 ${currentBlock.header.date} 的排期和每日安排；项目、标签、截止日与时长保持不变`
+                      : `${currentBlock.header.date ?? '未排期'} → ${headerPatch.date ?? '未排期'}`,
                 modules: completionChanged
                   ? ['项目文档', '每日安排', 'EBB', '知识大盘']
                   : dateChanged

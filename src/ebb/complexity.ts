@@ -38,7 +38,13 @@ export function getPointWeight(
   customConfigs?: ComplexityConfigs,
 ): number {
   const config = getComplexityConfig(level, customConfigs);
-  return config.weights[round] ?? 0;
+  const configuredRounds = Object.keys(config.weights)
+    .map(Number)
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .sort((a, b) => a - b);
+  const lastConfiguredRound = configuredRounds.at(-1);
+  return config.weights[round]
+    ?? (lastConfiguredRound !== undefined ? config.weights[lastConfiguredRound] : 0);
 }
 
 /**

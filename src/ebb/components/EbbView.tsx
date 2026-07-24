@@ -6,6 +6,7 @@
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { requestConfirmation } from '@/services/confirmation';
+import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
 import '@/styles/ebb.css';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
@@ -70,7 +71,6 @@ const EbbView: React.FC = () => {
     outlineNodes,
     ebbSettings,
     undoStack,
-    toggleReviewTask,
     deleteReviewTask,
     updateReviewTask,
     addReviewTasks,
@@ -88,7 +88,6 @@ const EbbView: React.FC = () => {
       outlineNodes: s.outlineNodes,
       ebbSettings: s.ebbSettings,
       undoStack: s.undoStack,
-      toggleReviewTask: s.toggleReviewTask,
       deleteReviewTask: s.deleteReviewTask,
       updateReviewTask: s.updateReviewTask,
       addReviewTasks: s.addReviewTasks,
@@ -126,7 +125,6 @@ const EbbView: React.FC = () => {
       outlineNodes,
       ebbSettings,
       undoStack,
-      toggleReviewTask,
       deleteReviewTask,
       updateReviewTask,
       addReviewTasks,
@@ -142,7 +140,6 @@ const EbbView: React.FC = () => {
       outlineNodes,
       ebbSettings,
       undoStack,
-      toggleReviewTask,
       deleteReviewTask,
       updateReviewTask,
       addReviewTasks,
@@ -214,11 +211,11 @@ const EbbView: React.FC = () => {
 
   // ── 任务操作回调 ──────────────────────────────────────────
   const handleToggle = useCallback(
-    (id: string) => {
-      const err = store.toggleReviewTask(id);
-      if (err) showToast(err);
+    async (id: string) => {
+      const result = await requestManualReviewToggle(id);
+      if (result.message) showToast(result.message);
     },
-    [store, showToast],
+    [showToast],
   );
 
   const handleDelete = useCallback(
@@ -306,7 +303,7 @@ const EbbView: React.FC = () => {
 
   // 拖拽改期（看板视图）
   const handleDndEnd = useCallback(
-    (result: DropResult) => {
+    async (result: DropResult) => {
       const { draggableId, destination } = result;
       if (!destination) return;
       const destId = destination.droppableId;
@@ -317,13 +314,8 @@ const EbbView: React.FC = () => {
       const taskExists = store.reviewTasks.some((t) => t.id === draggableId);
       if (!taskExists) return;
       if (colId === 'board-col-done') {
-        // 校验轮次顺序（与 toggleReviewTask 一致）
-        const err = store.toggleReviewTask(draggableId);
-        if (err) {
-          showToast(err);
-        } else {
-          showToast('已标记完成');
-        }
+        const completion = await requestManualReviewToggle(draggableId);
+        if (completion.message) showToast(completion.message);
       } else if (colId === 'board-col-today') {
         if (rescheduleTask(draggableId, todayStr(), { isCompleted: false })) {
           showToast('已改期到今天');

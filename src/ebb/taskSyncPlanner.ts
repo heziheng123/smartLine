@@ -39,6 +39,7 @@ export function planEbbTaskSync({
     action = 'add',
     graphNodeId,
     topicName,
+    complexity = 'normal',
     triggerSchedule = true,
     sourceTaskId,
     sourceBlockId,
@@ -121,7 +122,7 @@ export function planEbbTaskSync({
   if (!triggerSchedule) return unchanged(reviewTasks);
 
   if (existingTasks.length === 0) {
-    const intervals = ebbSettings.complexityConfigs.normal.intervals;
+    const intervals = ebbSettings.complexityConfigs[complexity].intervals;
     const dueDates = buildAbsoluteScheduleDates(today, intervals);
     const generated = intervals.map((_, index): ReviewTask => ({
       id: createReviewTaskId(),
@@ -131,7 +132,7 @@ export function planEbbTaskSync({
       originalDueDate: dueDates[index],
       roundOrder: index + 1,
       isCompleted: false,
-      complexity: 'normal',
+      complexity,
       smStatus: 'scheduled',
       scheduleCreatedDate: today,
       scheduleSourceTaskId: sourceTaskId,
@@ -201,6 +202,7 @@ export function planEbbTaskSync({
 
   const nextRoundOrder = Math.max(0, ...existingTasks.map((task) => task.roundOrder ?? 0)) + 1;
   const dueDate = addDays(today, 1);
+  const inheritedComplexity = existingTasks.find((task) => task.complexity)?.complexity ?? complexity;
   return {
     reviewTasks: [
       ...reviewTasks,
@@ -212,7 +214,7 @@ export function planEbbTaskSync({
         originalDueDate: dueDate,
         roundOrder: nextRoundOrder,
         isCompleted: false,
-        complexity: 'normal',
+        complexity: inheritedComplexity,
         smStatus: 'scheduled',
         scheduleCreatedDate: today,
         scheduleSourceTaskId: sourceTaskId,

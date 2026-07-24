@@ -74,6 +74,9 @@ try {
     ebbTaskSyncPlanner,
     graphBindingModule,
     choiceModule,
+    taskBacklogModule,
+    ebbComplexity,
+    operationHistoryModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -102,6 +105,9 @@ try {
     load('/src/ebb/taskSyncPlanner.ts'),
     load('/src/graph/bindingStore.ts'),
     load('/src/services/choice.ts'),
+    load('/src/domain/taskBacklog.ts'),
+    load('/src/ebb/complexity.ts'),
+    load('/src/services/operationHistory.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
@@ -1628,6 +1634,136 @@ try {
     const validation = backupModule.validateWorkspaceBackup(backup);
     assert.equal(validation.errors.length, 0);
     assert.equal(validation.summary.issues.length, 0);
+  });
+
+  check('quantity progress rejects dates before the task start date', () => {
+    const quantity = smartBlock('future-quantity', 'Future quantity', [], false);
+    quantity.header = {
+      ...quantity.header,
+      taskKind: 'quantity',
+      date: '2026-07-25',
+      duration: 0,
+      quantityUnit: 'item',
+      quantityTotal: 100,
+      quantityInitialCompleted: 0,
+      quantityRecords: {},
+    };
+    resetStores({ tasks: [project('future-project', [quantity])] });
+    const result = projectTaskCommands.recordQuantityProgress(
+      'future-project',
+      'future-quantity',
+      '2026-07-24',
+      10,
+    );
+    assert.equal(result.ok, false);
+    assert.equal(blocksModule.getQuantityCompleted(getBlock('future-project', 'future-quantity').header), 0);
+  });
+
+  check('single review reschedule undo restores the original daily placement', async () => {
+    operationHistoryModule.useOperationHistory.getState().clear();
+    const review = {
+      id: 'reschedule-snapshot',
+      topicName: 'Snapshot review',
+      dueDate: '2026-07-18',
+      originalDueDate: '2026-07-18',
+      roundOrder: 1,
+      isCompleted: false,
+    };
+    const sourceId = sourceIds.getReviewSourceId(review.id);
+    resetStores({
+      reviewTasks: [review],
+      schedules: {
+        '2026-07-18': {
+          date: '2026-07-18',
+          items: [{ id: 'snapshot-item', sourceId, name: review.topicName, source: 'review', timeSlot: 'evening', order: 0 }],
+          blocks: [{ id: 'snapshot-block', sourceId, name: review.topicName, startTime: '20:00', endTime: '20:30', color: '#fff' }],
+        },
+      },
+    });
+    useEbbStore.getState().updateReviewTask(review.id, { dueDate: '2026-07-22' });
+    assert.equal(useDailyScheduleStore.getState().schedules['2026-07-18'].items.length, 0);
+    assert.equal(await operationHistoryModule.useOperationHistory.getState().undo(), true);
+    assert.equal(useEbbStore.getState().reviewTasks[0].dueDate, '2026-07-18');
+    assert.equal(useDailyScheduleStore.getState().schedules['2026-07-18'].items[0].timeSlot, 'evening');
+    assert.equal(useDailyScheduleStore.getState().schedules['2026-07-18'].blocks[0].startTime, '20:00');
+  });
+
+  check('Excel import validates calendar dates and preserves decimal durations', () => {
+    assert.equal(excelImportModule.normalizeDate('2026-02-29'), '');
+    assert.equal(excelImportModule.normalizeDate('2026-13-40'), '');
+    assert.equal(excelImportModule.normalizeDate('Jul 6, 2026'), '2026-07-06');
+    assert.equal(excelImportModule.normalizeDate('Feb 29, 2024'), '2024-02-29');
+    assert.equal(excelImportModule.parseDuration('17.5'), 17.5);
+    assert.equal(excelImportModule.parseDuration('1.5小时'), 90);
+  });
+
+  check('project task complexity drives generated review intervals and appended rounds keep points', () => {
+    const currentHeader = {
+      ...smartBlock('complexity-task', 'Hard task', ['complexity-leaf']).header,
+      complexity: 'hard',
+      isCompleted: false,
+    };
+    const nextHeader = { ...currentHeader, isCompleted: true };
+    const effects = projectTaskEffects.planProjectTaskEffects({
+      tasks: [project('complexity-project', [{ ...smartBlock('complexity-task', 'Hard task', ['complexity-leaf']), header: currentHeader }])],
+      taskId: 'complexity-project',
+      blockId: 'complexity-task',
+      currentHeader,
+      nextHeader,
+      graphNodes: [node('complexity-leaf', null, 'unactivated')],
+    });
+    assert.equal(effects.ebbPayloads[0].complexity, 'hard');
+    const generated = ebbTaskSyncPlanner.planEbbTaskSync({
+      reviewTasks: [],
+      ebbSettings: ebbConstants.DEFAULT_EBB_SETTINGS,
+      payload: effects.ebbPayloads[0],
+      today: '2026-07-24',
+      createReviewTaskId: (() => { let id = 0; return () => `hard-${++id}`; })(),
+    });
+    assert.equal(generated.reviewTasks.length, ebbConstants.DEFAULT_COMPLEXITY_CONFIGS.hard.intervals.length);
+    assert.ok(generated.reviewTasks.every((task) => task.complexity === 'hard'));
+    assert.equal(ebbComplexity.getPointWeight(10, 'hard'), 0.5);
+  });
+
+  check('continuous quantity tasks contribute to every active week workload date', () => {
+    const quantity = smartBlock('weekly-quantity', 'Weekly quantity', [], false);
+    quantity.header = {
+      ...quantity.header,
+      taskKind: 'quantity',
+      date: '2026-07-20',
+      duration: 0,
+      quantityUnit: 'item',
+      quantityTotal: 100,
+      quantityInitialCompleted: 0,
+      quantityRecords: {},
+    };
+    const dates = ['2026-07-20', '2026-07-21', '2026-07-22'];
+    const workloads = taskBacklogModule.calculateDateWorkloads({
+      dates,
+      tasks: [project('weekly-project', [quantity])],
+      reviewTasks: [],
+      schedules: {},
+      preferences: {
+        weekdayCapacityMinutes: 240,
+        weekendCapacityMinutes: 360,
+        showTaskCount: true,
+        showDuration: true,
+      },
+    });
+    assert.deepEqual(dates.map((date) => workloads.get(date).quantityCount), [1, 1, 1]);
+    assert.deepEqual(dates.map((date) => workloads.get(date).taskCount), [1, 1, 1]);
+  });
+
+  check('an overdue review completed today remains in today completed projection', () => {
+    const projected = dailyTaskProjection.reviewTasksForDate([{
+      id: 'completed-overdue',
+      topicName: 'Completed overdue review',
+      dueDate: '2026-07-20',
+      completedDate: '2026-07-24',
+      isCompleted: true,
+    }], '2026-07-24', '2026-07-24');
+    assert.deepEqual(projected.pending, []);
+    assert.equal(projected.completed[0].id, 'completed-overdue');
   });
 
   let passed = 0;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
-import { Check, CircleDashed, Clock, GripVertical, Hash, Link as LinkIcon, X } from 'lucide-react';
+import { ArchiveRestore, Check, CircleDashed, Clock, GripVertical, Hash, Link as LinkIcon, MoreHorizontal, X } from 'lucide-react';
 import type { ScheduledItem, TimeSlotConfig } from './types';
 import TimeSlotIcon from './TimeSlotIcon';
 import { droppableIdForSlot } from './dndIds';
@@ -29,6 +29,7 @@ interface DailySlotSectionProps {
   onToggleItem: (itemId: string) => void;
   onRecordQuantityTarget: (itemId: string, target: number) => void;
   onRemoveItem: (itemId: string) => void;
+  onReturnToBacklog: (itemId: string) => void;
   onStartAddFree: () => void;
   onFreeItemNameChange: (value: string) => void;
   onSubmitFree: () => void;
@@ -50,6 +51,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
   onToggleItem,
   onRecordQuantityTarget,
   onRemoveItem,
+  onReturnToBacklog,
   onStartAddFree,
   onFreeItemNameChange,
   onSubmitFree,
@@ -157,6 +159,25 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
                         <button type="button" className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`} onClick={(event) => { event.stopPropagation(); onToggleItem(item.id); }} aria-label={item.completed ? `取消完成：${item.name}` : `完成：${item.name}`}>
                           <Check size={13} />
                         </button>
+                      )}
+                      {item.source === 'project' && !quantity && !item.completed && !item.id.startsWith('virtual-block-') && (
+                        <details className="ds-item-menu" onClick={(event) => event.stopPropagation()}>
+                          <summary aria-label={`任务菜单：${item.name}`} title="任务菜单">
+                            <MoreHorizontal size={14} />
+                          </summary>
+                          <div role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onReturnToBacklog(item.id);
+                              }}
+                            >
+                              <ArchiveRestore size={13} />移回待排期箱
+                            </button>
+                          </div>
+                        </details>
                       )}
                       <button type="button" className="ds-item-delete" onClick={(event) => { event.stopPropagation(); onRemoveItem(item.id); }} aria-label={`移出安排：${item.name}`}><X size={13} /></button>
                     </div>

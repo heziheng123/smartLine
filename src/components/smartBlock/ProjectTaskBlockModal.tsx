@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUpRight, Hash, CalendarDays, Clock3, FolderOpen, Layers3, ListTodo, Tag, X } from 'lucide-react';
+import { ArchiveRestore, ArrowUpRight, Hash, CalendarDays, Clock3, FolderOpen, Layers3, ListTodo, RotateCcw, Tag, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import { SmartTaskBlockCard } from './SmartTaskBlockCard';
@@ -8,9 +8,13 @@ import { PROJECT_TASK_MODAL_EVENT, type ProjectTaskModalDetail } from './project
 import { getQuantityCompleted, getQuantityTotal, getQuantityUnit, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { formatDate } from '@/utils/dateSafe';
 import { deleteProjectTask, updateProjectTask } from '@/services/projectTaskCommands';
+import { returnProjectTaskToBacklog } from '@/services/backlogCommands';
+import { useOperationHistory } from '@/services/operationHistory';
 
 const ProjectTaskBlockModal: React.FC = () => {
   const [target, setTarget] = useState<ProjectTaskModalDetail | null>(null);
+  const [backlogNotice, setBacklogNotice] = useState<{ text: string; operationId?: string } | null>(null);
+  const undoOperation = useOperationHistory((state) => state.undo);
   const { tasks, groups, updateBlockBody } = useTimelineStore(
     useShallow((state) => ({
       tasks: state.tasks,
@@ -22,7 +26,10 @@ const ProjectTaskBlockModal: React.FC = () => {
   useEffect(() => {
     const handleOpen = (event: Event) => {
       const detail = (event as CustomEvent<ProjectTaskModalDetail>).detail;
-      if (detail?.taskId && detail?.blockId) setTarget(detail);
+      if (detail?.taskId && detail?.blockId) {
+        setBacklogNotice(null);
+        setTarget(detail);
+      }
     };
     const handleNavigate = () => setTarget(null);
     window.addEventListener(PROJECT_TASK_MODAL_EVENT, handleOpen);
@@ -95,6 +102,24 @@ const ProjectTaskBlockModal: React.FC = () => {
     window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'daily-schedule' } }));
   };
 
+  const moveToBacklog = () => {
+    const result = returnProjectTaskToBacklog(task.id, block.id);
+    setBacklogNotice('error' in result
+      ? { text: result.error }
+      : {
+          text: `已将“${result.title}”移回待排期箱，其他任务信息保持不变`,
+          operationId: result.operationId,
+        });
+  };
+
+  const undoMoveToBacklog = async () => {
+    if (!backlogNotice?.operationId) return;
+    const restored = await undoOperation(backlogNotice.operationId);
+    setBacklogNotice({
+      text: restored ? '已撤销，任务已恢复到原排期和每日安排' : '撤销失败，请在最近操作中查看原因',
+    });
+  };
+
   return createPortal(
     <div className="ptm-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <section className="ptm-dialog" role="dialog" aria-modal="true" aria-labelledby="ptm-title">
@@ -127,11 +152,26 @@ const ProjectTaskBlockModal: React.FC = () => {
               if (result.ok) close();
             }}
           />
+          {backlogNotice && (
+            <div className="ptm-backlog-notice" role="status" aria-live="polite">
+              <span>{backlogNotice.text}</span>
+              {backlogNotice.operationId && (
+                <button type="button" onClick={() => void undoMoveToBacklog()}>
+                  <RotateCcw size={13} />撤销
+                </button>
+              )}
+            </div>
+          )}
           <p className="ptm-date-change-hint">修改名称、日期、标签或进度后，项目文档、任务总览、周矩阵和每日安排会读取同一份任务数据。</p>
         </div>
         <footer className="ptm-footer">
           <div className="ptm-footer-context"><ListTodo size={14} /><span>{quantity ? '数量任务通过每日完成量推进总进度，不记录时长' : '完成状态会同步关联模块并进入统一撤销记录'}</span></div>
           <div className="ptm-footer-actions">
+            {block.header.date && !quantity && !block.header.isCompleted && (
+              <button type="button" className="ptm-backlog-btn" onClick={moveToBacklog}>
+                <ArchiveRestore size={14} />移回待排期箱
+              </button>
+            )}
             <button type="button" className="ptm-nav-btn" onClick={openInProject}><ArrowUpRight size={14} />在项目中定位</button>
             <button type="button" className="ptm-nav-btn" onClick={openInDailySchedule}><CalendarDays size={14} />查看每日安排</button>
             <button type="button" className="ptm-done-btn" onClick={close}>完成</button>

@@ -34,6 +34,8 @@ const project = {
         tagColor: '#2563eb',
         date: today,
         duration: 60,
+        deadline: addIsoDays(today, 10),
+        graphNodeIds: ['backlog-knowledge-node'],
         isCompleted: false,
         autoSyncEbb: false,
       },
@@ -138,10 +140,31 @@ async function openDailyBacklog(page: Page) {
   await page.getByRole('tab', { name: /待排期箱/ }).click();
 }
 
+async function readIndexedValue(page: Page, storeName: string, key: string) {
+  return page.evaluate(({ store, storageKey }) => new Promise<unknown>((resolve, reject) => {
+    const request = indexedDB.open('smart-timeline');
+    request.onsuccess = () => {
+      const database = request.result;
+      const transaction = database.transaction(store, 'readonly');
+      const getRequest = transaction.objectStore(store).get(storageKey);
+      getRequest.onsuccess = () => {
+        resolve(getRequest.result ?? null);
+        database.close();
+      };
+      getRequest.onerror = () => {
+        reject(getRequest.error);
+        database.close();
+      };
+    };
+    request.onerror = () => reject(request.error);
+  }), { store: storeName, storageKey: key });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(({ taskData, dailyData, ebbData }) => {
+    if (sessionStorage.getItem('backlog-e2e-seeded') === '1') return;
+    sessionStorage.setItem('backlog-e2e-seeded', '1');
     localStorage.clear();
-    sessionStorage.clear();
     localStorage.setItem('smart-timeline-data:mirror', JSON.stringify({
       tasks: [taskData],
       groups: [],
@@ -259,4 +282,109 @@ test('daily backlog can schedule directly into a slot and unified undo restores 
   await expect(page.locator('.ds-item').filter({ hasText: '待排期整理错题' })).toHaveCount(0);
   await page.getByRole('tab', { name: /待排期箱/ }).click();
   await expect(backlogCard).toBeVisible();
+});
+
+test('week task can return to the backlog without losing metadata and inline undo restores every placement', async ({ page }) => {
+  await page.getByTitle('周矩阵').click();
+  const scheduledCard = page.locator('[data-block-id="scheduled-block"]');
+  const backlogCapsule = page.getByRole('button', { name: '待排期箱，26 个任务' });
+  await expect(scheduledCard).toBeVisible();
+  await expect(backlogCapsule).toBeVisible();
+
+  await page.evaluate((sourceDate) => {
+    const source = document.querySelector<HTMLElement>('[data-block-id="scheduled-block"]');
+    const destination = document.querySelector<HTMLElement>('[aria-label="待排期箱，26 个任务"]');
+    if (!source || !destination) throw new Error('return-to-backlog drag endpoints missing');
+    const transfer = new DataTransfer();
+    transfer.setData('application/json', JSON.stringify({
+      type: 'smart-block',
+      source: 'week-matrix',
+      taskId: 'backlog-project',
+      blockId: 'scheduled-block',
+      tag: '学习',
+      title: '已排期六十分钟任务',
+      fromDate: sourceDate,
+    }));
+    transfer.effectAllowed = 'move';
+    source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    destination.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    destination.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    source.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, today);
+
+  const panel = page.getByRole('region', { name: '待排期任务箱' });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText('已将“已排期六十分钟任务”移回待排期箱')).toBeVisible();
+  await expect(page.locator('[data-block-id="scheduled-block"]')).toHaveCount(0);
+  await expect(panel.locator('[data-backlog-task-id="backlog:backlog-project::scheduled-block"]')).toBeVisible();
+
+  await expect.poll(async () => {
+    const timeline = await readIndexedValue(page, 'timeline_data', 'smart-timeline-data') as {
+      tasks?: Array<{ id?: string; blocks?: Array<{ id?: string; header?: Record<string, unknown> }> }>;
+      groups?: Array<{ children?: Array<{ id?: string; blocks?: Array<{ id?: string; header?: Record<string, unknown> }> }> }>;
+    } | null;
+    const project = [
+      ...(timeline?.tasks ?? []),
+      ...(timeline?.groups ?? []).flatMap((group) => group.children ?? []),
+    ].find((task) => task.id === 'backlog-project');
+    const header = project?.blocks?.find((block: { id?: string }) => block.id === 'scheduled-block')?.header;
+    return header ? {
+      date: header.date ?? null,
+      tag: header.tag,
+      duration: header.duration,
+      deadline: header.deadline,
+      graphNodeIds: header.graphNodeIds,
+    } : null;
+  }).toEqual({
+    date: null,
+    tag: '学习',
+    duration: 60,
+    deadline: addIsoDays(today, 10),
+    graphNodeIds: ['backlog-knowledge-node'],
+  });
+  await expect.poll(async () => {
+    const schedules = await readIndexedValue(page, 'daily_schedule_data', 'daily-schedule-data') as Record<string, {
+      items?: Array<{ sourceId?: string }>;
+      blocks?: Array<{ sourceId?: string }>;
+    }> | null;
+    return Object.values(schedules ?? {}).flatMap((day) => [
+      ...((day as { items?: Array<{ sourceId?: string }> }).items ?? []),
+      ...((day as { blocks?: Array<{ sourceId?: string }> }).blocks ?? []),
+    ]).filter((item) => item.sourceId === 'project-blk:backlog-project::scheduled-block').length;
+  }).toBe(0);
+
+  await panel.getByRole('button', { name: '撤销' }).click();
+  await expect(page.locator('[data-block-id="scheduled-block"]')).toHaveCount(1);
+  await expect(panel.locator('[data-backlog-task-id="backlog:backlog-project::scheduled-block"]')).toHaveCount(0);
+  await expect.poll(async () => {
+    const schedules = await readIndexedValue(page, 'daily_schedule_data', 'daily-schedule-data') as Record<string, {
+      items?: Array<{ sourceId?: string }>;
+    }> | null;
+    return Object.values(schedules ?? {}).flatMap((day) =>
+      (day as { items?: Array<{ sourceId?: string }> }).items ?? [],
+    ).filter((item) => item.sourceId === 'project-blk:backlog-project::scheduled-block').length;
+  }).toBe(1);
+});
+
+test('daily task menu returns a task to the backlog and persistent undo survives refresh', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  const card = page.locator('.ds-item').filter({ hasText: '已排期六十分钟任务' });
+  await expect(card).toBeVisible();
+  await card.getByLabel('任务菜单：已排期六十分钟任务').click();
+  await card.getByRole('menuitem', { name: '移回待排期箱' }).click();
+
+  await expect(page.getByRole('status').filter({ hasText: '已将“已排期六十分钟任务”移回待排期箱' })).toBeVisible();
+  await expect(card).toHaveCount(0);
+
+  await page.reload();
+  await page.getByTitle('每日安排').click();
+  await expect(page.locator('.ds-item').filter({ hasText: '已排期六十分钟任务' })).toHaveCount(0);
+  await page.getByTitle('最近操作与回收站').click();
+  const latest = page.locator('.operation-history-list article').first();
+  await expect(latest).toContainText('将“已排期六十分钟任务”移回待排期箱');
+  await expect(latest).toContainText('项目、标签、截止日与时长保持不变');
+  await latest.getByRole('button', { name: '撤销' }).click();
+  await page.getByLabel('关闭最近操作').click();
+
+  await expect(page.locator('.ds-item').filter({ hasText: '已排期六十分钟任务' })).toBeVisible();
 });

@@ -7,6 +7,8 @@ import { collectBacklogTasks, type BacklogTask } from '@/domain/taskBacklog';
 import { openProjectTaskModal } from './projectTaskModal';
 import BacklogTaskList from './BacklogTaskList';
 import { rescheduleProjectTask } from '@/services/projectTaskCommands';
+import { returnProjectTaskToBacklog } from '@/services/backlogCommands';
+import { useOperationHistory } from '@/services/operationHistory';
 import type { SmartBlockDragPayload } from '@/types';
 import styles from './IceboxPalette.module.css';
 
@@ -14,10 +16,16 @@ interface IceboxPaletteProps {
   layout?: 'overlay' | 'docked';
 }
 
+interface PaletteMessage {
+  text: string;
+  operationId?: string;
+}
+
 export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay' }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [dropActive, setDropActive] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<PaletteMessage | null>(null);
+  const undoOperation = useOperationHistory((state) => state.undo);
   const { tasks, groups } = useTimelineStore(
     useShallow((state) => ({ tasks: state.tasks, groups: state.groups })),
   );
@@ -34,10 +42,10 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
   const scheduleTask = async (task: BacklogTask, date: string): Promise<boolean> => {
     const result = rescheduleProjectTask(task.taskId, task.blockId, date);
     if ('error' in result) {
-      setMessage(result.error);
+      setMessage({ text: result.error });
       return false;
     }
-    setMessage(`已将“${task.title}”安排到 ${date}`);
+    setMessage({ text: `已将“${task.title}”安排到 ${date}` });
     return true;
   };
 
@@ -49,12 +57,25 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
       if (!raw) return;
       const payload = JSON.parse(raw) as SmartBlockDragPayload;
       if (payload.type !== 'smart-block' || !payload.fromDate) return;
-      const result = rescheduleProjectTask(payload.taskId, payload.blockId);
-      setMessage('error' in result ? result.error : `已将“${payload.title}”移回待排期箱`);
+      const result = returnProjectTaskToBacklog(payload.taskId, payload.blockId);
+      setMessage('error' in result
+        ? { text: result.error }
+        : {
+            text: `已将“${result.title}”移回待排期箱`,
+            operationId: result.operationId,
+          });
       setIsExpanded(true);
     } catch {
-      setMessage('无法识别拖入的任务');
+      setMessage({ text: '无法识别拖入的任务' });
     }
+  };
+
+  const handleUndo = async () => {
+    if (!message?.operationId) return;
+    const restored = await undoOperation(message.operationId);
+    setMessage({
+      text: restored ? '已撤销，任务已恢复到原排期' : '撤销失败，请在最近操作中查看原因',
+    });
   };
 
   return (
@@ -104,9 +125,13 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
               </button>
             </header>
             {message && (
-              <button type="button" className={styles.message} onClick={() => setMessage(null)}>
-                {message}
-              </button>
+              <div className={styles.message} role="status" aria-live="polite">
+                <span>{message.text}</span>
+                {message.operationId && (
+                  <button type="button" onClick={() => void handleUndo()}>撤销</button>
+                )}
+                <button type="button" onClick={() => setMessage(null)} aria-label="关闭提示">×</button>
+              </div>
             )}
             <div className={styles.panelBody} onPointerDownCapture={(event) => event.stopPropagation()}>
               <BacklogTaskList
