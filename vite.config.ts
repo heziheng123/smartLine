@@ -12,11 +12,24 @@ export default defineConfig({
     sourcemap: 'hidden',
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'framer-motion', 'zustand'],
-          'vendor-d3': ['d3-hierarchy', 'd3-selection', 'd3-shape', 'd3-zoom'],
-          'vendor-liveblocks': ['@liveblocks/client', '@liveblocks/zustand'],
-          'vendor-utils': ['dayjs', 'dompurify', 'lucide-react']
+        manualChunks(id) {
+          const normalized = id.replace(/\\/g, '/');
+          if (
+            normalized.includes('/node_modules/react/')
+            || normalized.includes('/node_modules/react-dom/')
+            || normalized.includes('/node_modules/scheduler/')
+          ) return 'vendor-react';
+          if (
+            normalized.includes('/node_modules/framer-motion/')
+            || normalized.includes('/node_modules/motion-dom/')
+            || normalized.includes('/node_modules/motion-utils/')
+          ) return 'vendor-motion';
+          if (normalized.includes('/node_modules/zustand/')) return 'vendor-state';
+          if (normalized.includes('/node_modules/@liveblocks/')) return 'vendor-liveblocks';
+          if (normalized.includes('/node_modules/d3-')) return 'vendor-d3';
+          if (normalized.includes('/node_modules/dayjs/')) return 'vendor-date';
+          if (normalized.includes('/node_modules/dompurify/')) return 'vendor-sanitize';
+          if (normalized.includes('/node_modules/lucide-react/')) return 'vendor-icons';
         }
       }
     }

@@ -15,7 +15,11 @@ import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from 
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
-import { removeQuantityProgress, setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { removeQuantityProgress, rescheduleProjectTask, setProjectTaskCompletion, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { scheduleBacklogTaskToTimeBlock } from '@/services/backlogCommands';
+import { requestConfirmation } from '@/services/confirmation';
+import BacklogTaskList from '@/components/smartBlock/BacklogTaskList';
+import type { BacklogTask } from '@/domain/taskBacklog';
 import TimeGrid from './TimeGrid';
 import { BlockEditor, QuickCreateInput } from './TimeBlockOverlays';
 import type { SmartTaskBlock } from '@/types';
@@ -44,6 +48,9 @@ interface BlockModeViewProps {
   selectedDate: string;
   poolItems: DailyPoolItem[];
   completedPoolItems: CompletedDailyPoolItem[];
+  backlogItems: BacklogTask[];
+  onScheduleBacklog: (task: BacklogTask, date: string) => boolean | Promise<boolean>;
+  onOpenBacklogTask: (task: BacklogTask) => void;
   onReviewToggleError: (error: string | null) => void;
   onOpenQuantityProgress: (taskId: string, block: SmartTaskBlock) => void;
 }
@@ -54,10 +61,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   selectedDate,
   poolItems,
   completedPoolItems,
+  backlogItems,
+  onScheduleBacklog,
+  onOpenBacklogTask,
   onReviewToggleError,
   onOpenQuantityProgress,
 }) => {
   const [showCompletedPool, setShowCompletedPool] = useState(false);
+  const [activePoolTab, setActivePoolTab] = useState<'today' | 'backlog'>('today');
   const { tasks: rawTlTasks, groups: rawTlGroups } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
   );
@@ -282,6 +293,45 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
     [poolItems, blocks, addTimeBlock, selectedDate],
   );
 
+  const handleBacklogItemDrop = useCallback(
+    async (taskId: string, targetMinutes: number) => {
+      const task = backlogItems.find((item) => item.id === taskId);
+      if (!task) return;
+      const duration = Math.max(15, task.duration || 30);
+      const latestStart = 23 * 60 + 45 - duration;
+      const earliestStart = GRID_CONFIG.startHour * 60;
+      if (latestStart < earliestStart) return;
+      const startMin = Math.max(earliestStart, Math.min(snapToQuarter(targetMinutes), latestStart));
+      const endMin = startMin + duration;
+      const startTime = minutesToTime(startMin);
+      const endTime = minutesToTime(endMin);
+      if (checkCollision(null, startTime, endTime, blocks).overlap) {
+        onReviewToggleError('目标时间与现有时间块冲突。');
+        return;
+      }
+      if (task.deadline && selectedDate > task.deadline) {
+        const confirmed = await requestConfirmation({
+          title: '排期晚于截止日期',
+          message: `“${task.title}”的截止日期是 ${task.deadline}，目标日期是 ${selectedDate}。是否仍然安排？`,
+          confirmLabel: '仍然安排',
+          cancelLabel: '返回修改',
+          tone: 'warning',
+        });
+        if (!confirmed) return;
+      }
+      const result = scheduleBacklogTaskToTimeBlock({
+        task,
+        date: selectedDate,
+        startTime,
+        endTime,
+        color: task.projectColor,
+        categoryColor: task.tagColor,
+      });
+      onReviewToggleError('error' in result ? result.error : null);
+    },
+    [backlogItems, blocks, onReviewToggleError, selectedDate],
+  );
+
   // ── 时间块操作 ─────────────────────────────────────────
   const handleResize = useCallback(
     (blockId: string, startTime: string, endTime: string) => {
@@ -422,8 +472,10 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   // ── 画布区域的拖放处理 ──────────────────────────────────
   const handleCanvasDragOver = useCallback(
     (e: React.DragEvent) => {
-      // 仅接受从任务池拖入的项，不干预时间块拖回任务池
-      if (!e.dataTransfer.types.includes('application/x-pool-item')) return;
+      // 接受当日任务池或待排期箱，不干预时间块拖回右侧面板。
+      const fromPool = e.dataTransfer.types.includes('application/x-pool-item');
+      const fromBacklog = e.dataTransfer.types.includes('application/x-backlog-task');
+      if (!fromPool && !fromBacklog) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
 
@@ -434,7 +486,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
       const startMin = snapToQuarter(min);
 
       // 实时构建 ghost 预览块
-      if (draggedPoolItemId) {
+      if (fromPool && draggedPoolItemId) {
         const poolItem = poolItems.find((i) => i.id === draggedPoolItemId);
         if (poolItem) {
           const duration = Math.max(15, poolItem.duration ?? 30);
@@ -457,20 +509,22 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
   );
 
   const handleCanvasDrop = useCallback(
-    (e: React.DragEvent) => {
+    async (e: React.DragEvent) => {
       e.preventDefault();
       const poolItemId = e.dataTransfer.getData('application/x-pool-item');
-      if (!poolItemId || !canvasRef.current) return;
+      const backlogTaskId = e.dataTransfer.getData('application/x-backlog-task');
+      if ((!poolItemId && !backlogTaskId) || !canvasRef.current) return;
 
       const rect = canvasRef.current.getBoundingClientRect();
       const y = e.clientY - rect.top + canvasRef.current.scrollTop;
       const targetMin = yToMinutes(y);
 
-      handlePoolItemDrop(poolItemId, targetMin);
+      if (backlogTaskId) await handleBacklogItemDrop(backlogTaskId, targetMin);
+      else handlePoolItemDrop(poolItemId, targetMin);
       setDraggedPoolItemId(null);
       setGhostBlock(null);
     },
-    [handlePoolItemDrop],
+    [handleBacklogItemDrop, handlePoolItemDrop],
   );
 
   const handleCanvasDragLeave = useCallback(() => {
@@ -479,7 +533,10 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
 
   const handleCanvasDragEnter = useCallback(
     (e: React.DragEvent) => {
-      if (!e.dataTransfer.types.includes('application/x-pool-item')) return;
+      if (
+        !e.dataTransfer.types.includes('application/x-pool-item')
+        && !e.dataTransfer.types.includes('application/x-backlog-task')
+      ) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     },
@@ -577,7 +634,28 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
           e.preventDefault();
           const blockId = e.dataTransfer.getData('application/x-timeblock');
           if (blockId) {
-            removeTimeBlock(selectedDate, blockId);
+            const draggedBlock = blocks.find((block) => block.id === blockId);
+            if (activePoolTab === 'backlog' && draggedBlock?.source === 'project') {
+              const parsed = parseSourceId(draggedBlock.sourceId);
+              const project = parsed?.source === 'project'
+                ? tlTasks.find((task) => task.id === parsed.parentTaskId)
+                : undefined;
+              const projectBlock = parsed?.blockId
+                ? project?.blocks.find((block) => block.id === parsed.blockId)
+                : undefined;
+              if (parsed?.source !== 'project' || !parsed.parentTaskId || !parsed.blockId || projectBlock?.type !== 'smart-task') {
+                onReviewToggleError('无法识别对应的项目任务。');
+              } else if (isQuantityTask(projectBlock.header)) {
+                onReviewToggleError('数量任务必须保留开始日期，不能移入待排期箱。');
+              } else {
+                const result = rescheduleProjectTask(parsed.parentTaskId, parsed.blockId);
+                onReviewToggleError('error' in result ? result.error : null);
+              }
+            } else if (activePoolTab === 'backlog') {
+              onReviewToggleError('只有普通项目任务可以移回待排期箱。');
+            } else {
+              removeTimeBlock(selectedDate, blockId);
+            }
             setDraggingBlockId(null);
           }
         }}
@@ -585,7 +663,25 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         <div className="ds-pool-header">
           <h2 className="ds-pool-title">任务池</h2>
         </div>
+        <div className="ds-pool-tabs" role="tablist" aria-label="任务池类型">
+          <button type="button" role="tab" aria-selected={activePoolTab === 'today'} className={activePoolTab === 'today' ? 'is-active' : ''} onClick={() => setActivePoolTab('today')}>
+            今日任务 <span>{poolItems.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={activePoolTab === 'backlog'} className={activePoolTab === 'backlog' ? 'is-active' : ''} onClick={() => setActivePoolTab('backlog')}>
+            待排期箱 <span>{backlogItems.length}</span>
+          </button>
+        </div>
 
+        {activePoolTab === 'backlog' ? (
+          <div className="ds-pool-scroll ds-pool-scroll--backlog">
+            <BacklogTaskList
+              tasks={backlogItems}
+              defaultDate={selectedDate}
+              onSchedule={onScheduleBacklog}
+              onOpenTask={onOpenBacklogTask}
+            />
+          </div>
+        ) : <>
         {/* 项目任务组 */}
         {projectPoolItems.length > 0 && (
           <div className="ds-pool-group">
@@ -735,6 +831,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         {poolItems.length === 0 && (
           <div className="ds-pool-empty">今日暂无待安排任务</div>
         )}
+        </>}
       </div>
 
       {/* 编辑浮层 */}

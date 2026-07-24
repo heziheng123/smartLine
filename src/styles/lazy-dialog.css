@@ -1,0 +1,40 @@
+.lazy-dialog-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1590;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 24, 39, 0.34);
+}
+
+.lazy-dialog-loading__card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  background: #FFFFFF;
+  color: #374151;
+  box-shadow: 0 18px 46px rgba(17, 24, 39, 0.2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lazy-dialog-loading__spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #DCE5F3;
+  border-top-color: #3568E8;
+  border-radius: 50%;
+  animation: lazy-dialog-spin .8s linear infinite;
+}
+
+@keyframes lazy-dialog-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lazy-dialog-loading__spinner { animation-duration: 1.8s; }
+}

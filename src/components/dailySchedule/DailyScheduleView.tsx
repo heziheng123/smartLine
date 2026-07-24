@@ -5,6 +5,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import '@/styles/daily-schedule.css';
 import { todayStr } from '@/utils/dateSafe';
 import { projectTasksForDate, reviewTasksForDate } from '@/domain/dailyTaskProjection';
 import {
@@ -53,12 +54,16 @@ import {
   resolveProjectAppearance,
 } from './projectAppearance';
 import { recordOperation } from '@/services/operationHistory';
-import { recordQuantityProgress, removeQuantityProgress, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { recordQuantityProgress, removeQuantityProgress, rescheduleProjectTask, toggleProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { scheduleBacklogTaskToSlot } from '@/services/backlogCommands';
+import { collectBacklogTasks, type BacklogTask } from '@/domain/taskBacklog';
+import { requestConfirmation } from '@/services/confirmation';
 import DailySlotSection from './DailySlotSection';
 import DailyTaskPool, { type CompletedDailyPoolItem, type DailyPoolItem } from './DailyTaskPool';
 import TimeSlotIcon from './TimeSlotIcon';
 import {
   DROPPABLE_POOL,
+  DROPPABLE_BACKLOG,
   DROPPABLE_REVIEW_POOL,
   DROPPABLE_VOCABULARY_POOL,
   isTaskPoolDroppable,
@@ -184,6 +189,7 @@ const DailyScheduleView: React.FC = () => {
     }
     return map;
   }, [tlTasks]);
+  const backlogTasks = useMemo(() => collectBacklogTasks(tlTasks), [tlTasks]);
   const ebbReviewById = useMemo(() => new Map(ebbReviewTasks.map((task) => [task.id, task])), [ebbReviewTasks]);
 
   const { checkIsCompleted } = useTaskCompletionStatus();
@@ -196,6 +202,20 @@ const DailyScheduleView: React.FC = () => {
     (sourceId: string) => isQuantityTask(getProjectBlockFromSource(sourceId)?.block.header),
     [getProjectBlockFromSource],
   );
+
+  const scheduleBacklogToDate = useCallback((task: BacklogTask, date: string): boolean => {
+    const result = rescheduleProjectTask(task.taskId, task.blockId, date);
+    if ('error' in result) {
+      setOperationError(result.error);
+      return false;
+    }
+    setOperationError(null);
+    return true;
+  }, []);
+
+  const openBacklogTask = useCallback((task: BacklogTask) => {
+    openProjectTaskModal(task.taskId, task.blockId, { source: 'daily-schedule', sourceDate: selectedDate });
+  }, [selectedDate]);
   const {
     isHydrated,
     hydrateStore,
@@ -489,13 +509,67 @@ const DailyScheduleView: React.FC = () => {
 
   // ── 拖拽处理（时段模式） ─────────────────────────────────
   const handleDragEnd = useCallback(
-    (result: DropResult) => {
+    async (result: DropResult) => {
       const { source, destination, draggableId } = result;
       if (!destination) return;
 
       const srcDroppableId = source.droppableId;
       const destDroppableId = destination.droppableId;
       const destIndex = destination.index;
+
+      // 待排期箱 → 当日时段：同时更新原任务日期并创建每日安排。
+      if (srcDroppableId === DROPPABLE_BACKLOG && destDroppableId.startsWith('ds-slot-')) {
+        const task = backlogTasks.find((item) => item.id === draggableId);
+        if (!task) return;
+        if (task.deadline && selectedDate > task.deadline) {
+          const confirmed = await requestConfirmation({
+            title: '排期晚于截止日期',
+            message: `“${task.title}”的截止日期是 ${task.deadline}，目标日期是 ${selectedDate}。是否仍然安排？`,
+            confirmLabel: '仍然安排',
+            cancelLabel: '返回修改',
+            tone: 'warning',
+          });
+          if (!confirmed) return;
+        }
+        const targetSlot = destDroppableId.replace('ds-slot-', '') as TimeSlot;
+        const result = scheduleBacklogTaskToSlot({
+          task,
+          date: selectedDate,
+          slot: targetSlot,
+          color: task.projectColor,
+          categoryColor: task.tagColor,
+        });
+        setOperationError('error' in result ? result.error : null);
+        return;
+      }
+
+      // 今日任务或已安排时段 → 待排期箱：清除原任务日期。
+      if (destDroppableId === DROPPABLE_BACKLOG) {
+        let sourceId: string | undefined;
+        if (srcDroppableId.startsWith('ds-slot-')) {
+          const sourceSlot = srcDroppableId.replace('ds-slot-', '') as TimeSlot;
+          sourceId = getSlotItems(sourceSlot)[source.index]?.sourceId;
+        } else if (
+          srcDroppableId === DROPPABLE_POOL
+          || srcDroppableId === DROPPABLE_REVIEW_POOL
+          || srcDroppableId === DROPPABLE_VOCABULARY_POOL
+        ) {
+          sourceId = poolItems.find((item) => item.id === draggableId)?.sourceId;
+        }
+        const parsed = sourceId ? parseSourceId(sourceId) : null;
+        if (!parsed || parsed.source !== 'project' || !parsed.parentTaskId || !parsed.blockId) {
+          setOperationError('只有普通项目任务可以移回待排期箱。');
+          return;
+        }
+        const projectSource = getProjectBlockFromSource(sourceId!);
+        if (!projectSource || isQuantityTask(projectSource.block.header)) {
+          setOperationError('数量任务必须保留开始日期，不能移入待排期箱。');
+          return;
+        }
+        const result = rescheduleProjectTask(parsed.parentTaskId, parsed.blockId);
+        setOperationError('error' in result ? result.error : null);
+        return;
+      }
 
       // 从右侧任务池拖入左侧时间段
       if (
@@ -573,7 +647,17 @@ const DailyScheduleView: React.FC = () => {
           () => { if (useDailyScheduleStore.getState().schedules[selectedDate]?.items.some((item) => item.id === draggedItem.id)) return '任务已经重新安排'; useDailyScheduleStore.getState().restoreScheduledItem(selectedDate, draggedItem, source.index); });
       }
     },
-    [poolItems, selectedDate, addScheduledItem, reorderScheduledItems, moveScheduledItem, removeScheduledItem, getSlotItems],
+    [
+      addScheduledItem,
+      backlogTasks,
+      getProjectBlockFromSource,
+      getSlotItems,
+      moveScheduledItem,
+      poolItems,
+      removeScheduledItem,
+      reorderScheduledItems,
+      selectedDate,
+    ],
   );
 
   // Playwright bridge for deterministic DnD verification. The production
@@ -862,6 +946,8 @@ const DailyScheduleView: React.FC = () => {
               filter={filterSource}
               items={poolItems}
               completedItems={completedPoolItems}
+              backlogItems={backlogTasks}
+              selectedDate={selectedDate}
               showCompleted={showCompletedPool}
               checkIsUnlinkedTask={checkIsUnlinkedTask}
               checkIsLinkedTask={checkIsLinkedTask}
@@ -870,6 +956,8 @@ const DailyScheduleView: React.FC = () => {
               onShowCompletedChange={setShowCompletedPool}
               onOpenProjectSource={openProjectTaskFromSource}
               onUndoCompleted={handleUndoCompletedPoolItem}
+              onScheduleBacklog={scheduleBacklogToDate}
+              onOpenBacklogTask={openBacklogTask}
             />
           </div>
         </DragDropContext>
@@ -881,6 +969,9 @@ const DailyScheduleView: React.FC = () => {
             selectedDate={selectedDate}
             poolItems={poolItems}
             completedPoolItems={allCompletedPoolItems}
+            backlogItems={backlogTasks}
+            onScheduleBacklog={scheduleBacklogToDate}
+            onOpenBacklogTask={openBacklogTask}
             onReviewToggleError={setOperationError}
             onOpenQuantityProgress={(taskId, block) => setProgressTask({ taskId, block })}
           />

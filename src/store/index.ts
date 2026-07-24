@@ -15,7 +15,11 @@ import {
   recoverRequiredTaskStartDate,
 } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import {
+  captureDailySourceSnapshots,
+  useDailyScheduleStore,
+  type DailySourceSnapshot,
+} from '@/components/dailySchedule/store';
 import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
 import { todayStr } from '@/utils/dateSafe';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
@@ -529,6 +533,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
           const datePatched = Object.prototype.hasOwnProperty.call(headerPatch, 'date');
           const nextHeader = { ...currentBlock.header, ...headerPatch };
+          const dailySnapshots = datePatched && currentBlock.header.date !== nextHeader.date
+            ? captureDailySourceSnapshots(
+              useDailyScheduleStore.getState().schedules,
+              [getProjectBlockSourceId(taskId, blockId)],
+            )
+            : [];
           const effectPlan = planProjectTaskEffects({
             tasks: getUniqueTasks(get().tasks, get().groups),
             taskId,
@@ -586,6 +596,10 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               if (dateChanged) {
                 previousPatch.date = currentBlock.header.date;
                 expected.date = headerPatch.date;
+                if (Object.prototype.hasOwnProperty.call(headerPatch, 'frozenAt')) {
+                  previousPatch.frozenAt = currentBlock.header.frozenAt;
+                  expected.frozenAt = headerPatch.frozenAt;
+                }
               }
               if (vocabularyChanged) {
                 previousPatch.vocabularyRecords = currentBlock.header.vocabularyRecords;
@@ -611,13 +625,17 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   : dateChanged
                     ? ['项目文档', '周矩阵', '每日安排']
                     : ['项目文档', '每日安排'],
-                undoSpec: { kind: 'timeline-header', payload: { taskId, blockId, patch: previousPatch, expected } },
+                undoSpec: {
+                  kind: 'timeline-header',
+                  payload: { taskId, blockId, patch: previousPatch, expected, dailySnapshots },
+                },
               }, () => {
                 const latestTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
                 const latestBlock = latestTask?.blocks.find((block) => block.id === blockId);
                 if (latestBlock?.type !== 'smart-task') return '任务已经不存在';
                 if (Object.entries(expected).some(([key, value]) => !headerValueEquals(latestBlock.header[key as keyof SmartTaskHeader], value))) return '任务在此操作后又被修改';
                 get().updateBlockHeader(taskId, blockId, previousPatch);
+                useDailyScheduleStore.getState().restoreSourceSnapshots(dailySnapshots);
               });
             }
           }
@@ -934,13 +952,20 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 );
 
 registerUndoExecutor('timeline-header', (raw) => {
-  const payload = raw as { taskId: string; blockId: string; patch: Partial<SmartTaskHeader>; expected: Partial<SmartTaskHeader> };
+  const payload = raw as {
+    taskId: string;
+    blockId: string;
+    patch: Partial<SmartTaskHeader>;
+    expected: Partial<SmartTaskHeader>;
+    dailySnapshots?: DailySourceSnapshot[];
+  };
   const state = useTimelineStore.getState();
   const task = getUniqueTasks(state.tasks, state.groups).find((item) => item.id === payload.taskId);
   const block = task?.blocks.find((item) => item.id === payload.blockId);
   if (block?.type !== 'smart-task') return '任务已经不存在';
   if (Object.entries(payload.expected).some(([key, value]) => !headerValueEquals(block.header[key as keyof SmartTaskHeader], value))) return '任务在此操作后又被修改';
   state.updateBlockHeader(payload.taskId, payload.blockId, payload.patch);
+  useDailyScheduleStore.getState().restoreSourceSnapshots(payload.dailySnapshots ?? []);
 });
 
 registerUndoExecutor('timeline-remove-created-block', (raw) => {

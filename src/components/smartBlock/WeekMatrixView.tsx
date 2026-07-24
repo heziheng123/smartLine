@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, Hash, Clock3 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, Hash, Clock3, Settings2 } from 'lucide-react';
 import type { Task, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
@@ -8,6 +8,19 @@ import { openProjectTaskModal } from './projectTaskModal';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { isTaskOverdueOnDate } from '@/domain/taskRules';
 import { rescheduleProjectTask, setProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { useEbbStore } from '@/ebb/store';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import {
+  calculateDateWorkloads,
+  getWorkloadTone,
+  type WorkloadPreferences,
+} from '@/domain/taskBacklog';
+import {
+  loadWorkloadPreferences,
+  saveWorkloadPreferences,
+  WORKLOAD_PREFERENCES_EVENT,
+} from '@/services/workloadPreferences';
+import { requestConfirmation } from '@/services/confirmation';
 import {
   todayStr,
   addDays,
@@ -49,8 +62,14 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ tag: string; date: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [showLoadSettings, setShowLoadSettings] = useState(false);
+  const [workloadPreferences, setWorkloadPreferences] = useState<WorkloadPreferences>(
+    loadWorkloadPreferences,
+  );
   const toastTimerRef = useRef<number | null>(null);
   const suppressCardOpenRef = useRef(false);
+  const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const schedules = useDailyScheduleStore((state) => state.schedules);
 
   useEffect(() => {
     return () => {
@@ -79,6 +98,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
     for (const task of tasks) {
       const blocks = getSmartTaskBlocks(task.blocks ?? []);
       for (const block of blocks) {
+        if (block.header.isArchived) continue;
         result.push({ ...block, _taskId: task.id });
       }
     }
@@ -110,6 +130,17 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
 
     return map;
   }, [allBlocks]);
+
+  const workloads = useMemo(
+    () => calculateDateWorkloads({
+      dates: dateRange,
+      tasks,
+      reviewTasks,
+      schedules,
+      preferences: workloadPreferences,
+    }),
+    [dateRange, reviewTasks, schedules, tasks, workloadPreferences],
+  );
 
   const offRangeInfo = useMemo(() => {
     const rangeStartStr = dateRange[0];
@@ -173,6 +204,15 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
     setDraggingId(block.id);
   }, []);
 
+  useEffect(() => {
+    const handlePreferences = (event: Event) => {
+      const detail = (event as CustomEvent<WorkloadPreferences>).detail;
+      setWorkloadPreferences(detail ?? loadWorkloadPreferences());
+    };
+    window.addEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
+    return () => window.removeEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
+  }, []);
+
   const handleDragEnd = useCallback(() => {
     suppressCardOpenRef.current = true;
     clearDragState();
@@ -205,7 +245,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
   );
 
   const handleCellDrop = useCallback(
-    (event: React.DragEvent<HTMLDivElement>, tag: string, targetDate: string) => {
+    async (event: React.DragEvent<HTMLDivElement>, _tag: string, targetDate: string) => {
       event.preventDefault();
       
       let draggedData: SmartBlockDragPayload | null = null;
@@ -222,7 +262,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
         // 解析失败，忽略
       }
 
-      if (!draggedData || draggedData.tag !== tag) {
+      if (!draggedData) {
         clearDragState();
         return;
       }
@@ -232,11 +272,27 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
         return;
       }
 
+      const current = allBlocks.find(
+        (block) => block._taskId === draggedData.taskId && block.id === draggedData.blockId,
+      );
+      if (current?.header.deadline && targetDate > current.header.deadline) {
+        const confirmed = await requestConfirmation({
+          title: '排期晚于截止日期',
+          message: `“${draggedData.title}”的截止日期是 ${current.header.deadline}，目标日期是 ${targetDate}。是否仍然安排？`,
+          confirmLabel: '仍然安排',
+          cancelLabel: '返回修改',
+          tone: 'warning',
+        });
+        if (!confirmed) {
+          clearDragState();
+          return;
+        }
+      }
       const result = rescheduleProjectTask(draggedData.taskId, draggedData.blockId, targetDate);
       showToast('error' in result ? result.error : `已将“${draggedData.title}”改期到 ${targetDate}`);
       clearDragState();
     },
-    [clearDragState, showToast],
+    [allBlocks, clearDragState, showToast],
   );
 
   const jumpTo = useCallback((dateStr: string) => {
@@ -250,6 +306,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
           const { year, month } = splitDate(cursor);
           return `${year}年${month}月`;
         })();
+  const matrixColumnTemplate = `100px repeat(${dateRange.length}, minmax(${mode === 'week' ? '88px' : '120px'}, 1fr))`;
 
   return (
     <div className="wmv-container">
@@ -275,7 +332,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
 
         {draggingId && (
           <div className="wmv-drag-hint">
-            正在拖动智能任务块，可直接放到同标签的其他日期列完成改期
+            正在拖动任务，可放到任意日期；任务标签不会改变
           </div>
         )}
 
@@ -341,23 +398,122 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
               月
             </button>
           </div>
+          <div className="wmv-load-settings-wrap">
+            <button
+              type="button"
+              className="wmv-nav-btn"
+              onClick={() => setShowLoadSettings((value) => !value)}
+              aria-expanded={showLoadSettings}
+              aria-label="每日负载设置"
+            >
+              <Settings2 size={15} />
+            </button>
+            {showLoadSettings && (
+              <div className="wmv-load-settings">
+                <strong>每日可用容量</strong>
+                <label>
+                  <span>工作日</span>
+                  <input
+                    type="number"
+                    min={30}
+                    max={1440}
+                    step={30}
+                    value={workloadPreferences.weekdayCapacityMinutes}
+                    onChange={(event) => {
+                      const next = {
+                        ...workloadPreferences,
+                        weekdayCapacityMinutes: Math.max(30, Number(event.target.value) || 30),
+                      };
+                      setWorkloadPreferences(next);
+                      saveWorkloadPreferences(next);
+                    }}
+                  />
+                  <span>分钟</span>
+                </label>
+                <label>
+                  <span>周末</span>
+                  <input
+                    type="number"
+                    min={30}
+                    max={1440}
+                    step={30}
+                    value={workloadPreferences.weekendCapacityMinutes}
+                    onChange={(event) => {
+                      const next = {
+                        ...workloadPreferences,
+                        weekendCapacityMinutes: Math.max(30, Number(event.target.value) || 30),
+                      };
+                      setWorkloadPreferences(next);
+                      saveWorkloadPreferences(next);
+                    }}
+                  />
+                  <span>分钟</span>
+                </label>
+                <label className="wmv-load-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={workloadPreferences.showTaskCount}
+                    onChange={(event) => {
+                      const next = { ...workloadPreferences, showTaskCount: event.target.checked };
+                      setWorkloadPreferences(next);
+                      saveWorkloadPreferences(next);
+                    }}
+                  />
+                  显示任务数
+                </label>
+                <label className="wmv-load-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={workloadPreferences.showDuration}
+                    onChange={(event) => {
+                      const next = { ...workloadPreferences, showDuration: event.target.checked };
+                      setWorkloadPreferences(next);
+                      saveWorkloadPreferences(next);
+                    }}
+                  />
+                  显示分钟负载
+                </label>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="wmv-matrix">
-        <div className="wmv-row wmv-row--header" style={{ display: 'grid', gridTemplateColumns: `100px repeat(${dateRange.length}, minmax(120px, 1fr))` }}>
+        <div className="wmv-row wmv-row--header" style={{ display: 'grid', gridTemplateColumns: matrixColumnTemplate }}>
           <div className="wmv-cell wmv-cell--tag" />
           {dateRange.map((dateStr) => {
             const isToday = dateStr === todayString;
             const dow = getDayOfWeek(dateStr);
             const isWeekend = dow === 0 || dow === 6;
+            const workload = workloads.get(dateStr);
+            const ratio = workload?.ratio ?? 0;
+            const tone = getWorkloadTone(ratio);
             return (
               <div
                 key={dateStr}
-                className={`wmv-cell wmv-cell--date ${isToday ? 'wmv-cell--today' : ''} ${isWeekend ? 'wmv-cell--weekend' : ''}`}
+                className={`wmv-cell wmv-cell--date ${isToday ? 'wmv-cell--today' : ''} ${
+                  isWeekend ? 'wmv-cell--weekend' : ''
+                } ${hoverCell?.tag === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
+                data-date={dateStr}
+                onDragOver={(event) => handleCellDragOver(event, '', dateStr)}
+                onDragLeave={(event) => handleCellDragLeave(event, '', dateStr)}
+                onDrop={(event) => handleCellDrop(event, '', dateStr)}
               >
                 <span className="wmv-date-weekday">{WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}</span>
                 <span className="wmv-date-num">{splitDate(dateStr).day}</span>
+                {(workloadPreferences.showTaskCount || workloadPreferences.showDuration) && (
+                  <div className={`wmv-load wmv-load--${tone}`}>
+                    <span className="wmv-load-label">
+                      {workloadPreferences.showTaskCount && `${workload?.taskCount ?? 0}项`}
+                      {workloadPreferences.showTaskCount && workloadPreferences.showDuration && ' · '}
+                      {workloadPreferences.showDuration && `${workload?.totalMinutes ?? 0}/${workload?.capacityMinutes ?? 0}m`}
+                    </span>
+                    <span className="wmv-load-track" aria-label={`负载 ${Math.round(ratio * 100)}%`}>
+                      <span style={{ width: `${Math.min(100, Math.round(ratio * 100))}%` }} />
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -366,7 +522,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
         {tags.map((tag) => {
           const tagColor = getTagColor(tag);
           return (
-            <div key={tag} className="wmv-row" style={{ display: 'grid', gridTemplateColumns: `100px repeat(${dateRange.length}, minmax(120px, 1fr))` }}>
+            <div key={tag} className="wmv-row" style={{ display: 'grid', gridTemplateColumns: matrixColumnTemplate }}>
               <div className="wmv-cell wmv-cell--tag">
                 <span className="wmv-tag-badge" style={{ backgroundColor: tagColor }}>
                   {tag}

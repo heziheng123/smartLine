@@ -659,6 +659,59 @@
   margin-bottom: 8px;
 }
 
+.ds-pool-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 12px 10px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #f1f5f9;
+}
+
+.ds-pool-tabs button {
+  display: inline-flex;
+  min-width: 0;
+  height: 31px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ds-pool-tabs button.is-active {
+  background: #fff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+}
+
+.ds-pool-tabs button span {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 9px;
+}
+
+.ds-pool-tabs button.is-active span {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.ds-pool-scroll--backlog {
+  padding: 0 12px 12px;
+}
+
 .ds-filter-btn {
   min-height: 30px;
   padding: 4px 10px;
@@ -1163,12 +1216,13 @@
   }
 
   .ds-right {
-    position: fixed;
+    position: absolute;
     z-index: 72;
     right: 0;
     bottom: 0;
     left: 0;
     width: 100%;
+    height: min(72vh, 680px);
     max-height: min(72vh, 680px);
     flex: none;
     border: 1px solid var(--ds-border);
@@ -1228,7 +1282,7 @@
   }
 
   .ds-task-pool-trigger {
-    position: fixed;
+    position: absolute;
     z-index: 58;
     right: 14px;
     bottom: 92px;
@@ -1258,9 +1312,12 @@
   }
 
   .ds-task-pool-backdrop {
-    position: fixed;
+    position: absolute;
     z-index: 71;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: min(72vh, 680px);
+    left: 0;
     display: block;
     border: 0;
     background: rgba(15, 23, 42, 0.28);

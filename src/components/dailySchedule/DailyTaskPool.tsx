@@ -6,6 +6,8 @@ import { DROPPABLE_POOL, DROPPABLE_POOL_CONTAINER, DROPPABLE_REVIEW_POOL } from 
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { projectBadgeStyle } from './projectAppearance';
 import { isQuantityTask } from '@/utils/blocks';
+import BacklogTaskList from '@/components/smartBlock/BacklogTaskList';
+import type { BacklogTask } from '@/domain/taskBacklog';
 
 export interface DailyPoolItem {
   id: string;
@@ -43,6 +45,8 @@ interface DailyTaskPoolProps {
   filter: PoolFilter;
   items: DailyPoolItem[];
   completedItems: CompletedDailyPoolItem[];
+  backlogItems: BacklogTask[];
+  selectedDate: string;
   showCompleted: boolean;
   checkIsUnlinkedTask: (sourceId: string) => boolean;
   checkIsLinkedTask: (sourceId: string) => boolean;
@@ -51,6 +55,8 @@ interface DailyTaskPoolProps {
   onShowCompletedChange: (show: boolean) => void;
   onOpenProjectSource: (sourceId: string) => void;
   onUndoCompleted: (source: TaskSource, sourceId: string) => void;
+  onScheduleBacklog: (task: BacklogTask, date: string) => boolean | Promise<boolean>;
+  onOpenBacklogTask: (task: BacklogTask) => void;
 }
 
 interface PoolGroupProps {
@@ -137,6 +143,8 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
   filter,
   items,
   completedItems,
+  backlogItems,
+  selectedDate,
   showCompleted,
   checkIsUnlinkedTask,
   checkIsLinkedTask,
@@ -145,7 +153,10 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
   onShowCompletedChange,
   onOpenProjectSource,
   onUndoCompleted,
+  onScheduleBacklog,
+  onOpenBacklogTask,
 }) => {
+  const [activeTab, setActiveTab] = React.useState<'today' | 'backlog'>('today');
   const visibleItems = filter === 'all'
     ? items
     : items.filter((item) => filter === 'quantity'
@@ -191,45 +202,67 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
                   <ChevronDown className="ds-pool-collapse-mobile" size={18} />
                 </button>
               </div>
-              <div className="ds-pool-filters" role="group" aria-label="任务池筛选">
-                {(['all', 'project', 'review', 'quantity'] as const).map((value) => (
-                  <button key={value} type="button" className={`ds-filter-btn ${filter === value ? 'ds-filter-btn--active' : ''}`} onClick={() => onFilterChange(value)}>
-                    {value === 'all' ? '全部' : value === 'project' ? '项目' : value === 'review' ? '复习' : '数量'}
-                  </button>
-                ))}
+              <div className="ds-pool-tabs" role="tablist" aria-label="任务池类型">
+                <button type="button" role="tab" aria-selected={activeTab === 'today'} className={activeTab === 'today' ? 'is-active' : ''} onClick={() => setActiveTab('today')}>
+                  今日任务 <span>{totalAvailable}</span>
+                </button>
+                <button type="button" role="tab" aria-selected={activeTab === 'backlog'} className={activeTab === 'backlog' ? 'is-active' : ''} onClick={() => setActiveTab('backlog')}>
+                  待排期箱 <span>{backlogItems.length}</span>
+                </button>
               </div>
-              <div className="ds-pool-scroll">
-                <PoolGroup title="项目任务" dotClass="ds-pool-group-dot--project" droppableId={DROPPABLE_POOL} items={projectItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
-                <PoolGroup title="复习任务" dotClass="ds-pool-group-dot--review" droppableId={DROPPABLE_REVIEW_POOL} items={reviewItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
-                {visibleItems.length === 0 && (
-                  <div className="ds-pool-empty">
-                    <ListTodo size={22} />
-                    <strong>{items.length === 0 ? '今日暂无待安排任务' : '当前筛选下没有任务'}</strong>
-                    <span>{items.length === 0 ? '普通任务、数量进度任务和复习会显示在这里' : '可以切换上方筛选条件'}</span>
-                  </div>
-                )}
-                {completedItems.length > 0 && (
-                  <section className="ds-pool-group ds-pool-group--completed">
-                    <button type="button" className="ds-pool-completed-toggle" onClick={() => onShowCompletedChange(!showCompleted)} aria-expanded={showCompleted}>
-                      <span>今日已完成</span>
-                      <span className="ds-pool-group-count">{completedItems.length}</span>
-                      <span>{showCompleted ? '收起' : '展开'}</span>
+              {activeTab === 'today' && (
+                <div className="ds-pool-filters" role="group" aria-label="任务池筛选">
+                  {(['all', 'project', 'review', 'quantity'] as const).map((value) => (
+                    <button key={value} type="button" className={`ds-filter-btn ${filter === value ? 'ds-filter-btn--active' : ''}`} onClick={() => onFilterChange(value)}>
+                      {value === 'all' ? '全部' : value === 'project' ? '项目' : value === 'review' ? '复习' : '数量'}
                     </button>
-                    {showCompleted && (
-                      <div className="ds-pool-list">
-                        {completedItems.map((item) => (
-                          <div key={item.id} className="ds-pool-item ds-pool-item--completed" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }} onClick={() => { if (item.source === 'project') onOpenProjectSource(item.sourceId); }}>
-                            <div className="ds-pool-item-content">
-                              <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                              {item.detail && (item.source !== 'project' || isQuantityTask({ taskKind: item.taskKind })) && <span className="ds-pool-item-detail">{item.detail}</span>}
-                            </div>
-                            {item.source === 'project' && !isQuantityTask({ taskKind: item.taskKind }) && <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>}
-                            <button type="button" className="ds-pool-undo-btn" onClick={(event) => { event.stopPropagation(); onUndoCompleted(item.source, item.sourceId); }}>撤销</button>
-                          </div>
-                        ))}
+                  ))}
+                </div>
+              )}
+              <div className="ds-pool-scroll">
+                {activeTab === 'backlog' ? (
+                  <BacklogTaskList
+                    tasks={backlogItems}
+                    mode="pangea"
+                    defaultDate={selectedDate}
+                    onSchedule={onScheduleBacklog}
+                    onOpenTask={onOpenBacklogTask}
+                  />
+                ) : (
+                  <>
+                    <PoolGroup title="项目任务" dotClass="ds-pool-group-dot--project" droppableId={DROPPABLE_POOL} items={projectItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
+                    <PoolGroup title="复习任务" dotClass="ds-pool-group-dot--review" droppableId={DROPPABLE_REVIEW_POOL} items={reviewItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
+                    {visibleItems.length === 0 && (
+                      <div className="ds-pool-empty">
+                        <ListTodo size={22} />
+                        <strong>{items.length === 0 ? '今日暂无待安排任务' : '当前筛选下没有任务'}</strong>
+                        <span>{items.length === 0 ? '普通任务、数量进度任务和复习会显示在这里' : '可以切换上方筛选条件'}</span>
                       </div>
                     )}
-                  </section>
+                    {completedItems.length > 0 && (
+                      <section className="ds-pool-group ds-pool-group--completed">
+                        <button type="button" className="ds-pool-completed-toggle" onClick={() => onShowCompletedChange(!showCompleted)} aria-expanded={showCompleted}>
+                          <span>今日已完成</span>
+                          <span className="ds-pool-group-count">{completedItems.length}</span>
+                          <span>{showCompleted ? '收起' : '展开'}</span>
+                        </button>
+                        {showCompleted && (
+                          <div className="ds-pool-list">
+                            {completedItems.map((item) => (
+                              <div key={item.id} className="ds-pool-item ds-pool-item--completed" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }} onClick={() => { if (item.source === 'project') onOpenProjectSource(item.sourceId); }}>
+                                <div className="ds-pool-item-content">
+                                  <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
+                                  {item.detail && (item.source !== 'project' || isQuantityTask({ taskKind: item.taskKind })) && <span className="ds-pool-item-detail">{item.detail}</span>}
+                                </div>
+                                {item.source === 'project' && !isQuantityTask({ taskKind: item.taskKind }) && <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>}
+                                <button type="button" className="ds-pool-undo-btn" onClick={(event) => { event.stopPropagation(); onUndoCompleted(item.source, item.sourceId); }}>撤销</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    )}
+                  </>
                 )}
                 {provided.placeholder}
               </div>

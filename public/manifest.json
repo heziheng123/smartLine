@@ -4,8 +4,8 @@
   "description": "智能知识大盘与排期系统",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "background_color": "#f5f7fb",
+  "theme_color": "#f5f7fb",
   "icons": [
     {
       "src": "/pwa-192x192.png",

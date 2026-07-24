@@ -122,7 +122,12 @@ export function rescheduleProjectTask(
   blockId: string,
   date?: string,
 ): ProjectTaskCommandResult {
-  return updateProjectTask(taskId, blockId, { date: date || undefined }, {
+  return updateProjectTask(taskId, blockId, {
+    date: date || undefined,
+    // A successful manual schedule, reschedule, or return-to-backlog should not
+    // retain the marker that says the task was automatically recovered.
+    frozenAt: undefined,
+  }, {
     operation: 'reschedule',
     summary: date ? `已改期至 ${date} 并更新每日安排` : '已清除排期并从日期视图移除',
   });

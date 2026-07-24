@@ -10,13 +10,7 @@ import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 // import TimelineView from '@/components/TimelineView';
 import Toolbar, { type AppModule } from '@/components/Toolbar';
-import TaskDialog from '@/components/TaskDialog';
-import GroupDialog from '@/components/GroupDialog';
-import NoteDialog from '@/components/NoteDialog';
-import MilestoneDialog from '@/components/MilestoneDialog';
-import SyncDialog from '@/components/SyncDialog';
 import ContextMenu from '@/components/ContextMenu';
-import { IceboxPalette } from '@/components/smartBlock/IceboxPalette';
 import ProjectTaskBlockModal from '@/components/smartBlock/ProjectTaskBlockModal';
 import ProjectTaskCreateDialog from '@/components/smartBlock/ProjectTaskCreateDialog';
 import ViewErrorBoundary from '@/components/ViewErrorBoundary';
@@ -28,8 +22,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import '@/styles/design-tokens.css';
 import '@/styles/confirmation.css';
 import '@/styles/timeline.css';
-import '@/styles/daily-schedule.css';
 import '@/styles/smart-block.css';
+import '@/styles/lazy-dialog.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 type ProjectWorkspaceView = 'timeline' | 'overview';
@@ -63,6 +57,13 @@ const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDoc
 const loadWeekMatrixView = () => import('@/components/smartBlock/WeekMatrixView');
 const loadTaskOverviewView = () => import('@/components/smartBlock/TaskOverviewView');
 const loadKnowledgeGraphView = () => import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView }));
+const loadTaskDialog = () => import('@/components/TaskDialog');
+const loadGroupDialog = () => import('@/components/GroupDialog');
+const loadNoteDialog = () => import('@/components/NoteDialog');
+const loadMilestoneDialog = () => import('@/components/MilestoneDialog');
+const loadSyncDialog = () => import('@/components/SyncDialog');
+const loadIceboxPalette = () => import('@/components/smartBlock/IceboxPalette')
+  .then((module) => ({ default: module.IceboxPalette }));
 
 const TimelineView = React.lazy(loadTimelineView);
 const EbbView = React.lazy(async () => {
@@ -88,6 +89,21 @@ const ProjectDocumentView = React.lazy(loadProjectDocumentView);
 const WeekMatrixView = React.lazy(loadWeekMatrixView);
 const TaskOverviewView = React.lazy(loadTaskOverviewView);
 const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
+const TaskDialog = React.lazy(loadTaskDialog);
+const GroupDialog = React.lazy(loadGroupDialog);
+const NoteDialog = React.lazy(loadNoteDialog);
+const MilestoneDialog = React.lazy(loadMilestoneDialog);
+const SyncDialog = React.lazy(loadSyncDialog);
+const IceboxPalette = React.lazy(loadIceboxPalette);
+
+const DialogLoadingFallback = () => (
+  <div className="lazy-dialog-loading" role="status" aria-live="polite">
+    <div className="lazy-dialog-loading__card">
+      <span className="lazy-dialog-loading__spinner" aria-hidden="true" />
+      正在打开…
+    </div>
+  </div>
+);
 
 import { useGraphStore } from '@/graph/store';
 import { useEbbStore } from '@/ebb/store';
@@ -100,6 +116,9 @@ import { isCurrentTabSyncLeader, startWorkspaceTabCoordinator } from '@/services
 import OperationHistoryPanel from '@/components/OperationHistoryPanel';
 import { recordOperation } from '@/services/operationHistory';
 import { useRecycleBin } from '@/services/recycleBin';
+import { requestConfirmation } from '@/services/confirmation';
+import { resolveProjectTask, rescheduleProjectTask } from '@/services/projectTaskCommands';
+import '@/services/backlogCommands';
 
 const ViewFallback: React.FC = () => (
   <div className="tl-app-split tl-app-split--ebb">
@@ -323,6 +342,20 @@ const App: React.FC = () => {
     isDailyHydrated,
     hydrateDailyStore,
   ]);
+
+  React.useEffect(() => {
+    if (!isHydrated) return;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        window.dispatchEvent(new Event('smartline:app-ready'));
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [isHydrated]);
 
   React.useEffect(() => {
     if (!isHydrated || hasAlignedDisplayYear.current) return;
@@ -798,11 +831,16 @@ const App: React.FC = () => {
             exit={{ opacity: 0, scale: 0.98 }}
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
           >
-            <div className="tl-app-main">
-              <Suspense fallback={<ViewFallback />}>
-                <WeekMatrixView
-                  tasks={weekMatrixTasks}
-                />
+            <div className="tl-app-main week-matrix-workspace">
+              <div className="week-matrix-content">
+                <Suspense fallback={<ViewFallback />}>
+                  <WeekMatrixView
+                    tasks={weekMatrixTasks}
+                  />
+                </Suspense>
+              </div>
+              <Suspense fallback={null}>
+                <IceboxPalette layout="docked" />
               </Suspense>
             </div>
           </motion.div>
@@ -856,8 +894,19 @@ const App: React.FC = () => {
                         onMilestoneDoubleClick={handleEditMilestone}
                         onMilestoneContextMenu={handleMilestoneContextMenu}
                         onGroupDoubleClick={handleEditGroup}
-                        onSmartBlockDrop={(dragData, targetDate) => {
-                          store.updateBlockHeader(dragData.taskId, dragData.blockId, { date: targetDate });
+                        onSmartBlockDrop={async (dragData, targetDate) => {
+                          const current = resolveProjectTask(dragData.taskId, dragData.blockId);
+                          if (current?.block.header.deadline && targetDate > current.block.header.deadline) {
+                            const confirmed = await requestConfirmation({
+                              title: '排期晚于截止日期',
+                              message: `“${current.block.header.title}”的截止日期是 ${current.block.header.deadline}，目标日期是 ${targetDate}。是否仍然安排？`,
+                              confirmLabel: '仍然安排',
+                              cancelLabel: '返回修改',
+                              tone: 'warning',
+                            });
+                            if (!confirmed) return;
+                          }
+                          rescheduleProjectTask(dragData.taskId, dragData.blockId, targetDate);
                         }}
                       />
                     </Suspense>
@@ -901,43 +950,45 @@ const App: React.FC = () => {
       </AnimatePresence>
 
       {/* 对话框 */}
-      {dialogType === 'task' && (
-        <TaskDialog
-          task={dialogMode === 'edit' ? editingTask : undefined}
-          onSave={handleSaveTask}
-          onDelete={dialogMode === 'edit' ? handleDeleteTask : undefined}
-          onCancel={closeDialog}
-        />
-      )}
-      {dialogType === 'group' && (
-        <GroupDialog
-          group={dialogMode === 'edit' ? editingGroup : undefined}
-          allTasks={store.tasks}
-          groups={store.groups}
-          onSave={handleSaveGroup}
-          onDelete={dialogMode === 'edit' ? handleDeleteGroup : undefined}
-          onCancel={closeDialog}
-        />
-      )}
-      {dialogType === 'note' && (
-        <NoteDialog
-          note={dialogMode === 'edit' ? editingNote : undefined}
-          onSave={handleSaveNote}
-          onDelete={dialogMode === 'edit' ? handleDeleteNote : undefined}
-          onCancel={closeDialog}
-        />
-      )}
-      {dialogType === 'milestone' && (
-        <MilestoneDialog
-          milestone={dialogMode === 'edit' ? editingMilestone : undefined}
-          onSave={handleSaveMilestone}
-          onDelete={dialogMode === 'edit' ? handleDeleteMilestone : undefined}
-          onCancel={closeDialog}
-        />
-      )}
-      {dialogType === 'sync' && (
-        <SyncDialog onClose={closeDialog} />
-      )}
+      <Suspense fallback={<DialogLoadingFallback />}>
+        {dialogType === 'task' && (
+          <TaskDialog
+            task={dialogMode === 'edit' ? editingTask : undefined}
+            onSave={handleSaveTask}
+            onDelete={dialogMode === 'edit' ? handleDeleteTask : undefined}
+            onCancel={closeDialog}
+          />
+        )}
+        {dialogType === 'group' && (
+          <GroupDialog
+            group={dialogMode === 'edit' ? editingGroup : undefined}
+            allTasks={store.tasks}
+            groups={store.groups}
+            onSave={handleSaveGroup}
+            onDelete={dialogMode === 'edit' ? handleDeleteGroup : undefined}
+            onCancel={closeDialog}
+          />
+        )}
+        {dialogType === 'note' && (
+          <NoteDialog
+            note={dialogMode === 'edit' ? editingNote : undefined}
+            onSave={handleSaveNote}
+            onDelete={dialogMode === 'edit' ? handleDeleteNote : undefined}
+            onCancel={closeDialog}
+          />
+        )}
+        {dialogType === 'milestone' && (
+          <MilestoneDialog
+            milestone={dialogMode === 'edit' ? editingMilestone : undefined}
+            onSave={handleSaveMilestone}
+            onDelete={dialogMode === 'edit' ? handleDeleteMilestone : undefined}
+            onCancel={closeDialog}
+          />
+        )}
+        {dialogType === 'sync' && (
+          <SyncDialog onClose={closeDialog} />
+        )}
+      </Suspense>
 
       {/* 右键菜单 */}
       {contextMenu && (
@@ -949,10 +1000,12 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* 悬浮磁吸面板：冷冻库 (Icebox) - 在周矩阵与项目规划视图中显示 */}
+      {/* 项目时间线保留悬浮入口；周矩阵使用不遮挡日期列的内嵌右侧抽屉。 */}
       <AnimatePresence>
-        {(currentView === 'week-matrix' || (currentView === 'timeline' && projectWorkspaceView === 'timeline')) && (
-          <IceboxPalette />
+        {currentView === 'timeline' && projectWorkspaceView === 'timeline' && (
+          <Suspense fallback={null}>
+            <IceboxPalette />
+          </Suspense>
         )}
       </AnimatePresence>
       </ViewErrorBoundary>

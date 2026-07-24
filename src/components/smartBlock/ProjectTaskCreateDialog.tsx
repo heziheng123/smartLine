@@ -7,6 +7,7 @@ import { genBlockId, getQuantityDailySuggestion, getTagColor } from '@/utils/blo
 import { todayStr } from '@/utils/dateSafe';
 import { PROJECT_TASK_CREATE_EVENT, type ProjectTaskCreateDetail } from './projectTaskCreate';
 import { createProjectTask } from '@/services/projectTaskCommands';
+import '@/styles/project-task-create-dialog.css';
 
 type ProgressMode = 'binary' | 'quantity';
 
