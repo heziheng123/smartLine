@@ -157,6 +157,48 @@ test('grouped project can complete and cancel repeatedly without refresh', async
   await expect.poll(() => readNodeStatus(page)).toBe('unactivated');
 });
 
+test('completed task without automatic review activates its knowledge node in blue', async ({ page }) => {
+  const card = await openProjectDocument(page);
+
+  // Return to an incomplete state, then explicitly opt out of automatic review.
+  await card.locator('.stb-check').click();
+  await expect.poll(() => readNodeStatus(page)).toBe('unactivated');
+  await card.getByRole('button', { name: '完成一致性节点' }).click();
+  const autoReview = page.getByLabel('自动同步至复习流');
+  await expect(autoReview).toBeChecked();
+  await autoReview.uncheck();
+  await page.locator('.stb-tag-picker-overlay').click({ position: { x: 4, y: 4 } });
+
+  await card.locator('.stb-check').click();
+  await expect(card).toHaveClass(/stb-card--done/);
+  await expect.poll(() => readNodeStatus(page)).toBe('activated');
+
+  const reviewCount = await page.evaluate(async () => {
+    const { useEbbStore } = await import('/src/ebb/store.ts');
+    return useEbbStore.getState().reviewTasks
+      .filter((task) => task.graphNodeId === 'completion-node' && !task.isArchived)
+      .length;
+  });
+  expect(reviewCount).toBe(0);
+
+  await page.getByTitle('知识大盘').click();
+  const nodeTitle = page.locator('svg title').filter({
+    hasText: '完成一致性节点 · 已完成 · 无需复习',
+  });
+  await expect(nodeTitle).toHaveCount(1);
+  const nodeFill = await nodeTitle.evaluate(
+    (element) => element.parentElement?.querySelector('path')?.getAttribute('fill'),
+  );
+  expect(nodeFill).toBe('#3b82f6');
+
+  await nodeTitle.evaluate(
+    (element) => element.parentElement?.dispatchEvent(new MouseEvent('click', { bubbles: true })),
+  );
+  const summary = page.getByLabel('学习状态总览');
+  await expect(summary).toContainText('已完成 · 无需复习');
+  await expect(summary).toContainText('未开启自动生成复习任务');
+});
+
 test('a remote legacy project without blocks cannot break linked-task cancellation', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));

@@ -10,7 +10,12 @@ import {
 } from 'lucide-react';
 import { formatDate, todayStr } from '@/utils/dateSafe';
 
-export type NodeMasteryState = 'not-started' | 'learning' | 'needs-review' | 'mastered';
+export type NodeMasteryState =
+  | 'not-started'
+  | 'completed-no-review'
+  | 'learning'
+  | 'needs-review'
+  | 'mastered';
 export type NodeDetailScope = 'direct' | 'subtree';
 
 export interface NodeLearningSummaryData {
@@ -37,7 +42,8 @@ interface NodeLearningSummaryProps {
 
 const masteryTone: Record<NodeMasteryState, string> = {
   'not-started': 'border-slate-200 bg-slate-50 text-slate-600',
-  learning: 'border-blue-200 bg-blue-50 text-blue-700',
+  'completed-no-review': 'border-blue-200 bg-blue-50 text-blue-700',
+  learning: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   'needs-review': 'border-amber-200 bg-amber-50 text-amber-700',
   mastered: 'border-emerald-200 bg-emerald-50 text-emerald-700',
 };
@@ -97,7 +103,9 @@ const NodeLearningSummary: React.FC<NodeLearningSummaryProps> = ({
       </div>
       <div className="rounded-lg bg-slate-50 p-2.5">
         <div className="flex items-center gap-1 text-[10px] text-slate-500"><CalendarClock size={11} />下次复习</div>
-        <div className="mt-1 truncate text-sm font-bold text-slate-800">{nextReviewLabel(data.nextReviewDate)}</div>
+        <div className="mt-1 truncate text-sm font-bold text-slate-800">
+          {data.masteryState === 'completed-no-review' ? '无需复习' : nextReviewLabel(data.nextReviewDate)}
+        </div>
         <div className="text-[10px] text-slate-500">{data.nodeCount > 1 ? `汇总 ${data.nodeCount} 个节点` : '当前知识节点'}</div>
       </div>
     </div>

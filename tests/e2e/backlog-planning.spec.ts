@@ -6,6 +6,8 @@ const today = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 }).format(new Date());
+const todayDayOfWeek = new Date(`${today}T12:00:00+08:00`).getDay();
+const todayCapacityMinutes = todayDayOfWeek === 0 || todayDayOfWeek === 6 ? 360 : 240;
 
 function addIsoDays(date: string, amount: number): string {
   const value = new Date(`${date}T00:00:00Z`);
@@ -180,7 +182,8 @@ test.beforeEach(async ({ page }) => {
 
 test('week matrix shows de-duplicated workload and the filtered backlog count', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
-  await expect(page.locator('.wmv-load-label').filter({ hasText: '3项 · 90/240m' })).toHaveCount(1);
+  const todayHeader = page.locator(`.wmv-row--header [data-date="${today}"]`);
+  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(`3项 · 90/${todayCapacityMinutes}m`);
   await expect(page.getByRole('button', { name: '待排期箱，26 个任务' })).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) > 900) {
     const [workspaceBox, contentBox] = await Promise.all([

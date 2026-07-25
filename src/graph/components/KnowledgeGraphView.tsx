@@ -17,6 +17,7 @@ import {
   getQuantityUnit,
   getValidGraphNodeIds,
   isQuantityTask,
+  shouldAutoSyncEbb,
 } from '@/utils/blocks';
 import { computeNodeActivationStates } from '../activation';
 import styles from './GraphConsole.module.css';
@@ -39,11 +40,28 @@ type NodeRollupStats = {
   noteCount: number;
 };
 
+type NodeVisualState = 'inactive' | 'completed-no-review' | 'reviewing' | 'mastered';
+
+const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
+  inactive: '#64748b',
+  'completed-no-review': '#3b82f6',
+  reviewing: '#10b981',
+  mastered: '#eab308',
+};
+
+const NODE_STATE_LABEL: Record<NodeVisualState, string> = {
+  inactive: '未激活',
+  'completed-no-review': '已完成 · 无需复习',
+  reviewing: '复习中',
+  mastered: '已掌握',
+};
+
 type ViewNode = {
   id: string;
   name: string;
   color: string;
   status: string;
+  visualState: NodeVisualState;
   isActivated: boolean;
   depth: number;
   rootId: string;
@@ -112,6 +130,7 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [childrenByParent, nodes]);
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
   const { tasks, groups } = useTimelineStore(useShallow((state) => ({ tasks: state.tasks, groups: state.groups })));
+  const allProjectTasks = useMemo(() => getUniqueTasks(tasks, groups), [tasks, groups]);
   const bindingSession = useGraphBindingStore();
   const [bindingError, setBindingError] = useState('');
 
@@ -125,7 +144,9 @@ export const KnowledgeGraphView: React.FC = () => {
 
   // Filter States
   const [selectedRootFilter, setSelectedRootFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'overdue' | 'active' | 'completed'>('all');
+  const [statusFilter, setStatusFilter] = useState<
+    'all' | 'inactive' | 'overdue' | 'reviewing' | 'completed-no-review' | 'mastered'
+  >('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -244,33 +265,55 @@ export const KnowledgeGraphView: React.FC = () => {
     return map;
   }, [reviewTasks]);
 
-  const getNodeColorHex = useCallback((nodeId: string): string => {
-    const gray = '#64748b';
-    const green = '#10b981';
-    const gold = '#eab308';
-    const getColor = (id: string, path = new Set<string>()): string => {
-      if (path.has(id)) return gray;
-      // 激活状态决定灰/非灰；EBB 轮次只决定已激活节点是绿色还是金色。
-      // 父节点的激活状态由 activationStates 按“所有子节点激活”计算，
-      // 因此不会因为刚生成了 0/7 的 EBB 轮次而错误回到灰色。
-      if (!(activationStates.get(id)?.isActivated ?? false)) return gray;
-
-      const descendantIds = getDescendants(id);
-      const scopedIds = [id, ...descendantIds];
-      const activatedLeafIds = scopedIds.filter((scopedId) => {
-        const hasChildren = childrenByParent.has(scopedId);
-        return !hasChildren && (activationStates.get(scopedId)?.isActivated ?? false);
+  const completedBindingsByNode = useMemo(() => {
+    const map = new Map<string, { hasAutoReview: boolean; hasNoAutoReview: boolean }>();
+    allProjectTasks.forEach((task) => {
+      const blocks = Array.isArray(task.blocks) ? task.blocks : [];
+      blocks.forEach((block) => {
+        if (block.type !== 'smart-task' || block.header.isArchived || !block.header.isCompleted) return;
+        getValidGraphNodeIds(block.header).forEach((nodeId) => {
+          const current = map.get(nodeId) ?? { hasAutoReview: false, hasNoAutoReview: false };
+          if (shouldAutoSyncEbb(block.header)) current.hasAutoReview = true;
+          else current.hasNoAutoReview = true;
+          map.set(nodeId, current);
+        });
       });
-      const allActivatedLeavesAreGold = activatedLeafIds.length > 0 && activatedLeafIds.every((leafId) => {
-        const rounds = reviewsByNode.get(leafId) ?? [];
-        return rounds.length > 0 && rounds.every((task) => task.isCompleted);
-      });
-      if (allActivatedLeavesAreGold) return gold;
-      return green;
-    };
+    });
+    return map;
+  }, [allProjectTasks]);
 
-    return getColor(nodeId);
-  }, [activationStates, childrenByParent, getDescendants, reviewsByNode]);
+  const getLeafVisualState = useCallback((nodeId: string): NodeVisualState => {
+    if (!(activationStates.get(nodeId)?.isActivated ?? false)) return 'inactive';
+    const rounds = reviewsByNode.get(nodeId) ?? [];
+    if (rounds.length > 0) {
+      return rounds.every((task) => task.isCompleted) ? 'mastered' : 'reviewing';
+    }
+
+    // An explicitly enabled completed binding means a review plan is expected.
+    // Keep it green during generation/migration gaps instead of falsely claiming
+    // that the user opted out of review. Manual activation and explicit opt-out
+    // both intentionally resolve to blue when there is no review plan.
+    return completedBindingsByNode.get(nodeId)?.hasAutoReview
+      ? 'reviewing'
+      : 'completed-no-review';
+  }, [activationStates, completedBindingsByNode, reviewsByNode]);
+
+  const getNodeVisualState = useCallback((nodeId: string): NodeVisualState => {
+    if (!(activationStates.get(nodeId)?.isActivated ?? false)) return 'inactive';
+
+    const scopedLeafIds = [nodeId, ...getDescendants(nodeId)].filter(
+      (scopedId) => !childrenByParent.has(scopedId),
+    );
+    const leafStates = scopedLeafIds.map(getLeafVisualState);
+    if (leafStates.length > 0 && leafStates.every((state) => state === 'mastered')) return 'mastered';
+    if (leafStates.some((state) => state === 'reviewing')) return 'reviewing';
+    return 'completed-no-review';
+  }, [activationStates, childrenByParent, getDescendants, getLeafVisualState]);
+
+  const getNodeColorHex = useCallback(
+    (nodeId: string): string => NODE_STATE_COLOR[getNodeVisualState(nodeId)],
+    [getNodeVisualState],
+  );
 
   const islandsData = useMemo(() => {
     const today = todayStr();
@@ -411,6 +454,7 @@ export const KnowledgeGraphView: React.FC = () => {
             parentId: n.id === rootId ? null : n.parentId,
             color: getNodeColorHex(n.id),
             status: activationStates.get(n.id)?.isActivated ? 'activated' : 'unactivated',
+            visualState: getNodeVisualState(n.id),
             isActivated: activationStates.get(n.id)?.isActivated ?? false,
             isLeaf,
             activeCount: isLeaf ? 0 : activationStates.get(n.id)?.activatedLeafCount ?? 0,
@@ -460,7 +504,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     return { islands, allFlatNodes };
-  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, dimensions.width, dimensions.height, allNodes, activationStates]);
+  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, getNodeVisualState, dimensions.width, dimensions.height, allNodes, activationStates]);
 
   const arcGenerator = useMemo(() => {
     return arc<HierarchyRectangularNode<ViewNode>>()
@@ -483,9 +527,11 @@ export const KnowledgeGraphView: React.FC = () => {
       if (node.isVirtual) return;
       let isMatch = false;
       const matchStatus = statusFilter === 'all' 
-        || (statusFilter === 'overdue' && node.isActivated && (node.overdueCount > 0 || node.color === '#ef4444'))
-        || (statusFilter === 'active' && node.isActivated && ((node.pendingCount > 0 && node.color !== '#ef4444') || node.color === '#10b981'))
-        || (statusFilter === 'completed' && node.isActivated && node.color === '#eab308');
+        || (statusFilter === 'inactive' && node.visualState === 'inactive')
+        || (statusFilter === 'overdue' && node.isActivated && node.overdueCount > 0)
+        || (statusFilter === 'reviewing' && node.visualState === 'reviewing' && node.overdueCount === 0)
+        || (statusFilter === 'completed-no-review' && node.visualState === 'completed-no-review')
+        || (statusFilter === 'mastered' && node.visualState === 'mastered');
 
       const matchQuery = !query || node.name.toLowerCase().includes(query);
 
@@ -549,6 +595,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const selectedActivationState = selectedNodeId
     ? activationStates.get(selectedNodeId) ?? null
     : null;
+  const selectedVisualState = selectedNodeId ? getNodeVisualState(selectedNodeId) : 'inactive';
   
   // Auto-focus rotation logic
   useEffect(() => {
@@ -591,10 +638,6 @@ export const KnowledgeGraphView: React.FC = () => {
     }
   }, [selectedNodeId, islandsData]);
   
-  const allProjectTasks = useMemo(() => {
-    return getUniqueTasks(tasks, groups);
-  }, [tasks, groups]);
-
   const selectedScopeIds = useMemo(() => {
     if (!selectedNodeId) return new Set<string>();
     const ids = detailScope === 'subtree'
@@ -659,30 +702,62 @@ export const KnowledgeGraphView: React.FC = () => {
     const reviewOverdue = pendingReviews.filter(task => diffDays(todayStr(), task.dueDate) > 0).length;
     const dueNow = pendingReviews.filter(task => diffDays(todayStr(), task.dueDate) >= 0).length;
     const nextReviewDate = pendingReviews[0]?.dueDate;
+    const completedTaskBlocks = relatedTaskBlocks.filter(({ block }) => block.header.isCompleted);
+    const completedAutoReviewCount = completedTaskBlocks.filter(
+      ({ block }) => shouldAutoSyncEbb(block.header),
+    ).length;
+    const completedNoReviewCount = completedTaskBlocks.length - completedAutoReviewCount;
     let masteryState: NodeMasteryState;
     let masteryLabel: string;
     let masteryReason: string;
 
-    if (dueNow > 0) {
-      masteryState = 'needs-review';
-      masteryLabel = '待巩固';
-      masteryReason = reviewOverdue > 0
-        ? `有 ${reviewOverdue} 个复习轮次已经逾期，需要优先处理。`
-        : '存在今天到期的复习轮次，完成后会继续推进掌握状态。';
+    if (pendingReviews.length > 0) {
+      if (dueNow > 0) {
+        masteryState = 'needs-review';
+        masteryLabel = '待巩固';
+        masteryReason = reviewOverdue > 0
+          ? `有 ${reviewOverdue} 个复习轮次已经逾期，需要优先处理。`
+          : '存在今天到期的复习轮次，完成后会继续推进掌握状态。';
+      } else {
+        masteryState = 'learning';
+        masteryLabel = '复习中';
+        masteryReason = `复习计划正在进行，下次复习时间为 ${nextReviewDate ?? '待安排'}。`;
+      }
     } else if (taskProgressPercent === 0) {
-      masteryState = 'not-started';
-      masteryLabel = '未开始';
-      masteryReason = taskTotal > 0 ? '尚未完成任何关联项目任务。' : '当前统计范围还没有关联项目任务。';
+      if (selectedActivationState?.isActivated && taskTotal === 0 && reviewTotal === 0) {
+        masteryState = 'completed-no-review';
+        masteryLabel = '已激活 · 无需复习';
+        masteryReason = '节点已手动激活，当前没有关联任务或复习计划。';
+      } else {
+        masteryState = 'not-started';
+        masteryLabel = '未开始';
+        masteryReason = taskTotal > 0 ? '尚未完成任何关联项目任务。' : '当前统计范围还没有关联项目任务。';
+      }
     } else if (taskTotal > 0 && taskProgressPercent === 100 && reviewTotal > 0 && reviewCompleted === reviewTotal) {
-      masteryState = 'mastered';
-      masteryLabel = '已掌握';
-      masteryReason = '关联任务和当前计划中的复习轮次均已完成。';
+      if (completedNoReviewCount > 0) {
+        masteryState = 'completed-no-review';
+        masteryLabel = '已完成（含无需复习）';
+        masteryReason = '关联任务均已完成；已有复习轮次全部完成，部分任务未开启自动复习。';
+      } else {
+        masteryState = 'mastered';
+        masteryLabel = '已掌握';
+        masteryReason = '关联任务和当前计划中的复习轮次均已完成。';
+      }
+    } else if (
+      taskTotal > 0
+      && taskProgressPercent === 100
+      && reviewTotal === 0
+      && completedAutoReviewCount === 0
+    ) {
+      masteryState = 'completed-no-review';
+      masteryLabel = '已完成 · 无需复习';
+      masteryReason = '关联任务已经完成，且未开启自动生成复习任务；节点已激活。';
     } else {
       masteryState = 'learning';
       masteryLabel = '学习中';
-      masteryReason = reviewTotal === 0
-        ? '已经完成部分学习任务，但还没有形成复习轮次。'
-        : '已有学习进展，仍有任务或后续复习轮次需要完成。';
+      masteryReason = reviewTotal === 0 && completedAutoReviewCount > 0
+        ? '关联任务已开启自动复习，复习计划正在准备中。'
+        : '已有学习进展，仍有任务需要完成。';
     }
 
     return {
@@ -699,7 +774,7 @@ export const KnowledgeGraphView: React.FC = () => {
       reviewOverdue,
       nextReviewDate,
     };
-  }, [relatedTaskBlocks, selectedReviewTasks, selectedScopeIds]);
+  }, [relatedTaskBlocks, selectedReviewTasks, selectedScopeIds, selectedActivationState]);
 
   useEffect(() => {
     if (selectedNode) {
@@ -854,20 +929,30 @@ export const KnowledgeGraphView: React.FC = () => {
             <div className="tl-dock-divider mx-0.5" />
 
             <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-100/50 rounded-full shadow-sm">
+              <button
+                onClick={() => setStatusFilter(prev => prev === 'inactive' ? 'all' : 'inactive')}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'inactive' ? 'bg-slate-500 scale-110 shadow-[0_0_8px_rgba(100,116,139,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-slate-500 hover:scale-110'}`}
+                title="查看未激活"
+              />
               <button 
                 onClick={() => setStatusFilter(prev => prev === 'overdue' ? 'all' : 'overdue')}
                 className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'overdue' ? 'bg-rose-500 scale-110 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-rose-400 hover:scale-110'}`}
                 title="查看严重逾期"
               />
-              <button 
-                onClick={() => setStatusFilter(prev => prev === 'active' ? 'all' : 'active')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'active' ? 'bg-emerald-500 scale-110 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-emerald-400 hover:scale-110'}`}
-                title="查看进行中"
+              <button
+                onClick={() => setStatusFilter(prev => prev === 'completed-no-review' ? 'all' : 'completed-no-review')}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'completed-no-review' ? 'bg-blue-500 scale-110 shadow-[0_0_8px_rgba(59,130,246,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-blue-500 hover:scale-110'}`}
+                title="查看已完成且无需复习"
               />
               <button 
-                onClick={() => setStatusFilter(prev => prev === 'completed' ? 'all' : 'completed')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'completed' ? 'bg-amber-500 scale-110 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-amber-400 hover:scale-110'}`}
-                title="查看已圆满"
+                onClick={() => setStatusFilter(prev => prev === 'reviewing' ? 'all' : 'reviewing')}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'reviewing' ? 'bg-emerald-500 scale-110 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-emerald-400 hover:scale-110'}`}
+                title="查看复习中"
+              />
+              <button 
+                onClick={() => setStatusFilter(prev => prev === 'mastered' ? 'all' : 'mastered')}
+                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'mastered' ? 'bg-amber-500 scale-110 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-amber-400 hover:scale-110'}`}
+                title="查看已掌握"
               />
             </div>
             <div className="tl-dock-divider mx-0.5" />
@@ -1030,7 +1115,7 @@ export const KnowledgeGraphView: React.FC = () => {
                       }}
                       className={`cursor-pointer transition-opacity duration-300 ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
                     >
-                      <title>{bindingSession.active ? `${node.data.name}${node.data.isLeaf ? (isBindingSelected ? '（已选择）' : '（点击选择）') : '（点击浏览）'}` : `${node.data.name} · 轮次 ${node.data.completedCount}/${node.data.totalReviewCount}${hasOverdueRounds ? ` · ${node.data.overdueCount} 个逾期` : ''}`}</title>
+                      <title>{bindingSession.active ? `${node.data.name}${node.data.isLeaf ? (isBindingSelected ? '（已选择）' : '（点击选择）') : '（点击浏览）'}` : `${node.data.name} · ${NODE_STATE_LABEL[node.data.visualState]} · 轮次 ${node.data.completedCount}/${node.data.totalReviewCount}${hasOverdueRounds ? ` · ${node.data.overdueCount} 个逾期` : ''}`}</title>
                       <path
                         d={arcGenerator(node) || ''}
                         fill={fillColor}
@@ -1125,9 +1210,17 @@ export const KnowledgeGraphView: React.FC = () => {
                     <span className="font-medium text-slate-600">
                       {selectedActivationState.isLeaf ? '图谱激活状态' : '子节点激活进度'}
                     </span>
-                    <span className={selectedActivationState.isActivated ? 'font-semibold text-blue-600' : 'font-semibold text-slate-500'}>
+                    <span className={
+                      !selectedActivationState.isActivated
+                        ? 'font-semibold text-slate-500'
+                        : selectedVisualState === 'mastered'
+                          ? 'font-semibold text-amber-600'
+                          : selectedVisualState === 'reviewing'
+                            ? 'font-semibold text-emerald-600'
+                            : 'font-semibold text-blue-600'
+                    }>
                       {selectedActivationState.isLeaf
-                        ? selectedActivationState.isActivated ? '已激活' : '未激活'
+                        ? NODE_STATE_LABEL[selectedVisualState]
                         : `${selectedActivationState.activatedLeafCount}/${selectedActivationState.totalLeafCount}`}
                     </span>
                   </div>
