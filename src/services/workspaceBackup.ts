@@ -2,16 +2,22 @@ import type { TimelineData } from '@/types';
 import type { EbbData } from '@/ebb/types';
 import type { GraphData } from '@/graph/types';
 import type { DaySchedule } from '@/components/dailySchedule/types';
+import type { DailyRetrospective } from '@/components/dailySchedule/retrospectiveTypes';
 import { persistTimelineData, useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
 import { useGraphStore } from '@/graph/store';
-import { persistDailySchedules, useDailyScheduleStore } from '@/components/dailySchedule/store';
+import {
+  normalizeDailyRetrospectives,
+  persistDailyRetrospectives,
+  persistDailySchedules,
+  useDailyScheduleStore,
+} from '@/components/dailySchedule/store';
 import { parseSourceId } from '@/components/dailySchedule/conversion';
 import { getReviewTopicKey } from '@/ebb/scheduler';
 import { createScopedStorage } from '@/utils/persistence';
 import { isContinuousTask } from '@/domain/taskRules';
 
-export const WORKSPACE_SCHEMA_VERSION = 1;
+export const WORKSPACE_SCHEMA_VERSION = 2;
 const snapshotStorage = createScopedStorage('workspace_snapshots');
 const snapshotChunkStorage = createScopedStorage('workspace_snapshot_chunks');
 
@@ -24,7 +30,10 @@ export interface WorkspaceBackup {
   timeline: TimelineData;
   ebb: EbbData;
   graph: GraphData;
-  daily: { schedules: Record<string, DaySchedule> };
+  daily: {
+    schedules: Record<string, DaySchedule>;
+    retrospectives: Record<string, DailyRetrospective>;
+  };
   settings: { timelineViewPreferences?: unknown };
 }
 
@@ -34,6 +43,8 @@ export interface WorkspaceBackupSummary {
   projectDocuments: number;
   reviewTasks: number;
   dailyDays: number;
+  retrospectiveDays: number;
+  retrospectiveEntries: number;
   graphNodes: number;
   issues: string[];
 }
@@ -116,7 +127,7 @@ export function createWorkspaceBackup(): WorkspaceBackup {
       ebbSettings: ebb.ebbSettings,
     },
     graph: { nodes: graph.nodes },
-    daily: { schedules: daily.schedules },
+    daily: { schedules: daily.schedules, retrospectives: daily.retrospectives },
     settings: {
       timelineViewPreferences: (() => {
         try { return JSON.parse(localStorage.getItem('smart-timeline-view-preferences-v2') ?? 'null'); }
@@ -159,7 +170,7 @@ export function validateWorkspaceBackup(value: unknown): {
   if (!isRecord(value) || value.kind !== 'smart-line-workspace') {
     return { errors: ['这不是 Smart Line 完整工作区备份文件。'] };
   }
-  if (value.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
+  if (value.schemaVersion !== 1 && value.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
     errors.push(`不支持的备份版本：${String(value.schemaVersion)}。`);
   }
   const timeline = value.timeline;
@@ -178,7 +189,19 @@ export function validateWorkspaceBackup(value: unknown): {
   if (!isRecord(daily) || !isRecord(daily.schedules)) errors.push('每日安排数据格式无效。');
   if (errors.length > 0) return { errors };
 
-  const backup = value as unknown as WorkspaceBackup;
+  const rawBackup = value as unknown as WorkspaceBackup;
+  const backup: WorkspaceBackup = {
+    ...rawBackup,
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    daily: {
+      schedules: rawBackup.daily.schedules,
+      retrospectives: normalizeDailyRetrospectives(
+        isRecord(rawBackup.daily.retrospectives)
+          ? rawBackup.daily.retrospectives as Record<string, DailyRetrospective>
+          : {},
+      ),
+    },
+  };
   if (!backup.timeline.tasks.every((task) => isRecord(task)
     && typeof task.id === 'string' && typeof task.name === 'string'
     && isDate(task.start) && isDate(task.end) && Array.isArray(task.blocks))) {
@@ -228,11 +251,39 @@ export function validateWorkspaceBackup(value: unknown): {
       || !Array.isArray(schedule.items) || !Array.isArray(schedule.blocks)
       || !schedule.items.every((item) => isRecord(item)
         && typeof item.id === 'string' && typeof item.sourceId === 'string'
-        && typeof item.name === 'string' && typeof item.order === 'number')
+        && typeof item.name === 'string' && typeof item.order === 'number'
+        && (item.completedDate === undefined
+          || (isDate(item.completedDate) && (item.source !== 'free' || item.completedDate === date))))
       || !schedule.blocks.every((block) => isRecord(block)
         && typeof block.id === 'string' && typeof block.sourceId === 'string'
-        && typeof block.name === 'string' && typeof block.startTime === 'string' && typeof block.endTime === 'string')) {
+        && typeof block.name === 'string' && typeof block.startTime === 'string' && typeof block.endTime === 'string'
+        && (block.completedDate === undefined
+          || (isDate(block.completedDate) && (block.source !== 'free' || block.completedDate === date))))) {
       errors.push(`每日安排 ${date} 包含无效数据。`);
+    }
+  }
+  for (const [date, retrospective] of Object.entries(backup.daily.retrospectives)) {
+    if (!isDate(date) || !isRecord(retrospective) || retrospective.date !== date
+      || (retrospective.status !== 'draft' && retrospective.status !== 'completed')
+      || !Array.isArray(retrospective.entries)
+      || !isRecord(retrospective.overall)
+      || !retrospective.entries.every((entry) => isRecord(entry)
+        && typeof entry.id === 'string'
+        && typeof entry.sourceId === 'string'
+        && typeof entry.title === 'string'
+        && entry.completedDate === date
+        && Array.isArray(entry.nodeIds)
+        && entry.nodeIds.every((nodeId) => typeof nodeId === 'string')
+        && Array.isArray(entry.nodeSnapshots)
+        && entry.nodeSnapshots.every((node) => isRecord(node)
+          && typeof node.id === 'string' && typeof node.name === 'string')
+        && Array.isArray(entry.categories)
+        && entry.categories.every((category) =>
+          category === 'insight' || category === 'problem' || category === 'next-action')
+        && typeof entry.completionStatusChanged === 'boolean'
+        && isRecord(entry.reflection)
+        && typeof entry.reflection.content === 'string')) {
+      errors.push(`每日复盘 ${date} 包含无效数据。`);
     }
   }
   if (errors.length > 0) return { errors };
@@ -439,6 +490,9 @@ export function validateWorkspaceBackup(value: unknown): {
       projectDocuments: backup.timeline.tasks.filter((task) => task.blocks.length > 0).length,
       reviewTasks: backup.ebb.reviewTasks.length,
       dailyDays: Object.keys(backup.daily.schedules).length,
+      retrospectiveDays: Object.keys(backup.daily.retrospectives).length,
+      retrospectiveEntries: Object.values(backup.daily.retrospectives)
+        .reduce((sum, retrospective) => sum + retrospective.entries.length, 0),
       graphNodes: backup.graph.nodes.length,
       issues: [...new Set(issues)].slice(0, 50),
     },
@@ -596,6 +650,7 @@ export async function restoreWorkspaceBackup(backup: WorkspaceBackup): Promise<v
     useEbbStore.getState().replaceEbbData(safe.ebb);
     useGraphStore.getState().replaceGraphData(safe.graph);
     useDailyScheduleStore.getState().replaceSchedules(safe.daily.schedules);
+    useDailyScheduleStore.getState().replaceRetrospectives(safe.daily.retrospectives);
     await Promise.all([
       persistTimelineData({
         tasks: useTimelineStore.getState().tasks,
@@ -604,6 +659,7 @@ export async function restoreWorkspaceBackup(backup: WorkspaceBackup): Promise<v
         milestones: useTimelineStore.getState().milestones,
       }),
       persistDailySchedules(useDailyScheduleStore.getState().schedules),
+      persistDailyRetrospectives(useDailyScheduleStore.getState().retrospectives),
     ]);
   };
   try {
@@ -645,4 +701,6 @@ useEbbStore.subscribe((state, previous) => {
   if (state.reviewTasks !== previous.reviewTasks || state.inboxItems !== previous.inboxItems || state.outlineNodes !== previous.outlineNodes || state.ebbSettings !== previous.ebbSettings) markWorkspaceChanged();
 });
 useGraphStore.subscribe((state, previous) => { if (state.nodes !== previous.nodes) markWorkspaceChanged(); });
-useDailyScheduleStore.subscribe((state, previous) => { if (state.schedules !== previous.schedules) markWorkspaceChanged(); });
+useDailyScheduleStore.subscribe((state, previous) => {
+  if (state.schedules !== previous.schedules || state.retrospectives !== previous.retrospectives) markWorkspaceChanged();
+});

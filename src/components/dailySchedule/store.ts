@@ -11,9 +11,12 @@ import type { DaySchedule, ScheduledItem, TimeSlot, TimeBlock } from './types';
 import { createCoalescedPersistence, createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 import { registerUndoExecutor } from '@/services/operationHistory';
 import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
+import type { DailyRetrospective } from './retrospectiveTypes';
 
 const STORAGE_KEY = 'daily-schedule-data';
 const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
+const RETROSPECTIVE_STORAGE_KEY = 'daily-retrospective-data';
+const RETROSPECTIVE_STORAGE_MIRROR_KEY = `${RETROSPECTIVE_STORAGE_KEY}:mirror`;
 const SYNC_SETTINGS_KEY = 'daily-schedule-liveblocks';
 const dailyScheduleStorage = createScopedStorage('daily_schedule_data');
 
@@ -56,6 +59,10 @@ function getInitialSchedules(): Record<string, DaySchedule> {
   return {};
 }
 
+function getInitialRetrospectives(): Record<string, DailyRetrospective> {
+  return {};
+}
+
 function isValidClockTime(value: unknown): value is string {
   return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
@@ -69,21 +76,92 @@ export function normalizeDailySchedules(
 ): Record<string, DaySchedule> {
   const normalized: Record<string, DaySchedule> = {};
   for (const [date, day] of Object.entries(input ?? {})) {
-    if (!day || typeof day !== 'object') continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !day || typeof day !== 'object') continue;
     const usedIds = new Set<string>();
-    const items = (Array.isArray(day.items) ? day.items : []).filter((item) => {
-      if (!item || typeof item.id !== 'string' || usedIds.has(item.id)) return false;
+    const items = (Array.isArray(day.items) ? day.items : []).flatMap((item) => {
+      if (!item || typeof item.id !== 'string' || usedIds.has(item.id)) return [];
       usedIds.add(item.id);
-      return true;
+      return [{
+        ...item,
+        completedDate: item.source === 'free' && item.completedDate !== date
+          ? undefined
+          : item.completedDate,
+      }];
     });
-    const blocks = (Array.isArray(day.blocks) ? day.blocks : []).filter((block) => {
-      if (!block || typeof block.id !== 'string' || usedIds.has(block.id)) return false;
-      if (!isValidClockTime(block.startTime) || !isValidClockTime(block.endTime)) return false;
-      if (block.startTime >= block.endTime) return false;
+    const blocks = (Array.isArray(day.blocks) ? day.blocks : []).flatMap((block) => {
+      if (!block || typeof block.id !== 'string' || usedIds.has(block.id)) return [];
+      if (!isValidClockTime(block.startTime) || !isValidClockTime(block.endTime)) return [];
+      if (block.startTime >= block.endTime) return [];
       usedIds.add(block.id);
-      return true;
+      return [{
+        ...block,
+        completedDate: block.source === 'free' && block.completedDate !== date
+          ? undefined
+          : block.completedDate,
+      }];
     });
     normalized[date] = { date, items, blocks };
+  }
+  return normalized;
+}
+
+export function normalizeDailyRetrospectives(
+  input: Record<string, DailyRetrospective> | null | undefined,
+): Record<string, DailyRetrospective> {
+  const normalized: Record<string, DailyRetrospective> = {};
+  for (const [date, value] of Object.entries(input ?? {})) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)
+      || !value || typeof value !== 'object' || value.date !== date || !Array.isArray(value.entries)) continue;
+    const fallbackTimestamp = `${date}T00:00:00.000Z`;
+    const normalizedUpdatedAt = typeof value.updatedAt === 'string'
+      ? value.updatedAt
+      : typeof value.createdAt === 'string'
+        ? value.createdAt
+        : fallbackTimestamp;
+    const normalizedCreatedAt = typeof value.createdAt === 'string'
+      ? value.createdAt
+      : normalizedUpdatedAt;
+    const entryIds = new Set<string>();
+    const entries = value.entries.flatMap((entry) => {
+      if (!entry || typeof entry.id !== 'string' || entryIds.has(entry.id)) return [];
+      if (typeof entry.sourceId !== 'string' || typeof entry.title !== 'string' || entry.completedDate !== date) return [];
+      entryIds.add(entry.id);
+      const nodeIds = Array.isArray(entry.nodeIds)
+        ? [...new Set(entry.nodeIds.filter((id): id is string => typeof id === 'string' && id.length > 0))]
+        : [];
+      const snapshotsById = new Map(
+        (Array.isArray(entry.nodeSnapshots) ? entry.nodeSnapshots : [])
+          .filter((node) => node && typeof node.id === 'string' && typeof node.name === 'string')
+          .map((node) => [node.id, node]),
+      );
+      return [{
+        ...entry,
+        nodeIds,
+        nodeSnapshots: nodeIds.map((id) => snapshotsById.get(id) ?? { id, name: id }),
+        categories: Array.isArray(entry.categories)
+          ? [...new Set(entry.categories.filter((category) =>
+            category === 'insight' || category === 'problem' || category === 'next-action',
+          ))]
+          : [],
+        completionStatusChanged: entry.completionStatusChanged === true,
+        reflection: {
+          content: typeof entry.reflection?.content === 'string' ? entry.reflection.content : '',
+        },
+        updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : normalizedUpdatedAt,
+      }];
+    });
+    normalized[date] = {
+      ...value,
+      id: typeof value.id === 'string' ? value.id : `retrospective:${date}`,
+      date,
+      status: value.status === 'completed' ? 'completed' : 'draft',
+      entries,
+      overall: {
+        summary: typeof value.overall?.summary === 'string' ? value.overall.summary : '',
+      },
+      createdAt: normalizedCreatedAt,
+      updatedAt: normalizedUpdatedAt,
+    };
   }
   return normalized;
 }
@@ -103,12 +181,45 @@ const dailyPersistence = createCoalescedPersistence<Record<string, DaySchedule>>
   writeAsync: saveSchedulesAsync,
 });
 
+async function saveRetrospectivesAsync(retrospectives: Record<string, DailyRetrospective>) {
+  await dailyScheduleStorage.setItem(RETROSPECTIVE_STORAGE_KEY, retrospectives);
+}
+
+const retrospectivePersistence = createCoalescedPersistence<Record<string, DailyRetrospective>>({
+  mirrorKey: RETROSPECTIVE_STORAGE_MIRROR_KEY,
+  label: 'daily-retrospective',
+  writeAsync: saveRetrospectivesAsync,
+});
+
 export async function persistDailySchedules(schedules: Record<string, DaySchedule>): Promise<void> {
   await dailyPersistence.writeNow(schedules);
 }
 
+export async function persistDailyRetrospectives(
+  retrospectives: Record<string, DailyRetrospective>,
+): Promise<void> {
+  await retrospectivePersistence.writeNow(retrospectives);
+}
+
 function saveSchedules(schedules: Record<string, DaySchedule>) {
   dailyPersistence.schedule(schedules);
+}
+
+function saveRetrospectives(retrospectives: Record<string, DailyRetrospective>) {
+  retrospectivePersistence.schedule(retrospectives);
+}
+
+async function loadPersistedRetrospectives(): Promise<Record<string, DailyRetrospective>> {
+  try {
+    let raw = readJsonStorage<unknown>(RETROSPECTIVE_STORAGE_MIRROR_KEY)
+      ?? await dailyScheduleStorage.getItem<unknown>(RETROSPECTIVE_STORAGE_KEY);
+    if (!raw) return {};
+    if (typeof raw === 'string') raw = JSON.parse(raw);
+    return normalizeDailyRetrospectives(raw as Record<string, DailyRetrospective>);
+  } catch (error) {
+    console.warn('[daily-retrospective] 复盘缓存无效，已忽略且继续加载每日安排：', error);
+    return {};
+  }
 }
 
 // ── Store 接口 ──────────────────────────────────────────────
@@ -138,6 +249,8 @@ interface DailyScheduleStore {
 
   /** 所有日期的安排数据 */
   schedules: Record<string, DaySchedule>;
+  /** 按日期保存的每日复盘。正文只保存一份，知识节点通过 nodeIds 关联查询。 */
+  retrospectives: Record<string, DailyRetrospective>;
 
   /** 同步状态 */
   syncEnabled: boolean;
@@ -188,6 +301,9 @@ interface DailyScheduleStore {
   /** 同步来源任务的展示信息，不改变其已安排的时间段。 */
   updateBySourceId: (sourceId: string, patch: { name?: string; duration?: number }) => void;
   replaceSchedules: (schedules: Record<string, DaySchedule>) => void;
+  upsertRetrospective: (retrospective: DailyRetrospective) => void;
+  replaceRetrospectives: (retrospectives: Record<string, DailyRetrospective>) => void;
+  removeRetrospectiveNodeReferences: (nodeIds: string[]) => void;
 }
 
 let _idCounter = 0;
@@ -201,18 +317,21 @@ function genScheduleId(): string {
 export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>()(
   liveblocks(
     (setState, get) => {
-      const set = createWorkspaceTrackedSet(setState, get, ['schedules']);
+      const set = createWorkspaceTrackedSet(setState, get, ['schedules', 'retrospectives']);
       const initialSyncSettings = loadSyncSettings();
 
       return {
         schedules: getInitialSchedules(),
+        retrospectives: getInitialRetrospectives(),
         isHydrated: false,
         hydrateStore: () => {
           if (get().isHydrated) return Promise.resolve();
           if (dailyHydrationPromise) return dailyHydrationPromise;
 
           dailyHydrationPromise = (async () => {
+          let retrospectives: Record<string, DailyRetrospective> = {};
           try {
+            retrospectives = await loadPersistedRetrospectives();
             const mirror = readJsonStorage<unknown>(STORAGE_MIRROR_KEY);
             let parsed = mirror ?? await dailyScheduleStorage.getItem<unknown>(STORAGE_KEY);
             if (!parsed) {
@@ -239,7 +358,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
                 };
               }
               const normalized = normalizeDailySchedules(result);
-              set({ schedules: normalized, isHydrated: true });
+              set({ schedules: normalized, retrospectives, isHydrated: true });
               saveSchedules(normalized);
               if (pendingSourceIdsToRemove.size > 0) {
                 const pendingIds = [...pendingSourceIdsToRemove];
@@ -251,7 +370,7 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
           } catch (e) {
             console.warn('[daily-schedule] IndexedDB数据加载失败：', e);
           }
-            set({ isHydrated: true });
+            set({ retrospectives, isHydrated: true });
             if (pendingSourceIdsToRemove.size > 0) {
               const pendingIds = [...pendingSourceIdsToRemove];
               pendingSourceIdsToRemove.clear();
@@ -544,12 +663,57 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
           saveSchedules(normalized);
           set({ schedules: normalized });
         },
+
+        upsertRetrospective: (retrospective) => {
+          set((state) => {
+            const normalized = normalizeDailyRetrospectives({
+              ...state.retrospectives,
+              [retrospective.date]: retrospective,
+            });
+            saveRetrospectives(normalized);
+            return { retrospectives: normalized };
+          });
+        },
+
+        replaceRetrospectives: (retrospectives) => {
+          const normalized = normalizeDailyRetrospectives(retrospectives);
+          saveRetrospectives(normalized);
+          set({ retrospectives: normalized });
+        },
+
+        removeRetrospectiveNodeReferences: (nodeIds) => {
+          const removed = new Set(nodeIds);
+          if (removed.size === 0) return;
+          set((state) => {
+            let changed = false;
+            const retrospectives = Object.fromEntries(
+              Object.entries(state.retrospectives).map(([date, retrospective]) => {
+                const entries = retrospective.entries.map((entry) => {
+                  const currentNodeIds = entry.nodeIds ?? [];
+                  const nextNodeIds = currentNodeIds.filter((id) => !removed.has(id));
+                  if (nextNodeIds.length === currentNodeIds.length) return entry;
+                  changed = true;
+                  return {
+                    ...entry,
+                    nodeIds: nextNodeIds,
+                    nodeSnapshots: (entry.nodeSnapshots ?? []).filter((node) => !removed.has(node.id)),
+                  };
+                });
+                return [date, { ...retrospective, entries }];
+              }),
+            );
+            if (!changed) return state;
+            saveRetrospectives(retrospectives);
+            return { retrospectives };
+          });
+        },
       };
     },
     {
       client: liveblocksClient,
       storageMapping: {
         schedules: true,
+        retrospectives: true,
       },
     }
   )
@@ -579,15 +743,20 @@ registerUndoExecutor('daily-restore', (raw) => {
 // 远端 Liveblocks 推送同步落盘，避免刷新后回退到旧的本地排期。
 {
   let lastSchedules: unknown = null;
+  let lastRetrospectives: unknown = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   useDailyScheduleStore.subscribe((state) => {
-    if (state.schedules === lastSchedules) return;
+    const schedulesChanged = state.schedules !== lastSchedules;
+    const retrospectivesChanged = state.retrospectives !== lastRetrospectives;
+    if (!schedulesChanged && !retrospectivesChanged) return;
     lastSchedules = state.schedules;
+    lastRetrospectives = state.retrospectives;
 
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveSchedules(state.schedules);
+      saveRetrospectives(state.retrospectives);
     }, 500);
   });
 }

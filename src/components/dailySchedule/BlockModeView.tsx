@@ -144,7 +144,9 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
         : undefined;
       return {
         ...b,
-        completed: checkIsCompleted(b.source, b.sourceId, selectedDate),
+        completed: b.source === 'free'
+          ? b.completedDate === selectedDate
+          : checkIsCompleted(b.source, b.sourceId, selectedDate),
         detail: appearance?.name ?? b.detail,
         color: appearance?.theme.backgroundColor ?? b.color,
         categoryColor: appearance?.categoryColor ?? reviewCategoryColor ?? b.categoryColor,
@@ -367,9 +369,14 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
           );
           if ('error' in result) onReviewToggleError(result.error);
         }
+      } else if (block.source === 'free') {
+        updateTimeBlock(selectedDate, block.id, {
+          completed: block.completedDate !== selectedDate,
+          completedDate: block.completedDate === selectedDate ? undefined : selectedDate,
+        });
       }
     },
-    [blocks, onOpenQuantityProgress, onReviewToggleError, tlTasks],
+    [blocks, onOpenQuantityProgress, onReviewToggleError, selectedDate, tlTasks, updateTimeBlock],
   );
 
   const handleUndoCompletedPoolItem = useCallback((item: CompletedDailyPoolItem) => {

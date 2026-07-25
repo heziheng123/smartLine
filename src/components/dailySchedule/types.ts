@@ -32,6 +32,8 @@ export interface ScheduledItem {
   order: number;
   /** @deprecated 状态现在是实时计算派生的，不需要持久化 */
   completed?: boolean;
+  /** 生活安排的权威完成日期；项目和复习状态仍从各自源 Store 派生。 */
+  completedDate?: string;
   /** 标签颜色 */
   color?: string;
   /** 任务种类颜色（项目标签色 / 复习色），与所属项目颜色相互独立 */
@@ -66,6 +68,8 @@ export interface TimeBlock {
   endTime: string;
   /** @deprecated 状态现在是实时计算派生的，不需要持久化 */
   completed?: boolean;
+  /** 生活安排的权威完成日期。 */
+  completedDate?: string;
   /** 标签颜色 */
   color?: string;
   /** 任务种类颜色（项目标签色 / 复习色），与所属项目颜色相互独立 */

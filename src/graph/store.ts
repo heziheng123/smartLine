@@ -9,6 +9,7 @@ import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal
 
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 
 const GRAPH_STORAGE_KEY = 'line-graph-storage';
 const GRAPH_SYNC_SETTINGS_KEY = 'line-graph-liveblocks';
@@ -394,6 +395,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
     if (deletedNodeIds.length > 0) {
       useTimelineStore.getState().removeGraphNodeReferences(deletedNodeIds);
       useEbbStore.getState().removeGraphNodeReferences(deletedNodeIds);
+      useDailyScheduleStore.getState().removeRetrospectiveNodeReferences(deletedNodeIds);
     }
 
     if (state.nodes === lastNodes) return;

@@ -77,6 +77,7 @@ try {
     taskBacklogModule,
     ebbComplexity,
     operationHistoryModule,
+    dailyRetrospectiveModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -108,6 +109,7 @@ try {
     load('/src/domain/taskBacklog.ts'),
     load('/src/ebb/complexity.ts'),
     load('/src/services/operationHistory.ts'),
+    load('/src/domain/dailyRetrospective.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
@@ -208,7 +210,14 @@ try {
   });
   const baseSettings = ebbConstants.getDefaultEbbData().ebbSettings;
 
-  const resetStores = ({ nodes = [], tasks = [], groups = [], reviewTasks = [], schedules = {} } = {}) => {
+  const resetStores = ({
+    nodes = [],
+    tasks = [],
+    groups = [],
+    reviewTasks = [],
+    schedules = {},
+    retrospectives = {},
+  } = {}) => {
     useTimelineStore.setState({ tasks, groups, notes: [], milestones: [], isHydrated: true });
     useGraphStore.setState({ nodes, isHydrated: true });
     useEbbStore.setState({
@@ -219,7 +228,7 @@ try {
       undoStack: [],
       isHydrated: true,
     });
-    useDailyScheduleStore.setState({ schedules, isHydrated: true });
+    useDailyScheduleStore.setState({ schedules, retrospectives, isHydrated: true });
   };
 
   const smartBlock = (id, title, graphNodeIds, autoSyncEbb = true) => ({
@@ -840,6 +849,134 @@ try {
     assert.deepEqual(normalized['2026-07-18'].blocks.map((block) => block.id), ['ok']);
   });
 
+  check('每日复盘兼容旧数据并隔离无效生活安排完成日期', () => {
+    const schedules = dailyModule.normalizeDailySchedules({
+      '2026-07-18': {
+        date: '2026-07-18',
+        items: [{
+          id: 'free-old',
+          sourceId: 'free-old',
+          name: '旧生活安排',
+          source: 'free',
+          timeSlot: 'evening',
+          order: 0,
+          completedDate: '2026-07-17',
+        }],
+        blocks: [],
+      },
+    });
+    assert.equal(schedules['2026-07-18'].items[0].completedDate, undefined);
+
+    const retrospectives = dailyModule.normalizeDailyRetrospectives({
+      '2026-07-18': {
+        id: 'retrospective:2026-07-18',
+        date: '2026-07-18',
+        status: 'completed',
+        entries: [{
+          id: '2026-07-18:project-old',
+          sourceId: 'project-old',
+          sourceType: 'project',
+          title: '旧复盘',
+          completedDate: '2026-07-18',
+          nodeIds: ['node-a'],
+          nodeSnapshots: [],
+          reflection: { content: '旧内容' },
+          updatedAt: '2026-07-18T12:00:00.000Z',
+        }],
+        overall: { summary: '' },
+        createdAt: '2026-07-18T12:00:00.000Z',
+        updatedAt: '2026-07-18T12:00:00.000Z',
+      },
+    });
+    const entry = retrospectives['2026-07-18'].entries[0];
+    assert.deepEqual(entry.categories, []);
+    assert.equal(entry.completionStatusChanged, false);
+    assert.deepEqual(entry.nodeSnapshots, [{ id: 'node-a', name: 'node-a' }]);
+  });
+
+  check('每日复盘锁定历史名称和节点，并在来源不再完成时保留正文', () => {
+    const existing = {
+      id: 'retrospective:2026-07-18',
+      date: '2026-07-18',
+      status: 'completed',
+      entries: [{
+        id: '2026-07-18:project-old',
+        sourceId: 'project-old',
+        sourceType: 'project',
+        title: '完成时名称',
+        projectName: '完成时项目',
+        completedDate: '2026-07-18',
+        nodeIds: ['node-a'],
+        nodeSnapshots: [{ id: 'node-a', name: '原节点' }],
+        categories: ['insight'],
+        completionStatusChanged: false,
+        reflection: { content: '历史正文' },
+        updatedAt: '2026-07-18T12:00:00.000Z',
+      }],
+      overall: { summary: '历史汇总' },
+      createdAt: '2026-07-18T12:00:00.000Z',
+      updatedAt: '2026-07-18T12:00:00.000Z',
+    };
+    const rebound = dailyRetrospectiveModule.mergeRetrospectiveWithActivities(
+      '2026-07-18',
+      [{
+        id: '2026-07-18:project-old',
+        sourceId: 'project-old',
+        sourceType: 'project',
+        title: '后来改名',
+        projectName: '后来项目',
+        completedDate: '2026-07-18',
+        nodeIds: ['node-b'],
+        nodeSnapshots: [{ id: 'node-b', name: '新节点' }],
+      }],
+      existing,
+    );
+    assert.equal(rebound.entries[0].title, '完成时名称');
+    assert.equal(rebound.entries[0].projectName, '完成时项目');
+    assert.deepEqual(rebound.entries[0].nodeIds, ['node-a']);
+
+    const reverted = dailyRetrospectiveModule.mergeRetrospectiveWithActivities(
+      '2026-07-18',
+      [],
+      existing,
+    );
+    assert.equal(reverted.entries[0].completionStatusChanged, true);
+    assert.equal(reverted.entries[0].reflection.content, '历史正文');
+  });
+
+  check('彻底删除知识节点只解除复盘关联，不删除复盘正文', () => {
+    resetStores({
+      nodes: [node('node-a')],
+      retrospectives: {
+        '2026-07-18': {
+          id: 'retrospective:2026-07-18',
+          date: '2026-07-18',
+          status: 'completed',
+          entries: [{
+            id: '2026-07-18:project-old',
+            sourceId: 'project-old',
+            sourceType: 'project',
+            title: '历史任务',
+            completedDate: '2026-07-18',
+            nodeIds: ['node-a'],
+            nodeSnapshots: [{ id: 'node-a', name: 'node-a' }],
+            categories: [],
+            completionStatusChanged: false,
+            reflection: { content: '不可丢失的正文' },
+            updatedAt: '2026-07-18T12:00:00.000Z',
+          }],
+          overall: { summary: '' },
+          createdAt: '2026-07-18T12:00:00.000Z',
+          updatedAt: '2026-07-18T12:00:00.000Z',
+        },
+      },
+    });
+    useGraphStore.getState().deleteNode('node-a');
+    const entry = useDailyScheduleStore.getState().retrospectives['2026-07-18'].entries[0];
+    assert.deepEqual(entry.nodeIds, []);
+    assert.equal(entry.reflection.content, '不可丢失的正文');
+  });
+
   check('IndexedDB成功写入后会清除localStorage完整数据镜像', async () => {
     resetStores({ tasks: [project('p1', [smartBlock('b1', '镜像任务', [])])] });
     useTimelineStore.getState().updateBlockHeader('p1', 'b1', { title: '已保存' });
@@ -975,6 +1112,7 @@ try {
             blocks: [{ id: 'tb1', sourceId: 'project::missing::block', name: '异常', source: 'project', startTime: '25:00', endTime: '09:00' }],
           },
         },
+        retrospectives: {},
       },
       settings: {},
     };

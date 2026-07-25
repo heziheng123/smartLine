@@ -8,6 +8,7 @@ import {
   createLocalSnapshot,
   createWorkspaceBackup,
   validateWorkspaceBackup,
+  WORKSPACE_SCHEMA_VERSION,
   type WorkspaceBackup,
   type WorkspaceBackupSummary,
 } from './workspaceBackup';
@@ -50,7 +51,7 @@ const SETTINGS_KEY = 'smart-line-sync-architecture-v1';
 const EXPECTED_KEYS = [
   'tasks', 'groups', 'notes', 'milestones',
   'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
-  'schedules', 'nodes',
+  'schedules', 'retrospectives', 'nodes',
 ] as const;
 let queueListenerStarted = false;
 let queueFlushTimer: number | null = null;
@@ -150,7 +151,14 @@ function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): Wor
         ? root.ebbSettings as WorkspaceBackup['ebb']['ebbSettings']
         : base.ebb.ebbSettings,
     },
-    daily: { schedules: root.schedules && typeof root.schedules === 'object' ? root.schedules as WorkspaceBackup['daily']['schedules'] : {} },
+    daily: {
+      schedules: root.schedules && typeof root.schedules === 'object'
+        ? root.schedules as WorkspaceBackup['daily']['schedules']
+        : {},
+      retrospectives: root.retrospectives && typeof root.retrospectives === 'object'
+        ? root.retrospectives as WorkspaceBackup['daily']['retrospectives']
+        : {},
+    },
     graph: { nodes: Array.isArray(root.nodes) ? root.nodes as WorkspaceBackup['graph']['nodes'] : [] },
   };
 }
@@ -255,7 +263,7 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
       for (const [key, value] of Object.entries(pending.fields)) root.set(key, value as Json);
       root.set('metadata', {
         ...metadata,
-        schemaVersion: 1,
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
         updatedAt: pending.updatedAt,
         deviceId: pending.deviceId,
       } as Json);
@@ -278,6 +286,7 @@ function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> 
     outlineNodes: backup.ebb.outlineNodes as unknown as Json,
     ebbSettings: backup.ebb.ebbSettings as unknown as Json,
     schedules: backup.daily.schedules as unknown as Json,
+    retrospectives: backup.daily.retrospectives as unknown as Json,
     nodes: backup.graph.nodes as unknown as Json,
   };
 }
@@ -315,7 +324,7 @@ export async function migrateLegacyWorkspace(roomCode: string, identity: string)
       });
     }
     root.set('metadata', {
-      schemaVersion: 1,
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       sourceRoomCode: roomCode,
       migratedAt: new Date().toISOString(),
       migrationHash: source.hash,

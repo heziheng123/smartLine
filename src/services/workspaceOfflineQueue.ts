@@ -1,6 +1,10 @@
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import {
+  normalizeDailyRetrospectives,
+  normalizeDailySchedules,
+  useDailyScheduleStore,
+} from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
 import { reconcileTimelineTaskCopies } from '@/store/timelineData';
 import {
@@ -56,7 +60,14 @@ function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unkn
   }
 
   if (fields.schedules !== undefined) {
-    useDailyScheduleStore.setState({ schedules: fields.schedules } as never);
+    useDailyScheduleStore.setState({
+      schedules: normalizeDailySchedules(fields.schedules as never),
+    } as never);
+  }
+  if (fields.retrospectives !== undefined) {
+    useDailyScheduleStore.setState({
+      retrospectives: normalizeDailyRetrospectives(fields.retrospectives as never),
+    } as never);
   }
   if (fields.nodes !== undefined) {
     useGraphStore.setState({ nodes: fields.nodes } as never);
@@ -203,14 +214,24 @@ export function startWorkspaceQueueTracking(): () => void {
     useDailyScheduleStore.subscribe((state) => {
       const previous = daily;
       daily = state;
+      const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      if (state.schedules !== previous.schedules) {
+        changed.schedules = state.schedules;
+        base.schedules = previous.schedules;
+      }
+      if (state.retrospectives !== previous.retrospectives) {
+        changed.retrospectives = state.retrospectives;
+        base.retrospectives = previous.retrospectives;
+      }
       if (
         !isWorkspaceQueueSuppressed()
         && shouldQueue()
-        && state.schedules !== previous.schedules
+        && Object.keys(changed).length
       ) {
         queueWorkspaceFields(
-          { schedules: state.schedules },
-          { schedules: previous.schedules },
+          changed,
+          base,
           { preservePendingFields: true },
         );
       }

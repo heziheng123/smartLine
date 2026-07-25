@@ -25,6 +25,9 @@ import { useGraphBindingStore } from '../bindingStore';
 import NodeLearningSummary, { type NodeDetailScope, type NodeLearningSummaryData, type NodeMasteryState } from './NodeLearningSummary';
 import type { SmartTaskBlock, Task } from '@/types';
 import { getUniqueTasks } from '@/store/timelineData';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import NodeRetrospectiveRecords from './NodeRetrospectiveRecords';
+import { isRetrospectiveEntryCurrentlyCompleted } from '@/domain/dailyRetrospective';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
 import { zoom, zoomIdentity, ZoomBehavior } from 'd3-zoom';
@@ -129,6 +132,10 @@ export const KnowledgeGraphView: React.FC = () => {
     return cache;
   }, [childrenByParent, nodes]);
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const { retrospectives, schedules } = useDailyScheduleStore(useShallow((state) => ({
+    retrospectives: state.retrospectives,
+    schedules: state.schedules,
+  })));
   const { tasks, groups } = useTimelineStore(useShallow((state) => ({ tasks: state.tasks, groups: state.groups })));
   const allProjectTasks = useMemo(() => getUniqueTasks(tasks, groups), [tasks, groups]);
   const bindingSession = useGraphBindingStore();
@@ -658,6 +665,24 @@ export const KnowledgeGraphView: React.FC = () => {
       return (a.dueDate || '').localeCompare(b.dueDate || '');
     }), [reviewTasks, selectedScopeIds]);
 
+  const selectedRetrospectiveEntries = useMemo(
+    () => Object.values(retrospectives)
+      .filter((retrospective) => retrospective.status === 'completed')
+      .flatMap((retrospective) => retrospective.entries)
+      .filter((entry) => (entry.nodeIds ?? []).some((nodeId) => selectedScopeIds.has(nodeId)))
+      .map((entry) => ({
+        ...entry,
+        completionStatusChanged: !isRetrospectiveEntryCurrentlyCompleted(
+          entry,
+          tasks,
+          groups,
+          reviewTasks,
+          schedules,
+        ),
+      })),
+    [retrospectives, selectedScopeIds, tasks, groups, reviewTasks, schedules],
+  );
+
   const selectedNodeReviewPreview = useMemo(
     () => selectedReviewTasks.slice(0, 5),
     [selectedReviewTasks],
@@ -1078,6 +1103,9 @@ export const KnowledgeGraphView: React.FC = () => {
                   return (
                     <g 
                       key={node.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`知识节点：${node.data.name}`}
                       onClick={(e) => { 
                         e.stopPropagation(); 
                         if (bindingSession.active) {
@@ -1098,6 +1126,11 @@ export const KnowledgeGraphView: React.FC = () => {
                           setSelectedNodeId(node.id);
                           setIsMoveMode(false);
                         }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return;
+                        e.preventDefault();
+                        e.currentTarget.dispatchEvent(new MouseEvent('click', { bubbles: true }));
                       }}
                       onDoubleClick={(e) => {
                         e.stopPropagation();
@@ -1186,7 +1219,11 @@ export const KnowledgeGraphView: React.FC = () => {
                       <Zap size={13} className={selectedActivationState?.isActivated ? 'fill-blue-500' : ''} />
                     </button>
                     <div className={styles.actionDivider}></div>
-                    <button onClick={async () => { if(await requestConfirmation('确定归档吗？')) { archiveNodeCascade(selectedNode.id, true); setSelectedNodeId(null); } }} className={styles.actionBtn}>
+                    <button
+                      aria-label="归档节点"
+                      onClick={async () => { if(await requestConfirmation('确定归档吗？')) { archiveNodeCascade(selectedNode.id, true); setSelectedNodeId(null); } }}
+                      className={styles.actionBtn}
+                    >
                       <Archive size={13} />
                     </button>
                     <div className={styles.actionDivider}></div>
@@ -1205,6 +1242,7 @@ export const KnowledgeGraphView: React.FC = () => {
                   canIncludeSubtree={canIncludeSelectedSubtree}
                   onScopeChange={setDetailScope}
                 />
+                <NodeRetrospectiveRecords entries={selectedRetrospectiveEntries} />
                 {selectedActivationState && (
                   <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
                     <span className="font-medium text-slate-600">

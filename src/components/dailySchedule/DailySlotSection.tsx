@@ -155,7 +155,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
                       >
                         {quantity ? '数量' : item.source === 'project' ? (item.detail || '项目') : item.source === 'review' ? `复习${item.detail ? ` · ${item.detail}` : ''}` : '占位'}
                       </span>
-                      {item.source !== 'free' && !quantity && (
+                      {!quantity && (
                         <button type="button" className={`ds-item-check ${item.completed ? 'ds-item-check--done' : ''}`} onClick={(event) => { event.stopPropagation(); onToggleItem(item.id); }} aria-label={item.completed ? `取消完成：${item.name}` : `完成：${item.name}`}>
                           <Check size={13} />
                         </button>

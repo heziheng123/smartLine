@@ -211,7 +211,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
           : '';
         const confirmed = await requestConfirmation(
-          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
+          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
         );
         if (!confirmed) return;
         await restoreWorkspaceBackup(result.backup);
@@ -287,7 +287,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       return;
     }
     const summary = migrationCheck.summary;
-    if (!await requestConfirmation(`将旧四房间复制到一个认证工作区：\n任务 ${summary.tasks}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
+    if (!await requestConfirmation(`将旧四房间复制到一个认证工作区：\n任务 ${summary.tasks}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n每日复盘 ${summary.retrospectiveDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
     setMigrationBusy(true);
     setMigrationStatus('正在创建快照、复制并校验数据；完成前请不要刷新或关闭页面…');
     try {
@@ -400,7 +400,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={handleMigrate} disabled={migrationBusy || !migrationCheck}><ArrowRightLeft size={14} />{migrationBusy && migrationCheck ? '迁移中…' : '迁移到统一工作区'}</button>
               </div>
               {migrationStatus && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{migrationStatus}</p>}
-              {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.groups} 个项目组、{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.projectDocuments} 份项目文档、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.graphNodes} 个节点。</p>}
+              {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.groups} 个项目组、{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.projectDocuments} 份项目文档、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.retrospectiveDays} 天复盘、{migrationCheck.summary.graphNodes} 个节点。</p>}
             </> : <>
               <p className="tl-sync-backup-hint">四个数据域共享同一底层房间连接。旧四房间保持不变，仅在主动回退时重新连接。</p>
               <button type="button" className="tl-sync-backup-btn" onClick={handleLegacyFallback}><RefreshCw size={14} />暂时返回旧房间</button>
@@ -469,7 +469,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             <button type="button" className="tl-sync-backup-btn" onClick={() => void handleArchivePeriod()}><Upload size={14} />保存月度归档</button>
             <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadArchive()}><Download size={14} />下载月度归档</button>
           </div>}
-          {restoreSummary && <p className="tl-sync-backup-hint">最近检查：{restoreSummary.tasks} 个任务、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.graphNodes} 个节点。</p>}
+          {restoreSummary && <p className="tl-sync-backup-hint">最近检查：{restoreSummary.tasks} 个任务、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.retrospectiveEntries} 条复盘、{restoreSummary.graphNodes} 个节点。</p>}
           {restoreMessage && <p className="tl-sync-backup-hint" role="status">{restoreMessage}</p>}
           {snapshots.length > 0 && (
             <div className="tl-sync-info" style={{ marginTop: 10 }}>

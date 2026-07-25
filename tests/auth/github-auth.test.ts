@@ -84,7 +84,10 @@ test('GitHub callback accepts only the allowed account and creates a session', a
 
 test('Liveblocks endpoint requires a session and uses a stable GitHub identity', async (context) => {
   const originalFetch = globalThis.fetch;
-  const requests: Array<{ body: { userId: string }; url: string }> = [];
+  const requests: Array<{
+    body: { userId: string; permissions: Record<string, string[]> };
+    url: string;
+  }> = [];
   globalThis.fetch = async (input, init) => {
     requests.push({ body: JSON.parse(String(init?.body)), url: String(input) });
     return Response.json({ token: 'liveblocks-id-token' });
@@ -103,13 +106,21 @@ test('Liveblocks endpoint requires a session and uses a stable GitHub identity',
     env,
     request: new Request('https://smartline.example/api/liveblocks-auth', {
       method: 'POST',
-      headers: { Cookie: `${SESSION_COOKIE}=${sessionValue}`, Origin: 'https://smartline.example' },
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${sessionValue}`,
+        Origin: 'https://smartline.example',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ room: 'workspace-owner-study' }),
     }),
   });
   assert.equal(authenticated.status, 200);
   assert.deepEqual(await authenticated.json(), { token: 'liveblocks-id-token' });
-  assert.equal(requests[0].url, 'https://api.liveblocks.io/v2/identify-user');
+  assert.equal(requests[0].url, 'https://api.liveblocks.io/v2/authorize-user');
   assert.equal(requests[0].body.userId, 'gh_12345');
+  assert.deepEqual(requests[0].body.permissions, {
+    'workspace-owner-study': ['*:write'],
+  });
 
   const crossOrigin = await authenticateLiveblocks({
     env,

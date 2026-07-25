@@ -14,7 +14,7 @@ import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
 function backup(): WorkspaceBackup {
   return {
     kind: 'smart-line-workspace',
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 1,
     exportedAt: '2026-07-21T00:00:00.000Z',
     deviceId: 'device-a',
@@ -29,7 +29,7 @@ function backup(): WorkspaceBackup {
         tagColors: {},
       },
     },
-    daily: { schedules: {} },
+    daily: { schedules: {}, retrospectives: {} },
     graph: { nodes: [] },
     settings: {},
   };

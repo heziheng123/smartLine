@@ -6,11 +6,34 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getValidGraphNodeIds } from '@/utils/blocks';
 import { requestConfirmation } from '@/services/confirmation';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { useEbbStore } from '@/ebb/store';
+import NodeRetrospectiveRecords from '@/graph/components/NodeRetrospectiveRecords';
+import { isRetrospectiveEntryCurrentlyCompleted } from '@/domain/dailyRetrospective';
 
 // 时光胶囊模态框：展示归档节点的内容
 export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose: () => void }) => {
   const { nodes, archiveNodeCascade } = useGraphStore();
-  const { tasks: tlTasks } = useTimelineStore();
+  const { tasks: tlTasks, groups } = useTimelineStore();
+  const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const { retrospectives, schedules } = useDailyScheduleStore();
+  const retrospectiveEntries = useMemo(
+    () => Object.values(retrospectives)
+      .filter((retrospective) => retrospective.status === 'completed')
+      .flatMap((retrospective) => retrospective.entries)
+      .filter((entry) => (entry.nodeIds ?? []).includes(nodeId))
+      .map((entry) => ({
+        ...entry,
+        completionStatusChanged: !isRetrospectiveEntryCurrentlyCompleted(
+          entry,
+          tlTasks,
+          groups,
+          reviewTasks,
+          schedules,
+        ),
+      })),
+    [groups, nodeId, retrospectives, reviewTasks, schedules, tlTasks],
+  );
   
   const node = nodes.find(n => n.id === nodeId);
   if (!node) return null;
@@ -82,47 +105,52 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-            {relatedBlocks.length > 0 ? (
+            {relatedBlocks.length > 0 || retrospectiveEntries.length > 0 ? (
               <div className="space-y-6">
                 {/* 历史任务块 */}
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-slate-500 flex items-center gap-2">
-                    <CalendarClock size={14} />
-                    历史任务
-                  </h3>
-                  <div className="grid gap-2">
-                    {relatedBlocks.map((block: import('@/types').SmartTaskBlock, idx: number) => (
-                      <div key={block.id || idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3 group hover:border-blue-100 transition-colors">
-                        <div className="mt-0.5">
-                          {block.type === 'smart-task' && block.header.isCompleted ? (
-                            <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-bold">
-                              ✓
-                            </div>
-                          ) : (
-                            <div className="w-4 h-4 rounded-full border-2 border-slate-200" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-4 mb-1">
-                            <span className="font-medium text-slate-700 text-sm truncate">
-                              {block.type === 'smart-task' ? block.header.title : '文本块'}
-                            </span>
-                            {block.type === 'smart-task' && block.header.completedDate && (
-                              <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                                {block.header.completedDate}
-                              </span>
+                {relatedBlocks.length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-slate-500 flex items-center gap-2">
+                      <CalendarClock size={14} />
+                      历史任务
+                    </h3>
+                    <div className="grid gap-2">
+                      {relatedBlocks.map((block: import('@/types').SmartTaskBlock, idx: number) => (
+                        <div key={block.id || idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3 group hover:border-blue-100 transition-colors">
+                          <div className="mt-0.5">
+                            {block.type === 'smart-task' && block.header.isCompleted ? (
+                              <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-bold">
+                                ✓
+                              </div>
+                            ) : (
+                              <div className="w-4 h-4 rounded-full border-2 border-slate-200" />
                             )}
                           </div>
-                          {block.type === 'smart-task' && block.body && (
-                            <div className="text-xs text-slate-500 line-clamp-2 leading-relaxed bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-100/50">
-                              {block.body.replace(/<[^>]*>?/gm, '')}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-4 mb-1">
+                              <span className="font-medium text-slate-700 text-sm truncate">
+                                {block.type === 'smart-task' ? block.header.title : '文本块'}
+                              </span>
+                              {block.type === 'smart-task' && block.header.completedDate && (
+                                <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                                  {block.header.completedDate}
+                                </span>
+                              )}
                             </div>
-                          )}
+                            {block.type === 'smart-task' && block.body && (
+                              <div className="text-xs text-slate-500 line-clamp-2 leading-relaxed bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-100/50">
+                                {block.body.replace(/<[^>]*>?/gm, '')}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
+                {retrospectiveEntries.length > 0 && (
+                  <NodeRetrospectiveRecords entries={retrospectiveEntries} />
+                )}
               </div>
             ) : (
               <div className="text-center py-12 text-slate-400">

@@ -287,15 +287,13 @@ const TimeBlockCard: React.FC<TimeBlockCardProps> = ({
 
       {/* 操作按钮 */}
       <div className="tb-actions">
-        {block.source !== 'free' && (
-          <button
-            type="button"
-            className={`tb-check ${block.completed ? 'tb-check--done' : ''}`}
-            onClick={(e) => { e.stopPropagation(); onToggle(block.id); }}
-          >
-            <Check size={12} />
-          </button>
-        )}
+        <button
+          type="button"
+          className={`tb-check ${block.completed ? 'tb-check--done' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggle(block.id); }}
+        >
+          <Check size={12} />
+        </button>
         <button
           type="button"
           className="tb-delete"

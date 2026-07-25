@@ -13,6 +13,7 @@ import {
   type DropResult,
 } from '@hello-pangea/dnd';
 import {
+  BookOpenCheck,
   CalendarCheck2,
   Settings2,
 } from 'lucide-react';
@@ -70,6 +71,8 @@ import {
   isTaskPoolDroppable,
 } from './dndIds';
 import DailyReviewPlanner from '@/ebb/components/DailyReviewPlanner';
+import DailyRetrospectiveDialog from './DailyRetrospectiveDialog';
+import { collectCompletedActivities } from '@/domain/dailyRetrospective';
 
 // ── 主组件 ───────────────────────────────────────────────────
 
@@ -94,6 +97,7 @@ const DailyScheduleView: React.FC = () => {
   const undoOperation = useOperationHistory((state) => state.undo);
   const [progressTask, setProgressTask] = useState<{ taskId: string; block: SmartTaskBlock } | null>(null);
   const [dailyPlanOpen, setDailyPlanOpen] = useState(false);
+  const [retrospectiveOpen, setRetrospectiveOpen] = useState(false);
   const [dailyPlanFeedback, setDailyPlanFeedback] = useState<string | null>(null);
   const [poolPreference, setPoolPreference] = useState<'auto' | 'open' | 'closed'>('auto');
   const [isCompactLayout, setIsCompactLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches);
@@ -219,6 +223,10 @@ const DailyScheduleView: React.FC = () => {
     moveScheduledItem,
     removeScheduledItem,
     removeTimeBlock,
+    updateScheduledItem,
+    updateTimeBlock,
+    retrospectives,
+    upsertRetrospective,
   } = useDailyScheduleStore(
     useShallow((s) => ({
       isHydrated: s.isHydrated,
@@ -228,6 +236,10 @@ const DailyScheduleView: React.FC = () => {
       moveScheduledItem: s.moveScheduledItem,
       removeScheduledItem: s.removeScheduledItem,
       removeTimeBlock: s.removeTimeBlock,
+      updateScheduledItem: s.updateScheduledItem,
+      updateTimeBlock: s.updateTimeBlock,
+      retrospectives: s.retrospectives,
+      upsertRetrospective: s.upsertRetrospective,
     })),
   );
 
@@ -294,6 +306,24 @@ const DailyScheduleView: React.FC = () => {
   );
   const todayReviewTasks = reviewProjection.pending;
   const completedReviewTasks = reviewProjection.completed;
+
+  const completedActivities = useMemo(
+    () => collectCompletedActivities(
+      selectedDate,
+      rawTlTasks,
+      rawTlGroups,
+      rawEbbReviewTasks,
+      graphNodes,
+      daySchedule,
+    ),
+    [selectedDate, rawTlTasks, rawTlGroups, rawEbbReviewTasks, graphNodes, daySchedule],
+  );
+  const selectedRetrospective = retrospectives[selectedDate];
+  const retrospectiveNewCount = useMemo(() => {
+    if (!selectedRetrospective || selectedRetrospective.status !== 'completed') return 0;
+    const savedIds = new Set(selectedRetrospective.entries.map((entry) => entry.id));
+    return completedActivities.filter((activity) => !savedIds.has(activity.id)).length;
+  }, [completedActivities, selectedRetrospective]);
 
   // ── 判断是否未绑定节点 ──────────────────────────────────
   const checkIsUnlinkedTask = useCallback((sourceId: string) => {
@@ -483,7 +513,9 @@ const DailyScheduleView: React.FC = () => {
           return {
             ...i,
             name: quantityHeader?.title ?? i.name,
-            completed: checkIsCompleted(i.source, i.sourceId, selectedDate),
+            completed: i.source === 'free'
+              ? i.completedDate === selectedDate
+              : checkIsCompleted(i.source, i.sourceId, selectedDate),
             detail: appearance?.name ?? i.detail,
             color: appearance?.theme.backgroundColor ?? i.color,
             categoryColor: quantityHeader ? (quantityHeader.tagColor || '#10B981') : appearance?.categoryColor ?? reviewCategoryColor ?? i.categoryColor,
@@ -723,6 +755,11 @@ const DailyScheduleView: React.FC = () => {
           void toggleReviewWithFeedback(reviewId);
         } else if (block.source === 'project') {
           syncProjectTaskCompletion(block.sourceId);
+        } else if (block.source === 'free') {
+          updateTimeBlock(selectedDate, block.id, {
+            completed: block.completedDate !== selectedDate,
+            completedDate: block.completedDate === selectedDate ? undefined : selectedDate,
+          });
         }
         // toggleTimeBlock 已经被移除，底层数据变化后 computedBlocks 自动重新计算
         return;
@@ -741,10 +778,15 @@ const DailyScheduleView: React.FC = () => {
         } else {
           syncProjectTaskCompletion(item.sourceId);
         }
+      } else if (item.source === 'free') {
+        updateScheduledItem(selectedDate, item.id, {
+          completed: item.completedDate !== selectedDate,
+          completedDate: item.completedDate === selectedDate ? undefined : selectedDate,
+        });
       }
       // toggleScheduledItem 已经被移除，底层数据变化后 getSlotItems 自动重新计算
     },
-    [daySchedule.items, daySchedule.blocks, toggleReviewWithFeedback, syncProjectTaskCompletion, getProjectBlockFromSource],
+    [daySchedule.items, daySchedule.blocks, toggleReviewWithFeedback, syncProjectTaskCompletion, getProjectBlockFromSource, selectedDate, updateScheduledItem, updateTimeBlock],
   );
 
   const handleRecordQuantityTarget = useCallback((itemId: string, target: number) => {
@@ -797,7 +839,7 @@ const DailyScheduleView: React.FC = () => {
   // ── 时间段统计 ──────────────────────────────────────────
   const getSlotStats = useCallback(
     (slot: TimeSlot) => {
-      const items = getSlotItems(slot).filter(i => i.source !== 'free');
+      const items = getSlotItems(slot);
       const total = items.length;
       const completed = items.filter((i) => i.completed).length;
       const inProgress = items.filter((item) => item.quantityState === 'in-progress').length;
@@ -836,6 +878,23 @@ const DailyScheduleView: React.FC = () => {
             />
           </div>
           <div className="ds-header-right">
+            <button
+              type="button"
+              className="ds-header-btn"
+              onClick={() => setRetrospectiveOpen(true)}
+              aria-label="每日复盘"
+              title={retrospectiveNewCount > 0 ? `新增 ${retrospectiveNewCount} 项待补充` : undefined}
+            >
+              <BookOpenCheck size={15} />
+              每日复盘
+              {retrospectiveNewCount > 0
+                ? <span className="rounded-full bg-amber-100 px-1.5 text-[10px] text-amber-700">+{retrospectiveNewCount}</span>
+                : selectedRetrospective?.status === 'completed'
+                  ? <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] text-emerald-700">已完成</span>
+                  : selectedRetrospective
+                    ? <span className="rounded-full bg-indigo-100 px-1.5 text-[10px] text-indigo-700">草稿</span>
+                    : null}
+            </button>
             <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日复习选择">
               <CalendarCheck2 size={15} />明日复习选择
             </button>
@@ -1025,6 +1084,16 @@ const DailyScheduleView: React.FC = () => {
             block={progressTask.block}
             date={selectedDate}
             onClose={() => setProgressTask(null)}
+          />
+        )}
+        {retrospectiveOpen && (
+          <DailyRetrospectiveDialog
+            date={selectedDate}
+            activities={completedActivities}
+            graphNodes={graphNodes}
+            existing={selectedRetrospective}
+            onSave={upsertRetrospective}
+            onClose={() => setRetrospectiveOpen(false)}
           />
         )}
         {dailyPlanOpen && (

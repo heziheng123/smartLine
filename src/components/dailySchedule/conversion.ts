@@ -225,6 +225,7 @@ export function convertItemsToBlocks(
         startTime,
         endTime,
         completed: item.completed,
+        completedDate: item.completedDate,
         color: item.color,
         detail: item.detail,
       });
@@ -266,6 +267,7 @@ export function convertBlocksToItems(
       timeSlot: slot,
       order: items.filter((i) => i.timeSlot === slot).length,
       completed: block.completed,
+      completedDate: block.completedDate,
       color: block.color,
       detail: block.detail,
     });

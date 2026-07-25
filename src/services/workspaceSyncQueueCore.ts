@@ -4,7 +4,7 @@ import { hashWorkspaceValue } from './workspaceSyncCore';
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones'
   | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
-  | 'schedules' | 'nodes';
+  | 'schedules' | 'retrospectives' | 'nodes';
 
 export interface PendingWorkspaceSync {
   version: 1;
