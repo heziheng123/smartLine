@@ -254,7 +254,7 @@ test('docked backlog leaves Saturday reachable and supports dropping on the date
   await expect(panel.locator('[data-backlog-task-id="backlog:backlog-project::backlog-block"]')).toHaveCount(0);
 });
 
-test('daily backlog can schedule directly into a slot and unified undo restores it', async ({ page }) => {
+test('daily backlog can schedule directly into a slot without creating a history-library entry', async ({ page }) => {
   await openDailyBacklog(page);
   const backlogCard = page.locator('[data-backlog-task-id="backlog:backlog-project::backlog-block"]');
   await expect(backlogCard).toBeVisible();
@@ -276,15 +276,12 @@ test('daily backlog can schedule directly into a slot and unified undo restores 
   });
 
   await expect(page.locator('.ds-item').filter({ hasText: '待排期整理错题' })).toBeVisible();
-  await page.getByTitle('最近操作与回收站').click();
-  const latest = page.locator('.operation-history-list article').first();
-  await expect(latest).toContainText('安排“待排期整理错题”');
-  await latest.getByRole('button', { name: '撤销' }).click();
-  await page.getByLabel('关闭最近操作').click();
-
-  await expect(page.locator('.ds-item').filter({ hasText: '待排期整理错题' })).toHaveCount(0);
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
+  await page.reload();
+  await page.getByTitle('每日安排').click();
+  await expect(page.locator('.ds-item').filter({ hasText: '待排期整理错题' })).toBeVisible();
   await page.getByRole('tab', { name: /待排期箱/ }).click();
-  await expect(backlogCard).toBeVisible();
+  await expect(backlogCard).toHaveCount(0);
 });
 
 test('week task can return to the backlog without losing metadata and inline undo restores every placement', async ({ page }) => {
@@ -369,7 +366,7 @@ test('week task can return to the backlog without losing metadata and inline und
   }).toBe(1);
 });
 
-test('daily task menu returns a task to the backlog and persistent undo survives refresh', async ({ page }) => {
+test('daily task menu return remains committed after refresh without a persistent undo library', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   const card = page.locator('.ds-item').filter({ hasText: '已排期六十分钟任务' });
   await expect(card).toBeVisible();
@@ -382,12 +379,7 @@ test('daily task menu returns a task to the backlog and persistent undo survives
   await page.reload();
   await page.getByTitle('每日安排').click();
   await expect(page.locator('.ds-item').filter({ hasText: '已排期六十分钟任务' })).toHaveCount(0);
-  await page.getByTitle('最近操作与回收站').click();
-  const latest = page.locator('.operation-history-list article').first();
-  await expect(latest).toContainText('将“已排期六十分钟任务”移回待排期箱');
-  await expect(latest).toContainText('项目、标签、截止日与时长保持不变');
-  await latest.getByRole('button', { name: '撤销' }).click();
-  await page.getByLabel('关闭最近操作').click();
-
-  await expect(page.locator('.ds-item').filter({ hasText: '已排期六十分钟任务' })).toBeVisible();
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
+  await page.getByRole('tab', { name: /待排期箱/ }).click();
+  await expect(page.locator('[data-backlog-task-id="backlog:backlog-project::scheduled-block"]')).toBeVisible();
 });

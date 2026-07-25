@@ -89,14 +89,6 @@ const openReviewTopic = async (page: Page, topicName: string) => {
   await row.click();
 };
 
-const undoLatest = async (page: Page) => {
-  await page.getByTitle('最近操作与回收站').click();
-  const panel = page.getByLabel('最近操作面板');
-  await expect(panel).toBeVisible();
-  await panel.locator('.operation-history-list article').first().getByRole('button', { name: '撤销' }).click();
-  await page.getByLabel('关闭最近操作').click();
-};
-
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(({ ebbData, dailyData }) => {
     if (sessionStorage.getItem('final-review-seeded') === '1') return;
@@ -109,7 +101,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test('last round cancel is mutation-free and finish ends the plan', async ({ page }) => {
+test('last round cancel is mutation-free and finishing remains committed without a history library', async ({ page }) => {
   await openReviewTopic(page, '末轮提醒测试');
   const toggle = page.getByLabel('标记第 2 轮完成');
   await toggle.click();
@@ -129,12 +121,12 @@ test('last round cancel is mutation-free and finish ends the plan', async ({ pag
   await expect(page.getByLabel('标记第 3 轮完成')).toHaveCount(0);
   await expect(page.getByText('已完成最后一轮，当前复习计划已结束')).toBeVisible();
   await page.reload();
-  await undoLatest(page);
   await openReviewTopic(page, '末轮提醒测试');
-  await expect(page.getByLabel('标记第 2 轮完成')).toBeVisible();
+  await expect(page.getByLabel('取消第 2 轮完成')).toBeVisible();
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
 });
 
-test('append uses the edited date and one persisted undo restores the whole transaction', async ({ page }) => {
+test('append uses the edited date and persists the whole transaction without history records', async ({ page }) => {
   await openReviewTopic(page, '末轮提醒测试');
   await page.getByLabel('标记第 2 轮完成').click();
   const dialog = page.getByRole('dialog', { name: '这是当前最后一轮复习' });
@@ -146,18 +138,12 @@ test('append uses the edited date and one persisted undo restores the whole tran
   await expect(nextRound).toBeVisible();
   await expect(nextRound).toContainText(customNextDate.slice(5).replace('-', '.'));
   await expect(page.getByText(new RegExp(`已完成第 2 轮，并增加第 3 轮：${customNextDate}`))).toBeVisible();
-  await page.getByTitle('最近操作与回收站').click();
-  const historyPanel = page.getByLabel('最近操作面板');
-  await expect(historyPanel.locator('.operation-history-list article')).toHaveCount(1);
-  await expect(historyPanel.locator('.operation-history-list article').first()).toContainText('完成并追加复习');
-  await page.getByLabel('关闭最近操作').click();
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
 
   await page.reload();
   await openReviewTopic(page, '末轮提醒测试');
   await expect(page.getByLabel('标记第 3 轮完成')).toContainText(customNextDate.slice(5).replace('-', '.'));
-  await undoLatest(page);
-  await expect(page.getByLabel('标记第 2 轮完成')).toBeVisible();
-  await expect(page.getByLabel('标记第 3 轮完成')).toHaveCount(0);
+  await expect(page.getByLabel('取消第 2 轮完成')).toBeVisible();
 });
 
 test('non-final rounds stay direct while daily schedule uses the same final-round decision', async ({ page }) => {

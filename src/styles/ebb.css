@@ -5462,3 +5462,56 @@
   .eb-batch-footer { align-items: stretch; flex-direction: column; }
   .eb-batch-footer > div { display: grid; grid-template-columns: 1fr 1.4fr; }
 }
+
+/* ── 每日滚动复习选择 ─────────────────────────────────── */
+.eb-daily-plan-overlay { z-index: 10060; display: flex; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(4px); }
+.eb-panel.eb-daily-plan-panel { position: relative; inset: auto; width: min(820px, calc(100vw - 48px)); height: min(720px, calc(100dvh - 48px)); max-width: 820px; max-height: 720px; border: 1px solid rgba(226,232,240,.9); border-radius: 18px; box-shadow: 0 24px 70px rgba(15,23,42,.2); display: flex; flex-direction: column; overflow: hidden; }
+.eb-daily-plan-header { flex: none; }
+.eb-daily-plan-eyebrow { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; color: #6366f1; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.eb-daily-plan-capacity { flex: none; display: grid; grid-template-columns: auto minmax(160px,1fr) auto; align-items: center; gap: 12px; padding: 11px 18px; border-block: 1px solid #e2e8f0; background: #f8fafc; }
+.eb-daily-plan-capacity > div:first-child { display: flex; align-items: baseline; gap: 8px; color: #64748b; font-size: 11px; }
+.eb-daily-plan-capacity strong { color: #334155; font-size: 15px; }
+.eb-daily-plan-capacity-track { height: 7px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
+.eb-daily-plan-capacity-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#818cf8,#6366f1); transition: width .2s ease; }
+.eb-daily-plan-capacity small { display: flex; align-items: center; gap: 5px; color: #94a3b8; font-size: 10px; white-space: nowrap; }
+.eb-daily-plan-body { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; overflow: hidden; background: #f8fafc; }
+.eb-daily-plan-guide { display: flex; flex-wrap: wrap; gap: 7px; }
+.eb-daily-plan-guide span { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border-radius: 999px; background: #fff; color: #64748b; font-size: 10px; box-shadow: inset 0 0 0 1px #e2e8f0; }
+.eb-daily-plan-list { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 7px; padding-right: 3px; overflow-y: auto; }
+.eb-daily-plan-card { display: grid; grid-template-columns: 108px minmax(0,1fr) 110px; align-items: center; gap: 12px; padding: 11px 12px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; transition: border-color .15s ease,box-shadow .15s ease,background .15s ease; }
+.eb-daily-plan-card.is-kept { border-color: #a5b4fc; background: #f5f7ff; box-shadow: 0 0 0 2px rgba(99,102,241,.06); }
+.eb-daily-plan-card.is-deferred { border-color: #e2e8f0; }
+.eb-daily-plan-choice { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 6px; padding: 0 9px; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; color: #475569; font-size: 11px; font-weight: 700; cursor: pointer; }
+.eb-daily-plan-choice:hover:not(:disabled) { border-color: #818cf8; color: #4f46e5; }
+.eb-daily-plan-choice[aria-pressed="true"] { border-color: #6366f1; background: #6366f1; color: #fff; }
+.eb-daily-plan-choice:disabled { cursor: not-allowed; opacity: .5; }
+.eb-daily-plan-check { display: inline-flex; width: 17px; height: 17px; align-items: center; justify-content: center; border: 1px solid currentColor; border-radius: 5px; }
+.eb-daily-plan-card-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.eb-daily-plan-card-title { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.eb-daily-plan-card-title strong { overflow: hidden; color: #1e293b; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.eb-daily-plan-card-title span { flex: none; padding: 2px 5px; border-radius: 5px; background: #f1f5f9; color: #64748b; font-size: 9px; }
+.eb-daily-plan-card-meta { display: flex; flex-wrap: wrap; gap: 5px 10px; color: #94a3b8; font-size: 9px; }
+.eb-daily-plan-card-meta .is-warning { color: #dc2626; font-weight: 700; }
+.eb-daily-plan-destination { display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: #64748b; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.eb-daily-plan-card.is-kept .eb-daily-plan-destination { color: #4f46e5; }
+.eb-daily-plan-empty { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: #94a3b8; text-align: center; }
+.eb-daily-plan-empty strong { color: #475569; font-size: 13px; }
+.eb-daily-plan-empty span { font-size: 11px; }
+.eb-daily-plan-footer { flex: none; align-items: center; justify-content: space-between; gap: 16px; }
+.eb-daily-plan-footer > div:first-child { min-width: 0; color: #64748b; font-size: 10px; }
+.eb-daily-plan-footer > div:last-child { flex: none; display: flex; gap: 8px; }
+.eb-daily-plan-footer .eb-btn:disabled { cursor: not-allowed; opacity: .45; }
+.eb-daily-plan-error { display: inline-flex; align-items: center; gap: 6px; color: #dc2626; font-weight: 700; }
+
+@media (max-width: 720px) {
+  .eb-daily-plan-overlay { padding: 0; }
+  .eb-panel.eb-daily-plan-panel { width: 100vw; height: 100dvh; max-width: none; max-height: none; border: 0; border-radius: 0; }
+  .eb-daily-plan-capacity { grid-template-columns: 1fr auto; }
+  .eb-daily-plan-capacity-track { grid-column: 1 / -1; grid-row: 2; }
+  .eb-daily-plan-capacity small { grid-column: 2; grid-row: 1; }
+  .eb-daily-plan-card { grid-template-columns: 1fr auto; }
+  .eb-daily-plan-choice { grid-column: 1 / -1; justify-self: stretch; }
+  .eb-daily-plan-destination { justify-content: flex-end; }
+  .eb-daily-plan-footer { align-items: stretch; flex-direction: column; }
+  .eb-daily-plan-footer > div:last-child { display: grid; grid-template-columns: 1fr 1.4fr; }
+}

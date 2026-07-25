@@ -71,7 +71,7 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
     if (!message?.operationId) return;
     const restored = await undoOperation(message.operationId);
     setMessage({
-      text: restored ? '已撤销，任务已恢复到原排期' : '撤销失败，请在最近操作中查看原因',
+      text: restored ? '已撤销，任务已恢复到原排期' : '撤销失败，任务数据可能已经发生变化',
     });
   };
 

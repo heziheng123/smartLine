@@ -33,6 +33,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   MoreHorizontal,
+  CalendarCheck2,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -53,6 +54,7 @@ import OverdueAlertModal from './OverdueAlertModal';
 import MatrixView from './MatrixView';
 import BoardView from './BoardView';
 import BatchAdjustPanel from './BatchAdjustPanel';
+import DailyReviewPlanner from './DailyReviewPlanner';
 
 type ViewTab = 'matrix' | 'board';
 
@@ -79,6 +81,7 @@ const EbbView: React.FC = () => {
     clearAllTasks,
     popUndo,
     applyBatchReviewAdjustment,
+    applyDailyReviewPlan,
   } = useEbbStore(
     useShallow((s) => ({
       isHydrated: s.isHydrated,
@@ -96,6 +99,7 @@ const EbbView: React.FC = () => {
       clearAllTasks: s.clearAllTasks,
       popUndo: s.popUndo,
       applyBatchReviewAdjustment: s.applyBatchReviewAdjustment,
+      applyDailyReviewPlan: s.applyDailyReviewPlan,
     })),
   );
 
@@ -133,6 +137,7 @@ const EbbView: React.FC = () => {
       clearAllTasks,
       popUndo,
       applyBatchReviewAdjustment,
+      applyDailyReviewPlan,
     }),
     [
       reviewTasks,
@@ -148,6 +153,7 @@ const EbbView: React.FC = () => {
       clearAllTasks,
       popUndo,
       applyBatchReviewAdjustment,
+      applyDailyReviewPlan,
     ],
   );
   const [activeTab, setActiveTab] = useState<ViewTab>('matrix');
@@ -160,6 +166,7 @@ const EbbView: React.FC = () => {
   const [overdueAlertOpen, setOverdueAlertOpen] = useState(false);
   const [timelineTopic, setTimelineTopic] = useState<string | null>(null);
   const [batchAdjustOpen, setBatchAdjustOpen] = useState(false);
+  const [dailyPlanOpen, setDailyPlanOpen] = useState(false);
   const toastTimer = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -417,6 +424,14 @@ const EbbView: React.FC = () => {
             </button>
           </div>
           <div className="eb-nav-right">
+            <button
+              type="button"
+              className="eb-nav-btn"
+              onClick={() => setDailyPlanOpen(true)}
+            >
+              <CalendarCheck2 size={15} />
+              明日选择
+            </button>
             <details className="eb-more-menu">
               <summary className="eb-nav-btn" aria-label="复习更多操作">
                 <MoreHorizontal size={15} />
@@ -614,10 +629,23 @@ const EbbView: React.FC = () => {
             settings={store.ebbSettings}
             onApply={(request) => {
               const result = applyBatchReviewAdjustment(request);
-              showToast(`已调整 ${result.affectedTopics} 个复习计划，可在最近操作中撤销`);
+              showToast(`已调整 ${result.affectedTopics} 个复习计划，关联日程已同步更新`);
               return result;
             }}
             onClose={() => setBatchAdjustOpen(false)}
+          />
+        )}
+
+        {dailyPlanOpen && (
+          <DailyReviewPlanner
+            reviewTasks={reviewTasks}
+            settings={store.ebbSettings}
+            onApply={(request) => {
+              const result = applyDailyReviewPlan(request);
+              showToast(`明日保留 ${result.keptCount} 轮，其余 ${result.deferredCount} 轮顺延一天`);
+              return result;
+            }}
+            onClose={() => setDailyPlanOpen(false)}
           />
         )}
 

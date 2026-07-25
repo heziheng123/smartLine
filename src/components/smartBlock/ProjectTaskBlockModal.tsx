@@ -116,7 +116,7 @@ const ProjectTaskBlockModal: React.FC = () => {
     if (!backlogNotice?.operationId) return;
     const restored = await undoOperation(backlogNotice.operationId);
     setBacklogNotice({
-      text: restored ? '已撤销，任务已恢复到原排期和每日安排' : '撤销失败，请在最近操作中查看原因',
+      text: restored ? '已撤销，任务已恢复到原排期和每日安排' : '撤销失败，任务数据可能已经发生变化',
     });
   };
 
@@ -165,7 +165,7 @@ const ProjectTaskBlockModal: React.FC = () => {
           <p className="ptm-date-change-hint">修改名称、日期、标签或进度后，项目文档、任务总览、周矩阵和每日安排会读取同一份任务数据。</p>
         </div>
         <footer className="ptm-footer">
-          <div className="ptm-footer-context"><ListTodo size={14} /><span>{quantity ? '数量任务通过每日完成量推进总进度，不记录时长' : '完成状态会同步关联模块并进入统一撤销记录'}</span></div>
+          <div className="ptm-footer-context"><ListTodo size={14} /><span>{quantity ? '数量任务通过每日完成量推进总进度，不记录时长' : '完成状态会同步更新项目、日程、复习和知识节点'}</span></div>
           <div className="ptm-footer-actions">
             {block.header.date && !quantity && !block.header.isCompleted && (
               <button type="button" className="ptm-backlog-btn" onClick={moveToBacklog}>

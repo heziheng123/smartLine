@@ -51,11 +51,11 @@ test('task overview is embedded in project planning on desktop and small screens
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
 
-test('daily schedule and week matrix can open the single embedded task overview', async ({ page }) => {
+test('daily schedule keeps focused planning controls while week matrix can open the task overview', async ({ page }) => {
   await page.getByTitle('每日安排').click();
-  await page.getByRole('button', { name: '查看全部项目任务' }).click();
-  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '明日复习选择' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '新建项目任务' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '查看全部项目任务' })).toHaveCount(0);
 
   await page.getByTitle('周矩阵').click();
   await page.getByRole('button', { name: '查看全部项目任务' }).click();
@@ -108,12 +108,19 @@ test('small screens expose the daily task pool as a closable bottom drawer', asy
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
 });
 
-test('operation history opens, closes and does not block navigation', async ({ page }) => {
-  await page.getByTitle('最近操作与回收站').click();
-  await expect(page.getByLabel('最近操作面板')).toBeVisible();
-  await expect(page.getByText('回收站', { exact: true })).toBeVisible();
-  await page.getByLabel('关闭最近操作').click();
-  await expect(page.getByLabel('最近操作面板')).toBeHidden();
+test('operation history and recycle library are removed with their legacy storage', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('line-operation-history-v2', '[{"id":"legacy-operation"}]');
+    localStorage.setItem('line-recycle-bin-v1', '[{"id":"legacy-recycled-task"}]');
+  });
+  await page.reload();
+  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
+  await expect(page.getByLabel('最近操作面板')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => ({
+    history: localStorage.getItem('line-operation-history-v2'),
+    recycle: localStorage.getItem('line-recycle-bin-v1'),
+  }))).toEqual({ history: null, recycle: null });
 });
 
 test('small screens can scroll the EBB content without the fixed toolbar swallowing the page', async ({ page }) => {

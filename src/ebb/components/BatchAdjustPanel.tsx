@@ -214,7 +214,7 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
         </div>
 
         <div className="eb-panel-footer eb-batch-footer">
-          <span>执行后可在“最近操作”中一次撤销</span>
+          <span>执行后会同步更新复习轮次与每日安排引用</span>
           <div><button type="button" className="eb-btn eb-btn--ghost" onClick={onClose}>取消</button><button type="button" className="eb-btn eb-btn--primary" disabled={preview.affectedTopics === 0} onClick={handleApply}>确认调整 {preview.affectedTopics > 0 ? `${preview.affectedTopics} 个计划` : ''}</button></div>
         </div>
       </div>

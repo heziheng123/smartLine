@@ -115,9 +115,6 @@ import { reconnectConfiguredWorkspace } from '@/services/workspaceSync';
 import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking } from '@/services/workspaceOfflineQueue';
 import { disconnectWorkspace } from '@/services/workspaceSync';
 import { isCurrentTabSyncLeader, startWorkspaceTabCoordinator } from '@/services/workspaceTabCoordinator';
-import OperationHistoryPanel from '@/components/OperationHistoryPanel';
-import { recordOperation } from '@/services/operationHistory';
-import { useRecycleBin } from '@/services/recycleBin';
 import { requestConfirmation } from '@/services/confirmation';
 import { resolveProjectTask, rescheduleProjectTask } from '@/services/projectTaskCommands';
 import '@/services/backlogCommands';
@@ -513,19 +510,18 @@ const App: React.FC = () => {
   }, [store]);
 
   // 抽屉：删除任务
-  const handleDeleteTaskFromDrawer = useCallback((taskId: string) => {
+  const handleDeleteTaskFromDrawer = useCallback(async (taskId: string) => {
     const task = [...store.tasks, ...store.groups.flatMap((group) => group.children)].find((item) => item.id === taskId);
-    const groupId = store.groups.find((group) => group.children.some((item) => item.id === taskId))?.id;
     if (task) {
-      const sourcePrefix = `project-blk:${taskId}::`;
-      const placements = Object.entries(useDailyScheduleStore.getState().schedules).map(([date, day]) => ({
-        date,
-        items: day.items.filter((item) => item.sourceId.startsWith(sourcePrefix)),
-        blocks: day.blocks.filter((block) => block.sourceId.startsWith(sourcePrefix)),
-      })).filter((entry) => entry.items.length > 0 || entry.blocks.length > 0);
-      const recycled = useRecycleBin.getState().recycle(task, groupId, placements);
+      const confirmed = await requestConfirmation({
+        title: '永久删除任务',
+        message: `确定永久删除“${task.name}”吗？关联的每日安排、复习进度和知识节点关系会同步清理，删除后无法从回收站恢复。`,
+        confirmLabel: '永久删除',
+        cancelLabel: '取消',
+        tone: 'danger',
+      });
+      if (!confirmed) return;
       store.deleteTask(taskId);
-      recordOperation({ label: `删除“${task.name}”`, detail: '任务及其每日安排位置已移入回收站，保留 30 天', modules: ['项目文档', '每日安排', 'EBB', '知识大盘'], undoSpec: { kind: 'restore-recycled', payload: { recycledId: recycled.id } } });
     }
     setDrawerTaskId(null);
   }, [store]);
@@ -756,7 +752,6 @@ const App: React.FC = () => {
 
   return (
     <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
-      <OperationHistoryPanel />
       <Toolbar
         currentView={currentView}
         onViewChange={setCurrentView}

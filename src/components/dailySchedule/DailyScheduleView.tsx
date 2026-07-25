@@ -13,9 +13,8 @@ import {
   type DropResult,
 } from '@hello-pangea/dnd';
 import {
+  CalendarCheck2,
   Settings2,
-  ListTodo,
-  Plus,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
@@ -70,7 +69,7 @@ import {
   DROPPABLE_VOCABULARY_POOL,
   isTaskPoolDroppable,
 } from './dndIds';
-import { openProjectTaskCreate } from '@/components/smartBlock/projectTaskCreate';
+import DailyReviewPlanner from '@/ebb/components/DailyReviewPlanner';
 
 // ── 主组件 ───────────────────────────────────────────────────
 
@@ -94,6 +93,8 @@ const DailyScheduleView: React.FC = () => {
   const [backlogFeedback, setBacklogFeedback] = useState<{ text: string; operationId?: string } | null>(null);
   const undoOperation = useOperationHistory((state) => state.undo);
   const [progressTask, setProgressTask] = useState<{ taskId: string; block: SmartTaskBlock } | null>(null);
+  const [dailyPlanOpen, setDailyPlanOpen] = useState(false);
+  const [dailyPlanFeedback, setDailyPlanFeedback] = useState<string | null>(null);
   const [poolPreference, setPoolPreference] = useState<'auto' | 'open' | 'closed'>('auto');
   const [isCompactLayout, setIsCompactLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches);
 
@@ -132,20 +133,18 @@ const DailyScheduleView: React.FC = () => {
     }
   }, [selectedDate]);
 
-  const openAllProjectTasks = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'task-overview' } }));
-  }, []);
-
   const { tasks: rawTlTasks, groups: rawTlGroups } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
   );
   const {
     reviewTasks: rawEbbReviewTasks,
     ebbSettings: ebbSettingsData,
+    applyDailyReviewPlan,
   } = useEbbStore(
     useShallow((s) => ({
       reviewTasks: s.reviewTasks,
       ebbSettings: s.ebbSettings,
+      applyDailyReviewPlan: s.applyDailyReviewPlan,
     })),
   );
 
@@ -791,7 +790,7 @@ const DailyScheduleView: React.FC = () => {
     if (!backlogFeedback?.operationId) return;
     const restored = await undoOperation(backlogFeedback.operationId);
     setBacklogFeedback({
-      text: restored ? '已撤销，任务已恢复到原排期和时段' : '撤销失败，请在最近操作中查看原因',
+      text: restored ? '已撤销，任务已恢复到原排期和时段' : '撤销失败，任务数据可能已经发生变化',
     });
   }, [backlogFeedback, undoOperation]);
 
@@ -837,11 +836,8 @@ const DailyScheduleView: React.FC = () => {
             />
           </div>
           <div className="ds-header-right">
-            <button type="button" className="ds-header-btn" onClick={() => openProjectTaskCreate({ date: selectedDate, source: 'daily-schedule' })} aria-label="新建项目任务">
-              <Plus size={15} />新建任务
-            </button>
-            <button type="button" className="ds-header-btn" onClick={openAllProjectTasks} aria-label="查看全部项目任务">
-              <ListTodo size={15} />全部任务
+            <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日复习选择">
+              <CalendarCheck2 size={15} />明日复习选择
             </button>
             {/* 视图模式切换 */}
             <div className="ds-mode-switch" role="tablist" aria-label="排期模式切换">
@@ -900,6 +896,12 @@ const DailyScheduleView: React.FC = () => {
               <button type="button" onClick={() => void undoReturnToBacklog()}>撤销</button>
             )}
             <button type="button" onClick={() => setBacklogFeedback(null)} aria-label="关闭移回提示">×</button>
+          </div>
+        )}
+        {dailyPlanFeedback && (
+          <div className="ds-backlog-feedback" role="status" aria-live="polite">
+            <span>{dailyPlanFeedback}</span>
+            <button type="button" onClick={() => setDailyPlanFeedback(null)} aria-label="关闭明日复习提示">×</button>
           </div>
         )}
 
@@ -1023,6 +1025,18 @@ const DailyScheduleView: React.FC = () => {
             block={progressTask.block}
             date={selectedDate}
             onClose={() => setProgressTask(null)}
+          />
+        )}
+        {dailyPlanOpen && (
+          <DailyReviewPlanner
+            reviewTasks={ebbReviewTasks}
+            settings={ebbSettingsData}
+            onApply={(request) => {
+              const result = applyDailyReviewPlan(request);
+              setDailyPlanFeedback(`明日保留 ${result.keptCount} 轮，其余 ${result.deferredCount} 轮顺延一天`);
+              return result;
+            }}
+            onClose={() => setDailyPlanOpen(false)}
           />
         )}
       </div>

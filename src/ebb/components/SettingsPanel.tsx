@@ -1,6 +1,6 @@
 // ============================================================
 // Ebb - 设置页
-// 间隔/负载/复杂度/逾期/分散/撤销栈/标签颜色
+// 间隔/负载/复杂度/逾期/分散/标签颜色
 // ============================================================
 
 import React, { useState, useCallback, useMemo } from 'react';
@@ -31,7 +31,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
   const [minTopicGapDays, setMinTopicGapDays] = useState(s.minTopicGapDays);
   const [autoProcessOverdue, setAutoProcessOverdue] = useState(s.autoProcessOverdue);
   const [overdueThreshold, setOverdueThreshold] = useState(s.overdueThreshold);
-  const [maxUndoStack, setMaxUndoStack] = useState(s.maxUndoStack);
   const [loadThresholds, setLoadThresholds] = useState<[number, number, number, number]>(
     s.loadThresholds ?? [2, 4, 6, 9],
   );
@@ -47,12 +46,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
       minTopicGapDays,
       autoProcessOverdue,
       overdueThreshold,
-      maxUndoStack,
       loadThresholds,
     };
     store.updateSettings(patch);
     onClose();
-  }, [customIntervals, dailyTaskLimit, dailyPointLimit, maxSpreadDays, minTopicGapDays, autoProcessOverdue, overdueThreshold, maxUndoStack, loadThresholds, store, onClose]);
+  }, [customIntervals, dailyTaskLimit, dailyPointLimit, maxSpreadDays, minTopicGapDays, autoProcessOverdue, overdueThreshold, loadThresholds, store, onClose]);
 
   // 复杂度配置编辑
   const [editingComplexity, setEditingComplexity] = useState<ComplexityLevel | null>(null);
@@ -278,25 +276,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
                 max={7}
                 value={minTopicGapDays}
                 onChange={(e) => setMinTopicGapDays(parseInt(e.target.value, 10))}
-                className="eb-slider"
-              />
-            </div>
-          </section>
-
-          {/* 撤销栈 */}
-          <section className="eb-settings-section">
-            <h4 className="eb-settings-section-title">撤销栈</h4>
-            <div className="eb-slider-row">
-              <label className="eb-slider-label">
-                最大深度
-                <span className="eb-slider-value">{maxUndoStack}</span>
-              </label>
-              <input
-                type="range"
-                min={1}
-                max={50}
-                value={maxUndoStack}
-                onChange={(e) => setMaxUndoStack(parseInt(e.target.value, 10))}
                 className="eb-slider"
               />
             </div>

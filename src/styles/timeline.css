@@ -4614,25 +4614,6 @@ html, body, #root {
 .tl-datepicker-today:hover {
   background: #E0E7FF;
 }
-/* Unified operation history / undo. The entry now lives inside the bottom dock. */
-.operation-history-panel { position: fixed; z-index: 130; right: 20px; bottom: 90px; width: min(390px, calc(100vw - 28px)); max-height: min(620px, calc(100vh - 112px)); display: flex; flex-direction: column; background: white; border: 1px solid #dbe3ef; border-radius: 16px; box-shadow: 0 20px 55px rgba(15,23,42,.2); overflow: hidden; }
-.operation-history-panel header, .operation-history-panel footer { padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #eef2f7; }
-.operation-history-panel header > div, .operation-history-panel button { display: inline-flex; align-items: center; gap: 7px; }
-.operation-history-panel button { border: 0; background: transparent; color: #64748b; cursor: pointer; }
-.operation-history-list { overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
-.operation-history-list article { padding: 11px; border: 1px solid #eef2f7; border-radius: 11px; margin-bottom: 8px; }
-.operation-history-row { display: flex; justify-content: space-between; gap: 12px; }
-.operation-history-row time, .operation-history-modules { color: #94a3b8; font-size: 12px; }
-.operation-history-list p { margin: 6px 0; color: #64748b; font-size: 13px; line-height: 1.5; }
-.operation-history-list .operation-history-error { color: #dc2626; }
-.operation-history-item-actions { margin-top: 9px; display: flex; gap: 12px; }
-.operation-history-item-actions button:first-child { color: #4f46e5; }
-.operation-history-empty { padding: 40px 12px; text-align: center; color: #94a3b8; }
-.operation-history-panel footer { border-top: 1px solid #eef2f7; border-bottom: 0; justify-content: flex-end; }
-.operation-history-trash-title { padding: 11px 15px 6px; display: flex; align-items: center; gap: 7px; border-top: 1px solid #e2e8f0; }
-.operation-history-trash-title span { margin-left: auto; color: #94a3b8; font-size: 12px; }
-.operation-history-trash { max-height: 220px; }
-@media (max-width: 640px) { .operation-history-panel { right: 14px; bottom: 88px; } }
 @media (max-width: 640px) {
   .tl-dock-wrapper { width: calc(100vw - 24px); max-width: calc(100vw - 24px); }
   .tl-dock { width: 100%; max-width: 100%; overflow-x: auto; overflow-y: hidden; justify-content: flex-start; scrollbar-width: none; overscroll-behavior-x: contain; }

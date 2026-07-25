@@ -82,7 +82,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test('batch trim updates rounds, daily references, knowledge color and unified undo', async ({ page }) => {
+test('batch trim updates rounds, daily references and knowledge color without history-library records', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
   const totalCard = page.locator('.eb-stat-card').filter({ hasText: '总任务' });
   await expect(totalCard.locator('.eb-stat-value')).toHaveText('4');
@@ -105,17 +105,9 @@ test('batch trim updates rounds, daily references, knowledge color and unified u
   await page.getByTitle('每日安排').click();
   await page.locator('.ds-date-input').fill(dueDates[2]);
   await expect(page.locator('.ds-item').filter({ hasText: '批量颜色联动知识' })).toHaveCount(0);
-
-  await page.getByTitle('最近操作与回收站').click();
-  const history = page.getByLabel('最近操作面板');
-  await expect(history).toContainText('批量精简复习轮次');
-  await history.locator('.operation-history-list article').first().getByRole('button', { name: '撤销' }).click();
-  await page.getByLabel('关闭最近操作').click();
-
-  await page.locator('.ds-date-input').fill(dueDates[2]);
-  await expect(page.locator('.ds-item').filter({ hasText: '批量颜色联动知识' })).toBeVisible();
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
   await page.getByTitle('艾宾浩斯复习').click();
-  await expect(page.locator('.eb-stat-card').filter({ hasText: '总任务' }).locator('.eb-stat-value')).toHaveText('4');
+  await expect(page.locator('.eb-stat-card').filter({ hasText: '总任务' }).locator('.eb-stat-value')).toHaveText('2');
 });
 
 test('batch panel previews shift, append and future-template operations', async ({ page }) => {
@@ -149,25 +141,21 @@ test('batch panel previews shift, append and future-template operations', async 
   await expect(dialog.locator('.eb-batch-preview-row').filter({ hasText: '批量颜色联动知识' })).toContainText('4 → 7');
 });
 
-test('undoing appended rounds preserves existing daily arrangements', async ({ page }) => {
+test('appended rounds preserve existing daily arrangements without creating a history entry', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
   await openEbbMoreAction(page, '批量调整');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await dialog.getByRole('radio', { name: /追加轮次/ }).click();
   await dialog.getByRole('button', { name: /确认调整 1 个计划/ }).click();
   await expect(page.locator('.eb-stat-card').filter({ hasText: '总任务' }).locator('.eb-stat-value')).toHaveText('5');
-
-  await page.getByTitle('最近操作与回收站').click();
-  const history = page.getByLabel('最近操作面板');
-  await history.locator('.operation-history-list article').first().getByRole('button', { name: '撤销' }).click();
-  await page.getByLabel('关闭最近操作').click();
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
 
   await page.getByTitle('每日安排').click();
   await page.locator('.ds-date-input').fill(dueDates[2]);
   await expect(page.locator('.ds-item').filter({ hasText: '批量颜色联动知识' })).toBeVisible();
 });
 
-test('shifted rounds survive refresh and unified undo restores items and time blocks', async ({ page }) => {
+test('shifted rounds survive refresh and stale daily items stay removed without persistent undo', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
   await openEbbMoreAction(page, '批量调整');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
@@ -194,10 +182,7 @@ test('shifted rounds survive refresh and unified undo restores items and time bl
   await page.reload();
   await page.getByTitle('艾宾浩斯复习').click();
   await expect(page.locator('.eb-stat-card').filter({ hasText: '总任务' }).locator('.eb-stat-value')).toHaveText('4');
-  await page.getByTitle('最近操作与回收站').click();
-  const history = page.getByLabel('最近操作面板');
-  await expect(history).toContainText('批量调整复习日期');
-  await history.locator('.operation-history-list article').first().getByRole('button', { name: '撤销' }).click();
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{ reviewTasks?: Array<{ id: string; dueDate: string }> }>(page, 'ebb_data', 'smart-ebb-data') ?? {};
@@ -205,15 +190,14 @@ test('shifted rounds survive refresh and unified undo restores items and time bl
       .filter((task: { id: string }) => task.id === 'batch-r3' || task.id === 'batch-r4')
       .sort((a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id))
       .map((task: { dueDate: string }) => task.dueDate);
-  }).toEqual([dueDates[2], dueDates[3]]);
+  }).toEqual([addDays(dueDates[2], -2), addDays(dueDates[3], -2)]);
   await expect.poll(async () => {
     const schedules = await readPersistedStore<Record<string, { items?: Array<{ id: string; sourceId?: string }>; blocks?: Array<{ id: string; sourceId?: string }> }>>(page, 'daily_schedule_data', 'daily-schedule-data') ?? {};
     const days = Object.values(schedules) as Array<{ items?: Array<{ id: string; sourceId?: string }>; blocks?: Array<{ id: string; sourceId?: string }> }>;
     return days.flatMap((day) => [...(day.items ?? []), ...(day.blocks ?? [])])
       .filter((entry: { sourceId?: string }) => entry.sourceId === 'review-batch-r3' || entry.sourceId === 'review-batch-r4')
-      .map((entry: { id: string }) => entry.id)
-      .sort();
-  }).toEqual(['batch-block-r4', 'batch-daily-r3', 'batch-daily-r4']);
+      .length;
+  }).toBe(0);
 });
 
 test('future template rejects malformed intervals and preserves completed history when applied', async ({ page }) => {

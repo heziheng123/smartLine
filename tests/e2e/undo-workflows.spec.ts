@@ -24,14 +24,6 @@ const daily = {
 };
 const ebb = { reviewTasks: [{ id: 'e2e-review', topicName: 'E2E复习撤销', dueDate: testDate, originalDueDate: testDate, roundOrder: 1, isCompleted: false, tag: '默认', smStatus: 'scheduled' }], inboxItems: [], outlineNodes: [], ebbSettings: {} };
 
-const undoLatestFromHistory = async (page: Page) => {
-  await page.getByTitle('最近操作与回收站').click();
-  const panel = page.getByLabel('最近操作面板');
-  await expect(panel).toBeVisible();
-  await panel.locator('.operation-history-list article').first().getByRole('button', { name: '撤销' }).click();
-  await page.getByLabel('关闭最近操作').click();
-};
-
 const openTaskOverview = async (page: Page) => {
   await page.getByTitle('项目规划').click();
   await page.getByRole('menuitemradio', { name: '全部任务' }).click();
@@ -49,15 +41,38 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test('completion from daily schedule creates one unified undo and restores the card', async ({ page }) => {
+test('completion from daily schedule stays committed without creating a history-library entry', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   const card = page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' });
   await expect(card).toBeVisible();
   await card.locator('.ds-item-check').click();
   await expect(card).toHaveClass(/ds-item--completed/);
-  await expect(page.getByRole('button', { name: /^撤销：/ })).toHaveCount(0);
-  await undoLatestFromHistory(page);
-  await expect(card).not.toHaveClass(/ds-item--completed/);
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('line-operation-history-v2'))).toBeNull();
+  await page.reload();
+  await page.getByTitle('每日安排').click();
+  await expect(page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toHaveClass(/ds-item--completed/);
+});
+
+test('permanent task deletion requires confirmation and leaves no recycle entry', async ({ page }) => {
+  const project = page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first();
+  await expect(project).toBeVisible();
+  await project.click({ button: 'right' });
+  await page.locator('.tl-context-menu').getByRole('button', { name: '删除', exact: true }).click();
+
+  const dialog = page.getByRole('alertdialog', { name: '永久删除任务' });
+  await expect(dialog).toContainText('删除后无法从回收站恢复');
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(project).toBeVisible();
+
+  await project.click({ button: 'right' });
+  await page.locator('.tl-context-menu').getByRole('button', { name: '删除', exact: true }).click();
+  await dialog.getByRole('button', { name: '永久删除' }).click();
+  await expect(project).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('line-recycle-bin-v1'))).toBeNull();
+
+  await page.getByTitle('每日安排').click();
+  await expect(page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toHaveCount(0);
 });
 
 test('task overview aggregates project tasks and edits the original task block', async ({ page }) => {
@@ -160,32 +175,30 @@ test('legacy quantity task without a start date is repaired and returns to the d
   await expect(page.locator('.ds-pool-item').filter({ hasText: '待恢复背诵任务' })).toBeVisible();
 });
 
-test('latest undo survives page refresh and remains executable', async ({ page }) => {
+test('operation history is not persisted across refresh', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   const card = page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' });
   await card.locator('.ds-item-check').click();
   await expect(card).toHaveClass(/ds-item--completed/);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('line-operation-history-v2'))).toBeNull();
   await page.reload();
   await page.getByTitle('每日安排').click();
   const refreshedCard = page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' });
   await expect(refreshedCard).toHaveClass(/ds-item--completed/);
-  await undoLatestFromHistory(page);
-  await expect(refreshedCard).not.toHaveClass(/ds-item--completed/);
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
 });
 
-test('older operations are not offered after a newer operation is recorded', async ({ page }) => {
+test('multiple operations never surface a central history list', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   const card = page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' });
   await card.locator('.ds-item-check').click();
   await card.locator('.ds-item-check').click();
-  await page.getByTitle('最近操作与回收站').click();
-  const entries = page.locator('.operation-history-list article');
-  await expect(entries).toHaveCount(2);
-  await expect(entries.nth(0).getByRole('button', { name: '撤销' })).toBeVisible();
-  await expect(entries.nth(1).getByRole('button', { name: '撤销' })).toHaveCount(0);
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
+  await expect(page.locator('.operation-history-list')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('line-operation-history-v2'))).toBeNull();
 });
 
-test('EBB completion from the main matrix uses the same global undo', async ({ page }) => {
+test('EBB completion remains committed without a global undo library', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
   await page.locator('.eb-topic-row-main').filter({ hasText: 'E2E复习撤销' }).click();
   const toggle = page.getByLabel('标记第 1 轮完成');
@@ -193,11 +206,13 @@ test('EBB completion from the main matrix uses the same global undo', async ({ p
   await toggle.click();
   await page.getByRole('button', { name: '完成并结束计划' }).click();
   await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
-  await undoLatestFromHistory(page);
-  await expect(page.getByLabel('标记第 1 轮完成')).toBeVisible();
+  await page.reload();
+  await page.getByTitle('艾宾浩斯复习').click();
+  await page.locator('.eb-topic-row-main').filter({ hasText: 'E2E复习撤销' }).click();
+  await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
 });
 
-test('daily schedule drag between slots can be undone precisely', async ({ page }) => {
+test('daily schedule drag between slots remains committed after refresh', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   const afternoon = page.getByTestId('daily-slot-afternoon');
   await page.waitForFunction(() => typeof (window as typeof window & { __e2eDailyDragEnd?: unknown }).__e2eDailyDragEnd === 'function');
@@ -207,11 +222,12 @@ test('daily schedule drag between slots can be undone precisely', async ({ page 
     destination: { droppableId: 'ds-slot-afternoon', index: 0 },
   }));
   await expect(afternoon.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toBeVisible();
-  await undoLatestFromHistory(page);
-  await expect(page.getByTestId('daily-slot-morning').locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toBeVisible();
+  await page.reload();
+  await page.getByTitle('每日安排').click();
+  await expect(page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toBeVisible();
 });
 
-test('week matrix drag reschedules through unified undo', async ({ page }) => {
+test('week matrix drag reschedule remains committed after refresh', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
   const card = page.locator('[data-block-id="e2e-block"]');
   const target = page.locator(`[data-date="${weekMoveTargetDate}"][data-tag="默认"]`);
@@ -228,8 +244,9 @@ test('week matrix drag reschedules through unified undo', async ({ page }) => {
     source.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
   }, { sourceDate: testDate, targetDate: weekMoveTargetDate });
   await expect(target.locator('[data-block-id="e2e-block"]')).toBeVisible();
-  await undoLatestFromHistory(page);
-  await expect(page.locator(`[data-date="${testDate}"][data-tag="默认"] [data-block-id="e2e-block"]`)).toBeVisible();
+  await page.reload();
+  await page.getByTitle('周矩阵').click();
+  await expect(page.locator(`[data-date="${weekMoveTargetDate}"][data-tag="默认"] [data-block-id="e2e-block"]`)).toBeVisible();
 });
 
 test('daily schedule keeps the real drag transform and visual feedback', async ({ page }) => {
@@ -385,10 +402,13 @@ test('project quantity task suggests a daily target and records progress without
   await refreshedCard.getByRole('button', { name: '补到 80 题' }).click();
   await expect(refreshedCard).toHaveClass(/ds-item--completed/);
   await expect(refreshedCard).toContainText('今日 80/80 题');
-  await undoLatestFromHistory(page);
-  await expect(refreshedCard).not.toHaveClass(/ds-item--completed/);
-  await expect(refreshedCard).toContainText('今日 35/80 题');
-  await expect(refreshedCard).toContainText('235/1000 题');
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('tab', { name: '每日安排' }).click();
+  const completedCard = page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: '考研数学题库' });
+  await expect(completedCard).toHaveClass(/ds-item--completed/);
+  await expect(completedCard).toContainText('今日 80/80 题');
+  await expect(completedCard).toContainText('280/1000 题');
 });
 
 test('quantity controls open a real progress entry and future tasks stay locked', async ({ page }) => {
@@ -457,7 +477,7 @@ test('quantity controls open a real progress entry and future tasks stay locked'
   await expect(futureDialog.getByRole('button', { name: /任务尚未开始：Future quantity/ })).toBeDisabled();
 });
 
-test('direct quantity total and cumulative edits restore their numeric values through persistent undo', async ({ page }) => {
+test('direct quantity total and cumulative edits persist without creating history records', async ({ page }) => {
   await page.evaluate(({ date }) => {
     const key = 'smart-timeline-data:mirror';
     const data = JSON.parse(localStorage.getItem(key) ?? '{}');
@@ -504,7 +524,13 @@ test('direct quantity total and cumulative edits restore their numeric values th
   await page.reload();
   card = await openQuantityCard();
   await expect(card).toHaveClass(/stb-card--done/);
-  await undoLatestFromHistory(page);
+  await expect(card.getByTitle('累计已完成题数')).toHaveValue('100');
+  await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
+
+  const restoredCompletedInput = card.getByTitle('累计已完成题数');
+  await restoredCompletedInput.press('Control+A');
+  await restoredCompletedInput.pressSequentially('90');
+  await restoredCompletedInput.press('Enter');
   await expect(card).not.toHaveClass(/stb-card--done/);
   await expect(card.getByTitle('累计已完成题数')).toHaveValue('90');
   await expect(card).toContainText('进度 90/100 题');
@@ -519,10 +545,9 @@ test('direct quantity total and cumulative edits restore their numeric values th
   await page.reload();
   card = await openQuantityCard();
   await expect(card).toHaveClass(/stb-card--done/);
-  await undoLatestFromHistory(page);
-  await expect(card).not.toHaveClass(/stb-card--done/);
-  await expect(card.getByTitle('目标总量')).toHaveValue('100');
-  await expect(card).toContainText('进度 90/100 题');
+  await expect(card.getByTitle('目标总量')).toHaveValue('90');
+  await expect(card.getByTitle('累计已完成题数')).toHaveValue('90');
+  await expect(card).toContainText('进度 90/90 题');
 });
 
 test('project task duration accepts any positive minute value', async ({ page }) => {

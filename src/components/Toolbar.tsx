@@ -1,11 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Archive, History, ListTodo, Check, ChevronUp } from 'lucide-react';
+import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Archive, ListTodo, Check, ChevronUp } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { motion } from 'framer-motion';
 import { ArchiveLibraryModal } from './GlobalSearch';
-import { useOperationHistory } from '@/services/operationHistory';
 
 export type AppModule = 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
 
@@ -53,12 +52,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const createMenuRef = useRef<HTMLDivElement>(null);
   const projectViewMenuRef = useRef<HTMLDivElement>(null);
   const projectViewPopoverRef = useRef<HTMLDivElement>(null);
-  const {
-    entries: operationEntries,
-    panelOpen: operationPanelOpen,
-    setPanelOpen: setOperationPanelOpen,
-  } = useOperationHistory();
-
   useEffect(() => {
     if (!isCreateMenuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
@@ -259,33 +252,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
             </motion.button>
           );
         })}
-
-        <motion.div 
-          layout 
-          key="divider-1" 
-          className="tl-dock-divider" 
-          initial={{ opacity: 0, scale: 0 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0 }}
-        />
-
-        <motion.button
-          layout
-          key="operation-history"
-          initial={{ opacity: 0, width: 0, scale: 0.8 }}
-          animate={{ opacity: 1, width: 'auto', scale: 1 }}
-          exit={{ opacity: 0, width: 0, scale: 0.8 }}
-          type="button"
-          className={`tl-dock-btn ${operationPanelOpen ? 'tl-dock-btn--view-active' : ''}`}
-          onClick={() => setOperationPanelOpen(!operationPanelOpen)}
-          title="最近操作与回收站"
-          aria-label="最近操作与回收站"
-          aria-expanded={operationPanelOpen}
-          style={{ position: 'relative', flexShrink: 0 }}
-        >
-          <History size={18} />
-          {operationEntries.length > 0 && <span className="tl-dock-status-badge">{Math.min(operationEntries.length, 99)}</span>}
-        </motion.button>
 
         {/* ── 归档库 (仅在知识大盘中显示) ── */}
         {currentView === 'knowledge-graph' && (

@@ -45,6 +45,12 @@ export interface ReviewTask {
   /** 自动完成逾期轮次前，后续轮次的日期快照，用于安全取消完成。 */
   previousSchedule?: Array<{ reviewTaskId: string; dueDate: string }>;
   isSupplemental?: boolean;
+  /** 最近一次“明日选择”针对的计划日期。用于当晚重新打开后恢复选择状态。 */
+  rollingPlanDate?: string;
+  /** 最近一次“明日选择”的决定；只描述当前轮次，不改变知识节点绑定。 */
+  rollingDecision?: 'keep' | 'defer';
+  /** 当前轮次连续被顺延的次数；保留到明天时归零。 */
+  rollingDeferralCount?: number;
 }
 
 export interface SyncTaskToEbbPayload {

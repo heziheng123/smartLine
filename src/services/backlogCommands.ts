@@ -48,8 +48,8 @@ export type ReturnToBacklogCommandResult =
  * Clears the canonical planning date for one standard project task.
  *
  * The Timeline transaction is deliberately the only writer here. It removes
- * every Daily Schedule projection for the task and records the date plus those
- * projections in one persistent undo entry. All other task metadata remains
+ * every Daily Schedule projection for the task and keeps one contextual
+ * rollback snapshot for the current session. All other task metadata remains
  * untouched because the canonical patch only contains date/frozenAt.
  */
 export function returnProjectTaskToBacklog(

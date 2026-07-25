@@ -137,6 +137,13 @@ export function normalizeEbbData(data: Partial<EbbData> | null | undefined): Ebb
             && isValidEbbDate(entry.dueDate),
           )
         : undefined,
+      rollingPlanDate: isValidEbbDate(task.rollingPlanDate) ? task.rollingPlanDate : undefined,
+      rollingDecision: task.rollingDecision === 'keep' || task.rollingDecision === 'defer'
+        ? task.rollingDecision
+        : undefined,
+      rollingDeferralCount: Number.isInteger(task.rollingDeferralCount) && task.rollingDeferralCount! >= 0
+        ? task.rollingDeferralCount
+        : undefined,
     }))),
   );
   const inboxItems = deduplicateById(
