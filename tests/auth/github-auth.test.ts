@@ -122,6 +122,21 @@ test('Liveblocks endpoint requires a session and uses a stable GitHub identity',
     'workspace-owner-study': ['*:write'],
   });
 
+  const otherWorkspace = await authenticateLiveblocks({
+    env,
+    request: new Request('https://smartline.example/api/liveblocks-auth', {
+      method: 'POST',
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${sessionValue}`,
+        Origin: 'https://smartline.example',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ room: 'workspace-other-private' }),
+    }),
+  });
+  assert.equal(otherWorkspace.status, 403);
+  assert.equal(requests.length, 1);
+
   const crossOrigin = await authenticateLiveblocks({
     env,
     request: new Request('https://smartline.example/api/liveblocks-auth', {

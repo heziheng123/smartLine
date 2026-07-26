@@ -111,8 +111,8 @@ import { useGraphStore } from '@/graph/store';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
-import { reconnectConfiguredWorkspace } from '@/services/workspaceSync';
-import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking } from '@/services/workspaceOfflineQueue';
+import { reconnectConfiguredWorkspace, WORKSPACE_CONFLICT_EVENT } from '@/services/workspaceSync';
+import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking, WORKSPACE_QUEUE_ERROR_EVENT } from '@/services/workspaceOfflineQueue';
 import { disconnectWorkspace } from '@/services/workspaceSync';
 import { isCurrentTabSyncLeader, startWorkspaceTabCoordinator } from '@/services/workspaceTabCoordinator';
 import { requestConfirmation } from '@/services/confirmation';
@@ -287,6 +287,7 @@ const App: React.FC = () => {
   // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
   const [currentView, setCurrentView] = useState<AppModule>('timeline');
   const [projectWorkspaceView, setProjectWorkspaceView] = useState<ProjectWorkspaceView>(loadProjectWorkspaceView);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   React.useEffect(() => {
     try {
@@ -295,6 +296,20 @@ const App: React.FC = () => {
       // 视图偏好写入失败不应影响项目数据和页面使用。
     }
   }, [projectWorkspaceView]);
+
+  React.useEffect(() => {
+    const handleConflict = () => setSyncNotice('检测到多设备同步冲突，本地修改已保留。请打开同步设置处理。');
+    const handleQueueError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      setSyncNotice(detail?.message ?? '本地修改尚未安全写入同步队列，请勿关闭页面。');
+    };
+    window.addEventListener(WORKSPACE_CONFLICT_EVENT, handleConflict);
+    window.addEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
+    return () => {
+      window.removeEventListener(WORKSPACE_CONFLICT_EVENT, handleConflict);
+      window.removeEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
+    };
+  }, []);
 
   // 年份显示
   const [displayYear, setDisplayYear] = useState(() => {
@@ -767,6 +782,14 @@ const App: React.FC = () => {
         onProjectWorkspaceViewChange={setProjectWorkspaceView}
       />
 
+      {syncNotice && (
+        <div className="tl-sync-warning" role="alert">
+          <span>{syncNotice}</span>
+          <button type="button" onClick={() => setDialogType('sync')}>查看同步</button>
+          <button type="button" aria-label="关闭同步警告" onClick={() => setSyncNotice(null)}>×</button>
+        </div>
+      )}
+
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
       <ViewErrorBoundary
         viewName={currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
@@ -829,6 +852,7 @@ const App: React.FC = () => {
                 <Suspense fallback={<ViewFallback />}>
                   <WeekMatrixView
                     tasks={weekMatrixTasks}
+                    groups={store.groups}
                   />
                 </Suspense>
               </div>

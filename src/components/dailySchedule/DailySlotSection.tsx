@@ -20,7 +20,7 @@ interface DailySlotSectionProps {
   stats: SlotStats;
   addingFree: boolean;
   freeItemName: string;
-  freeInputRef: React.RefObject<HTMLInputElement | null>;
+  freeInputRef: React.RefObject<HTMLInputElement>;
   getVirtualTime: (itemId: string) => string;
   isQuantitySource: (sourceId: string) => boolean;
   checkIsUnlinkedTask: (sourceId: string) => boolean;

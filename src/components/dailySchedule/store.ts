@@ -72,10 +72,14 @@ function isValidTimeRange(startTime: unknown, endTime: unknown): boolean {
 }
 
 export function normalizeDailySchedules(
-  input: Record<string, DaySchedule> | null | undefined,
+  input: unknown,
 ): Record<string, DaySchedule> {
   const normalized: Record<string, DaySchedule> = {};
-  for (const [date, day] of Object.entries(input ?? {})) {
+  const source = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
+  for (const [date, rawDay] of Object.entries(source)) {
+    const day = rawDay as Partial<DaySchedule> | null;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !day || typeof day !== 'object') continue;
     const usedIds = new Set<string>();
     const items = (Array.isArray(day.items) ? day.items : []).flatMap((item) => {
@@ -106,10 +110,14 @@ export function normalizeDailySchedules(
 }
 
 export function normalizeDailyRetrospectives(
-  input: Record<string, DailyRetrospective> | null | undefined,
+  input: unknown,
 ): Record<string, DailyRetrospective> {
   const normalized: Record<string, DailyRetrospective> = {};
-  for (const [date, value] of Object.entries(input ?? {})) {
+  const source = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
+  for (const [date, rawValue] of Object.entries(source)) {
+    const value = rawValue as Partial<DailyRetrospective> | null;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)
       || !value || typeof value !== 'object' || value.date !== date || !Array.isArray(value.entries)) continue;
     const fallbackTimestamp = `${date}T00:00:00.000Z`;

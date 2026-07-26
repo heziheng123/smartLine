@@ -20,9 +20,16 @@ function saturdayOfCurrentWeek(date: string): string {
   return addIsoDays(date, day === 0 ? -1 : 6 - day);
 }
 
+function alternateDateInCurrentWeek(date: string): string {
+  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
+  const monday = addIsoDays(date, day === 0 ? -6 : 1 - day);
+  return monday === date ? addIsoDays(monday, 1) : monday;
+}
+
 const project = {
   id: 'backlog-project',
   name: '机动任务测试项目',
+  groupId: 'backlog-group',
   start: today,
   end: today,
   color: '#3b82f6',
@@ -104,6 +111,37 @@ const project = {
   ],
 };
 
+const secondaryProject = {
+  id: 'secondary-project',
+  name: '第二测试项目',
+  start: today,
+  end: today,
+  color: '#f59e0b',
+  blocks: [{
+    type: 'smart-task',
+    id: 'secondary-scheduled-block',
+    header: {
+      title: '第二项目已排期任务',
+      tag: '复习',
+      tagColor: '#f59e0b',
+      date: today,
+      duration: 30,
+      isCompleted: false,
+      autoSyncEbb: false,
+    },
+    body: '',
+  }],
+};
+
+const projectGroup = {
+  id: 'backlog-group',
+  name: '测试项目组',
+  start: today,
+  end: today,
+  color: '#60a5fa',
+  children: [project],
+};
+
 const daily = {
   [today]: {
     date: today,
@@ -163,19 +201,19 @@ async function readIndexedValue(page: Page, storeName: string, key: string) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(({ taskData, dailyData, ebbData }) => {
+  await page.addInitScript(({ taskData, secondaryTaskData, groupData, dailyData, ebbData }) => {
     if (sessionStorage.getItem('backlog-e2e-seeded') === '1') return;
     sessionStorage.setItem('backlog-e2e-seeded', '1');
     localStorage.clear();
     localStorage.setItem('smart-timeline-data:mirror', JSON.stringify({
-      tasks: [taskData],
-      groups: [],
+      tasks: [taskData, secondaryTaskData],
+      groups: [groupData],
       notes: [],
       milestones: [],
     }));
     localStorage.setItem('daily-schedule-data:mirror', JSON.stringify(dailyData));
     localStorage.setItem('smart-ebb-data:mirror', JSON.stringify(ebbData));
-  }, { taskData: project, dailyData: daily, ebbData: ebb });
+  }, { taskData: project, secondaryTaskData: secondaryProject, groupData: projectGroup, dailyData: daily, ebbData: ebb });
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
@@ -183,7 +221,7 @@ test.beforeEach(async ({ page }) => {
 test('week matrix shows de-duplicated workload and the filtered backlog count', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
   const todayHeader = page.locator(`.wmv-row--header [data-date="${today}"]`);
-  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(`3项 · 90/${todayCapacityMinutes}m`);
+  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(`4项 · 120/${todayCapacityMinutes}m`);
   await expect(page.getByRole('button', { name: '待排期箱，26 个任务' })).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) > 900) {
     const [workspaceBox, contentBox] = await Promise.all([
@@ -208,9 +246,35 @@ test('week matrix shows de-duplicated workload and the filtered backlog count', 
   await expect(backlog.getByText('待排期整理错题', { exact: true })).toHaveCount(0);
 });
 
+test('week matrix groups by real project identity without changing workload and remembers the view', async ({ page }) => {
+  await page.getByTitle('周矩阵').click();
+  const todayHeader = page.locator(`.wmv-row--header [data-date="${today}"]`);
+  const originalLoad = await todayHeader.locator('.wmv-load-label').textContent();
+
+  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+
+  const primaryRow = page.locator('.wmv-row').filter({ has: page.locator('[data-project-id="backlog-project"]') });
+  const secondaryRow = page.locator('.wmv-row').filter({ has: page.locator('[data-project-id="secondary-project"]') });
+  await expect(primaryRow.getByText('测试项目组 / 机动任务测试项目', { exact: true })).toBeVisible();
+  await expect(secondaryRow.getByText('第二测试项目', { exact: true })).toBeVisible();
+  await expect(primaryRow.locator('[data-block-id="scheduled-block"]')).toBeVisible();
+  await expect(secondaryRow.locator('[data-block-id="secondary-scheduled-block"]')).toBeVisible();
+  await expect.poll(() => page.locator('.wmv-row:not(.wmv-row--header)').evaluateAll((rows) =>
+    rows.filter((row) => !row.querySelector('.wmv-block-card')).length,
+  )).toBe(0);
+  await expect(primaryRow.getByText('学习', { exact: true })).toBeVisible();
+  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(originalLoad ?? '');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('week-matrix-group-mode-v1'))).toBe('project');
+
+  await page.reload();
+  await page.getByTitle('周矩阵').click();
+  await expect(page.locator('[data-project-id="backlog-project"] [data-block-id="scheduled-block"]')).toBeVisible();
+});
+
 test('docked backlog leaves Saturday reachable and supports dropping on the date header', async ({ page }) => {
   const saturday = saturdayOfCurrentWeek(today);
   await page.getByTitle('周矩阵').click();
+  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
   await page.getByRole('button', { name: '待排期箱，26 个任务' }).click();
 
   const panel = page.getByRole('region', { name: '待排期任务箱' });
@@ -250,8 +314,38 @@ test('docked backlog leaves Saturday reachable and supports dropping on the date
     await confirmation.getByRole('button', { name: '仍然安排' }).click();
   }
 
-  await expect(page.locator(`.wmv-cell[data-date="${saturday}"]`).filter({ hasText: '待排期整理错题' })).toBeVisible();
+  await expect(page.locator(`[data-project-id="backlog-project"][data-date="${saturday}"]`).filter({ hasText: '待排期整理错题' })).toBeVisible();
   await expect(panel.locator('[data-backlog-task-id="backlog:backlog-project::backlog-block"]')).toHaveCount(0);
+});
+
+test('project grouping rejects a drop onto another project row without changing ownership or date', async ({ page }) => {
+  const targetDate = alternateDateInCurrentWeek(today);
+  await page.getByTitle('周矩阵').click();
+  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+
+  await page.evaluate(({ sourceDate, destinationDate }) => {
+    const source = document.querySelector<HTMLElement>('[data-block-id="scheduled-block"]');
+    const destination = document.querySelector<HTMLElement>(`[data-project-id="secondary-project"][data-date="${destinationDate}"]`);
+    if (!source || !destination) throw new Error('project matrix drag endpoints missing');
+    const transfer = new DataTransfer();
+    transfer.setData('application/json', JSON.stringify({
+      type: 'smart-block',
+      source: 'week-matrix',
+      taskId: 'backlog-project',
+      blockId: 'scheduled-block',
+      tag: '学习',
+      title: '已排期六十分钟任务',
+      fromDate: sourceDate,
+    }));
+    source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    destination.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    destination.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    source.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, { sourceDate: today, destinationDate: targetDate });
+
+  await expect(page.getByText(/不能通过周矩阵更改所属项目/)).toBeVisible();
+  await expect(page.locator(`[data-project-id="backlog-project"][data-date="${today}"] [data-block-id="scheduled-block"]`)).toBeVisible();
+  await expect(page.locator(`[data-project-id="secondary-project"][data-date="${targetDate}"] [data-block-id="scheduled-block"]`)).toHaveCount(0);
 });
 
 test('daily backlog can schedule directly into a slot without creating a history-library entry', async ({ page }) => {
@@ -286,6 +380,7 @@ test('daily backlog can schedule directly into a slot without creating a history
 
 test('week task can return to the backlog without losing metadata and inline undo restores every placement', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
+  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
   const scheduledCard = page.locator('[data-block-id="scheduled-block"]');
   const backlogCapsule = page.getByRole('button', { name: '待排期箱，26 个任务' });
   await expect(scheduledCard).toBeVisible();

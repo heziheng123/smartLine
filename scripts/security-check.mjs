@@ -27,6 +27,18 @@ async function walk(directory) {
 }
 
 await walk(root);
+const responseHeaders = await readFile(join(root, 'public', '_headers'), 'utf8').catch(() => '');
+for (const requiredHeader of [
+  'Content-Security-Policy:',
+  'X-Content-Type-Options: nosniff',
+  'Referrer-Policy:',
+  'Permissions-Policy:',
+  'X-Frame-Options: DENY',
+]) {
+  if (!responseHeaders.includes(requiredHeader)) findings.push(`public/_headers: missing ${requiredHeader}`);
+}
+const entryHtml = await readFile(join(root, 'index.html'), 'utf8').catch(() => '');
+if (/\son[a-z]+\s*=/i.test(entryHtml)) findings.push('index.html: inline event handler bypasses the CSP policy');
 if (findings.length) {
   console.error(`发现可能提交的敏感信息：\n${findings.join('\n')}`);
   process.exitCode = 1;

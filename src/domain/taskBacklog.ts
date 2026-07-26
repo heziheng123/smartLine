@@ -1,10 +1,11 @@
 import type { ReviewTask } from '@/ebb/types';
 import type { DaySchedule } from '@/components/dailySchedule/types';
 import { getProjectBlockSourceId, getReviewSourceId } from '@/components/dailySchedule/sourceIds';
-import type { SmartTaskBlock, Task } from '@/types';
+import type { SmartTaskBlock, Task, TaskGroup } from '@/types';
 import { getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { addDays, getDayOfWeek, todayStr } from '@/utils/dateSafe';
 import { timeToMinutes } from '@/components/dailySchedule/conversion';
+import { buildProjectDescriptorMap } from './projectDescriptor';
 
 export interface BacklogTask {
   id: string;
@@ -12,7 +13,9 @@ export interface BacklogTask {
   blockId: string;
   sourceId: string;
   title: string;
+  projectId: string;
   projectName: string;
+  projectLabel: string;
   projectColor?: string;
   tag: string;
   tagColor: string;
@@ -51,9 +54,10 @@ export const DEFAULT_WORKLOAD_PREFERENCES: WorkloadPreferences = {
   showDuration: true,
 };
 
-export function collectBacklogTasks(tasks: readonly Task[]): BacklogTask[] {
+export function collectBacklogTasks(tasks: readonly Task[], groups: readonly TaskGroup[] = []): BacklogTask[] {
   const result: BacklogTask[] = [];
   const seen = new Set<string>();
+  const projectDescriptors = buildProjectDescriptorMap(tasks, groups);
 
   for (const task of tasks) {
     for (const block of getSmartTaskBlocks(task.blocks ?? [])) {
@@ -62,13 +66,16 @@ export function collectBacklogTasks(tasks: readonly Task[]): BacklogTask[] {
       seen.add(key);
       const header = block.header;
       if (header.isCompleted || header.isArchived || header.date || isQuantityTask(header)) continue;
+      const descriptor = projectDescriptors.get(task.id);
       result.push({
         id: `backlog:${key}`,
         taskId: task.id,
         blockId: block.id,
         sourceId: getProjectBlockSourceId(task.id, block.id),
         title: header.title,
+        projectId: task.id,
         projectName: task.name,
+        projectLabel: descriptor?.label ?? task.name,
         projectColor: task.color,
         tag: header.tag || '未分类',
         tagColor: header.tagColor,
@@ -101,7 +108,7 @@ export function filterAndSortBacklogTasks(
   const weekEndIso = addDays(todayIso, 7);
   return tasks
     .filter((task) => {
-      if (filters.project !== 'all' && task.projectName !== filters.project) return false;
+      if (filters.project !== 'all' && task.projectId !== filters.project) return false;
       if (filters.tag !== 'all' && task.tag !== filters.tag) return false;
       if (filters.origin === 'manual' && task.frozenAt) return false;
       if (filters.origin === 'recovered' && !task.frozenAt) return false;
@@ -112,7 +119,7 @@ export function filterAndSortBacklogTasks(
       if (filters.duration === 'medium' && (task.duration <= 30 || task.duration > 60)) return false;
       if (filters.duration === 'long' && task.duration <= 60) return false;
       if (query) {
-        const haystack = `${task.title} ${task.projectName} ${task.tag}`.toLocaleLowerCase('zh-CN');
+        const haystack = `${task.title} ${task.projectLabel} ${task.tag}`.toLocaleLowerCase('zh-CN');
         if (!haystack.includes(query)) return false;
       }
       return true;
@@ -125,7 +132,7 @@ export function filterAndSortBacklogTasks(
         return (right.frozenAt ?? '').localeCompare(left.frozenAt ?? '') || compareDeadline(left, right);
       }
       if (filters.sort === 'project') {
-        return left.projectName.localeCompare(right.projectName, 'zh-CN')
+        return left.projectLabel.localeCompare(right.projectLabel, 'zh-CN')
           || left.tag.localeCompare(right.tag, 'zh-CN')
           || compareDeadline(left, right);
       }

@@ -48,6 +48,17 @@ function success(
   };
 }
 
+function validateProjectTaskHeader(header: SmartTaskHeader): string | null {
+  if (typeof header.title !== 'string' || !header.title.trim()) return '任务标题不能为空。';
+  if (header.date && !isValidCalendarDate(header.date)) return '任务日期无效。';
+  if (header.deadline && !isValidCalendarDate(header.deadline)) return '截止日期无效。';
+  if (header.completedDate && !isValidCalendarDate(header.completedDate)) return '完成日期无效。';
+  if (!Number.isFinite(header.duration) || (isQuantityTask(header) ? header.duration < 0 : header.duration <= 0)) {
+    return isQuantityTask(header) ? '数量任务时长不能为负数。' : '预计时长必须是大于 0 的分钟数。';
+  }
+  return null;
+}
+
 /**
  * Resolve a project task from the canonical timeline store. UI projections
  * should never update their own copy first: the timeline action coordinates
@@ -77,6 +88,8 @@ export function createProjectTask(
   if (requiresTaskStartDate(block.header) && !block.header.date) {
     return { ok: false, error: '数量任务必须设置开始日期。' };
   }
+  const validationError = validateProjectTaskHeader(block.header);
+  if (validationError) return { ok: false, error: validationError };
   state.appendBlock(taskId, block);
   const created = resolveProjectTask(taskId, block.id);
   return created ? success(created, 'create', '已创建任务并更新相关规划视图') : { ok: false, error: '任务创建失败。' };
@@ -98,6 +111,8 @@ export function updateProjectTask(
     && !patch.date) {
     return { ok: false, error: '数量任务必须保留开始日期。' };
   }
+  const validationError = validateProjectTaskHeader({ ...current.block.header, ...patch });
+  if (validationError) return { ok: false, error: validationError };
   let commit;
   try {
     commit = useTimelineStore.getState().updateBlockHeader(taskId, blockId, patch);

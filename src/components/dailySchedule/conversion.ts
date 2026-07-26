@@ -74,14 +74,10 @@ export function yToMinutes(y: number): number {
 
 // ── SourceId 解析工具 ────────────────────────────────────────
 
-export interface ParsedSourceId {
-  source: 'project' | 'review';
-  reviewId?: string;
-  parentTaskId?: string;
-  line?: number;
-  /** 来源为 SmartTaskBlock 时，存储 blockId */
-  blockId?: string;
-}
+export type ParsedSourceId =
+  | { source: 'review'; reviewId: string }
+  | { source: 'project'; parentTaskId: string; line: number; blockId?: never }
+  | { source: 'project'; parentTaskId: string; blockId: string; line?: never };
 
 /**
  * 解析 sourceId 格式：
@@ -92,7 +88,8 @@ export interface ParsedSourceId {
  */
 export function parseSourceId(sourceId: string): ParsedSourceId | null {
   if (sourceId.startsWith('review-')) {
-    return { source: 'review', reviewId: sourceId.slice(7) };
+    const reviewId = sourceId.slice(7);
+    return reviewId ? { source: 'review', reviewId } : null;
   }
 
   if (sourceId.startsWith('project-')) {
@@ -105,30 +102,39 @@ export function parseSourceId(sourceId: string): ParsedSourceId | null {
       // 优先匹配新格式双冒号分隔符
       const doubleColon = rest.indexOf('::');
       if (doubleColon !== -1) {
+        const parentTaskId = rest.slice(0, doubleColon);
+        const blockId = rest.slice(doubleColon + 2);
+        if (!parentTaskId || !blockId) return null;
         return {
           source: 'project',
-          parentTaskId: rest.slice(0, doubleColon),
-          blockId: rest.slice(doubleColon + 2),
+          parentTaskId,
+          blockId,
         };
       }
 
       // 回退匹配旧格式：寻找 '-blk-' 作为分隔特征
       const blockIdIndex = rest.indexOf('-blk-');
       if (blockIdIndex !== -1) {
+        const parentTaskId = rest.slice(0, blockIdIndex);
+        const blockId = rest.slice(blockIdIndex + 1);
+        if (!parentTaskId || !blockId) return null;
         return {
           source: 'project',
-          parentTaskId: rest.slice(0, blockIdIndex),
-          blockId: rest.slice(blockIdIndex + 1), // 保留 'blk-' 前缀
+          parentTaskId,
+          blockId, // 保留 'blk-' 前缀
         };
       }
 
       // 最差情况回退（如果有不带 blk- 的旧 blockId）
       const firstDash = rest.indexOf('-');
       if (firstDash === -1) return null;
+      const parentTaskId = rest.slice(0, firstDash);
+      const blockId = rest.slice(firstDash + 1);
+      if (!parentTaskId || !blockId) return null;
       return {
         source: 'project',
-        parentTaskId: rest.slice(0, firstDash),
-        blockId: rest.slice(firstDash + 1),
+        parentTaskId,
+        blockId,
       };
     }
 
@@ -139,7 +145,7 @@ export function parseSourceId(sourceId: string): ParsedSourceId | null {
       if (lastDash === -1) return null;
       const parentTaskId = rest.slice(0, lastDash);
       const line = parseInt(rest.slice(lastDash + 1), 10);
-      if (isNaN(line)) return null;
+      if (!parentTaskId || !Number.isInteger(line) || line < 0) return null;
       return { source: 'project', parentTaskId, line };
     }
 
@@ -148,7 +154,7 @@ export function parseSourceId(sourceId: string): ParsedSourceId | null {
     if (lastDash === -1) return null;
     const parentTaskId = fullId.slice(0, lastDash);
     const line = parseInt(fullId.slice(lastDash + 1), 10);
-    if (isNaN(line)) return null;
+    if (!parentTaskId || !Number.isInteger(line) || line < 0) return null;
     return { source: 'project', parentTaskId, line };
   }
 

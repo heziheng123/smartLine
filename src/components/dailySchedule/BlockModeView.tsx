@@ -656,16 +656,19 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
               const project = parsed?.source === 'project'
                 ? tlTasks.find((task) => task.id === parsed.parentTaskId)
                 : undefined;
-              const projectBlock = parsed?.blockId
-                ? (Array.isArray(project?.blocks) ? project.blocks : [])
-                  .find((block) => block.id === parsed.blockId)
+              const parsedBlockId = parsed?.source === 'project' && 'blockId' in parsed
+                ? parsed.blockId
                 : undefined;
-              if (parsed?.source !== 'project' || !parsed.parentTaskId || !parsed.blockId || projectBlock?.type !== 'smart-task') {
+              const projectBlock = parsedBlockId
+                ? (Array.isArray(project?.blocks) ? project.blocks : [])
+                  .find((block) => block.id === parsedBlockId)
+                : undefined;
+              if (parsed?.source !== 'project' || !parsedBlockId || projectBlock?.type !== 'smart-task') {
                 onReviewToggleError('无法识别对应的项目任务。');
               } else if (isQuantityTask(projectBlock.header)) {
                 onReviewToggleError('数量任务必须保留开始日期，不能移入待排期箱。');
               } else {
-                const result = returnProjectTaskToBacklog(parsed.parentTaskId, parsed.blockId);
+                const result = returnProjectTaskToBacklog(parsed.parentTaskId, parsedBlockId);
                 onReviewToggleError('error' in result ? result.error : null);
               }
             } else if (activePoolTab === 'backlog') {

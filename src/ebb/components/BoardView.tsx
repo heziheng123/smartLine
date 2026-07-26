@@ -26,7 +26,7 @@ class BoardErrorBoundary extends Component<{ children: ReactNode }, { error: Err
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  componentDidCatch(_error: Error, info: ErrorInfo) {
     // 占位：错误已记录在 state 中展示
     void info;
   }

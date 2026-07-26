@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Search, Archive, X, CalendarClock, BrainCircuit } from 'lucide-react';
 import { useGraphStore } from '@/graph/store';
 import { useTimelineStore } from '@/store';
@@ -39,8 +39,8 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
   if (!node) return null;
   
   // 提取智能块中的备注
-  const relatedBlocks = tlTasks.flatMap(t => 
-    (t.blocks || []).filter(b => {
+  const relatedBlocks = tlTasks.flatMap(t =>
+    (t.blocks || []).filter((b): b is import('@/types').SmartTaskBlock => {
       if (b.type !== 'smart-task') return false;
       const ids = getValidGraphNodeIds(b.header);
       return ids.includes(nodeId);
@@ -115,7 +115,7 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
                       历史任务
                     </h3>
                     <div className="grid gap-2">
-                      {relatedBlocks.map((block: import('@/types').SmartTaskBlock, idx: number) => (
+                      {relatedBlocks.map((block, idx) => (
                         <div key={block.id || idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3 group hover:border-blue-100 transition-colors">
                           <div className="mt-0.5">
                             {block.type === 'smart-task' && block.header.isCompleted ? (

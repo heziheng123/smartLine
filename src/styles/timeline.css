@@ -4619,3 +4619,31 @@ html, body, #root {
   .tl-dock { width: 100%; max-width: 100%; overflow-x: auto; overflow-y: hidden; justify-content: flex-start; scrollbar-width: none; overscroll-behavior-x: contain; }
   .tl-dock::-webkit-scrollbar { display: none; }
 }
+.tl-sync-warning {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  z-index: 1200;
+  display: flex;
+  max-width: min(680px, calc(100vw - 32px));
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 12px;
+  color: #78350f;
+  background: #fffbeb;
+  box-shadow: 0 12px 30px rgb(120 53 15 / 16%);
+  transform: translateX(-50%);
+  font-size: 13px;
+}
+
+.tl-sync-warning span { flex: 1; }
+.tl-sync-warning button {
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 8px;
+  color: inherit;
+  background: #fef3c7;
+  cursor: pointer;
+}

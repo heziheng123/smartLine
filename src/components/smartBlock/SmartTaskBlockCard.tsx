@@ -787,7 +787,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
 /** 内联日历小组件（轻量版，用于 block 日期选择） */
 const MiniCalendarInline: React.FC<{
-  selectedDate: string;
+  selectedDate?: string;
   onDateSelect: (date: string) => void;
 }> = ({ selectedDate, onDateSelect }) => {
   const [cursor, setCursor] = useState(() => selectedDate ? makeLocalDayjs(selectedDate) : dayjs());

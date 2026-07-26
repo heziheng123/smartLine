@@ -32,7 +32,7 @@ test('R2 archives are authenticated and scoped to the signed-in user', async () 
         Origin: 'https://smartline.example',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ version: 1 }),
+      body: JSON.stringify({ version: 1, period: '2026-07', data: {} }),
     }),
   });
   assert.equal(response.status, 200);
@@ -46,7 +46,7 @@ test('R2 archives are authenticated and scoped to the signed-in user', async () 
     request: new Request('https://smartline.example/api/archives/2026-07', {
       method: 'PUT',
       headers: { Cookie: `${SESSION_COOKIE}=${sessionCookie}`, Origin: 'https://attacker.example' },
-      body: JSON.stringify({ version: 1 }),
+      body: JSON.stringify({ version: 1, period: '2026-07', data: {} }),
     }),
   });
   assert.equal(crossOrigin.status, 403);
@@ -57,7 +57,7 @@ test('R2 archive endpoints fail closed when login or binding is missing', async 
     env: { ...sessionEnv, SMARTLINE_R2: { put: async () => undefined, get: async () => null, delete: async () => undefined } },
     params: { period: '2026-07' },
     request: new Request('https://smartline.example/api/archives/2026-07', {
-      method: 'PUT', headers: { Origin: 'https://smartline.example' }, body: JSON.stringify({ version: 1 }),
+      method: 'PUT', headers: { Origin: 'https://smartline.example' }, body: JSON.stringify({ version: 1, period: '2026-07', data: {} }),
     }),
   });
   assert.equal(unauthenticated.status, 401);
@@ -67,4 +67,40 @@ test('R2 archive endpoints fail closed when login or binding is missing', async 
     request: new Request('https://smartline.example/api/archives/2026-07', { method: 'PUT' }),
   });
   assert.equal(unavailable.status, 503);
+});
+
+test('R2 archives reject oversized and mismatched payloads before storage', async () => {
+  let writeCount = 0;
+  const env: StorageEnv = {
+    ...sessionEnv,
+    SMARTLINE_R2: {
+      put: async () => { writeCount += 1; },
+      get: async () => null,
+      delete: async () => undefined,
+    },
+  };
+  const sessionCookie = await cookie();
+  const headers = {
+    Cookie: `${SESSION_COOKIE}=${sessionCookie}`,
+    Origin: 'https://smartline.example',
+    'Content-Type': 'application/json',
+  };
+  const mismatched = await saveArchive({
+    env,
+    params: { period: '2026-07' },
+    request: new Request('https://smartline.example/api/archives/2026-07', {
+      method: 'PUT', headers, body: JSON.stringify({ version: 1, period: '2026-08', data: {} }),
+    }),
+  });
+  assert.equal(mismatched.status, 400);
+
+  const oversized = await saveArchive({
+    env,
+    params: { period: '2026-07' },
+    request: new Request('https://smartline.example/api/archives/2026-07', {
+      method: 'PUT', headers: { ...headers, 'Content-Length': String(11 * 1024 * 1024) }, body: '{}',
+    }),
+  });
+  assert.equal(oversized.status, 413);
+  assert.equal(writeCount, 0);
 });

@@ -34,6 +34,7 @@ import {
 import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflict, type WorkspaceConflictRecord } from '@/services/workspaceOfflineQueue';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
+import { useShallow } from 'zustand/react/shallow';
 
 interface SyncDialogProps { onClose: () => void }
 type ModuleKey = 'timeline' | 'ebb' | 'daily' | 'graph';
@@ -58,10 +59,34 @@ function formatTime(value?: string): string {
 const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const auth = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const timeline = useTimelineStore();
-  const ebb = useEbbStore();
-  const daily = useDailyScheduleStore();
-  const graph = useGraphStore();
+  const timeline = useTimelineStore(useShallow((state) => ({
+    syncRoomCode: state.syncRoomCode,
+    syncEnabled: state.syncEnabled,
+    syncStatus: state.syncStatus,
+    enableSync: state.enableSync,
+    liveblocks: state.liveblocks,
+  })));
+  const ebb = useEbbStore(useShallow((state) => ({
+    syncRoomCode: state.syncRoomCode,
+    syncEnabled: state.syncEnabled,
+    syncStatus: state.syncStatus,
+    enableSync: state.enableSync,
+    liveblocks: state.liveblocks,
+  })));
+  const daily = useDailyScheduleStore(useShallow((state) => ({
+    syncRoomCode: state.syncRoomCode,
+    syncEnabled: state.syncEnabled,
+    syncStatus: state.syncStatus,
+    enableSync: state.enableSync,
+    liveblocks: state.liveblocks,
+  })));
+  const graph = useGraphStore(useShallow((state) => ({
+    syncRoomCode: state.syncRoomCode,
+    syncEnabled: state.syncEnabled,
+    syncStatus: state.syncStatus,
+    enableSync: state.enableSync,
+    liveblocks: state.liveblocks,
+  })));
   const [roomCode, setRoomCode] = useState(timeline.syncRoomCode || '');
   const [showRoomCode, setShowRoomCode] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -87,7 +112,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   useEffect(() => {
     if (!auth.enabled) return;
-    fetch('/api/storage/status', { credentials: 'same-origin', cache: 'no-store' })
+    fetch('/api/storage/status', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8_000),
+    })
       .then(async (response) => response.ok ? await response.json() as { r2Configured?: boolean } : null)
       .then((result) => setR2Configured(Boolean(result?.r2Configured)))
       .catch(() => setR2Configured(false));
@@ -189,9 +218,13 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   const handleCopy = useCallback(async () => {
     if (!activeCode) return;
-    await navigator.clipboard.writeText(activeCode);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(activeCode);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setRestoreMessage('复制失败，请手动选择房间号复制。');
+    }
   }, [activeCode]);
 
   const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -220,8 +253,18 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         setRestoreMessage('恢复失败：文件不是有效的 JSON 备份。');
       }
     };
+    reader.onerror = () => setRestoreMessage('备份文件读取失败，请重新选择文件。');
     reader.readAsText(file);
   }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await auth.logout();
+      onClose();
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '退出登录失败，请重试。');
+    }
+  }, [auth, onClose]);
 
   const handleExport = useCallback(() => {
     try {
@@ -361,7 +404,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '冲突恢复失败。'));
         }} style={{ marginBottom: 12 }}><RefreshCw size={14} />恢复最近冲突副本</button>}
         {auth.enabled && auth.login && (
-          <button type="button" className="tl-sync-backup-btn" onClick={() => void auth.logout().then(onClose)} style={{ marginBottom: 12 }}>
+          <button type="button" className="tl-sync-backup-btn" onClick={() => void handleLogout()} style={{ marginBottom: 12 }}>
             <LogOut size={14} />退出当前账号
           </button>
         )}

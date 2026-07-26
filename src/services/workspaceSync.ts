@@ -20,7 +20,7 @@ import {
   readPendingWorkspaceSync,
   setWorkspaceQueueSuppressed,
 } from './workspaceOfflineQueue';
-import { buildUnifiedRoomId, findWorkspaceFieldConflicts, hashWorkspaceBackup, withTimeout } from './workspaceSyncCore';
+import { buildUnifiedRoomId, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, withTimeout } from './workspaceSyncCore';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
 export type SyncArchitecture = 'legacy' | 'unified';
@@ -55,6 +55,7 @@ const EXPECTED_KEYS = [
 ] as const;
 let queueListenerStarted = false;
 let queueFlushTimer: number | null = null;
+export const WORKSPACE_CONFLICT_EVENT = 'smartline:workspace-conflict';
 
 export function readWorkspaceSyncSettings(): WorkspaceSyncSettings {
   try {
@@ -231,11 +232,24 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
     : {};
   const remoteUpdatedAt = typeof metadata.updatedAt === 'string' ? metadata.updatedAt : '';
   const remoteDeviceId = typeof metadata.deviceId === 'string' ? metadata.deviceId : '';
-  const fieldConflicts = await findWorkspaceFieldConflicts(
+  const merged = mergeWorkspaceFieldChanges(
     pending.fields,
-    pending.baseHashes ?? {},
+    pending.baseFields ?? {},
     rootJson,
   );
+  const legacyFields = Object.fromEntries(
+    Object.entries(pending.fields).filter(([key]) =>
+      !Object.prototype.hasOwnProperty.call(pending.baseFields ?? {}, key),
+    ),
+  );
+  const fieldConflicts = [
+    ...merged.conflicts,
+    ...await findWorkspaceFieldConflicts(
+    legacyFields,
+    pending.baseHashes ?? {},
+    rootJson,
+    ),
+  ];
   const fieldsWithoutBaseline = Object.keys(pending.fields).filter((key) => !pending.baseHashes?.[key as keyof typeof pending.baseHashes]);
   const metadataConflict = fieldsWithoutBaseline.length > 0
     && remoteUpdatedAt > pending.updatedAt
@@ -253,14 +267,14 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
 
   if (fieldConflicts.length > 0 || metadataConflict) {
     await preserveWorkspaceConflict(pending, remoteUpdatedAt);
-    window.dispatchEvent(new CustomEvent('smartline:workspace-conflict'));
+    window.dispatchEvent(new CustomEvent(WORKSPACE_CONFLICT_EVENT));
     return { applied: 0, conflict: true };
   }
 
   setWorkspaceQueueSuppressed(true);
   try {
     room.batch(() => {
-      for (const [key, value] of Object.entries(pending.fields)) root.set(key, value as Json);
+      for (const [key, value] of Object.entries(merged.fields)) root.set(key, value as Json);
       root.set('metadata', {
         ...metadata,
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
@@ -272,7 +286,7 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
   }
   await clearPendingWorkspaceSync(pending);
-  return { applied: Object.keys(pending.fields).length, conflict: false };
+  return { applied: Object.keys(merged.fields).length, conflict: false };
 }
 
 function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> {

@@ -7,6 +7,7 @@ import {
   hashWorkspaceBackup,
   hashWorkspaceValue,
   isWorkspaceStoreStorageReady,
+  mergeWorkspaceFieldChanges,
   withTimeout,
 } from '../../src/services/workspaceSyncCore.ts';
 import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
@@ -94,6 +95,25 @@ test('offline field conflicts are detected per field without blocking unrelated 
     ),
     [],
   );
+});
+
+test('offline collections merge disjoint entity edits and report only same-property conflicts', () => {
+  const base = [{ id: 'one', title: 'before' }, { id: 'two', title: 'before' }];
+  const local = [{ id: 'one', title: 'offline' }, { id: 'two', title: 'before' }];
+  const remote = [{ id: 'one', title: 'before' }, { id: 'two', title: 'remote' }];
+  const disjoint = mergeWorkspaceFieldChanges({ tasks: local }, { tasks: base }, { tasks: remote });
+  assert.deepEqual(disjoint.conflicts, []);
+  assert.deepEqual(disjoint.fields.tasks, [
+    { id: 'one', title: 'offline' },
+    { id: 'two', title: 'remote' },
+  ]);
+
+  const conflicting = mergeWorkspaceFieldChanges(
+    { tasks: [{ id: 'one', title: 'offline' }] },
+    { tasks: [{ id: 'one', title: 'before' }] },
+    { tasks: [{ id: 'one', title: 'remote' }] },
+  );
+  assert.deepEqual(conflicting.conflicts, ['tasks[one].title']);
 });
 
 test('room inspection timeout reports a visible failure instead of waiting forever', async () => {

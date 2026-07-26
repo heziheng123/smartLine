@@ -81,20 +81,12 @@
           <h1 class="boot-title">Smart Timeline</h1>
           <p class="boot-status">正在启动工作台…</p>
           <div class="boot-spinner" aria-hidden="true"></div>
-          <button class="boot-retry" type="button" onclick="location.reload()">重新加载</button>
+          <button id="boot-retry" class="boot-retry" type="button">重新加载</button>
         </section>
       </main>
     </div>
     <noscript>Smart Timeline 需要启用 JavaScript 才能运行。</noscript>
-    <script>
-      window.setTimeout(function () {
-        var screen = document.querySelector('#root .boot-screen');
-        var status = document.querySelector('#root .boot-status');
-        if (!screen || !status) return;
-        screen.setAttribute('data-delayed', 'true');
-        status.textContent = '加载时间较长，请检查网络后重试。';
-      }, 15000);
-    </script>
+    <script src="/boot.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, Hash, Clock3, Settings2 } from 'lucide-react';
-import type { Task, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, Hash, Clock3, Settings2, FolderOpen, Tag } from 'lucide-react';
+import type { Task, TaskGroup, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
@@ -21,6 +21,7 @@ import {
   WORKLOAD_PREFERENCES_EVENT,
 } from '@/services/workloadPreferences';
 import { requestConfirmation } from '@/services/confirmation';
+import { buildProjectDescriptorMap } from '@/domain/projectDescriptor';
 import {
   todayStr,
   addDays,
@@ -33,10 +34,36 @@ import {
 
 interface WeekMatrixViewProps {
   tasks: Task[];
+  groups: TaskGroup[];
 }
 
 interface ViewBlock extends SmartTaskBlock {
   _taskId: string;
+  _projectLabel: string;
+  _projectColor: string;
+  _projectTextColor: string;
+}
+
+type MatrixGroupMode = 'tag' | 'project';
+
+interface MatrixRow {
+  key: string;
+  label: string;
+  color: string;
+  textColor?: string;
+  kind: MatrixGroupMode;
+  projectId?: string;
+  tag?: string;
+}
+
+const GROUP_MODE_STORAGE_KEY = 'week-matrix-group-mode-v1';
+
+function loadGroupMode(): MatrixGroupMode {
+  try {
+    return localStorage.getItem(GROUP_MODE_STORAGE_KEY) === 'project' ? 'project' : 'tag';
+  } catch {
+    return 'tag';
+  }
 }
 
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -56,11 +83,25 @@ function addMonths(dateStr: string, months: number): string {
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 }
 
-const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
+const sanitizedBodyCache = new Map<string, string>();
+function getSanitizedTaskBody(body: string): string {
+  const cached = sanitizedBodyCache.get(body);
+  if (cached !== undefined) return cached;
+  const sanitized = sanitizeHtml(body);
+  if (sanitizedBodyCache.size >= 500) {
+    const oldest = sanitizedBodyCache.keys().next().value;
+    if (oldest !== undefined) sanitizedBodyCache.delete(oldest);
+  }
+  sanitizedBodyCache.set(body, sanitized);
+  return sanitized;
+}
+
+const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
   const [cursor, setCursor] = useState(() => todayStr());
   const [mode, setMode] = useState<'week' | 'month'>('week');
+  const [groupMode, setGroupMode] = useState<MatrixGroupMode>(loadGroupMode);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [hoverCell, setHoverCell] = useState<{ tag: string; date: string } | null>(null);
+  const [hoverCell, setHoverCell] = useState<{ rowKey: string; date: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showLoadSettings, setShowLoadSettings] = useState(false);
   const [workloadPreferences, setWorkloadPreferences] = useState<WorkloadPreferences>(
@@ -79,6 +120,14 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROUP_MODE_STORAGE_KEY, groupMode);
+    } catch {
+      // Display preferences are optional and must never block task planning.
+    }
+  }, [groupMode]);
+
   const dateRange = useMemo(() => {
     if (mode === 'week') {
       const start = getWeekStartStr(cursor);
@@ -94,42 +143,78 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
   const todayString = todayStr();
 
   const allBlocks = useMemo(() => {
+    const projectDescriptors = buildProjectDescriptorMap(tasks, groups);
     const result: ViewBlock[] = [];
     for (const task of tasks) {
+      const descriptor = projectDescriptors.get(task.id);
       const blocks = getSmartTaskBlocks(task.blocks ?? []);
       for (const block of blocks) {
         if (block.header.isArchived) continue;
-        result.push({ ...block, _taskId: task.id });
+        result.push({
+          ...block,
+          _taskId: task.id,
+          _projectLabel: descriptor?.label ?? task.name,
+          _projectColor: descriptor?.backgroundColor ?? '#e5e7eb',
+          _projectTextColor: descriptor?.textColor ?? '#1f2937',
+        });
       }
     }
     return result;
-  }, [tasks]);
+  }, [groups, tasks]);
 
-  const tags = useMemo(() => {
-    const tagSet = new Set<string>();
+  const rows = useMemo(() => {
+    const rowMap = new Map<string, MatrixRow>();
+    const visibleDates = new Set(dateRange);
     for (const block of allBlocks) {
-      tagSet.add(block.header.tag);
+      if (!block.header.date || !visibleDates.has(block.header.date)) continue;
+      if (groupMode === 'project') {
+        const key = `project:${block._taskId}`;
+        if (!rowMap.has(key)) {
+          rowMap.set(key, {
+            key,
+            label: block._projectLabel,
+            color: block._projectColor,
+            textColor: block._projectTextColor,
+            kind: 'project',
+            projectId: block._taskId,
+          });
+        }
+      } else {
+        const tag = block.header.tag || '未分类';
+        const key = `tag:${tag}`;
+        if (!rowMap.has(key)) {
+          rowMap.set(key, { key, label: tag, color: getTagColor(tag), kind: 'tag', tag });
+        }
+      }
     }
-    return Array.from(tagSet);
-  }, [allBlocks]);
+    return [...rowMap.values()];
+  }, [allBlocks, dateRange, groupMode]);
 
   const matrix = useMemo(() => {
-    const map = new Map<string, ViewBlock[]>();
+    const map = new Map<string, Map<string, ViewBlock[]>>();
     for (const block of allBlocks) {
-      const key = `${block.header.tag}::${block.header.date}`;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(block);
+      if (!block.header.date) continue;
+      const normalizedTag = block.header.tag || '未分类';
+      const rowKey = groupMode === 'project'
+        ? `project:${block._taskId}`
+        : `tag:${normalizedTag}`;
+      if (!map.has(rowKey)) map.set(rowKey, new Map());
+      const row = map.get(rowKey)!;
+      if (!row.has(block.header.date)) row.set(block.header.date, []);
+      row.get(block.header.date)!.push(block);
     }
 
-    for (const blocks of map.values()) {
-      blocks.sort((a, b) => {
-        if (a.header.isCompleted !== b.header.isCompleted) return Number(a.header.isCompleted) - Number(b.header.isCompleted);
-        return a.header.title.localeCompare(b.header.title);
-      });
+    for (const row of map.values()) {
+      for (const blocks of row.values()) {
+        blocks.sort((a, b) => {
+          if (a.header.isCompleted !== b.header.isCompleted) return Number(a.header.isCompleted) - Number(b.header.isCompleted);
+          return a.header.title.localeCompare(b.header.title, 'zh-CN');
+        });
+      }
     }
 
     return map;
-  }, [allBlocks]);
+  }, [allBlocks, groupMode]);
 
   const workloads = useMemo(
     () => calculateDateWorkloads({
@@ -201,7 +286,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
 
   const handleDragStart = useCallback((block: ViewBlock) => {
     suppressCardOpenRef.current = false;
-    setDraggingId(block.id);
+    setDraggingId(`${block._taskId}::${block.id}`);
   }, []);
 
   useEffect(() => {
@@ -220,24 +305,24 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
   }, [clearDragState]);
 
   const handleCellDragOver = useCallback(
-    (event: React.DragEvent<HTMLDivElement>, tag: string, date: string) => {
+    (event: React.DragEvent<HTMLDivElement>, rowKey: string, date: string) => {
       // 允许所有拖拽（包括来自外部的 Icebox）
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
-      if (!hoverCell || hoverCell.tag !== tag || hoverCell.date !== date) {
-        setHoverCell({ tag, date });
+      if (!hoverCell || hoverCell.rowKey !== rowKey || hoverCell.date !== date) {
+        setHoverCell({ rowKey, date });
       }
     },
     [hoverCell],
   );
 
   const handleCellDragLeave = useCallback(
-    (event: React.DragEvent<HTMLDivElement>, tag: string, date: string) => {
+    (event: React.DragEvent<HTMLDivElement>, rowKey: string, date: string) => {
       // 避免由于进入子元素而触发的意外 leave 导致闪烁
       if (event.currentTarget.contains(event.relatedTarget as Node)) {
         return;
       }
-      if (hoverCell?.tag === tag && hoverCell.date === date) {
+      if (hoverCell?.rowKey === rowKey && hoverCell.date === date) {
         setHoverCell(null);
       }
     },
@@ -245,7 +330,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
   );
 
   const handleCellDrop = useCallback(
-    async (event: React.DragEvent<HTMLDivElement>, _tag: string, targetDate: string) => {
+    async (event: React.DragEvent<HTMLDivElement>, targetRowKey: string, targetDate: string) => {
       event.preventDefault();
       
       let draggedData: SmartBlockDragPayload | null = null;
@@ -263,6 +348,19 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
       }
 
       if (!draggedData) {
+        clearDragState();
+        return;
+      }
+
+      if (
+        groupMode === 'project'
+        && targetRowKey.startsWith('project:')
+        && targetRowKey !== `project:${draggedData.taskId}`
+      ) {
+        const current = allBlocks.find(
+          (block) => block._taskId === draggedData.taskId && block.id === draggedData.blockId,
+        );
+        showToast(`不能通过周矩阵更改所属项目，请拖到日期表头或“${current?._projectLabel ?? '原项目'}”行`);
         clearDragState();
         return;
       }
@@ -292,7 +390,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
       showToast('error' in result ? result.error : `已将“${draggedData.title}”改期到 ${targetDate}`);
       clearDragState();
     },
-    [allBlocks, clearDragState, showToast],
+    [allBlocks, clearDragState, groupMode, showToast],
   );
 
   const jumpTo = useCallback((dateStr: string) => {
@@ -306,7 +404,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
           const { year, month } = splitDate(cursor);
           return `${year}年${month}月`;
         })();
-  const matrixColumnTemplate = `100px repeat(${dateRange.length}, minmax(${mode === 'week' ? '88px' : '120px'}, 1fr))`;
+  const rowLabelWidth = groupMode === 'project' ? '180px' : '100px';
+  const matrixColumnTemplate = `${rowLabelWidth} repeat(${dateRange.length}, minmax(${mode === 'week' ? '88px' : '120px'}, 1fr))`;
 
   return (
     <div className="wmv-container">
@@ -332,7 +431,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
 
         {draggingId && (
           <div className="wmv-drag-hint">
-            正在拖动任务，可放到任意日期；任务标签不会改变
+            正在拖动任务；只调整日期，不改变所属项目和任务类型
           </div>
         )}
 
@@ -382,7 +481,26 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
             </div>
           )}
 
-          <div className="wmv-mode-switch">
+          <div className="wmv-group-switch" role="group" aria-label="周矩阵分组方式">
+            <span className="wmv-group-switch-label">分组</span>
+            <button
+              type="button"
+              className={`wmv-mode-btn ${groupMode === 'tag' ? 'wmv-mode-btn--active' : ''}`}
+              onClick={() => setGroupMode('tag')}
+              aria-pressed={groupMode === 'tag'}
+            >
+              <Tag size={13} />类型
+            </button>
+            <button
+              type="button"
+              className={`wmv-mode-btn ${groupMode === 'project' ? 'wmv-mode-btn--active' : ''}`}
+              onClick={() => setGroupMode('project')}
+              aria-pressed={groupMode === 'project'}
+            >
+              <FolderOpen size={13} />项目
+            </button>
+          </div>
+          <div className="wmv-mode-switch" role="group" aria-label="周矩阵时间范围">
             <button
               type="button"
               className={`wmv-mode-btn ${mode === 'week' ? 'wmv-mode-btn--active' : ''}`}
@@ -422,7 +540,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                     onChange={(event) => {
                       const next = {
                         ...workloadPreferences,
-                        weekdayCapacityMinutes: Math.max(30, Number(event.target.value) || 30),
+                        weekdayCapacityMinutes: Math.min(1440, Math.max(30, Number(event.target.value) || 30)),
                       };
                       setWorkloadPreferences(next);
                       saveWorkloadPreferences(next);
@@ -441,7 +559,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                     onChange={(event) => {
                       const next = {
                         ...workloadPreferences,
-                        weekendCapacityMinutes: Math.max(30, Number(event.target.value) || 30),
+                        weekendCapacityMinutes: Math.min(1440, Math.max(30, Number(event.target.value) || 30)),
                       };
                       setWorkloadPreferences(next);
                       saveWorkloadPreferences(next);
@@ -494,7 +612,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                 key={dateStr}
                 className={`wmv-cell wmv-cell--date ${isToday ? 'wmv-cell--today' : ''} ${
                   isWeekend ? 'wmv-cell--weekend' : ''
-                } ${hoverCell?.tag === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
+                } ${hoverCell?.rowKey === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
                 data-date={dateStr}
                 onDragOver={(event) => handleCellDragOver(event, '', dateStr)}
                 onDragLeave={(event) => handleCellDragLeave(event, '', dateStr)}
@@ -519,22 +637,25 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
           })}
         </div>
 
-        {tags.map((tag) => {
-          const tagColor = getTagColor(tag);
+        {rows.map((row) => {
           return (
-            <div key={tag} className="wmv-row" style={{ display: 'grid', gridTemplateColumns: matrixColumnTemplate }}>
+            <div key={row.key} className="wmv-row" style={{ display: 'grid', gridTemplateColumns: matrixColumnTemplate }}>
               <div className="wmv-cell wmv-cell--tag">
-                <span className="wmv-tag-badge" style={{ backgroundColor: tagColor }}>
-                  {tag}
+                <span
+                  className={`wmv-tag-badge ${row.kind === 'project' ? 'wmv-project-badge' : ''}`}
+                  style={{ backgroundColor: row.color, color: row.textColor }}
+                  title={row.label}
+                >
+                  {row.kind === 'project' && <FolderOpen size={13} aria-hidden="true" />}
+                  <span>{row.label}</span>
                 </span>
               </div>
 
               {dateRange.map((dateStr) => {
-                const key = `${tag}::${dateStr}`;
-                const blocks = matrix.get(key) ?? [];
+                const blocks = matrix.get(row.key)?.get(dateStr) ?? [];
                 const dow = getDayOfWeek(dateStr);
                 const isWeekend = dow === 0 || dow === 6;
-                const isDropTarget = hoverCell?.tag === tag && hoverCell.date === dateStr;
+                const isDropTarget = hoverCell?.rowKey === row.key && hoverCell.date === dateStr;
 
                 return (
                   <div
@@ -543,16 +664,28 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                       blocks.length > 0 ? 'wmv-cell--has-data' : ''
                     } ${isDropTarget ? 'wmv-cell--drop-target' : ''}`}
                     data-date={dateStr}
-                    data-tag={tag}
-                    onDragOver={(event) => handleCellDragOver(event, tag, dateStr)}
-                    onDragLeave={(event) => handleCellDragLeave(event, tag, dateStr)}
-                    onDrop={(event) => handleCellDrop(event, tag, dateStr)}
+                    data-row-key={row.key}
+                    data-tag={row.kind === 'tag' ? row.tag : undefined}
+                    data-project-id={row.kind === 'project' ? row.projectId : undefined}
+                    onDragOver={(event) => handleCellDragOver(event, row.key, dateStr)}
+                    onDragLeave={(event) => handleCellDragLeave(event, row.key, dateStr)}
+                    onDrop={(event) => handleCellDrop(event, row.key, dateStr)}
                   >
                     <AnimatePresence mode="popLayout">
                     {blocks.map((block) => {
                       const header = block.header;
                       const isOverdue = isTaskOverdueOnDate(header, todayString);
-                      const isDragging = draggingId === block.id;
+                      const isDragging = draggingId === `${block._taskId}::${block.id}`;
+                      const taskTag = header.tag || '未分类';
+                      const tagColor = groupMode === 'tag'
+                        ? row.color
+                        : header.tagColor || getTagColor(taskTag);
+                      const categoryTheme = resolveTaskCategoryTheme(tagColor);
+                      const hasGraphNode = getValidGraphNodeIds(header).length > 0;
+                      const quantityTask = isQuantityTask(header);
+                      const quantityDailyStatus = quantityTask && header.date
+                        ? getQuantityDailyStatus(header, header.date)
+                        : null;
 
                       return (
                         <motion.div
@@ -561,7 +694,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                           animate={{ opacity: 1, scale: 1, y: 0 }}
                           exit={{ opacity: 0, scale: 0.8, y: 30, filter: 'blur(4px)' }}
                           transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                          key={block.id}
+                          key={`${block._taskId}::${block.id}`}
                           draggable
                           tabIndex={0}
                           // @ts-expect-error framer-motion type collision
@@ -582,16 +715,14 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                           onDragEnd={handleDragEnd}
                           className={`wmv-block-card ${header.isCompleted ? 'wmv-block-card--done' : ''} ${
                             isOverdue ? 'wmv-block-card--overdue' : ''
-                          } ${(() => {
-                            const ids = getValidGraphNodeIds(header);
-                            return ids.length === 0 ? 'wmv-block-card--unlinked' : '';
-                          })()} ${
+                          } ${!hasGraphNode ? 'wmv-block-card--unlinked' : ''} ${
                             isDragging ? 'wmv-block-card--dragging' : ''
                           }`}
                           data-block-id={block.id}
+                          data-task-id={block._taskId}
                           style={{
-                            backgroundColor: resolveTaskCategoryTheme(tagColor).backgroundColor,
-                            borderLeftColor: resolveTaskCategoryTheme(tagColor).accentColor,
+                            backgroundColor: categoryTheme.backgroundColor,
+                            borderLeftColor: categoryTheme.accentColor,
                           }}
                           onClick={() => { if (!suppressCardOpenRef.current) openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date }); }}
                           onKeyDown={(event) => {
@@ -600,50 +731,56 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
                               openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date });
                             }
                           }}
-                          title="拖动到同标签的其他日期列即可直接改期"
+                          title={groupMode === 'project' ? '拖动到同项目的其他日期列即可直接改期' : '拖动到其他日期列即可直接改期，任务类型不会改变'}
                         >
                           <div className="wmv-block-header">
                             <button
                               type="button"
-                              className={`wmv-check ${isQuantityTask(header) ? 'wmv-check--quantity' : ''} ${header.isCompleted ? 'wmv-check--done' : ''}`}
+                              className={`wmv-check ${quantityTask ? 'wmv-check--quantity' : ''} ${header.isCompleted ? 'wmv-check--done' : ''}`}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                if (isQuantityTask(header)) {
+                                if (quantityTask) {
                                   openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date });
                                 } else {
                                   handleToggle(block._taskId, block.id, header.isCompleted);
                                 }
                               }}
-                              title={isQuantityTask(header) ? '打开任务并记录数量进度' : header.isCompleted ? '取消完成' : '标记完成'}
-                              aria-label={isQuantityTask(header) ? `记录数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
+                              title={quantityTask ? '打开任务并记录数量进度' : header.isCompleted ? '取消完成' : '标记完成'}
+                              aria-label={quantityTask ? `记录数量进度：${header.title}` : header.isCompleted ? `取消完成：${header.title}` : `标记完成：${header.title}`}
                             >
-                              {isQuantityTask(header) ? <Hash size={12} /> : header.isCompleted && '✓'}
+                              {quantityTask ? <Hash size={12} /> : header.isCompleted && '✓'}
                             </button>
                             <span
                               className={`wmv-block-title ${header.isCompleted ? 'wmv-block-title--done' : ''}`}
                               style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
                             >
                               {header.title}
-                              {(() => {
-                                const ids = getValidGraphNodeIds(header);
-                                return ids.length === 0 ? (
+                              {!hasGraphNode ? (
                                   <span title="未绑定知识节点" className="inline-flex items-center flex-shrink-0 opacity-40">
                                     <CircleDashed size={12} />
                                   </span>
-                                ) : null;
-                              })()}
+                                ) : null}
                             </span>
                           </div>
 
                           <div className="wmv-block-meta">
-                            <span>{isQuantityTask(header) && header.date ? <><Hash size={12} />{getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}% · 当日 {getQuantityDailyStatus(header, header.date).actual}/{getQuantityDailyStatus(header, header.date).target}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
+                            <span>{quantityTask && quantityDailyStatus ? <><Hash size={12} />{getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}% · 当日 {quantityDailyStatus.actual}/{quantityDailyStatus.target}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
+                          </div>
+                          <div className="wmv-block-context">
+                            {groupMode === 'project' ? (
+                              <span style={{ borderColor: categoryTheme.accentColor, color: categoryTheme.accentColor }}>
+                                <Tag size={10} />{taskTag}
+                              </span>
+                            ) : (
+                              <span title={block._projectLabel}><FolderOpen size={10} />{block._projectLabel}</span>
+                            )}
                           </div>
 
                           {block.body && (
                             <div className="wmv-block-body">
                               <div
                                 dangerouslySetInnerHTML={{
-                                  __html: sanitizeHtml(block.body),
+                                  __html: getSanitizedTaskBody(block.body),
                                 }}
                               />
                             </div>
@@ -659,11 +796,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks }) => {
           );
         })}
 
-        {tags.length === 0 && (
+        {rows.length === 0 && (
           <div className="wmv-empty">
             <CalendarDays size={48} />
-            <p>暂无智能任务块</p>
-            <p className="wmv-empty-hint">在项目文档中添加智能任务块后，它们会自动出现在这里</p>
+            <p>{groupMode === 'project' ? `当前${mode === 'week' ? '周' : '月'}暂无已排期项目任务` : '暂无智能任务块'}</p>
+            <p className="wmv-empty-hint">{groupMode === 'project' ? '可从待排期箱拖到上方日期表头进行安排' : '在项目文档中添加智能任务块后，它们会自动出现在这里'}</p>
           </div>
         )}
       </div>

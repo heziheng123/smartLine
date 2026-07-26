@@ -14,6 +14,10 @@ function createLiveblocksClient() {
     return createClient({ authEndpoint: liveblocksAuthEndpoint });
   }
 
+  if (import.meta.env.PROD) {
+    throw new Error('[Liveblocks] Production requires VITE_LIVEBLOCKS_AUTH_ENDPOINT; public-key fallback is development-only.');
+  }
+
   if (liveblocksPublicKeyFallbackDisabled) {
     throw new Error('[Liveblocks] Authenticated endpoint is required because public-key fallback is disabled.');
   }

@@ -65,7 +65,8 @@ function clearPersistedParentStatuses(nodes: GraphNode[]): GraphNode[] {
   );
 }
 
-export function normalizeGraphNodes(nodes: GraphNode[]): GraphNode[] {
+export function normalizeGraphNodes(value: unknown): GraphNode[] {
+  const nodes = Array.isArray(value) ? value.filter(isValidGraphNode) : [];
   const deduplicated = new Map<string, GraphNode>();
   nodes.forEach((node) => deduplicated.set(node.id, node));
 

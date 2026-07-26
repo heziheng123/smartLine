@@ -6,7 +6,9 @@ import {
   useDailyScheduleStore,
 } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
-import { reconcileTimelineTaskCopies } from '@/store/timelineData';
+import { normalizeGraphNodes } from '@/graph/store';
+import { normalizeTimelineData } from '@/store/timelineData';
+import { normalizeEbbData } from '@/ebb/dataNormalization';
 import {
   isWorkspaceQueueSuppressed,
   listWorkspaceConflicts,
@@ -28,66 +30,92 @@ export {
   readPendingWorkspaceSync,
   setWorkspaceQueueSuppressed,
   WORKSPACE_QUEUE_EVENT,
+  WORKSPACE_QUEUE_ERROR_EVENT,
   type PendingWorkspaceSync,
   type WorkspaceConflictRecord,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
 
 function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
-  const timelinePatch: Record<string, unknown> = {};
-  for (const key of ['tasks', 'groups', 'notes', 'milestones'] as const) {
-    if (fields[key] !== undefined) timelinePatch[key] = fields[key];
-  }
-  if (Object.keys(timelinePatch).length) {
-    if (fields.tasks !== undefined || fields.groups !== undefined) {
-      const current = useTimelineStore.getState();
-      const reconciled = reconcileTimelineTaskCopies(
-        Array.isArray(fields.tasks) ? fields.tasks as typeof current.tasks : current.tasks,
-        Array.isArray(fields.groups) ? fields.groups as typeof current.groups : current.groups,
-      );
-      timelinePatch.tasks = reconciled.tasks;
-      timelinePatch.groups = reconciled.groups;
-    }
-    useTimelineStore.setState(timelinePatch as never);
+  const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones']
+    .some((key) => fields[key as WorkspaceStorageField] !== undefined);
+  if (hasTimelineFields) {
+    const current = useTimelineStore.getState();
+    const normalized = normalizeTimelineData({
+      tasks: fields.tasks ?? current.tasks,
+      groups: fields.groups ?? current.groups,
+      notes: fields.notes ?? current.notes,
+      milestones: fields.milestones ?? current.milestones,
+    });
+    useTimelineStore.setState({
+      tasks: normalized.tasks,
+      groups: normalized.groups,
+      notes: normalized.notes,
+      milestones: normalized.milestones,
+    });
   }
 
-  const ebbPatch: Record<string, unknown> = {};
-  for (const key of ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings'] as const) {
-    if (fields[key] !== undefined) ebbPatch[key] = fields[key];
-  }
-  if (Object.keys(ebbPatch).length) {
-    useEbbStore.setState(ebbPatch as never);
+  const hasEbbFields = ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings']
+    .some((key) => fields[key as WorkspaceStorageField] !== undefined);
+  if (hasEbbFields) {
+    const current = useEbbStore.getState();
+    const normalized = normalizeEbbData({
+      reviewTasks: fields.reviewTasks ?? current.reviewTasks,
+      inboxItems: fields.inboxItems ?? current.inboxItems,
+      outlineNodes: fields.outlineNodes ?? current.outlineNodes,
+      ebbSettings: fields.ebbSettings ?? current.ebbSettings,
+    });
+    useEbbStore.setState(normalized);
   }
 
   if (fields.schedules !== undefined) {
     useDailyScheduleStore.setState({
-      schedules: normalizeDailySchedules(fields.schedules as never),
-    } as never);
+      schedules: normalizeDailySchedules(fields.schedules),
+    });
   }
   if (fields.retrospectives !== undefined) {
     useDailyScheduleStore.setState({
-      retrospectives: normalizeDailyRetrospectives(fields.retrospectives as never),
-    } as never);
+      retrospectives: normalizeDailyRetrospectives(fields.retrospectives),
+    });
   }
   if (fields.nodes !== undefined) {
-    useGraphStore.setState({ nodes: fields.nodes } as never);
+    useGraphStore.setState({ nodes: normalizeGraphNodes(fields.nodes) });
   }
+}
+
+function isWorkspaceMessage(value: unknown): value is {
+  version?: 1;
+  type: 'queue-ready' | 'fields';
+  source: string;
+  fields?: Partial<Record<WorkspaceStorageField, unknown>>;
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.version !== undefined && record.version !== 1) return false;
+  if (record.type !== 'queue-ready' && record.type !== 'fields') return false;
+  if (typeof record.source !== 'string' || !record.source) return false;
+  if (record.type === 'queue-ready') return true;
+  if (!record.fields || typeof record.fields !== 'object' || Array.isArray(record.fields)) return false;
+  const allowed = new Set<WorkspaceStorageField>([
+    'tasks', 'groups', 'notes', 'milestones',
+    'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
+    'schedules', 'retrospectives', 'nodes',
+  ]);
+  return Object.keys(record.fields).every((key) => allowed.has(key as WorkspaceStorageField));
 }
 
 export function startWorkspaceCrossTabDataSync(): () => void {
   if (!workspaceQueueChannel) return () => undefined;
 
-  const handler = (event: MessageEvent<{
-    type?: string;
-    source?: string;
-    fields?: Partial<Record<WorkspaceStorageField, unknown>>;
-  }>) => {
-    if (event.data?.source === workspaceQueueTabId) return;
-    if (event.data?.type === 'queue-ready') {
+  const channel = workspaceQueueChannel;
+  const handler = (event: MessageEvent<unknown>) => {
+    if (!isWorkspaceMessage(event.data)) return;
+    if (event.data.source === workspaceQueueTabId) return;
+    if (event.data.type === 'queue-ready') {
       window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
       return;
     }
-    if (event.data?.type !== 'fields' || !event.data.fields) return;
+    if (event.data.type !== 'fields' || !event.data.fields) return;
 
     setWorkspaceQueueSuppressed(true);
     try {
@@ -97,8 +125,8 @@ export function startWorkspaceCrossTabDataSync(): () => void {
     }
   };
 
-  workspaceQueueChannel.addEventListener('message', handler);
-  return () => workspaceQueueChannel.removeEventListener('message', handler);
+  channel.addEventListener('message', handler);
+  return () => channel.removeEventListener('message', handler);
 }
 
 export async function restoreWorkspaceConflict(id: string): Promise<void> {

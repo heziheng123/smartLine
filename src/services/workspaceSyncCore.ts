@@ -58,6 +58,90 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
+function workspaceValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isEntityArray(value: unknown): value is Array<Record<string, unknown> & { id: string }> {
+  return Array.isArray(value) && value.every((item) =>
+    isPlainRecord(item) && typeof item.id === 'string' && item.id.length > 0,
+  );
+}
+
+interface ThreeWayMergeResult {
+  value: unknown;
+  conflicts: string[];
+}
+
+function mergeWorkspaceValue(
+  base: unknown,
+  local: unknown,
+  remote: unknown,
+  path: string,
+): ThreeWayMergeResult {
+  if (workspaceValuesEqual(local, base)) return { value: remote, conflicts: [] };
+  if (workspaceValuesEqual(remote, base) || workspaceValuesEqual(remote, local)) {
+    return { value: local, conflicts: [] };
+  }
+
+  if (isEntityArray(base) && isEntityArray(local) && isEntityArray(remote)) {
+    const baseById = new Map(base.map((item) => [item.id, item]));
+    const localById = new Map(local.map((item) => [item.id, item]));
+    const remoteById = new Map(remote.map((item) => [item.id, item]));
+    const orderedIds = [...new Set([...remote.map((item) => item.id), ...local.map((item) => item.id), ...base.map((item) => item.id)])];
+    const merged: unknown[] = [];
+    const conflicts: string[] = [];
+    for (const id of orderedIds) {
+      const result = mergeWorkspaceValue(
+        baseById.get(id),
+        localById.get(id),
+        remoteById.get(id),
+        `${path}[${id}]`,
+      );
+      conflicts.push(...result.conflicts);
+      if (result.value !== undefined) merged.push(result.value);
+    }
+    return { value: merged, conflicts };
+  }
+
+  if (isPlainRecord(base) && isPlainRecord(local) && isPlainRecord(remote)) {
+    const merged: Record<string, unknown> = {};
+    const conflicts: string[] = [];
+    const keys = new Set([...Object.keys(base), ...Object.keys(remote), ...Object.keys(local)]);
+    for (const key of keys) {
+      const result = mergeWorkspaceValue(base[key], local[key], remote[key], `${path}.${key}`);
+      conflicts.push(...result.conflicts);
+      if (result.value !== undefined) merged[key] = result.value;
+    }
+    return { value: merged, conflicts };
+  }
+
+  return { value: local, conflicts: [path] };
+}
+
+export function mergeWorkspaceFieldChanges(
+  fields: Record<string, unknown>,
+  baseFields: Record<string, unknown>,
+  remote: Record<string, unknown>,
+): { fields: Record<string, unknown>; conflicts: string[] } {
+  const mergedFields: Record<string, unknown> = {};
+  const conflicts: string[] = [];
+  for (const [key, localValue] of Object.entries(fields)) {
+    if (!Object.prototype.hasOwnProperty.call(baseFields, key)) {
+      mergedFields[key] = localValue;
+      continue;
+    }
+    const result = mergeWorkspaceValue(baseFields[key], localValue, remote[key], key);
+    mergedFields[key] = result.value;
+    conflicts.push(...result.conflicts);
+  }
+  return { fields: mergedFields, conflicts };
+}
+
 export async function hashWorkspaceValue(value: unknown): Promise<string> {
   const serialized = JSON.stringify(canonicalize(value)) ?? 'undefined';
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serialized));

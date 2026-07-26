@@ -71,10 +71,10 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
   const [sort, setSort] = useState<BacklogSort>('deadline');
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const projects = useMemo(
-    () => [...new Set(tasks.map((task) => task.projectName))].sort((a, b) => a.localeCompare(b, 'zh-CN')),
-    [tasks],
-  );
+  const projects = useMemo(() => {
+    const byId = new Map(tasks.map((task) => [task.projectId, task.projectLabel]));
+    return [...byId].sort((left, right) => left[1].localeCompare(right[1], 'zh-CN'));
+  }, [tasks]);
   const tags = useMemo(
     () => [...new Set(tasks.map((task) => task.tag))].sort((a, b) => a.localeCompare(b, 'zh-CN')),
     [tasks],
@@ -124,7 +124,7 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
           {task.title}
         </button>
         <div className={styles.badges}>
-          <span className={styles.project} title={task.projectName}>{task.projectName}</span>
+          <span className={styles.project} title={task.projectLabel}>{task.projectLabel}</span>
           <span className={styles.tag} style={{ borderColor: task.tagColor, color: task.tagColor }}>{task.tag}</span>
           {task.frozenAt && <span className={styles.recovered}><History size={11} />逾期回收</span>}
         </div>
@@ -204,7 +204,7 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
       <div className={styles.filters}>
         <select value={project} onChange={(event) => setProject(event.target.value)} aria-label="按项目筛选">
           <option value="all">全部项目</option>
-          {projects.map((value) => <option key={value} value={value}>{value}</option>)}
+          {projects.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
         <select value={tag} onChange={(event) => setTag(event.target.value)} aria-label="按标签筛选">
           <option value="all">全部标签</option>

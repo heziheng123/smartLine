@@ -6,12 +6,11 @@ import {
   queueWorkspaceFields,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
+import type { StoreApi } from 'zustand';
 
 type WorkspaceState = WorkspaceStoreReadiness;
-type SetStateLike<TState> = (
-  partial: Partial<TState> | TState | ((state: TState) => Partial<TState> | TState),
-  replace?: boolean,
-) => void;
+type SetStateLike<TState> = StoreApi<TState>['setState'];
+type SetStateInput<TState> = Partial<TState> | TState | ((state: TState) => Partial<TState> | TState);
 
 function isUnifiedWorkspaceConfigured(): boolean {
   if (typeof localStorage === 'undefined') return false;
@@ -36,9 +35,13 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
   getState: () => TState,
   fieldNames: readonly WorkspaceStorageField[],
 ): SetStateLike<TState> {
-  return (partial, replace) => {
+  const trackedSet = (partial: SetStateInput<TState>, replace?: boolean) => {
     const before = getState();
-    setState(partial, replace);
+    if (replace === true) {
+      setState(partial as TState | ((state: TState) => TState), true);
+    } else {
+      setState(partial, false);
+    }
     const after = getState();
 
     // Initial IndexedDB hydration establishes the local baseline; it is not a
@@ -61,4 +64,5 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
       { bypassSuppression: true },
     );
   };
+  return trackedSet as SetStateLike<TState>;
 }

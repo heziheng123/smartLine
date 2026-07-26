@@ -167,9 +167,12 @@ function isValidGroup(group: unknown): group is TaskGroup {
     && Array.isArray(record.children);
 }
 
-export function normalizeTimelineData(data: TimelineData): TimelineData {
-  const tasks = Array.isArray(data?.tasks) ? data.tasks.filter(isValidTask).map(normalizeTimelineTask) : [];
-  const groups = Array.isArray(data?.groups)
+export function normalizeTimelineData(value: unknown): TimelineData {
+  const data = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<TimelineData>
+    : {};
+  const tasks = Array.isArray(data.tasks) ? data.tasks.filter(isValidTask).map(normalizeTimelineTask) : [];
+  const groups = Array.isArray(data.groups)
     ? data.groups
       .filter(isValidGroup)
       .map((group) => {

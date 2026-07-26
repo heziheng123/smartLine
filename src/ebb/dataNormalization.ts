@@ -108,8 +108,11 @@ function normalizeOutlineNodes(values: unknown[]): StudyOutlineNode[] {
   return nodes.sort((a, b) => a.orderIndex - b.orderIndex);
 }
 
-export function normalizeEbbData(data: Partial<EbbData> | null | undefined): EbbData {
-  const rawTasks = Array.isArray(data?.reviewTasks) ? data.reviewTasks : [];
+export function normalizeEbbData(value: unknown): EbbData {
+  const data = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<EbbData>
+    : {};
+  const rawTasks = Array.isArray(data.reviewTasks) ? data.reviewTasks : [];
   let reviewTasks = normalizeReviewRoundOrders(
     deduplicateById(rawTasks.filter(isValidReviewTask).map((task) => ({
       ...task,
@@ -147,10 +150,10 @@ export function normalizeEbbData(data: Partial<EbbData> | null | undefined): Ebb
     }))),
   );
   const inboxItems = deduplicateById(
-    (Array.isArray(data?.inboxItems) ? data.inboxItems : []).filter(isValidInboxItem),
+    (Array.isArray(data.inboxItems) ? data.inboxItems : []).filter(isValidInboxItem),
   );
   const outlineNodes = normalizeOutlineNodes(
-    Array.isArray(data?.outlineNodes) ? data.outlineNodes : [],
+    Array.isArray(data.outlineNodes) ? data.outlineNodes : [],
   );
   const outlineIds = new Set(outlineNodes.map((node) => node.id));
   reviewTasks = reviewTasks.map((task) =>
@@ -158,7 +161,7 @@ export function normalizeEbbData(data: Partial<EbbData> | null | undefined): Ebb
       ? { ...task, outlineNodeId: undefined }
       : task,
   );
-  const incomingSettings = data?.ebbSettings;
+  const incomingSettings = data.ebbSettings;
   const ebbSettings: EbbSettings = {
     ...DEFAULT_EBB_SETTINGS,
     ...(incomingSettings ?? {}),

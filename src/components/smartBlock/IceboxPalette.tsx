@@ -34,7 +34,7 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
   const allTasks = useMemo(() => {
     return getUniqueTasks(tasks, groups);
   }, [groups, tasks]);
-  const backlogTasks = useMemo(() => collectBacklogTasks(allTasks), [allTasks]);
+  const backlogTasks = useMemo(() => collectBacklogTasks(allTasks, groups), [allTasks, groups]);
 
   const scheduleTask = async (task: BacklogTask, date: string): Promise<boolean> => {
     const result = rescheduleProjectTask(task.taskId, task.blockId, date);

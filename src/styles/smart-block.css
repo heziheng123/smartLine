@@ -1847,6 +1847,28 @@
   gap: 8px;
 }
 
+.wmv-group-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: #f3f4f6;
+}
+
+.wmv-group-switch-label {
+  padding: 0 6px;
+  color: #9ca3af;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.wmv-group-switch .wmv-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .wmv-mode-switch {
   display: flex;
   background: #f3f4f6;
@@ -1958,6 +1980,10 @@
   border-bottom: 1px solid #f3f4f6;
   min-width: min-content;
 }
+.wmv-row:not(.wmv-row--header) {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 156px;
+}
 .wmv-row--header {
   border-bottom: 2px solid #e5e7eb;
   position: sticky;
@@ -2040,6 +2066,22 @@
 @media (max-width: 900px) {
   .week-matrix-workspace:has([data-backlog-dock='true'][data-expanded='true']) .week-matrix-content {
     padding-right: 0;
+  }
+
+  .wmv-nav {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .wmv-nav-right {
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .wmv-group-switch-label {
+    display: none;
   }
 }
 
@@ -2139,6 +2181,23 @@
   white-space: nowrap;
 }
 
+.wmv-project-badge {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.wmv-project-badge > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── 矩阵中的任务卡片 ── */
 .wmv-block-card {
   border-radius: 6px;
@@ -2218,6 +2277,31 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
+}
+
+.wmv-block-context {
+  min-width: 0;
+  margin-bottom: 3px;
+  font-size: 9px;
+}
+
+.wmv-block-context > span {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  padding: 1px 5px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+  color: #64748b;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wmv-block-context svg {
+  flex: 0 0 auto;
 }
 
 .wmv-block-body {

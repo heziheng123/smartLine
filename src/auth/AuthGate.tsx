@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { liveblocksAuthMode } from './config';
 import { AuthContext, type AuthStatus } from './AuthContext';
 import './auth.css';
@@ -60,11 +60,16 @@ export default function AuthGate({ children }: AuthGateProps) {
   const [login, setLogin] = useState<string>();
   const [userId, setUserId] = useState<string>();
   const [usingCachedSession, setUsingCachedSession] = useState(false);
+  const sessionRequestIdRef = useRef(0);
+  const sessionControllerRef = useRef<AbortController | null>(null);
 
   const checkSession = useCallback(async () => {
     if (!enabled) return;
+    sessionControllerRef.current?.abort();
+    const requestId = ++sessionRequestIdRef.current;
     setStatus('loading');
     const controller = new AbortController();
+    sessionControllerRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), AUTH_SESSION_TIMEOUT_MS);
     try {
       const response = await fetch('/api/auth/session', {
@@ -73,6 +78,7 @@ export default function AuthGate({ children }: AuthGateProps) {
         signal: controller.signal,
       });
       const body = await response.json() as SessionResponse;
+      if (requestId !== sessionRequestIdRef.current) return;
       if (response.ok && body.authenticated && body.userId) {
         setLogin(body.login);
         setUserId(body.userId);
@@ -90,6 +96,7 @@ export default function AuthGate({ children }: AuthGateProps) {
         setStatus('error');
       }
     } catch (error) {
+      if (requestId !== sessionRequestIdRef.current) return;
       const unavailable = error instanceof TypeError
         || (error instanceof DOMException && error.name === 'AbortError');
       const cached = unavailable ? readCachedSession() : null;
@@ -104,10 +111,12 @@ export default function AuthGate({ children }: AuthGateProps) {
       }
     } finally {
       window.clearTimeout(timeout);
+      if (sessionControllerRef.current === controller) sessionControllerRef.current = null;
     }
   }, [enabled]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
+  useEffect(() => () => sessionControllerRef.current?.abort(), []);
   useEffect(() => {
     if (!enabled) return;
     const revalidate = () => { void checkSession(); };
@@ -117,13 +126,30 @@ export default function AuthGate({ children }: AuthGateProps) {
 
   const logout = useCallback(async () => {
     if (!enabled) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), AUTH_SESSION_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw new Error(error instanceof DOMException && error.name === 'AbortError'
+        ? '退出登录超时，请检查网络后重试。'
+        : '退出登录失败，请检查网络后重试。');
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    if (!response.ok) throw new Error('退出登录失败，请稍后重试。');
+    sessionControllerRef.current?.abort();
+    sessionRequestIdRef.current += 1;
     setLogin(undefined);
     setUserId(undefined);
     setUsingCachedSession(false);
     writeCachedSession(null);
     setStatus('unauthenticated');
-    const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-    if (!response.ok) throw new Error('退出登录失败');
   }, [enabled]);
 
   const context = useMemo(() => ({ enabled, login, userId, logout, retry: checkSession, status }), [checkSession, enabled, login, logout, status, userId]);

@@ -26,8 +26,12 @@ export function loadWorkloadPreferences(): WorkloadPreferences {
         parsed.weekendCapacityMinutes,
         DEFAULT_WORKLOAD_PREFERENCES.weekendCapacityMinutes,
       ),
-      showTaskCount: parsed.showTaskCount ?? DEFAULT_WORKLOAD_PREFERENCES.showTaskCount,
-      showDuration: parsed.showDuration ?? DEFAULT_WORKLOAD_PREFERENCES.showDuration,
+      showTaskCount: typeof parsed.showTaskCount === 'boolean'
+        ? parsed.showTaskCount
+        : DEFAULT_WORKLOAD_PREFERENCES.showTaskCount,
+      showDuration: typeof parsed.showDuration === 'boolean'
+        ? parsed.showDuration
+        : DEFAULT_WORKLOAD_PREFERENCES.showDuration,
     };
   } catch {
     return DEFAULT_WORKLOAD_PREFERENCES;
@@ -35,6 +39,16 @@ export function loadWorkloadPreferences(): WorkloadPreferences {
 }
 
 export function saveWorkloadPreferences(preferences: WorkloadPreferences): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
-  window.dispatchEvent(new CustomEvent(WORKLOAD_PREFERENCES_EVENT, { detail: preferences }));
+  const normalized: WorkloadPreferences = {
+    weekdayCapacityMinutes: positiveMinutes(preferences.weekdayCapacityMinutes, DEFAULT_WORKLOAD_PREFERENCES.weekdayCapacityMinutes),
+    weekendCapacityMinutes: positiveMinutes(preferences.weekendCapacityMinutes, DEFAULT_WORKLOAD_PREFERENCES.weekendCapacityMinutes),
+    showTaskCount: preferences.showTaskCount === true,
+    showDuration: preferences.showDuration === true,
+  };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // Display preferences are optional; still notify the current page.
+  }
+  window.dispatchEvent(new CustomEvent(WORKLOAD_PREFERENCES_EVENT, { detail: normalized }));
 }

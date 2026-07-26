@@ -37,6 +37,7 @@ export async function onRequestGet({ env, request }: FunctionContext): Promise<R
         redirect_uri: `${url.origin}/api/auth/github/callback`,
         code_verifier: verifier,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     const tokenBody = await tokenResponse.json() as { access_token?: string };
     if (!tokenResponse.ok || !tokenBody.access_token) return failed();
@@ -48,6 +49,7 @@ export async function onRequestGet({ env, request }: FunctionContext): Promise<R
         'User-Agent': 'SmartLine',
         'X-GitHub-Api-Version': '2022-11-28',
       },
+      signal: AbortSignal.timeout(10_000),
     });
     const user = await userResponse.json() as GitHubUser;
     const allowedLogin = env.ALLOWED_GITHUB_LOGIN?.trim().toLowerCase();

@@ -143,7 +143,6 @@ function rollbackSchedule(
 
 function recordBacklogDailyOperation(
   task: BacklogTask,
-  date: string,
   payload: BacklogDailyUndoPayload,
   detail: string,
 ) {
@@ -198,7 +197,6 @@ export function scheduleBacklogTaskToSlot(input: {
   };
   recordBacklogDailyOperation(
     task,
-    date,
     payload,
     `已安排到 ${date} 的${slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'}`,
   );
@@ -247,6 +245,6 @@ export function scheduleBacklogTaskToTimeBlock(input: {
     createdKind: 'block',
     createdId: created.id,
   };
-  recordBacklogDailyOperation(task, date, payload, `已安排到 ${date} ${startTime}–${endTime}`);
+  recordBacklogDailyOperation(task, payload, `已安排到 ${date} ${startTime}–${endTime}`);
   return { ok: true, createdKind: 'block', createdId: created.id };
 }

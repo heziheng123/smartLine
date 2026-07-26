@@ -59,6 +59,11 @@ const NODE_STATE_LABEL: Record<NodeVisualState, string> = {
   mastered: '已掌握',
 };
 
+const getNodeStateLabel = (value: unknown): string =>
+  typeof value === 'string' && value in NODE_STATE_LABEL
+    ? NODE_STATE_LABEL[value as NodeVisualState]
+    : NODE_STATE_LABEL.inactive;
+
 type ViewNode = {
   id: string;
   name: string;
@@ -1148,7 +1153,7 @@ export const KnowledgeGraphView: React.FC = () => {
                       }}
                       className={`cursor-pointer transition-opacity duration-300 ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
                     >
-                      <title>{bindingSession.active ? `${node.data.name}${node.data.isLeaf ? (isBindingSelected ? '（已选择）' : '（点击选择）') : '（点击浏览）'}` : `${node.data.name} · ${NODE_STATE_LABEL[node.data.visualState]} · 轮次 ${node.data.completedCount}/${node.data.totalReviewCount}${hasOverdueRounds ? ` · ${node.data.overdueCount} 个逾期` : ''}`}</title>
+                      <title>{bindingSession.active ? `${node.data.name}${node.data.isLeaf ? (isBindingSelected ? '（已选择）' : '（点击选择）') : '（点击浏览）'}` : `${node.data.name} · ${getNodeStateLabel(node.data.visualState)} · 轮次 ${node.data.completedCount}/${node.data.totalReviewCount}${hasOverdueRounds ? ` · ${node.data.overdueCount} 个逾期` : ''}`}</title>
                       <path
                         d={arcGenerator(node) || ''}
                         fill={fillColor}

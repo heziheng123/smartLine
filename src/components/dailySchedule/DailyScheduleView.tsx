@@ -188,7 +188,7 @@ const DailyScheduleView: React.FC = () => {
     }
     return map;
   }, [tlTasks]);
-  const backlogTasks = useMemo(() => collectBacklogTasks(tlTasks), [tlTasks]);
+  const backlogTasks = useMemo(() => collectBacklogTasks(tlTasks, rawTlGroups), [rawTlGroups, tlTasks]);
   const ebbReviewById = useMemo(() => new Map(ebbReviewTasks.map((task) => [task.id, task])), [ebbReviewTasks]);
 
   const { checkIsCompleted } = useTaskCompletionStatus();

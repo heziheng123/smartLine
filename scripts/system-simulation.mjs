@@ -1966,6 +1966,25 @@ try {
     assert.deepEqual(dates.map((date) => workloads.get(date).taskCount), [1, 1, 1]);
   });
 
+  check('backlog project filters use stable IDs and full paths for duplicate project names', () => {
+    const firstBlock = smartBlock('same-name-one', 'First backlog task', []);
+    const secondBlock = smartBlock('same-name-two', 'Second backlog task', []);
+    delete firstBlock.header.date;
+    delete secondBlock.header.date;
+    const firstProject = { ...project('same-project-one', [firstBlock]), name: 'Same project', groupId: 'group-one' };
+    const secondProject = { ...project('same-project-two', [secondBlock]), name: 'Same project', groupId: 'group-two' };
+    const groups = [
+      { id: 'group-one', name: 'First group', start: '2026-07-01', end: '2026-08-31', children: [firstProject] },
+      { id: 'group-two', name: 'Second group', start: '2026-07-01', end: '2026-08-31', children: [secondProject] },
+    ];
+    const backlog = taskBacklogModule.collectBacklogTasks([firstProject, secondProject], groups);
+    assert.deepEqual(backlog.map((task) => task.projectLabel), ['First group / Same project', 'Second group / Same project']);
+    const filtered = taskBacklogModule.filterAndSortBacklogTasks(backlog, {
+      query: '', project: 'same-project-two', tag: 'all', origin: 'all', deadline: 'all', duration: 'all', sort: 'project',
+    });
+    assert.deepEqual(filtered.map((task) => task.blockId), ['same-name-two']);
+  });
+
   check('an overdue review completed today remains in today completed projection', () => {
     const projected = dailyTaskProjection.reviewTasksForDate([{
       id: 'completed-overdue',

@@ -8,13 +8,32 @@ function isLocalRequest(request: Request): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
 }
 
-async function resolveUserId({ env, request }: FunctionContext): Promise<string | null> {
+interface ResolvedIdentity { userId: string; login: string }
+
+function sanitizeRoomIdentity(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
+async function resolveIdentity({ env, request }: FunctionContext): Promise<ResolvedIdentity | null> {
   if (env.AUTH_ALLOW_DEV_BYPASS === 'true' && isLocalRequest(request)) {
     const localId = env.DEV_AUTH_USER_ID?.trim();
-    return localId ? `dev_${localId}` : null;
+    return localId ? { userId: `dev_${localId}`, login: localId } : null;
   }
   const session = await readSession(request, env);
-  return session ? `gh_${session.githubUserId}` : null;
+  return session ? { userId: `gh_${session.githubUserId}`, login: session.login } : null;
+}
+
+function canAccessRoom(room: string, identity: ResolvedIdentity): boolean {
+  // Legacy four-room workspaces do not carry an owner prefix and remain
+  // temporarily accessible for the migration workflow. Every unified room is
+  // owner-scoped and must match either the stable GitHub id or the historical
+  // login-based identity.
+  if (!room.startsWith('workspace-')) return true;
+  const allowedPrefixes = [identity.userId, identity.login]
+    .map(sanitizeRoomIdentity)
+    .filter(Boolean)
+    .map((value) => `workspace-${value}-`);
+  return allowedPrefixes.some((prefix) => room.startsWith(prefix));
 }
 
 async function readRequestedRoom(request: Request): Promise<string | null> {
@@ -35,13 +54,14 @@ export async function onRequestPost(context: FunctionContext): Promise<Response>
   const secret = context.env.LIVEBLOCKS_SECRET_KEY?.trim();
   if (!secret?.startsWith('sk_')) return jsonResponse({ error: 'Liveblocks authentication is not configured.' }, 503);
 
-  let userId: string | null = null;
-  try { userId = await resolveUserId(context); } catch (error) {
+  let identity: ResolvedIdentity | null = null;
+  try { identity = await resolveIdentity(context); } catch (error) {
     console.warn('[liveblocks-auth] Session validation failed:', error instanceof Error ? error.message : error);
   }
-  if (!userId) return jsonResponse({ error: 'Authentication required.' }, 401);
+  if (!identity) return jsonResponse({ error: 'Authentication required.' }, 401);
   const room = await readRequestedRoom(context.request);
   if (!room) return jsonResponse({ error: 'A valid Liveblocks room is required.' }, 400);
+  if (!canAccessRoom(room, identity)) return jsonResponse({ error: 'The requested room does not belong to this user.' }, 403);
 
   try {
     // Access tokens carry the exact room permission. This avoids issuing an ID
@@ -51,11 +71,12 @@ export async function onRequestPost(context: FunctionContext): Promise<Response>
       method: 'POST',
       headers: { Accept: 'application/json', Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId,
+        userId: identity.userId,
         permissions: {
           [room]: ['*:write'],
         },
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) return jsonResponse({ error: 'Unable to create a Liveblocks session.' }, 502);
     const payload = await response.json() as { token?: string };

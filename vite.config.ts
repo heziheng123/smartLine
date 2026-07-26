@@ -9,7 +9,7 @@ export default defineConfig({
     dedupe: ['react', 'react-dom']
   },
   build: {
-    sourcemap: 'hidden',
+    sourcemap: process.env.UPLOAD_PRIVATE_SOURCEMAPS === 'true' ? 'hidden' : false,
     rollupOptions: {
       output: {
         manualChunks(id) {
