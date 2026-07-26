@@ -98,6 +98,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     tasks: storeTasks,
     updateBlockBody,
     updateTextBlockContent,
+    removeBlock,
     extendTaskBlocks,
     updateTaskBlocks,
   } = useTimelineStore(
@@ -105,6 +106,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       tasks: s.tasks,
       updateBlockBody: s.updateBlockBody,
       updateTextBlockContent: s.updateTextBlockContent,
+      removeBlock: s.removeBlock,
       extendTaskBlocks: s.extendTaskBlocks,
       updateTaskBlocks: s.updateTaskBlocks,
     })),
@@ -320,9 +322,18 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
 
   const handleDeleteBlock = useCallback(
     (blockId: string) => {
-      deleteProjectTask(task.id, blockId);
+      const result = deleteProjectTask(task.id, blockId);
+      setOperationError('error' in result ? result.error : null);
     },
     [task.id],
+  );
+
+  const handleDeleteTextBlock = useCallback(
+    (blockId: string) => {
+      setOperationError(null);
+      removeBlock(task.id, blockId);
+    },
+    [removeBlock, task.id],
   );
 
   const handleUpdateTextBlock = useCallback(
@@ -832,7 +843,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                       key={block.id}
                       block={block}
                       onUpdate={handleUpdateTextBlock}
-                      onDelete={handleDeleteBlock}
+                      onDelete={handleDeleteTextBlock}
                       onSlashCommand={handleSlashCommandTrigger}
                     />
                   ))}

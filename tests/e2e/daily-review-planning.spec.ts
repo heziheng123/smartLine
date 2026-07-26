@@ -63,6 +63,17 @@ const reviewTasks = [
   },
 ];
 
+const extraReviewTasks = [
+  {
+    id: 'rolling-c1', topicName: '额外复习主题C', dueDate: tomorrow, originalDueDate: tomorrow,
+    roundOrder: 1, isCompleted: false, complexity: 'normal' as const, smStatus: 'scheduled' as const,
+  },
+  {
+    id: 'rolling-d1', topicName: '额外复习主题D', dueDate: tomorrow, originalDueDate: tomorrow,
+    roundOrder: 1, isCompleted: false, complexity: 'easy' as const, smStatus: 'scheduled' as const,
+  },
+];
+
 const dailySchedules = {
   [today]: {
     date: today,
@@ -86,7 +97,10 @@ const dailySchedules = {
   },
 };
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
+  const seededTasks = testInfo.title.includes('more than the configured daily task limit')
+    ? [...reviewTasks, ...extraReviewTasks]
+    : reviewTasks;
   await page.addInitScript(({ tasks, schedules }) => {
     if (sessionStorage.getItem('daily-review-plan-seeded') === '1') return;
     sessionStorage.setItem('daily-review-plan-seeded', '1');
@@ -105,7 +119,7 @@ test.beforeEach(async ({ page }) => {
       ebbSettings: { dailyTaskLimit: 3 },
     }));
     localStorage.setItem('daily-schedule-data:mirror', JSON.stringify(schedules));
-  }, { tasks: reviewTasks, schedules: dailySchedules });
+  }, { tasks: seededTasks, schedules: dailySchedules });
   await page.goto('/');
 });
 
@@ -226,6 +240,30 @@ test('nightly selection keeps tomorrow, rolls the rest one day and preserves eve
       .filter((entry) => entry.sourceId?.startsWith('review-rolling-'))
       .length;
   }).toBe(0);
+});
+
+test('nightly selection allows keeping more than the configured daily task limit', async ({ page }) => {
+  await page.getByTitle('艾宾浩斯复习').click();
+  await page.getByRole('button', { name: '明日选择' }).click();
+  const dialog = page.getByRole('dialog', { name: '明日复习选择' });
+  await expect(dialog.locator('.eb-daily-plan-card')).toHaveCount(4);
+  const unselectedButtons = dialog.getByRole('button', { name: '保留明天' });
+  while (await unselectedButtons.count() > 0) {
+    await unselectedButtons.first().click();
+  }
+  await expect(dialog.getByRole('button', { name: '明天保留' })).toHaveCount(4);
+  await expect(dialog).toContainText('4 轮 · 不限数量');
+  await expect(dialog).not.toContainText('容量已满');
+  await dialog.getByRole('button', { name: '确认明日选择' }).click();
+
+  await expect.poll(async () => {
+    const data = await readPersistedStore<{ reviewTasks?: Array<{ rollingPlanDate?: string; rollingDecision?: string }> }>(
+      page,
+      'ebb_data',
+      'smart-ebb-data',
+    );
+    return data?.reviewTasks?.filter((task) => task.rollingPlanDate === tomorrow && task.rollingDecision === 'keep').length;
+  }).toBe(4);
 });
 
 test('reopening the same nightly plan does not double-count deferrals and can revise the choice', async ({ page }) => {

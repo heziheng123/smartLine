@@ -170,7 +170,8 @@ test('daily retrospective aggregates every completion, saves once and exposes mu
 
   const dialog = page.getByRole('dialog', { name: '每日复盘' });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('已完成 4 项');
+  await expect(dialog.getByText('把今天沉淀下来')).toBeVisible();
+  await expect(dialog.getByLabel('复盘进度概览')).toContainText('4');
 
   await dialog.getByRole('button', { name: '完成核心任务' }).click();
   await dialog.getByLabel('复盘内容').fill('多节点知识已经形成联系');

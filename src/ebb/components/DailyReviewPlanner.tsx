@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
-import type { EbbSettings, ReviewTask } from '../types';
+import type { ReviewTask } from '../types';
 import {
   getDailyReviewCandidates,
   type DailyReviewPlan,
@@ -20,7 +20,6 @@ import {
 
 interface DailyReviewPlannerProps {
   reviewTasks: ReviewTask[];
-  settings: EbbSettings;
   onApply: (request: DailyReviewPlanRequest) => DailyReviewPlan;
   onClose: () => void;
 }
@@ -33,7 +32,6 @@ const complexityLabel = {
 
 const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
   reviewTasks,
-  settings,
   onApply,
   onClose,
 }) => {
@@ -50,11 +48,9 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
   const [keptIds, setKeptIds] = useState(() => new Set(
     candidates
       .filter((candidate) => candidate.previousDecision === 'keep')
-      .slice(0, settings.dailyTaskLimit)
       .map((candidate) => candidate.taskId),
   ));
   const [error, setError] = useState('');
-  const limit = Math.max(1, settings.dailyTaskLimit);
   const deferredCount = Math.max(0, candidates.length - keptIds.size);
 
   const toggleKeep = (taskId: string) => {
@@ -63,7 +59,7 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
       const next = new Set(current);
       if (next.has(taskId)) {
         next.delete(taskId);
-      } else if (next.size < limit) {
+      } else {
         next.add(taskId);
       }
       return next;
@@ -76,7 +72,6 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
         planDate,
         candidateTaskIds: candidates.map((candidate) => candidate.taskId),
         keptTaskIds: [...keptIds],
-        dailyLimit: limit,
       });
       onClose();
     } catch (cause) {
@@ -104,13 +99,10 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
 
         <div className="eb-daily-plan-capacity" role="status">
           <div>
-            <span>明日容量</span>
-            <strong>{keptIds.size}/{limit} 轮</strong>
+            <span>明日已选择</span>
+            <strong>{keptIds.size} 轮 · 不限数量</strong>
           </div>
-          <div className="eb-daily-plan-capacity-track" aria-hidden="true">
-            <span style={{ width: `${Math.min(100, (keptIds.size / limit) * 100)}%` }} />
-          </div>
-          <small><Clock3 size={13} />建议控制在 {limit * 12}–{limit * 15} 分钟内</small>
+          <small><Clock3 size={13} />预计约 {keptIds.size * 12}–{keptIds.size * 15} 分钟，可按实际精力自由选择</small>
         </div>
 
         <div className="eb-daily-plan-body">
@@ -131,7 +123,6 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
                 {candidates.map((candidate) => {
                   const task = taskById.get(candidate.taskId);
                   const kept = keptIds.has(candidate.taskId);
-                  const limitReached = !kept && keptIds.size >= limit;
                   const nextDeferralCount = candidate.previousDecision === 'defer'
                     ? candidate.deferralCount
                     : candidate.deferralCount + 1;
@@ -144,11 +135,10 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
                         type="button"
                         className="eb-daily-plan-choice"
                         aria-pressed={kept}
-                        disabled={limitReached}
                         onClick={() => toggleKeep(candidate.taskId)}
                       >
                         <span className="eb-daily-plan-check">{kept && <Check size={14} />}</span>
-                        <span>{kept ? '明天保留' : limitReached ? '容量已满' : '保留明天'}</span>
+                        <span>{kept ? '明天保留' : '保留明天'}</span>
                       </button>
                       <div className="eb-daily-plan-card-main">
                         <div className="eb-daily-plan-card-title">

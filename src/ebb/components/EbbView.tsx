@@ -639,7 +639,6 @@ const EbbView: React.FC = () => {
         {dailyPlanOpen && (
           <DailyReviewPlanner
             reviewTasks={reviewTasks}
-            settings={store.ebbSettings}
             onApply={(request) => {
               const result = applyDailyReviewPlan(request);
               showToast(`明日保留 ${result.keptCount} 轮，其余 ${result.deferredCount} 轮顺延一天`);

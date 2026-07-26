@@ -1099,7 +1099,6 @@ const DailyScheduleView: React.FC = () => {
         {dailyPlanOpen && (
           <DailyReviewPlanner
             reviewTasks={ebbReviewTasks}
-            settings={ebbSettingsData}
             onApply={(request) => {
               const result = applyDailyReviewPlan(request);
               setDailyPlanFeedback(`明日保留 ${result.keptCount} 轮，其余 ${result.deferredCount} 轮顺延一天`);

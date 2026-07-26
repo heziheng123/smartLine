@@ -18,7 +18,6 @@ export interface DailyReviewPlanRequest {
   planDate: string;
   candidateTaskIds: string[];
   keptTaskIds: string[];
-  dailyLimit: number;
 }
 
 export interface DailyReviewPlan {
@@ -101,10 +100,8 @@ export function planDailyReviewSelection(
   request: DailyReviewPlanRequest,
 ): DailyReviewPlan {
   if (!isValidCalendarDate(request.planDate)) throw new Error('明日日期无效，请重新打开规划');
-  const dailyLimit = Math.max(1, Math.trunc(request.dailyLimit));
   const requestedIds = [...new Set(request.candidateTaskIds)];
   const keptIds = new Set(request.keptTaskIds);
-  if (keptIds.size > dailyLimit) throw new Error(`明日最多保留 ${dailyLimit} 轮`);
   if ([...keptIds].some((id) => !requestedIds.includes(id))) {
     throw new Error('选择中包含已经失效的复习轮次，请重新打开规划');
   }

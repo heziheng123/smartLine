@@ -17,6 +17,10 @@ const project = {
   groupId: 'completion-group',
   completed: false,
   blocks: [{
+    type: 'text',
+    id: 'deletable-document-text',
+    content: '可删除的项目文档内容',
+  }, {
     type: 'smart-task',
     id: 'grouped-completion-block',
     header: {
@@ -155,6 +159,32 @@ test('grouped project can complete and cancel repeatedly without refresh', async
   await expect(reloadedCard.getByRole('button', { name: '标记完成', exact: true })).toBeVisible();
   await expect.poll(() => readCompletionCopies(page)).toEqual({ task: false, group: false });
   await expect.poll(() => readNodeStatus(page)).toBe('unactivated');
+});
+
+test('project document text blocks can be deleted and stay deleted after reload', async ({ page }) => {
+  await openProjectDocument(page);
+  const textCard = page.locator('.tb-card').filter({ hasText: '可删除的项目文档内容' });
+  await expect(textCard).toBeVisible();
+  await textCard.hover();
+  await textCard.getByTitle('删除').click();
+  await expect(textCard).toHaveCount(0);
+
+  await expect.poll(() => page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    const state = useTimelineStore.getState();
+    const taskHasBlock = state.tasks
+      .find((task) => task.id === 'grouped-completion-project')
+      ?.blocks.some((block) => block.id === 'deletable-document-text');
+    const groupHasBlock = state.groups
+      .flatMap((group) => group.children)
+      .find((task) => task.id === 'grouped-completion-project')
+      ?.blocks.some((block) => block.id === 'deletable-document-text');
+    return { taskHasBlock, groupHasBlock };
+  })).toEqual({ taskHasBlock: false, groupHasBlock: false });
+
+  await page.reload();
+  await openProjectDocument(page);
+  await expect(page.locator('.tb-card').filter({ hasText: '可删除的项目文档内容' })).toHaveCount(0);
 });
 
 test('completed task without automatic review activates its knowledge node in blue', async ({ page }) => {
