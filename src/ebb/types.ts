@@ -32,6 +32,10 @@ export interface ReviewTask {
   outlineNodeId?: string; // 保留以兼容旧版，新版推荐使用 graphNodeId
   graphNodeId?: string;   // 🧠 关联的知识大盘节点 ID
   complexity?: ComplexityLevel;
+  /** Topic base duration. When omitted, difficulty supplies 10/15/20 minutes. */
+  baseDurationMinutes?: number;
+  /** Optional override for this round only. */
+  durationOverrideMinutes?: number;
   smStatus?: SmStatus;
   isArchived?: boolean;   // 是否已归档（冷数据区）
   /** 项目任务完成所触发的计划创建日期，用于避免同节点同日连续消耗轮次。 */
@@ -73,6 +77,7 @@ export interface InboxItem {
   startDate?: string;
   generatedTasks?: ReviewTask[];
   complexity?: ComplexityLevel;
+  baseDurationMinutes?: number;
   createdAt: string;
 }
 
@@ -161,6 +166,7 @@ export interface TopicStat {
   pendingRounds: number;
   overdueRounds: number;
   nextDueDate?: string;
+  nextDurationMinutes?: number;
   totalPoints: number;
   earnedPoints: number;
   ratio: number;

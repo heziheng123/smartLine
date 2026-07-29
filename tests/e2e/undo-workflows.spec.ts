@@ -24,9 +24,15 @@ const daily = {
 };
 const ebb = { reviewTasks: [{ id: 'e2e-review', topicName: 'E2E复习撤销', dueDate: testDate, originalDueDate: testDate, roundOrder: 1, isCompleted: false, tag: '默认', smStatus: 'scheduled' }], inboxItems: [], outlineNodes: [], ebbSettings: {} };
 
-const openTaskOverview = async (page: Page) => {
+const openProjectTaskCard = async (page: Page, taskTitle = 'E2E完成撤销任务') => {
   await page.getByTitle('项目规划').click();
-  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
+  const card = page.locator('.stb-card').filter({ hasText: taskTitle });
+  await page.locator('.pdv-container').waitFor({ state: 'visible', timeout: 1_500 }).catch(() => undefined);
+  if (!await page.locator('.pdv-container').isVisible()) {
+    await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
+  }
+  await expect(card).toBeVisible();
+  return card;
 };
 
 test.beforeEach(async ({ page }) => {
@@ -75,27 +81,14 @@ test('permanent task deletion requires confirmation and leaves no recycle entry'
   await expect(page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toHaveCount(0);
 });
 
-test('task overview aggregates project tasks and edits the original task block', async ({ page }) => {
-  await openTaskOverview(page);
-  const card = page.locator('[data-block-id="e2e-block"]');
+test('project document edits the original task block', async ({ page }) => {
+  const card = await openProjectTaskCard(page);
+  await expect(card.getByRole('textbox')).toHaveValue('E2E完成撤销任务');
+  await card.locator('.stb-check').click();
+  await expect(card).toHaveClass(/stb-card--done/);
+  await card.locator('.stb-check').click();
   await expect(card).toBeVisible();
-  await expect(card).toContainText('E2E项目');
-  await card.click();
-  const taskDialog = page.getByRole('dialog', { name: '任务详情' });
-  await expect(taskDialog).toBeVisible();
-  await expect(taskDialog.getByLabel('任务附件')).toHaveCount(0);
-  await expect(taskDialog.getByRole('button', { name: '上传附件' })).toHaveCount(0);
-  await page.getByLabel('关闭任务详情').click();
-
-  await card.getByRole('button', { name: /完成/ }).click();
-  await page.getByRole('button', { name: /已完成/ }).first().click();
-  const completedSection = page.locator('.task-overview-section').filter({ hasText: '已完成' });
-  await completedSection.locator('.task-overview-section-header').click();
-  await expect(card).toHaveClass(/is-completed/);
-  await card.getByRole('button', { name: /取消完成/ }).click();
-  await page.getByRole('button', { name: /全部任务/ }).first().click();
-  await expect(card).toBeVisible();
-  await expect(card).not.toHaveClass(/is-completed/);
+  await expect(card).not.toHaveClass(/stb-card--done/);
 });
 
 test('batch edit can explicitly clear a schedule date and keep the task unscheduled', async ({ page }) => {
@@ -163,14 +156,6 @@ test('legacy quantity task without a start date is repaired and returns to the d
   const projectCard = page.locator('.stb-card').filter({ hasText: '待恢复背诵任务' });
   await expect(projectCard).toBeVisible();
   await expect(projectCard).not.toContainText('未排期');
-  await page.getByRole('button', { name: '关闭项目文档' }).click();
-
-  await openTaskOverview(page);
-  const overviewCard = page.locator('[data-block-id="legacy-quantity-without-date"]');
-  await expect(overviewCard).toBeVisible();
-  await expect(overviewCard).not.toHaveClass(/is-overdue/);
-  await expect(overviewCard).toContainText('开始');
-
   await page.getByRole('tab', { name: '每日安排' }).click();
   await expect(page.locator('.ds-pool-item').filter({ hasText: '待恢复背诵任务' })).toBeVisible();
 });
@@ -280,7 +265,7 @@ test('daily schedule keeps the real drag transform and visual feedback', async (
   await expect(card).not.toHaveClass(/ds-pool-item--dragging/);
 });
 
-test('project quantity task suggests a daily target and records progress without duration', async ({ page }) => {
+test('project quantity task suggests a daily target and keeps its daily duration visible', async ({ page }) => {
   await page.getByTitle('项目规划').click();
   await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
   await page.getByRole('button', { name: '添加任务卡片' }).click();
@@ -301,7 +286,7 @@ test('project quantity task suggests a daily target and records progress without
   await expect(projectCard).toContainText('今日 0/80 题');
   await expect(projectCard).toContainText('剩余 800 题');
   await expect(projectCard).toContainText('建议今天 80 题');
-  await expect(projectCard).not.toContainText('min');
+  await expect(projectCard.getByTitle('每日预计投入（分钟）')).toHaveValue('30');
   const projectProgressButton = projectCard.getByRole('button', { name: /^记录今日完成量：考研数学题库/ });
   await expect(projectProgressButton).toBeVisible();
   await expect(projectCard.getByRole('button', { name: '标记完成' })).toHaveCount(0);
@@ -339,7 +324,7 @@ test('project quantity task suggests a daily target and records progress without
   const poolCard = page.locator('.ds-pool-item').filter({ hasText: '考研数学题库' });
   await expect(poolCard).toContainText('剩余 800 题');
   await expect(poolCard).toContainText('今日目标 80 题');
-  await expect(poolCard).not.toContainText('min');
+  await expect(poolCard).toContainText('每日投入 30 分钟');
 
   // The two daily presentations must consume the same projection. Continuous
   // quantity tasks used to disappear entirely after switching to time blocks.
@@ -348,6 +333,7 @@ test('project quantity task suggests a daily target and records progress without
   await expect(timeBlockPoolCard).toBeVisible();
   await expect(timeBlockPoolCard).toContainText('今日 0/80 题');
   await expect(timeBlockPoolCard).toContainText('总进度 200/1000 题');
+  await expect(timeBlockPoolCard).toContainText('每日投入 30 分钟');
   await page.getByRole('tab', { name: '时段' }).click();
 
   const draggableId = await poolCard.evaluate((element) => {
@@ -365,7 +351,7 @@ test('project quantity task suggests a daily target and records progress without
   const afternoonCard = page.getByTestId('daily-slot-afternoon').locator('.ds-item').filter({ hasText: '考研数学题库' });
   await expect(afternoonCard).toBeVisible();
   await expect(afternoonCard).toHaveClass(/ds-item--quantity/);
-  await expect(afternoonCard).not.toContainText('min');
+  await expect(afternoonCard).toContainText('30min');
   const quantityLayout = await afternoonCard.evaluate((element) => {
     const card = element.getBoundingClientRect();
     const name = element.querySelector('.ds-item-name')?.getBoundingClientRect();
@@ -459,11 +445,10 @@ test('quantity controls open a real progress entry and future tasks stay locked'
   }, { today: testDate, future: addTestDays(testDate, 1) });
   await page.reload();
 
-  await openTaskOverview(page);
-  const overviewCard = page.locator('[data-block-id="compact-quantity-entry"]');
-  await overviewCard.getByRole('button', { name: '记录数量进度：Compact quantity entry' }).click();
-  await expect(page.getByRole('dialog', { name: '任务详情' })).toBeVisible();
-  await page.getByLabel('关闭任务详情').click();
+  const projectCard = await openProjectTaskCard(page, 'Compact quantity entry');
+  await projectCard.getByRole('button', { name: /^记录今日完成量：Compact quantity entry/ }).click();
+  await expect(page.getByRole('dialog', { name: /记录今日完成量/ })).toBeVisible();
+  await page.getByLabel('关闭数量记录窗口').click();
 
   await page.getByTitle('周矩阵').click();
   const weekCard = page.locator('[data-block-id="compact-quantity-entry"]');
@@ -471,10 +456,8 @@ test('quantity controls open a real progress entry and future tasks stay locked'
   await expect(page.getByRole('dialog', { name: '任务详情' })).toBeVisible();
   await page.getByLabel('关闭任务详情').click();
 
-  await page.getByTitle('项目规划').click();
-  await page.locator('[data-block-id="future-quantity-entry"]').click();
-  const futureDialog = page.getByRole('dialog', { name: '任务详情' });
-  await expect(futureDialog.getByRole('button', { name: /任务尚未开始：Future quantity/ })).toBeDisabled();
+  const futureCard = await openProjectTaskCard(page, 'Future quantity');
+  await expect(futureCard.getByRole('button', { name: /^任务尚未开始：Future quantity/ })).toBeDisabled();
 });
 
 test('direct quantity total and cumulative edits persist without creating history records', async ({ page }) => {
@@ -550,18 +533,20 @@ test('direct quantity total and cumulative edits persist without creating histor
   await expect(card).toContainText('进度 90/90 题');
 });
 
-test('project task duration accepts any positive minute value', async ({ page }) => {
+test('project task duration uses convenient five-minute presets', async ({ page }) => {
   await page.getByTitle('项目规划').click();
   await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
   await page.getByRole('button', { name: '添加任务卡片' }).click();
   const createDialog = page.getByRole('dialog', { name: '新建项目任务' });
-  await createDialog.getByLabel('任务名称').fill('任意分钟任务');
+  await createDialog.getByLabel('任务名称').fill('五分钟粒度任务');
   const durationInput = createDialog.getByLabel('预计时长（分钟）');
-  await durationInput.fill('17.5');
+  await createDialog.getByRole('button', { name: '45 分钟' }).click();
+  await expect(durationInput).toHaveValue('45');
+  await durationInput.fill('20');
   expect(await durationInput.evaluate((input: HTMLInputElement) => input.checkValidity())).toBeTruthy();
   await createDialog.getByRole('button', { name: '创建任务' }).click();
   await expect(createDialog).toBeHidden();
-  await expect(page.locator('.stb-card').filter({ hasText: '任意分钟任务' })).toBeVisible();
+  await expect(page.locator('.stb-card').filter({ hasText: '五分钟粒度任务' }).getByTitle('预估时长（分钟）')).toHaveValue('20');
 });
 
 test('standard project task can be created unscheduled while quantity start remains required', async ({ page }) => {
@@ -580,14 +565,14 @@ test('standard project task can be created unscheduled while quantity start rema
   const quantityDialog = page.getByRole('dialog', { name: '新建项目任务' });
   await quantityDialog.getByRole('button', { name: '按数量推进' }).click();
   await expect(quantityDialog.getByLabel('开始日期（必填）')).toHaveAttribute('required', '');
+  await expect(quantityDialog.getByLabel('每日预计投入（分钟）')).toHaveValue('30');
   await quantityDialog.getByRole('button', { name: '取消' }).click();
 });
 
 test('knowledge binding actions stay inside an iPad Air viewport', async ({ page }) => {
   await page.setViewportSize({ width: 1180, height: 820 });
-  await openTaskOverview(page);
-  await page.locator('[data-block-id="e2e-block"]').click();
-  await page.getByRole('button', { name: '未绑定节点' }).click();
+  const card = await openProjectTaskCard(page);
+  await card.getByRole('button', { name: '未绑定节点', exact: true }).click();
   await page.getByRole('button', { name: '去知识大盘选择' }).click();
 
   const banner = page.getByTestId('graph-binding-banner');
@@ -603,13 +588,11 @@ test('knowledge binding actions stay inside an iPad Air viewport', async ({ page
 });
 
 test('knowledge node detail summarizes linked tasks, reviews and mastery state', async ({ page }) => {
-  await openTaskOverview(page);
-  await page.locator('[data-block-id="e2e-block"]').click();
-  await page.getByRole('button', { name: '未绑定节点' }).click();
+  const card = await openProjectTaskCard(page);
+  await card.getByRole('button', { name: '未绑定节点', exact: true }).click();
   await page.getByPlaceholder('搜索或创建知识节点...').fill('E2E知识节点');
   await page.getByRole('button', { name: /创建新知识节点："E2E知识节点"/ }).click();
   await page.locator('.stb-tag-picker-overlay').click({ position: { x: 5, y: 5 } });
-  await page.getByLabel('关闭任务详情').click();
 
   await page.getByTitle('知识大盘').click();
   const nodeLabel = page.locator('svg text[fill="#ffffff"]').filter({ hasText: 'E2E知识节点' });

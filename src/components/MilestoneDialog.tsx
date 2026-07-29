@@ -28,6 +28,7 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
   const [name, setName] = useState(milestone?.name ?? '');
   const [date, setDate] = useState(milestone?.date ?? '');
   const [color, setColor] = useState(milestone?.color ?? '');
+  const [importance, setImportance] = useState<NonNullable<Milestone['importance']>>(milestone?.importance ?? 'important');
 
   const handleSave = () => {
     const trimmed = name.trim();
@@ -50,6 +51,8 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
       name: trimmed,
       date,
       color: finalColor,
+      placement: milestone?.placement,
+      importance,
     });
   };
 
@@ -86,6 +89,22 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
               onChange={(e) => setDate(e.target.value)}
             />
           </label>
+
+          <div className="tl-dialog-field">
+            <span className="tl-dialog-label">关键程度</span>
+            <div className="tl-dialog-segmented" role="group" aria-label="关键日期重要程度">
+              {([['normal', '普通提醒'], ['important', '重要节点'], ['core', '核心事件']] as Array<[NonNullable<Milestone['importance']>, string]>).map(([value, label]) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={importance === value ? 'is-active' : ''}
+                  onClick={() => setImportance(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <label className="tl-dialog-field">
             <span className="tl-dialog-label">标记颜色</span>

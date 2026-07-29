@@ -6,10 +6,11 @@
 
 import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
-import { ListChecks, Plus, RotateCcw, Search } from 'lucide-react';
+import { Clock3, ListChecks, Plus, RotateCcw, Search } from 'lucide-react';
 import type { ReviewTask, EbbSettings, ComplexityLevel } from '../types';
 import { computeRounds, getReviewTopicKey, isOverdue, isDueToday, getDateLabel } from '../scheduler';
 import { getPointWeight } from '../complexity';
+import { getReviewRoundDuration } from '../duration';
 import { ROUND_COLORS } from '../constants';
 import type { TaskActions } from './MatrixView';
 import { useGraphStore } from '@/graph/store';
@@ -402,6 +403,7 @@ interface BoardCardProps {
                 {dateLabel.text}
               </span>
             )}
+            {nextTask && <span className="eb-board-card-points"><Clock3 size={11} />{getReviewRoundDuration(nextTask, nextRound)}分钟</span>}
             {points > 0 && <span className="eb-board-card-points">{points}分</span>}
           </div>
         </div>

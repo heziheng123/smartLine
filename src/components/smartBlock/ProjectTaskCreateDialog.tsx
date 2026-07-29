@@ -3,7 +3,13 @@ import { CheckSquare2, Hash, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import type { SmartTaskBlock } from '@/types';
-import { genBlockId, getQuantityDailySuggestion, getTagColor } from '@/utils/blocks';
+import {
+  genBlockId,
+  getQuantityDailySuggestion,
+  getTagColor,
+  getTaskEstimatedMinutes,
+  TASK_DURATION_OPTIONS,
+} from '@/utils/blocks';
 import { todayStr } from '@/utils/dateSafe';
 import { PROJECT_TASK_CREATE_EVENT, type ProjectTaskCreateDetail } from './projectTaskCreate';
 import { createProjectTask } from '@/services/projectTaskCommands';
@@ -81,6 +87,9 @@ const ProjectTaskCreateDialog: React.FC = () => {
     if (!projectId || !projects.some((task) => task.id === projectId)) return setError('请选择所属项目。');
     if (!title.trim()) return setError('请输入任务名称。');
     if (mode === 'quantity' && !date) return setError('请选择开始日期。');
+    const parsedDuration = Number(duration);
+    if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) return setError('预计时长必须是大于 0 的分钟数。');
+    const estimatedMinutes = getTaskEstimatedMinutes({ duration: parsedDuration });
 
     let block: SmartTaskBlock;
     if (mode === 'quantity') {
@@ -95,20 +104,18 @@ const ProjectTaskCreateDialog: React.FC = () => {
         type: 'smart-task', id: genBlockId(), body: '',
         header: {
           taskKind: 'quantity', title: title.trim(), tag: '数量', tagColor: '#14B8A6',
-          date, deadline: deadline || undefined, duration: 0,
+          date, deadline: deadline || undefined, duration: estimatedMinutes,
           isCompleted: completed, completedDate: completed ? todayStr() : undefined,
           autoSyncEbb: false, quantityUnit: unit.trim().slice(0, 6),
           quantityTotal: parsedTotal, quantityInitialCompleted: parsedInitial, quantityRecords: {},
         },
       };
     } else {
-      const parsedDuration = Number(duration);
-      if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) return setError('预计时长必须是大于 0 的分钟数。');
       block = {
         type: 'smart-task', id: genBlockId(), body: '',
         header: {
           taskKind: 'standard', title: title.trim(), tag: '默认', tagColor: getTagColor('默认'),
-          date: date || undefined, duration: parsedDuration, isCompleted: false, autoSyncEbb: true,
+          date: date || undefined, duration: estimatedMinutes, isCompleted: false, autoSyncEbb: true,
         },
       };
     }
@@ -135,9 +142,19 @@ const ProjectTaskCreateDialog: React.FC = () => {
               <button type="button" className={mode === 'quantity' ? 'is-active' : ''} onClick={() => setMode('quantity')}><Hash size={14} />按数量推进</button>
             </div>
           </fieldset>
-          {mode === 'binary' ? (
-            <label>预计时长（分钟）<input type="number" step="any" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>
-          ) : (
+          <label>
+            {mode === 'quantity' ? '每日预计投入（分钟）' : '预计时长（分钟）'}
+            <input type="number" min="5" step="5" value={duration} onChange={(event) => setDuration(event.target.value)} />
+          </label>
+          <div className="task-create-units" role="group" aria-label="快捷预计时长">
+            {TASK_DURATION_OPTIONS.map((value) => (
+              <button key={value} type="button" className={duration === String(value) ? 'is-active' : ''} onClick={() => setDuration(String(value))}>
+                {value >= 60 ? `${value / 60} 小时` : `${value} 分钟`}
+              </button>
+            ))}
+            <span>{mode === 'quantity' ? '这是每天为该数量任务预留的时间' : '会按 5 分钟粒度保存'}</span>
+          </div>
+          {mode === 'quantity' && (
             <>
               <div className="ds-vocab-form-grid">
                 <label>目标总量<input type="number" min="1" step="1" value={total} onChange={(event) => setTotal(event.target.value)} placeholder="例如 1000" /></label>

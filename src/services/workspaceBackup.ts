@@ -1,4 +1,4 @@
-import type { TimelineData } from '@/types';
+import type { LifeStage, TimelineData } from '@/types';
 import type { EbbData } from '@/ebb/types';
 import type { GraphData } from '@/graph/types';
 import type { DaySchedule } from '@/components/dailySchedule/types';
@@ -27,7 +27,7 @@ export interface WorkspaceBackup {
   revision: number;
   exportedAt: string;
   deviceId: string;
-  timeline: TimelineData;
+  timeline: TimelineData & { lifeStages: LifeStage[] };
   ebb: EbbData;
   graph: GraphData;
   daily: {
@@ -40,6 +40,7 @@ export interface WorkspaceBackup {
 export interface WorkspaceBackupSummary {
   tasks: number;
   groups: number;
+  lifeStages: number;
   projectDocuments: number;
   reviewTasks: number;
   dailyDays: number;
@@ -119,6 +120,7 @@ export function createWorkspaceBackup(): WorkspaceBackup {
       groups: timeline.groups,
       notes: timeline.notes,
       milestones: timeline.milestones,
+      lifeStages: timeline.lifeStages,
     },
     ebb: {
       reviewTasks: ebb.reviewTasks,
@@ -178,7 +180,8 @@ export function validateWorkspaceBackup(value: unknown): {
   const graph = value.graph;
   const daily = value.daily;
   if (!isRecord(timeline) || !Array.isArray(timeline.tasks) || !Array.isArray(timeline.groups)
-    || !Array.isArray(timeline.notes) || !Array.isArray(timeline.milestones)) {
+    || !Array.isArray(timeline.notes) || !Array.isArray(timeline.milestones)
+    || (timeline.lifeStages !== undefined && !Array.isArray(timeline.lifeStages))) {
     errors.push('时间轴或项目文档数据格式无效。');
   }
   if (!isRecord(ebb) || !Array.isArray(ebb.reviewTasks) || !Array.isArray(ebb.inboxItems)
@@ -193,6 +196,10 @@ export function validateWorkspaceBackup(value: unknown): {
   const backup: WorkspaceBackup = {
     ...rawBackup,
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    timeline: {
+      ...rawBackup.timeline,
+      lifeStages: Array.isArray(rawBackup.timeline.lifeStages) ? rawBackup.timeline.lifeStages : [],
+    },
     daily: {
       schedules: rawBackup.daily.schedules,
       retrospectives: normalizeDailyRetrospectives(
@@ -223,6 +230,11 @@ export function validateWorkspaceBackup(value: unknown): {
   if (!backup.timeline.milestones.every((milestone) => isRecord(milestone)
     && typeof milestone.id === 'string' && typeof milestone.name === 'string' && isDate(milestone.date))) {
     errors.push('里程碑数据包含缺失字段或无效日期。');
+  }
+  if (!backup.timeline.lifeStages.every((stage) => isRecord(stage)
+    && typeof stage.id === 'string' && typeof stage.name === 'string'
+    && isDate(stage.start) && isDate(stage.end))) {
+    errors.push('人生阶段包含缺失字段或无效日期。');
   }
   if (!backup.ebb.reviewTasks.every((task) => isRecord(task)
     && typeof task.id === 'string' && typeof task.topicName === 'string'
@@ -298,6 +310,7 @@ export function validateWorkspaceBackup(value: unknown): {
     ['项目分组', backup.timeline.groups],
     ['便签', backup.timeline.notes],
     ['里程碑', backup.timeline.milestones],
+    ['人生阶段', backup.timeline.lifeStages],
     ['EBB 轮次', backup.ebb.reviewTasks],
     ['EBB 收件箱', backup.ebb.inboxItems],
     ['EBB 大纲', backup.ebb.outlineNodes],
@@ -346,6 +359,9 @@ export function validateWorkspaceBackup(value: unknown): {
   for (const note of backup.timeline.notes) {
     if (note.endDate !== undefined && !isDate(note.endDate)) issues.push(`便签“${note.name}”的结束日期无效`);
     if (note.endDate && note.date > note.endDate) issues.push(`便签“${note.name}”的开始日期晚于结束日期`);
+  }
+  for (const stage of backup.timeline.lifeStages) {
+    if (stage.start > stage.end) issues.push(`人生阶段“${stage.name}”的开始日期晚于结束日期`);
   }
   for (const task of timelineTaskMap.values()) {
     if (task.start > task.end) issues.push(`项目“${task.name}”的开始日期晚于结束日期`);
@@ -487,6 +503,7 @@ export function validateWorkspaceBackup(value: unknown): {
     summary: {
       tasks: backup.timeline.tasks.length,
       groups: backup.timeline.groups.length,
+      lifeStages: backup.timeline.lifeStages.length,
       projectDocuments: backup.timeline.tasks.filter((task) => task.blocks.length > 0).length,
       reviewTasks: backup.ebb.reviewTasks.length,
       dailyDays: Object.keys(backup.daily.schedules).length,
@@ -657,6 +674,7 @@ export async function restoreWorkspaceBackup(backup: WorkspaceBackup): Promise<v
         groups: useTimelineStore.getState().groups,
         notes: useTimelineStore.getState().notes,
         milestones: useTimelineStore.getState().milestones,
+        lifeStages: useTimelineStore.getState().lifeStages,
       }),
       persistDailySchedules(useDailyScheduleStore.getState().schedules),
       persistDailyRetrospectives(useDailyScheduleStore.getState().retrospectives),
@@ -695,7 +713,8 @@ function markWorkspaceChanged() {
   }, 300);
 }
 useTimelineStore.subscribe((state, previous) => {
-  if (state.tasks !== previous.tasks || state.groups !== previous.groups || state.notes !== previous.notes || state.milestones !== previous.milestones) markWorkspaceChanged();
+  if (state.tasks !== previous.tasks || state.groups !== previous.groups || state.notes !== previous.notes
+    || state.milestones !== previous.milestones || state.lifeStages !== previous.lifeStages) markWorkspaceChanged();
 });
 useEbbStore.subscribe((state, previous) => {
   if (state.reviewTasks !== previous.reviewTasks || state.inboxItems !== previous.inboxItems || state.outlineNodes !== previous.outlineNodes || state.ebbSettings !== previous.ebbSettings) markWorkspaceChanged();

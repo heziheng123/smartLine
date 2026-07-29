@@ -19,7 +19,7 @@ function backup(): WorkspaceBackup {
     revision: 1,
     exportedAt: '2026-07-21T00:00:00.000Z',
     deviceId: 'device-a',
-    timeline: { tasks: [], groups: [], notes: [], milestones: [] },
+    timeline: { tasks: [], groups: [], notes: [], milestones: [], lifeStages: [] },
     ebb: {
       reviewTasks: [],
       inboxItems: [],
@@ -61,6 +61,17 @@ test('workspace hashes ignore object key insertion order but detect data changes
   assert.notEqual(
     await hashWorkspaceBackup(first),
     await hashWorkspaceBackup(changed),
+  );
+  const changedStage = backup();
+  changedStage.timeline.lifeStages.push({
+    id: 'stage-1',
+    name: '备考阶段',
+    start: '2026-07-01',
+    end: '2026-12-31',
+  });
+  assert.notEqual(
+    await hashWorkspaceBackup(first),
+    await hashWorkspaceBackup(changedStage),
   );
 });
 

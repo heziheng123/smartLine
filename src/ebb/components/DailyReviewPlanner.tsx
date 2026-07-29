@@ -17,6 +17,7 @@ import {
   type DailyReviewPlan,
   type DailyReviewPlanRequest,
 } from '../dailyReviewPlanning';
+import { getReviewRoundDuration } from '../duration';
 
 interface DailyReviewPlannerProps {
   reviewTasks: ReviewTask[];
@@ -52,6 +53,11 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
   ));
   const [error, setError] = useState('');
   const deferredCount = Math.max(0, candidates.length - keptIds.size);
+  const selectedMinutes = useMemo(() => candidates.reduce((sum, candidate) => {
+    if (!keptIds.has(candidate.taskId)) return sum;
+    const task = taskById.get(candidate.taskId);
+    return sum + (task ? getReviewRoundDuration(task, candidate.round) : 15);
+  }, 0), [candidates, keptIds, taskById]);
 
   const toggleKeep = (taskId: string) => {
     setError('');
@@ -102,7 +108,7 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
             <span>明日已选择</span>
             <strong>{keptIds.size} 轮 · 不限数量</strong>
           </div>
-          <small><Clock3 size={13} />预计约 {keptIds.size * 12}–{keptIds.size * 15} 分钟，可按实际精力自由选择</small>
+          <small><Clock3 size={13} />预计约 {selectedMinutes} 分钟，按各主题基础时长与当前轮次计算</small>
         </div>
 
         <div className="eb-daily-plan-body">
@@ -145,6 +151,7 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
                           <strong>{candidate.topicName}</strong>
                           <span>R{candidate.round}/{candidate.totalRounds}</span>
                           {task?.complexity && <span>{complexityLabel[task.complexity]}</span>}
+                          {task && <span><Clock3 size={11} />约 {getReviewRoundDuration(task, candidate.round)}m</span>}
                         </div>
                         <div className="eb-daily-plan-card-meta">
                           <span>当前日期 {candidate.dueDate}</span>

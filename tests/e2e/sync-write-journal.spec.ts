@@ -85,6 +85,14 @@ async function simulateConnectedStorageReady(page: Page) {
   });
 }
 
+async function openProjectTaskCard(page: Page) {
+  await page.getByTitle('项目规划').click();
+  await page.locator('.tl-seg').filter({ hasText: project.name }).first().click();
+  const card = page.locator('.stb-card').filter({ hasText: project.blocks[0].header.title });
+  await expect(card).toBeVisible();
+  return card;
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(({ projectData }) => {
     localStorage.clear();
@@ -131,16 +139,13 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('rapid completion toggles are journaled while cloud storage is still loading', async ({ page }) => {
-  await page.getByTitle('项目规划').click();
-  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
-  const card = page.locator('[data-block-id="sync-journal-block"]');
-  await expect(card).toBeVisible();
+  const card = await openProjectTaskCard(page);
 
   // Reproduce the production race precisely: the room reports connected
   // before Liveblocks has finished loading its storage root.
   await simulateConnectedStorageLoading(page);
 
-  await card.getByRole('button', { name: /^完成：/ }).click();
+  await card.locator('.stb-check').click();
   await expect.poll(async () => {
     const pending = await readPendingWorkspaceSync(page);
     const fields = pending?.fields as {
@@ -149,11 +154,9 @@ test('rapid completion toggles are journaled while cloud storage is still loadin
     return fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted;
   }).toBe(true);
 
-  await page.locator('.task-overview-stats button').filter({ hasText: '已完成' }).click();
-  await page.locator('.task-overview-section-header').filter({ hasText: '已完成' }).click();
   await expect(card).toBeVisible();
-  await expect(card).toHaveClass(/is-completed/);
-  await card.getByRole('button', { name: /^取消完成：/ }).click();
+  await expect(card).toHaveClass(/stb-card--done/);
+  await card.locator('.stb-check').click();
   await expect.poll(async () => {
     const pending = await readPendingWorkspaceSync(page);
     const fields = pending?.fields as {
@@ -162,19 +165,15 @@ test('rapid completion toggles are journaled while cloud storage is still loadin
     return fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted;
   }).toBe(false);
 
-  await page.locator('.task-overview-stats button').filter({ hasText: '全部任务' }).click();
   await expect(card).toBeVisible();
-  await expect(card).not.toHaveClass(/is-completed/);
+  await expect(card).not.toHaveClass(/stb-card--done/);
 });
 
 test('late storage hydration cannot overwrite an explicit pending completion', async ({ page }) => {
-  await page.getByTitle('项目规划').click();
-  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
-  const card = page.locator('[data-block-id="sync-journal-block"]');
-  await expect(card).toBeVisible();
+  const card = await openProjectTaskCard(page);
   await simulateConnectedStorageLoading(page);
 
-  await card.getByRole('button', { name: /^完成：/ }).click();
+  await card.locator('.stb-check').click();
   await expect.poll(async () => {
     const pending = await readPendingWorkspaceSync(page);
     const fields = pending?.fields as {
@@ -206,13 +205,10 @@ test('late storage hydration cannot overwrite an explicit pending completion', a
 });
 
 test('connected storage journal keeps the newest cancellation instead of an older completion', async ({ page }) => {
-  await page.getByTitle('项目规划').click();
-  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
-  const card = page.locator('[data-block-id="sync-journal-block"]');
-  await expect(card).toBeVisible();
+  const card = await openProjectTaskCard(page);
   await simulateConnectedStorageReady(page);
 
-  await card.getByRole('button', { name: /^完成：/ }).click();
+  await card.locator('.stb-check').click();
   await expect.poll(async () => {
     const pending = await readPendingWorkspaceSync(page);
     const fields = pending?.fields as {
@@ -221,10 +217,8 @@ test('connected storage journal keeps the newest cancellation instead of an olde
     return fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted;
   }).toBe(true);
 
-  await page.locator('.task-overview-stats button').filter({ hasText: '已完成' }).click();
-  await page.locator('.task-overview-section-header').filter({ hasText: '已完成' }).click();
   await expect(card).toBeVisible();
-  await card.getByRole('button', { name: /^取消完成：/ }).click();
+  await card.locator('.stb-check').click();
 
   await expect.poll(async () => {
     const pending = await readPendingWorkspaceSync(page);

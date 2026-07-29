@@ -111,12 +111,19 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
                             ? <span title="未绑定节点" className="ml-1 inline-flex items-center"><CircleDashed size={12} className="opacity-40" /></span>
                             : checkIsLinkedTask(item.sourceId) && <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500"><LinkIcon size={12} className="opacity-60" /></span>)}
                         </span>
-                        {item.detail && (item.source !== 'project' || !quantity) && <span className="ds-pool-item-detail">{item.detail}</span>}
                         {quantity && (
                           <span className="ds-pool-quantity-summary">
                             <span>总进度 <strong>{item.quantityCompleted}/{item.quantityTotal} {item.quantityUnit}</strong></span>
                             <span>剩余 <strong>{Math.max(0, (item.quantityTotal ?? 0) - (item.quantityCompleted ?? 0))} {item.quantityUnit}</strong></span>
                             {item.quantityTarget !== undefined && <span>今日目标 <strong>{item.quantityTarget} {item.quantityUnit}</strong></span>}
+                            <span>每日投入 <strong>{item.duration ?? 30} 分钟</strong></span>
+                          </span>
+                        )}
+                        {!quantity && ((item.source !== 'project' && item.detail) || item.duration !== undefined) && (
+                          <span className="ds-pool-item-meta">
+                            {item.source !== 'project' && item.detail && <span>{item.detail}</span>}
+                            {item.source !== 'project' && item.detail && item.duration !== undefined && <i>·</i>}
+                            {item.duration !== undefined && <span>预计 {item.duration} 分钟</span>}
                           </span>
                         )}
                       </div>

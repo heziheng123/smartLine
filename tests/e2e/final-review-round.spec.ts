@@ -101,6 +101,27 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('review topic base duration and per-round override persist independently', async ({ page }) => {
+  await openReviewTopic(page, '末轮提醒测试');
+  await page.getByLabel('管理末轮提醒测试的全部轮次').click();
+  const panel = page.locator('.eb-panel--rounds');
+  await expect(panel).toContainText('当前基础 15 分钟');
+
+  await panel.getByRole('group', { name: '主题基础时长' }).getByRole('button', { name: '30m', exact: true }).click();
+  await expect(panel).toContainText('当前基础 30 分钟');
+  const secondRoundDuration = panel.getByLabel('第2轮预计时长');
+  await expect(secondRoundDuration.locator('option[value="auto"]')).toHaveText('自动 25m');
+  await secondRoundDuration.selectOption('45');
+  await expect(secondRoundDuration).toHaveValue('45');
+
+  await page.reload();
+  await openReviewTopic(page, '末轮提醒测试');
+  await page.getByLabel('管理末轮提醒测试的全部轮次').click();
+  const reopenedPanel = page.locator('.eb-panel--rounds');
+  await expect(reopenedPanel).toContainText('当前基础 30 分钟');
+  await expect(reopenedPanel.getByLabel('第2轮预计时长')).toHaveValue('45');
+});
+
 test('last round cancel is mutation-free and finishing remains committed without a history library', async ({ page }) => {
   await openReviewTopic(page, '末轮提醒测试');
   const toggle = page.getByLabel('标记第 2 轮完成');

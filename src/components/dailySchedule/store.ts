@@ -87,6 +87,9 @@ export function normalizeDailySchedules(
       usedIds.add(item.id);
       return [{
         ...item,
+        duration: Number.isFinite(item.duration) && (item.duration ?? 0) > 0
+          ? Math.max(5, Math.ceil(item.duration! / 5) * 5)
+          : undefined,
         completedDate: item.source === 'free' && item.completedDate !== date
           ? undefined
           : item.completedDate,

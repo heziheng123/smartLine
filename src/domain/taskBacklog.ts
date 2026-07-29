@@ -2,7 +2,8 @@ import type { ReviewTask } from '@/ebb/types';
 import type { DaySchedule } from '@/components/dailySchedule/types';
 import { getProjectBlockSourceId, getReviewSourceId } from '@/components/dailySchedule/sourceIds';
 import type { SmartTaskBlock, Task, TaskGroup } from '@/types';
-import { getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
+import { getSmartTaskBlocks, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
+import { getReviewRoundDuration } from '@/ebb/duration';
 import { addDays, getDayOfWeek, todayStr } from '@/utils/dateSafe';
 import { timeToMinutes } from '@/components/dailySchedule/conversion';
 import { buildProjectDescriptorMap } from './projectDescriptor';
@@ -79,7 +80,7 @@ export function collectBacklogTasks(tasks: readonly Task[], groups: readonly Tas
         projectColor: task.color,
         tag: header.tag || '未分类',
         tagColor: header.tagColor,
-        duration: Math.max(5, header.duration || 30),
+        duration: getTaskEstimatedMinutes(header),
         deadline: header.deadline,
         frozenAt: header.frozenAt,
         graphNodeCount: getValidGraphNodeIds(header).length,
@@ -147,14 +148,6 @@ function compareDeadline(left: BacklogTask, right: BacklogTask): number {
   return (left.deadline || '9999-12-31').localeCompare(right.deadline || '9999-12-31');
 }
 
-function isCanonicalProjectSource(sourceId: string): boolean {
-  return sourceId.startsWith('project-');
-}
-
-function isCanonicalReviewSource(sourceId: string): boolean {
-  return sourceId.startsWith('review-');
-}
-
 function safeDuration(start: string, end: string): number {
   const startMinutes = timeToMinutes(start);
   const endMinutes = timeToMinutes(end);
@@ -205,18 +198,19 @@ export function calculateDateWorkloads(input: {
         for (const date of dates) {
           if (date >= header.date && (!lastActiveDate || date <= lastActiveDate)) {
             getQuantities(date).add(sourceId);
+            getDurations(date).set(sourceId, getTaskEstimatedMinutes(header));
           }
         }
       } else {
         if (!requested.has(header.date)) continue;
-        getDurations(header.date).set(sourceId, Math.max(5, header.duration || 30));
+        getDurations(header.date).set(sourceId, getTaskEstimatedMinutes(header));
       }
     }
   }
 
   for (const review of reviewTasks) {
     if (review.isArchived || !requested.has(review.dueDate)) continue;
-    getDurations(review.dueDate).set(getReviewSourceId(review.id), 30);
+    getDurations(review.dueDate).set(getReviewSourceId(review.id), getReviewRoundDuration(review));
   }
 
   for (const date of dates) {
@@ -224,17 +218,11 @@ export function calculateDateWorkloads(input: {
     if (!day) continue;
     const durations = getDurations(date);
     for (const item of day.items ?? []) {
-      if (getQuantities(date).has(item.sourceId)) continue;
-      if (
-        item.source === 'free'
-        || isCanonicalProjectSource(item.sourceId)
-        || isCanonicalReviewSource(item.sourceId)
-      ) {
-        durations.set(item.sourceId, Math.max(5, item.duration ?? 30));
+      if (item.source === 'free' || !durations.has(item.sourceId)) {
+        durations.set(item.sourceId, getTaskEstimatedMinutes({ duration: item.duration }));
       }
     }
     for (const block of day.blocks ?? []) {
-      if (getQuantities(date).has(block.sourceId)) continue;
       durations.set(block.sourceId, safeDuration(block.startTime, block.endTime));
     }
   }
@@ -250,7 +238,7 @@ export function calculateDateWorkloads(input: {
       : preferences.weekdayCapacityMinutes;
     workloads.set(date, {
       date,
-      taskCount: durations.size + quantityCount,
+      taskCount: durations.size,
       totalMinutes,
       capacityMinutes,
       ratio: capacityMinutes > 0 ? totalMinutes / capacityMinutes : 0,

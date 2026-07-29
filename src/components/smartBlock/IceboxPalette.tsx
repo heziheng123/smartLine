@@ -134,7 +134,7 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
               <BacklogTaskList
                 tasks={backlogTasks}
                 onSchedule={scheduleTask}
-                onOpenTask={(task) => openProjectTaskModal(task.taskId, task.blockId, { source: 'task-overview' })}
+                onOpenTask={(task) => openProjectTaskModal(task.taskId, task.blockId, { source: 'icebox' })}
               />
             </div>
           </motion.section>

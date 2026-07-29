@@ -131,6 +131,7 @@ interface EbbStore extends EbbData {
   // 复习任务
   addReviewTasks: (tasks: ReviewTask[]) => void;
   updateReviewTask: (id: string, patch: Partial<ReviewTask>) => void;
+  updateReviewTopicDuration: (topicKey: string, baseDurationMinutes?: number) => void;
   rescheduleReviewRounds: (updates: Array<{ id: string; dueDate: string }>) => void;
   restoreReviewReschedule: (payload: ReviewRescheduleUndoPayload) => string | null;
   applyBatchReviewAdjustment: (request: BatchReviewRequest) => BatchReviewPlan;
@@ -484,6 +485,24 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           }
         },
 
+        updateReviewTopicDuration: (topicKey, baseDurationMinutes) => {
+          set((state) => {
+            const reviewTasks = state.reviewTasks.map((task) =>
+              !task.isArchived && getReviewTopicKey(task) === topicKey
+                ? { ...task, baseDurationMinutes }
+                : task,
+            );
+            const newData: EbbData = {
+              reviewTasks,
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: state.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+        },
+
         rescheduleReviewRounds: (updates) => {
           if (updates.length === 0) return;
           const previous = updates.map((update) => ({ id: update.id, dueDate: get().reviewTasks.find((task) => task.id === update.id)?.dueDate ?? update.dueDate }));
@@ -549,6 +568,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             outlineNodeId: template.outlineNodeId,
             graphNodeId: template.graphNodeId,
             complexity: template.complexity,
+            baseDurationMinutes: template.baseDurationMinutes,
             smStatus: 'scheduled',
           }));
 

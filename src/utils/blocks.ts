@@ -77,6 +77,23 @@ export function isQuantityTask(header: Partial<SmartTaskHeader> | undefined | nu
   return isContinuousTask(header);
 }
 
+/** Common quick choices used by task creation and duration editors. */
+export const TASK_DURATION_OPTIONS = [10, 15, 30, 45, 60, 90] as const;
+
+/**
+ * Returns a schedulable duration in five-minute units. Legacy quantity tasks
+ * stored zero minutes, so invalid or missing values intentionally fall back to
+ * 30 minutes until the user chooses an explicit daily investment.
+ */
+export function getTaskEstimatedMinutes(
+  header: Partial<SmartTaskHeader> | undefined | null,
+  fallback = 30,
+): number {
+  const value = Number(header?.duration);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.max(5, Math.ceil(value / 5) * 5);
+}
+
 export { requiresTaskStartDate } from '@/domain/taskRules';
 
 /**

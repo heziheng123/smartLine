@@ -49,7 +49,7 @@ export interface WorkspaceMigrationReport {
 
 const SETTINGS_KEY = 'smart-line-sync-architecture-v1';
 const EXPECTED_KEYS = [
-  'tasks', 'groups', 'notes', 'milestones',
+  'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
   'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
   'schedules', 'retrospectives', 'nodes',
 ] as const;
@@ -143,6 +143,7 @@ function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): Wor
       groups: Array.isArray(root.groups) ? root.groups as WorkspaceBackup['timeline']['groups'] : [],
       notes: Array.isArray(root.notes) ? root.notes as WorkspaceBackup['timeline']['notes'] : [],
       milestones: Array.isArray(root.milestones) ? root.milestones as WorkspaceBackup['timeline']['milestones'] : [],
+      lifeStages: Array.isArray(root.lifeStages) ? root.lifeStages as WorkspaceBackup['timeline']['lifeStages'] : [],
     },
     ebb: {
       reviewTasks: Array.isArray(root.reviewTasks) ? root.reviewTasks as WorkspaceBackup['ebb']['reviewTasks'] : [],
@@ -295,6 +296,7 @@ function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> 
     groups: backup.timeline.groups as unknown as Json,
     notes: backup.timeline.notes as unknown as Json,
     milestones: backup.timeline.milestones as unknown as Json,
+    lifeStages: backup.timeline.lifeStages as unknown as Json,
     reviewTasks: backup.ebb.reviewTasks as unknown as Json,
     inboxItems: backup.ebb.inboxItems as unknown as Json,
     outlineNodes: backup.ebb.outlineNodes as unknown as Json,

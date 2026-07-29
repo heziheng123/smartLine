@@ -32,6 +32,7 @@ import {
   getQuantityRecords,
   getQuantityTotal,
   getQuantityUnit,
+  getTaskEstimatedMinutes,
   isQuantityTask,
   isVocabularyTask,
   shouldAutoSyncEbb,
@@ -297,7 +298,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const handleDurationChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
     if (!isNaN(val) && val > 0) {
-      onUpdateHeader(block.id, { duration: val });
+      onUpdateHeader(block.id, { duration: getTaskEstimatedMinutes({ duration: val }) });
     }
   }, [block.id, onUpdateHeader]);
 
@@ -406,7 +407,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             onBlur={commitTitle}
           />
           <span className="stb-meta">
-            {isQuantity ? <><Hash size={12} /> {quantityCompleted}/{quantityTotal} {quantityUnit}</> : <><Clock size={12} /> {header.duration}min</>}
+            {isQuantity
+              ? <><Hash size={12} /> {quantityCompleted}/{quantityTotal} {quantityUnit} · <Clock size={12} /> 每日 {getTaskEstimatedMinutes(header)}min</>
+              : <><Clock size={12} /> {getTaskEstimatedMinutes(header)}min</>}
           </span>
           <AnimatePresence initial={false}>
             {bodyExpanded && (
@@ -549,22 +552,25 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
 
             <span className="text-slate-300">·</span>
 
-            {isQuantity ? (
-              <span className="stb-quantity-meta"><Hash size={12} />进度 {quantityCompleted}/{quantityTotal} {quantityUnit} · {quantityPercent}%</span>
-            ) : (
-              <span className="stb-duration-badge">
-                <input
-                  type="number"
-                  className="stb-duration-input"
-                  value={header.duration}
-                  onChange={handleDurationChange}
-                  min={5}
-                  step={5}
-                  title="预估时长（分钟）"
-                />
-                <span style={{ fontSize: 10 }}>m</span>
-              </span>
+            {isQuantity && (
+              <>
+                <span className="stb-quantity-meta"><Hash size={12} />进度 {quantityCompleted}/{quantityTotal} {quantityUnit} · {quantityPercent}%</span>
+                <span className="text-slate-300">·</span>
+              </>
             )}
+            <span className="stb-duration-badge">
+              {isQuantity && <span style={{ fontSize: 10 }}>每日</span>}
+              <input
+                type="number"
+                className="stb-duration-input"
+                value={getTaskEstimatedMinutes(header)}
+                onChange={handleDurationChange}
+                min={5}
+                step={5}
+                title={isQuantity ? '每日预计投入（分钟）' : '预估时长（分钟）'}
+              />
+              <span style={{ fontSize: 10 }}>m</span>
+            </span>
 
             {header.recurring && (
               <>

@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from './client';
-import type { TimelineData, Task, TaskGroup, Note, Milestone, Block, SmartTaskHeader } from '@/types';
+import type { TimelineData, Task, TaskGroup, Note, Milestone, LifeStage, Block, SmartTaskHeader } from '@/types';
 import {
   updateBlockHeader,
   deleteBlock,
@@ -48,7 +48,7 @@ import {
   saveTimelineSyncSettings,
 } from './timelinePersistence';
 
-function getDefaultData(): TimelineData {
+function getDefaultData(): TimelineData & { lifeStages: LifeStage[] } {
   const y = new Date().getFullYear();
   return {
     tasks: [
@@ -111,10 +111,11 @@ function getDefaultData(): TimelineData {
       { id: 'demo-ms-1', name: 'V1.0 上线', date: `${y}-05-30`, color: '#F59E0B' },
       { id: 'demo-ms-2', name: '年度总结', date: `${y}-12-20`, color: '#F59E0B' },
     ],
+    lifeStages: [],
   };
 }
 
-function getInitialSyncData(): TimelineData {
+function getInitialSyncData(): TimelineData & { lifeStages: LifeStage[] } {
   return getDefaultData();
 }
 
@@ -142,6 +143,7 @@ export interface ProjectTaskHeaderUpdateOptions {
 }
 
 interface TimelineStore extends TimelineData {
+  lifeStages: LifeStage[];
   isHydrated: boolean;
   hydrateStore: () => Promise<void>;
 
@@ -203,6 +205,10 @@ interface TimelineStore extends TimelineData {
   updateMilestone: (milestone: Milestone) => void;
   deleteMilestone: (milestoneId: string) => void;
 
+  addLifeStage: (stage: LifeStage) => void;
+  updateLifeStage: (stage: LifeStage) => void;
+  deleteLifeStage: (stageId: string) => void;
+
   importData: (data: TimelineData) => void;
   replaceData: (data: TimelineData) => void;
   exportData: () => string;
@@ -218,6 +224,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         'groups',
         'notes',
         'milestones',
+        'lifeStages',
       ]);
       const initialSyncSettings = loadTimelineSyncSettings();
 
@@ -987,6 +994,32 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           });
         },
 
+        addLifeStage: (stage) => {
+          set((state) => {
+            const newData = { ...state, lifeStages: [...state.lifeStages, stage] };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        updateLifeStage: (stage) => {
+          set((state) => {
+            const lifeStages = state.lifeStages.map((item) => (item.id === stage.id ? stage : item));
+            const newData = { ...state, lifeStages };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        deleteLifeStage: (stageId) => {
+          set((state) => {
+            const lifeStages = state.lifeStages.filter((item) => item.id !== stageId);
+            const newData = { ...state, lifeStages };
+            saveData(newData);
+            return newData;
+          });
+        },
+
         importData: (data) => {
           const normalized = normalizeTimelineData(data);
 
@@ -1002,6 +1035,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             notes: mergeById(current.notes, normalized.notes),
             milestones: mergeById(current.milestones, normalized.milestones),
             groups: mergeById(current.groups, normalized.groups),
+            lifeStages: mergeById(current.lifeStages, normalized.lifeStages ?? []),
           };
           saveData(merged);
           set(merged);
@@ -1014,8 +1048,8 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         exportData: () => {
-          const { tasks, groups, notes, milestones } = get();
-          return JSON.stringify({ tasks, groups, notes, milestones }, null, 2);
+          const { tasks, groups, notes, milestones, lifeStages } = get();
+          return JSON.stringify({ tasks, groups, notes, milestones, lifeStages }, null, 2);
         },
       };
     },
@@ -1026,6 +1060,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         groups: true,
         notes: true,
         milestones: true,
+        lifeStages: true,
       },
     }
   )

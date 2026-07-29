@@ -203,6 +203,7 @@ export function planEbbTaskSync({
   const nextRoundOrder = Math.max(0, ...existingTasks.map((task) => task.roundOrder ?? 0)) + 1;
   const dueDate = addDays(today, 1);
   const inheritedComplexity = existingTasks.find((task) => task.complexity)?.complexity ?? complexity;
+  const inheritedBaseDuration = existingTasks.find((task) => task.baseDurationMinutes !== undefined)?.baseDurationMinutes;
   return {
     reviewTasks: [
       ...reviewTasks,
@@ -215,6 +216,7 @@ export function planEbbTaskSync({
         roundOrder: nextRoundOrder,
         isCompleted: false,
         complexity: inheritedComplexity,
+        baseDurationMinutes: inheritedBaseDuration,
         smStatus: 'scheduled',
         scheduleCreatedDate: today,
         scheduleSourceTaskId: sourceTaskId,

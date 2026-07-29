@@ -20,6 +20,7 @@ interface DailySlotSectionProps {
   stats: SlotStats;
   addingFree: boolean;
   freeItemName: string;
+  freeItemDuration: number;
   freeInputRef: React.RefObject<HTMLInputElement>;
   getVirtualTime: (itemId: string) => string;
   isQuantitySource: (sourceId: string) => boolean;
@@ -32,6 +33,7 @@ interface DailySlotSectionProps {
   onReturnToBacklog: (itemId: string) => void;
   onStartAddFree: () => void;
   onFreeItemNameChange: (value: string) => void;
+  onFreeItemDurationChange: (value: number) => void;
   onSubmitFree: () => void;
   onCancelFree: () => void;
 }
@@ -42,6 +44,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
   stats,
   addingFree,
   freeItemName,
+  freeItemDuration,
   freeInputRef,
   getVirtualTime,
   isQuantitySource,
@@ -54,6 +57,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
   onReturnToBacklog,
   onStartAddFree,
   onFreeItemNameChange,
+  onFreeItemDurationChange,
   onSubmitFree,
   onCancelFree,
 }) => {
@@ -187,7 +191,12 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
             })}
             {provided.placeholder}
             {addingFree ? (
-              <div className="ds-slot-add-free-input-wrap">
+              <div
+                className="ds-slot-add-free-input-wrap"
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onSubmitFree();
+                }}
+              >
                 <input
                   ref={freeInputRef}
                   type="text"
@@ -199,8 +208,15 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
                     if (event.key === 'Enter') onSubmitFree();
                     if (event.key === 'Escape') onCancelFree();
                   }}
-                  onBlur={onSubmitFree}
                 />
+                <select
+                  className="ds-slot-add-free-duration"
+                  value={freeItemDuration}
+                  aria-label="生活安排预计时长"
+                  onChange={(event) => onFreeItemDurationChange(Number(event.target.value))}
+                >
+                  {[15, 30, 45, 60, 90].map((value) => <option key={value} value={value}>{value} 分钟</option>)}
+                </select>
               </div>
             ) : (
               <button type="button" className="ds-slot-add-free-btn" onClick={onStartAddFree}>添加生活安排</button>

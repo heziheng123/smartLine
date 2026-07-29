@@ -1,4 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+const setLifeMapZoom = async (page: Page, zoom: 'year' | 'month' | 'week' | 'day') => {
+  const label = { year: '年视图', month: '月视图', week: '周视图', day: '日视图' }[zoom];
+  await page.getByRole('combobox', { name: '时间尺度' }).click();
+  await page.getByRole('option', { name: new RegExp(`^${label}`) }).click();
+};
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -24,55 +30,62 @@ test('timeline fills the workspace on the initial load before lazy views are ope
   expect(layout.width).toBeGreaterThanOrEqual(layout.parentWidth - 2);
 });
 
-test('five main views remain reachable through the real interface', async ({ page }) => {
-  for (const title of ['每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
+test('six main views remain reachable through the real interface', async ({ page }) => {
+  for (const title of ['人生地图', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
     await page.getByTitle(title).click();
     await expect(page.getByTitle(title)).toHaveAttribute('aria-selected', 'true');
   }
   await expect(page.getByTitle('任务总览')).toHaveCount(0);
 });
 
-test('task overview is embedded in project planning on desktop and small screens', async ({ page }) => {
-  await page.getByTitle('项目规划').click();
-  const projectViewMenu = page.getByRole('menu', { name: '项目规划视图' });
-  await expect(projectViewMenu).toBeVisible();
-  const menuBox = await projectViewMenu.boundingBox();
-  const viewport = page.viewportSize();
-  expect(menuBox).not.toBeNull();
-  expect(viewport).not.toBeNull();
-  expect(menuBox!.x).toBeGreaterThanOrEqual(0);
-  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(viewport!.width);
-  expect(menuBox!.y).toBeGreaterThanOrEqual(0);
-  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(viewport!.height);
-  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
-  await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
-  await expect(page.getByLabel('搜索全部项目任务')).toBeVisible();
-  await expect(page.getByRole('group', { name: '任务分组方式' })).toBeVisible();
-  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
+test('life map keeps every planning scale on one literal zoomable line', async ({ page }) => {
+  await page.getByTitle('人生地图').click();
+  await expect(page.getByRole('heading', { name: '人生地图', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '人生时间线' })).toBeVisible();
+  await expect(page.locator('.life-line__axis')).toHaveCount(1);
+  await expect(page.locator('.life-line__canvas')).toBeVisible();
+
+  await setLifeMapZoom(page, 'day');
+  await expect(page.getByLabel('人生规划日视图时间轴')).toBeVisible();
+  await setLifeMapZoom(page, 'week');
+  await expect(page.getByLabel('人生规划周视图时间轴')).toBeVisible();
+  await page.getByRole('button', { name: '今天', exact: true }).click();
+  await expect(page.locator('.life-line__today')).toBeVisible();
 });
 
-test('daily schedule keeps focused planning controls while week matrix can open the task overview', async ({ page }) => {
+test('project planning opens the timeline directly without an internal view menu', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  await page.getByTitle('项目规划').click();
+  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.tl-year-stack')).toBeVisible();
+  await page.getByTitle('项目规划').click();
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(page.locator('.tl-year-stack')).toBeVisible();
+});
+
+test('daily schedule and week matrix keep focused planning controls without an all-project task shortcut', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   await expect(page.getByRole('button', { name: '明日复习选择' })).toBeVisible();
   await expect(page.getByRole('button', { name: '新建项目任务' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '查看全部项目任务' })).toHaveCount(0);
 
   await page.getByTitle('周矩阵').click();
-  await page.getByRole('button', { name: '查看全部项目任务' }).click();
-  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看全部项目任务' })).toHaveCount(0);
+  await expect(page.getByTitle('周矩阵')).toHaveAttribute('aria-selected', 'true');
 });
 
-test('project planning remembers the selected internal view after refresh', async ({ page }) => {
-  await page.getByTitle('项目规划').click();
-  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
+test('retired project overview preferences are cleared after refresh', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('project-workspace-view-v1', 'overview');
+    localStorage.setItem('task-overview-preferences-v1', JSON.stringify({ groupBy: 'project' }));
+  });
   await page.reload();
   await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('heading', { name: '任务总览' })).toBeVisible();
-  await page.getByTitle('项目规划').click();
-  await expect(page.getByRole('menuitemradio', { name: '全部任务' })).toHaveAttribute('aria-checked', 'true');
-  await page.getByRole('menuitemradio', { name: '项目时间轴' }).click();
   await expect(page.locator('.tl-year-stack')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => ({
+    workspace: localStorage.getItem('project-workspace-view-v1'),
+    preferences: localStorage.getItem('task-overview-preferences-v1'),
+  }))).toEqual({ workspace: null, preferences: null });
 });
 
 test('global search is removed while archive search remains available', async ({ page }) => {
@@ -94,6 +107,49 @@ test('daily schedule keeps its controls clickable', async ({ page }) => {
   await expect(page.getByRole('tab', { name: '时间块' })).toBeVisible();
   await page.getByRole('tab', { name: '时间块' }).click();
   await expect(page.getByRole('tab', { name: '时间块' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('daily task pool cards grow to fit wrapped titles and duration metadata', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  await page.evaluate(() => {
+    const fixture = document.createElement('div');
+    fixture.id = 'ds-pool-layout-fixture';
+    fixture.style.cssText = 'position:fixed;left:8px;top:8px;width:330px;z-index:9999';
+    fixture.innerHTML = `
+      <div class="ds-pool-item">
+        <div class="ds-pool-item-accent"></div>
+        <div class="ds-pool-item-content">
+          <span class="ds-pool-item-name">南京国民政府时期教育与杨贤江 1000题</span>
+          <span class="ds-pool-item-meta"><span>预计 30 分钟</span></span>
+        </div>
+        <span class="ds-pool-item-tag ds-pool-item-tag--project">中教强化课</span>
+      </div>
+      <div class="ds-pool-item">
+        <div class="ds-pool-item-accent"></div>
+        <div class="ds-pool-item-content">
+          <span class="ds-pool-item-name">01.导论、新时代坚持和发展中国特色社会主义</span>
+          <span class="ds-pool-item-meta"><span>第1/5轮</span><i>·</i><span>预计 30 分钟</span></span>
+        </div>
+        <span class="ds-pool-item-tag ds-pool-item-tag--review">复习 · 第1/5轮</span>
+      </div>`;
+    document.body.appendChild(fixture);
+  });
+  const cards = page.locator('#ds-pool-layout-fixture .ds-pool-item');
+  await expect(cards).toHaveCount(2);
+  const layout = await cards.evaluateAll((elements) => elements.map((element) => {
+    const card = element.getBoundingClientRect();
+    const content = element.querySelector('.ds-pool-item-content')?.getBoundingClientRect();
+    const tag = element.querySelector('.ds-pool-item-tag')?.getBoundingClientRect();
+    const title = element.querySelector('.ds-pool-item-name') as HTMLElement | null;
+    return {
+      contentFits: !content || content.bottom <= card.bottom + 1,
+      tagFits: !tag || tag.bottom <= card.bottom + 1,
+      cardFits: element.scrollHeight <= element.clientHeight + 1,
+      titleWraps: !title || getComputedStyle(title).whiteSpace === 'normal',
+      titleFits: !title || title.scrollHeight <= title.clientHeight + 1,
+    };
+  }));
+  expect(layout.every((item) => item.contentFits && item.tagFits && item.cardFits && item.titleWraps && item.titleFits)).toBeTruthy();
 });
 
 test('small screens expose the daily task pool as a closable bottom drawer', async ({ page }) => {

@@ -2,7 +2,7 @@ import { createScopedStorage } from '@/utils/persistence';
 import { hashWorkspaceValue } from './workspaceSyncCore';
 
 export type WorkspaceStorageField =
-  | 'tasks' | 'groups' | 'notes' | 'milestones'
+  | 'tasks' | 'groups' | 'notes' | 'milestones' | 'lifeStages'
   | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
   | 'schedules' | 'retrospectives' | 'nodes';
 

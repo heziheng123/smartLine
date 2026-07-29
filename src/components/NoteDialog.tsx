@@ -57,6 +57,7 @@ const NoteDialog: React.FC<NoteDialogProps> = ({
       type,
       color: finalColor,
       notePath: notePath.trim() || undefined,
+      placement: note?.placement,
     });
   };
 

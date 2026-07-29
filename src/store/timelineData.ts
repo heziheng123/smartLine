@@ -1,4 +1,4 @@
-import type { Milestone, Note, SmartTaskHeader, Task, TaskGroup, TimelineData } from '@/types';
+import type { LifeStage, Milestone, Note, SmartTaskHeader, Task, TaskGroup, TimelineData } from '@/types';
 import {
   getValidGraphNodeIds,
   migrateMarkdownToBlocks,
@@ -159,6 +159,15 @@ function isValidMilestone(milestone: unknown): milestone is Milestone {
     && typeof record.date === 'string';
 }
 
+function isValidLifeStage(stage: unknown): stage is LifeStage {
+  if (!stage || typeof stage !== 'object') return false;
+  const record = stage as Record<string, unknown>;
+  return typeof record.id === 'string'
+    && typeof record.name === 'string'
+    && typeof record.start === 'string'
+    && typeof record.end === 'string';
+}
+
 function isValidGroup(group: unknown): group is TaskGroup {
   if (!group || typeof group !== 'object') return false;
   const record = group as Record<string, unknown>;
@@ -167,7 +176,7 @@ function isValidGroup(group: unknown): group is TaskGroup {
     && Array.isArray(record.children);
 }
 
-export function normalizeTimelineData(value: unknown): TimelineData {
+export function normalizeTimelineData(value: unknown): TimelineData & { lifeStages: LifeStage[] } {
   const data = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Partial<TimelineData>
     : {};
@@ -199,6 +208,7 @@ export function normalizeTimelineData(value: unknown): TimelineData {
     tasks: reconciled.tasks,
     notes: Array.isArray(data?.notes) ? data.notes.filter(isValidNote) : [],
     milestones: Array.isArray(data?.milestones) ? data.milestones.filter(isValidMilestone) : [],
+    lifeStages: Array.isArray(data?.lifeStages) ? data.lifeStages.filter(isValidLifeStage) : [],
     groups: reconciled.groups,
   };
 }
@@ -222,11 +232,12 @@ export function getUniqueTasks(tasks: Task[], groups: TaskGroup[]): Task[] {
   return [...byId.values()];
 }
 
-export function toTimelineData(data: TimelineData): TimelineData {
+export function toTimelineData(data: TimelineData): TimelineData & { lifeStages: LifeStage[] } {
   return {
     tasks: Array.isArray(data.tasks) ? data.tasks : [],
     groups: Array.isArray(data.groups) ? data.groups : [],
     notes: Array.isArray(data.notes) ? data.notes : [],
     milestones: Array.isArray(data.milestones) ? data.milestones : [],
+    lifeStages: Array.isArray(data.lifeStages) ? data.lifeStages : [],
   };
 }

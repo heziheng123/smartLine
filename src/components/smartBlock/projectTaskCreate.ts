@@ -3,7 +3,7 @@ export const PROJECT_TASK_CREATE_EVENT = 'tl-create-project-task';
 export interface ProjectTaskCreateDetail {
   taskId?: string;
   date?: string;
-  source?: 'project' | 'task-overview' | 'daily-schedule';
+  source?: 'project' | 'daily-schedule';
 }
 
 export function openProjectTaskCreate(detail: ProjectTaskCreateDetail = {}): void {

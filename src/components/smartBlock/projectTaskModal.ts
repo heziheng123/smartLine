@@ -3,7 +3,7 @@ export const PROJECT_TASK_MODAL_EVENT = 'tl-open-project-task-block';
 export interface ProjectTaskModalDetail {
   taskId: string;
   blockId: string;
-  source?: 'daily-schedule' | 'task-overview' | 'week-matrix' | 'time-block' | 'project';
+  source?: 'daily-schedule' | 'week-matrix' | 'time-block' | 'icebox' | 'project';
   sourceDate?: string;
 }
 

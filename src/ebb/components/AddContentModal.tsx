@@ -19,6 +19,11 @@ import {
 } from '../complexity';
 import { generateTasks, validateInput, type GenerateTasksInput } from '../scheduler';
 import { COMPLEXITY_LEVELS } from '../constants';
+import {
+  getDefaultReviewBaseDuration,
+  getReviewRoundDuration,
+  REVIEW_DURATION_OPTIONS,
+} from '../duration';
 
 interface AddContentModalProps {
   open: boolean;
@@ -38,6 +43,8 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
   const [tag, setTag] = useState('');
   const [startDate, setStartDate] = useState(todayStr());
   const [complexity, setComplexity] = useState<ComplexityLevel>('normal');
+  const [durationMode, setDurationMode] = useState<'auto' | 'custom'>('auto');
+  const [baseDurationMinutes, setBaseDurationMinutes] = useState(15);
   const [intervalsText, setIntervalsText] = useState(formatIntervals(getIntervalsForComplexity('normal')));
   const [intervalsDirty, setIntervalsDirty] = useState(false);
   const [preview, setPreview] = useState<ReturnType<typeof generateTasks> | null>(null);
@@ -51,11 +58,12 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
         if (!await requestConfirmation('已手动修改间隔，切换复杂度将覆盖当前间隔，是否继续？')) return;
       }
       setComplexity(level);
+      if (durationMode === 'auto') setBaseDurationMinutes(getDefaultReviewBaseDuration(level));
       setIntervalsText(formatIntervals(getIntervalsForComplexity(level, ebbSettings.complexityConfigs)));
       setIntervalsDirty(false);
       setPreview(null);
     },
-    [complexity, intervals, intervalsDirty, ebbSettings.complexityConfigs],
+    [complexity, durationMode, intervals, intervalsDirty, ebbSettings.complexityConfigs],
   );
 
   const handleIntervalsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,6 +83,7 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
       complexity,
       startDate,
       intervals,
+      baseDurationMinutes: durationMode === 'custom' ? baseDurationMinutes : undefined,
     };
     const errs = validateInput(input);
     if (errs.length > 0) {
@@ -83,7 +92,7 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
     }
     setError('');
     return input;
-  }, [topicName, tag, complexity, startDate, intervals]);
+  }, [topicName, tag, complexity, startDate, intervals, durationMode, baseDurationMinutes]);
 
   const handlePreview = useCallback(() => {
     const input = buildInput();
@@ -111,6 +120,8 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
       setTopicName('');
       setTag('');
       setIntervalsDirty(false);
+      setDurationMode('auto');
+      setBaseDurationMinutes(getDefaultReviewBaseDuration('normal'));
       setPreview(null);
       onClose();
     } catch (e) {
@@ -125,6 +136,8 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
     setTopicName('');
     setTag('');
     setIntervalsDirty(false);
+    setDurationMode('auto');
+    setBaseDurationMinutes(getDefaultReviewBaseDuration('normal'));
     setPreview(null);
     onClose();
   }, [preview, addReviewTasks, onGenerated, onClose]);
@@ -197,6 +210,40 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
             </div>
           </div>
 
+          <div className="eb-field">
+            <span className="eb-field-label">
+              单轮复习基础时长
+              <span className="eb-field-hint">自动时按难度带出；也可以为该主题单独设定</span>
+            </span>
+            <div className="eb-complexity-switch" role="group" aria-label="单轮复习基础时长">
+              <button
+                type="button"
+                className={`eb-complexity-btn ${durationMode === 'auto' ? 'eb-complexity-btn--active' : ''}`}
+                onClick={() => {
+                  setDurationMode('auto');
+                  setBaseDurationMinutes(getDefaultReviewBaseDuration(complexity));
+                  setPreview(null);
+                }}
+              >
+                自动 {getDefaultReviewBaseDuration(complexity)}m
+              </button>
+              {REVIEW_DURATION_OPTIONS.filter((value) => value >= 10).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`eb-complexity-btn ${durationMode === 'custom' && baseDurationMinutes === value ? 'eb-complexity-btn--active' : ''}`}
+                  onClick={() => {
+                    setDurationMode('custom');
+                    setBaseDurationMinutes(value);
+                    setPreview(null);
+                  }}
+                >
+                  {value}m
+                </button>
+              ))}
+            </div>
+          </div>
+
           <label className="eb-field">
             <span className="eb-field-label">
               复习间隔（天）
@@ -225,6 +272,7 @@ const AddContentModal: React.FC<AddContentModalProps> = ({ open, onClose, onGene
                     <div key={t.id} className="eb-preview-row">
                       <span className="eb-preview-round">第 {i + 1} 轮</span>
                       <span className="eb-preview-date">{t.dueDate}</span>
+                      <span className="eb-preview-weekday">约 {getReviewRoundDuration(t, i + 1)} 分钟</span>
                       <span className="eb-preview-weekday">{['周日','周一','周二','周三','周四','周五','周六'][getDayOfWeek(t.dueDate)]}</span>
                     </div>
                   );

@@ -2,6 +2,7 @@ import { addDays } from '@/utils/dateSafe';
 import type { EbbData, EbbSettings, InboxItem, ReviewTask, StudyOutlineNode } from './types';
 import { DEFAULT_EBB_SETTINGS, TAG_COLOR_PALETTE } from './constants';
 import { normalizeReviewRoundOrders } from './scheduler';
+import { normalizeOptionalEstimatedMinutes } from './duration';
 
 export function buildAbsoluteScheduleDates(
   baseDate: string,
@@ -147,10 +148,21 @@ export function normalizeEbbData(value: unknown): EbbData {
       rollingDeferralCount: Number.isInteger(task.rollingDeferralCount) && task.rollingDeferralCount! >= 0
         ? task.rollingDeferralCount
         : undefined,
+      baseDurationMinutes: task.baseDurationMinutes === undefined
+        ? undefined
+        : normalizeOptionalEstimatedMinutes(task.baseDurationMinutes),
+      durationOverrideMinutes: task.durationOverrideMinutes === undefined
+        ? undefined
+        : normalizeOptionalEstimatedMinutes(task.durationOverrideMinutes),
     }))),
   );
   const inboxItems = deduplicateById(
-    (Array.isArray(data.inboxItems) ? data.inboxItems : []).filter(isValidInboxItem),
+    (Array.isArray(data.inboxItems) ? data.inboxItems : []).filter(isValidInboxItem).map((item) => ({
+      ...item,
+      baseDurationMinutes: item.baseDurationMinutes === undefined
+        ? undefined
+        : normalizeOptionalEstimatedMinutes(item.baseDurationMinutes),
+    })),
   );
   const outlineNodes = normalizeOutlineNodes(
     Array.isArray(data.outlineNodes) ? data.outlineNodes : [],

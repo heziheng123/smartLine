@@ -29,7 +29,8 @@ export interface SmartTaskHeader {
    */
   date?: string;
   deadline?: string;      // 🎯 独立截止日 YYYY-MM-DD
-  duration: number;       // ⏳ 预估时长（分钟）
+  /** 普通任务为本次预计时长；数量/单词任务为每日预计投入（分钟）。 */
+  duration: number;
   isCompleted: boolean;
   completedDate?: string;
   recurring?: string;     // 🔁 循环规则
@@ -40,7 +41,6 @@ export interface SmartTaskHeader {
   isArchived?: boolean;   // 🗃️ 是否已归档（冷数据）
   frozenAt?: string;      // 🧊 进入冷冻仓的时间戳
   priority?: 'P0' | 'P1' | 'P2'; // 🚨 优先级
-  estimatedTime?: number; // ⏱️ 预估耗时（分钟）
   /** 单词任务的总单词数 */
   vocabularyTotalWords?: number;
   /** 创建单词任务时已经掌握的数量 */
@@ -104,6 +104,7 @@ export interface Note {
   type: 'pin' | 'range';  // pin=单日图钉, range=日期范围
   color?: string;         // 标记颜色（默认琥珀色 #F59E0B）
   notePath?: string;      // 关联笔记路径
+  placement?: 'above' | 'below'; // 人生地图批注文字位置
 }
 
 /** 里程碑 */
@@ -112,6 +113,17 @@ export interface Milestone {
   name: string;           // 里程碑名称
   date: string;           // 日期 YYYY-MM-DD
   color?: string;         // 标记颜色
+  placement?: 'above' | 'below'; // 人生地图批注文字位置
+  importance?: 'normal' | 'important' | 'core'; // 人生地图关键日期等级
+}
+
+/** 人生地图中独立录入的人生阶段，不属于项目或项目分组 */
+export interface LifeStage {
+  id: string;
+  name: string;
+  start: string;
+  end: string;
+  color?: string;
 }
 
 /** 完整数据（持久化到 JSON） */
@@ -120,6 +132,8 @@ export interface TimelineData {
   groups: TaskGroup[];
   notes: Note[];
   milestones: Milestone[];
+  /** 旧数据中不存在时按空数组处理 */
+  lifeStages?: LifeStage[];
 }
 
 /** 智能任务块跨视图拖拽标准数据协议 */

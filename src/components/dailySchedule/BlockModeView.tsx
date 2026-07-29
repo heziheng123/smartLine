@@ -739,7 +739,11 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                       <span className="ds-pool-quantity-summary">
                         今日 {item.quantityActual ?? 0}/{item.quantityTarget ?? 0} {item.quantityUnit}
                         {' · '}总进度 {item.quantityCompleted ?? 0}/{item.quantityTotal ?? 0} {item.quantityUnit}
+                        {' · '}每日投入 {item.duration ?? 30} 分钟
                       </span>
+                    )}
+                    {!isQuantityTask({ taskKind: item.taskKind }) && item.duration !== undefined && (
+                      <span className="ds-pool-item-detail">预计 {item.duration} 分钟</span>
                     )}
                   </div>
                   <span
@@ -791,6 +795,7 @@ const BlockModeView: React.FC<BlockModeViewProps> = ({
                               </span>
                             )}
                           </span>
+                      {item.duration !== undefined && <span className="ds-pool-item-detail">预计 {item.duration} 分钟</span>}
                     </div>
                     <span className="ds-pool-item-tag ds-pool-item-tag--review">
                       复习{item.detail ? ` · ${item.detail}` : ''}

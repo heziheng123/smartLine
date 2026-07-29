@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, memo, useDeferredValue, useEffect, useRef } from 'react';
-import { Search, ChevronRight, CircleDashed, ListChecks, Plus, RotateCcw } from 'lucide-react';
+import { Search, ChevronRight, CircleDashed, Clock3, ListChecks, Plus, RotateCcw } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
@@ -295,6 +295,7 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
                 <span className="eb-topic-row-rounds">
                   {stat.completedRounds}/{stat.totalRounds} 轮
                 </span>
+                {stat.nextDurationMinutes && <span className="eb-topic-row-rounds"><Clock3 size={12} />{stat.nextDurationMinutes} 分钟</span>}
               </>
             ) : null}
             {stat.totalPoints > 0 && (

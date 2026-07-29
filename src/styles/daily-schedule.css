@@ -446,6 +446,8 @@
 
 .ds-slot-add-free-input-wrap {
   margin-top: 8px;
+  display: flex;
+  gap: 6px;
 }
 
 .ds-slot-add-free-input {
@@ -462,6 +464,16 @@
 .ds-slot-add-free-input:focus {
   outline: none;
   border-color: #8B9DC3;
+}
+
+.ds-slot-add-free-duration {
+  flex: 0 0 92px;
+  padding: 8px 6px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  background: #FFFFFF;
+  color: #475569;
+  font-size: 12px;
 }
 
 /* 左侧颜色高亮条 */
@@ -946,11 +958,12 @@
 /* ── 任务池中的任务卡片 ──────────────────────────────────── */
 .ds-pool-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   box-sizing: border-box;
-  height: 44px;
+  min-height: 52px;
+  height: auto;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 7px 10px;
   margin-bottom: 4px;
   background: #FFFFFF;
   border: 1px solid #E5E7EB;
@@ -1050,7 +1063,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   margin-left: 8px;
 }
 
@@ -1058,9 +1071,9 @@
   font-size: 13px;
   font-weight: 500;
   color: #1F2937;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ds-pool-item-detail {
@@ -1071,6 +1084,22 @@
   white-space: nowrap;
 }
 
+.ds-pool-item-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  color: #8B95A5;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.ds-pool-item-meta i {
+  color: #C4CAD3;
+  font-style: normal;
+}
+
 .ds-pool-item-tag {
   font-size: 10px;
   font-weight: 600;
@@ -1078,6 +1107,8 @@
   border-radius: 4px;
   flex-shrink: 0;
   letter-spacing: 0.02em;
+  align-self: flex-start;
+  margin-top: 1px;
 }
 
 .ds-pool-item-tag--project {

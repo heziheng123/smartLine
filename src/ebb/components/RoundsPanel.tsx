@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, Trash2, Plus, CalendarRange, RotateCcw } from 'lucide-react';
+import { X, Calendar, Trash2, Plus, CalendarRange, RotateCcw, Clock3 } from 'lucide-react';
 import { addDays, diffDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
@@ -14,6 +14,12 @@ import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import EbbDatePicker from './EbbDatePicker';
 import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
+import {
+  getDefaultReviewBaseDuration,
+  getReviewBaseDuration,
+  getReviewRoundDuration,
+  REVIEW_DURATION_OPTIONS,
+} from '../duration';
 
 interface RoundsPanelProps {
   topicKey: string;
@@ -34,6 +40,8 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     addReviewTasks,
     rescheduleReviewRounds,
     restartReviewCycle,
+    updateReviewTask,
+    updateReviewTopicDuration,
   } = useEbbStore(
     useShallow((s) => ({
       reviewTasks: s.reviewTasks,
@@ -42,6 +50,8 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
       addReviewTasks: s.addReviewTasks,
       rescheduleReviewRounds: s.rescheduleReviewRounds,
       restartReviewCycle: s.restartReviewCycle,
+      updateReviewTask: s.updateReviewTask,
+      updateReviewTopicDuration: s.updateReviewTopicDuration,
     })),
   );
   const [datePickerTaskId, setDatePickerTaskId] = useState<string | null>(null);
@@ -73,6 +83,10 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const topicName = topicTasks[0]?.topicName ?? '';
   const completedCount = topicTasks.filter((t) => t.isCompleted).length;
   const ratio = topicTasks.length > 0 ? completedCount / topicTasks.length : 0;
+  const durationTemplate = topicTasks.find((task) => task.baseDurationMinutes !== undefined) ?? topicTasks[0];
+  const explicitBaseDuration = durationTemplate?.baseDurationMinutes;
+  const automaticBaseDuration = getDefaultReviewBaseDuration(durationTemplate?.complexity);
+  const effectiveBaseDuration = durationTemplate ? getReviewBaseDuration(durationTemplate) : automaticBaseDuration;
 
   // 积分统计
   const pointsInfo = useMemo(() => {
@@ -237,6 +251,35 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
             </div>
           </div>
 
+          {durationTemplate && (
+            <div className="eb-field" style={{ marginBottom: 16 }}>
+              <span className="eb-field-label">
+                主题基础时长
+                <span className="eb-field-hint">自动跟随难度，或为整个主题设置自定义时长</span>
+              </span>
+              <div className="eb-complexity-switch" role="group" aria-label="主题基础时长">
+                <button
+                  type="button"
+                  className={`eb-complexity-btn ${explicitBaseDuration === undefined ? 'eb-complexity-btn--active' : ''}`}
+                  onClick={() => updateReviewTopicDuration(topicKey, undefined)}
+                >
+                  自动 {automaticBaseDuration}m
+                </button>
+                {REVIEW_DURATION_OPTIONS.filter((value) => value >= 10).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`eb-complexity-btn ${explicitBaseDuration === value ? 'eb-complexity-btn--active' : ''}`}
+                    onClick={() => updateReviewTopicDuration(topicKey, value)}
+                  >
+                    {value}m
+                  </button>
+                ))}
+              </div>
+              <span className="eb-field-hint">当前基础 {effectiveBaseDuration} 分钟；R1 为100%，R2–R3 为80%，R4以后为60%。</span>
+            </div>
+          )}
+
           {/* 轮次列表 */}
           <div className="eb-rounds-list">
             {topicTasks.map((t, i) => {
@@ -293,6 +336,23 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
                   {points > 0 && (
                     <span className="eb-round-points">{points}分</span>
                   )}
+
+                  <label className="eb-round-duration" title="可仅覆盖这一轮的预计时长">
+                    <Clock3 size={12} />
+                    <select
+                      value={t.durationOverrideMinutes ?? 'auto'}
+                      disabled={t.isCompleted}
+                      aria-label={`第${round}轮预计时长`}
+                      onChange={(event) => updateReviewTask(t.id, {
+                        durationOverrideMinutes: event.target.value === 'auto'
+                          ? undefined
+                          : Number(event.target.value),
+                      })}
+                    >
+                      <option value="auto">自动 {getReviewRoundDuration({ ...t, durationOverrideMinutes: undefined }, round)}m</option>
+                      {REVIEW_DURATION_OPTIONS.map((value) => <option key={value} value={value}>{value}m</option>)}
+                    </select>
+                  </label>
 
                   {/* 操作按钮 */}
                   <div className="eb-round-actions">

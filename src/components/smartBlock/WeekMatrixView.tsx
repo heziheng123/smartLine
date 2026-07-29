@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, ListTodo, BookMarked, Hash, Clock3, Settings2, FolderOpen, Tag } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, Settings2, FolderOpen, Tag } from 'lucide-react';
 import type { Task, TaskGroup, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
-import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
+import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
@@ -436,14 +436,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
         )}
 
         <div className="wmv-nav-right">
-          <button
-            type="button"
-            className="wmv-nav-btn wmv-all-tasks-btn"
-            onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'task-overview' } }))}
-            aria-label="查看全部项目任务"
-          >
-            <ListTodo size={15} />全部任务
-          </button>
           {hasOffRangeBlocks && (
             <div
               className="wmv-offrange-capsule"
@@ -764,7 +756,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
                           </div>
 
                           <div className="wmv-block-meta">
-                            <span>{quantityTask && quantityDailyStatus ? <><Hash size={12} />{getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}% · 当日 {quantityDailyStatus.actual}/{quantityDailyStatus.target}</> : <><Clock3 size={12} />{header.duration}m</>}</span>
+                            <span>{quantityTask && quantityDailyStatus ? <><Hash size={12} />{getQuantityCompleted(header)}/{getQuantityTotal(header)} {getQuantityUnit(header)} · {getQuantityProgressPercent(header)}% · 当日 {quantityDailyStatus.actual}/{quantityDailyStatus.target} · <Clock3 size={12} />每日 {getTaskEstimatedMinutes(header)}m</> : <><Clock3 size={12} />{getTaskEstimatedMinutes(header)}m</>}</span>
                           </div>
                           <div className="wmv-block-context">
                             {groupMode === 'project' ? (

@@ -26,12 +26,14 @@ import {
   getQuantityRecords,
   getQuantityTotal,
   getQuantityUnit,
+  getTaskEstimatedMinutes,
   getValidGraphNodeIds,
   isQuantityTask,
 } from '@/utils/blocks';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
 import { getReviewTopicKey, computeRounds } from '@/ebb/scheduler';
+import { getReviewRoundDuration } from '@/ebb/duration';
 import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '@/ebb/category';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
@@ -256,6 +258,7 @@ const DailyScheduleView: React.FC = () => {
   // ── 添加自由占位符 ───────────────────────────────────────
   const [addingFreeSlot, setAddingFreeSlot] = useState<TimeSlot | null>(null);
   const [freeItemName, setFreeItemName] = useState('');
+  const [freeItemDuration, setFreeItemDuration] = useState(30);
   const freeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -280,12 +283,14 @@ const DailyScheduleView: React.FC = () => {
           source: 'free',
           timeSlot: slot,
           completed: false,
+          duration: freeItemDuration,
         });
       }
       return '';
     });
     setAddingFreeSlot(null);
-  }, [selectedDate, addScheduledItem]);
+    setFreeItemDuration(30);
+  }, [selectedDate, addScheduledItem, freeItemDuration]);
 
   // ── 获取指定日期的项目任务 ─────────────────────────────
   const allSmartTaskTodos = useSmartTaskTodos(tlTasks, rawTlGroups);
@@ -442,7 +447,9 @@ const DailyScheduleView: React.FC = () => {
         taskKind: todo._taskKind,
         detail: todo.parentTaskTitle,
         sourceId,
-        duration: quantityHeader ? undefined : todo._duration,
+        duration: projectSource
+          ? getTaskEstimatedMinutes(projectSource.block.header)
+          : Math.max(5, todo._duration ?? 30),
         quantityActual: dailyStatus?.actual,
         quantityTarget: dailyStatus?.target ?? suggestion?.suggested,
         quantityTotal: quantityHeader ? quantityTotal : undefined,
@@ -471,7 +478,7 @@ const DailyScheduleView: React.FC = () => {
         ),
         detail: `第${round}/${total}轮`,
         sourceId: getReviewSourceId(task.id),
-        duration: 30,
+        duration: getReviewRoundDuration(task, round),
       });
     }
 
@@ -519,7 +526,11 @@ const DailyScheduleView: React.FC = () => {
             detail: appearance?.name ?? i.detail,
             color: appearance?.theme.backgroundColor ?? i.color,
             categoryColor: quantityHeader ? (quantityHeader.tagColor || '#10B981') : appearance?.categoryColor ?? reviewCategoryColor ?? i.categoryColor,
-            duration: quantityHeader ? undefined : i.duration,
+            duration: projectSource
+              ? getTaskEstimatedMinutes(projectSource.block.header)
+              : reviewTask
+                ? getReviewRoundDuration(reviewTask)
+                : i.duration,
             quantityActual: dailyStatus?.actual ?? quantityRecord,
             quantityTarget: dailyStatus?.target ?? suggestion?.suggested,
             quantityTotal: quantityHeader ? quantityTotal : undefined,
@@ -843,10 +854,10 @@ const DailyScheduleView: React.FC = () => {
       const total = items.length;
       const completed = items.filter((i) => i.completed).length;
       const inProgress = items.filter((item) => item.quantityState === 'in-progress').length;
-      const totalDuration = items.reduce((sum, item) => sum + (isQuantitySource(item.sourceId) ? 0 : (item.duration ?? 30)), 0);
+      const totalDuration = items.reduce((sum, item) => sum + (item.duration ?? 30), 0);
       return { total, completed, inProgress, totalDuration };
     },
-    [getSlotItems, isQuantitySource],
+    [getSlotItems],
   );
 
   // 异步加载 IndexedDB 数据
@@ -1017,6 +1028,7 @@ const DailyScheduleView: React.FC = () => {
                     stats={getSlotStats(config.slot)}
                     addingFree={addingFreeSlot === config.slot}
                     freeItemName={freeItemName}
+                    freeItemDuration={freeItemDuration}
                     freeInputRef={freeInputRef}
                     getVirtualTime={(itemId) => {
                       const block = daySchedule.blocks?.find((candidate) => candidate.id === itemId.replace('virtual-block-', ''));
@@ -1030,13 +1042,18 @@ const DailyScheduleView: React.FC = () => {
                     onRecordQuantityTarget={handleRecordQuantityTarget}
                     onRemoveItem={handleRemoveItem}
                     onReturnToBacklog={handleReturnItemToBacklog}
-                    onStartAddFree={() => setAddingFreeSlot(config.slot)}
+                    onStartAddFree={() => {
+                      setFreeItemDuration(30);
+                      setAddingFreeSlot(config.slot);
+                    }}
                     onFreeItemNameChange={setFreeItemName}
+                    onFreeItemDurationChange={setFreeItemDuration}
                     onSubmitFree={() => handleAddFreeSubmit(config.slot)}
                     onCancelFree={() => {
                       isCancelingFreeRef.current = true;
                       setAddingFreeSlot(null);
                       setFreeItemName('');
+                      setFreeItemDuration(30);
                     }}
                   />
                 );

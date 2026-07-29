@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import { SmartTaskBlockCard } from './SmartTaskBlockCard';
 import { PROJECT_TASK_MODAL_EVENT, type ProjectTaskModalDetail } from './projectTaskModal';
-import { getQuantityCompleted, getQuantityTotal, getQuantityUnit, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
+import { getQuantityCompleted, getQuantityTotal, getQuantityUnit, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { formatDate } from '@/utils/dateSafe';
 import { deleteProjectTask, updateProjectTask } from '@/services/projectTaskCommands';
 import { returnProjectTaskToBacklog } from '@/services/backlogCommands';
@@ -75,9 +75,9 @@ const ProjectTaskBlockModal: React.FC = () => {
 
   const sourceLabels: Record<NonNullable<ProjectTaskModalDetail['source']>, string> = {
     'daily-schedule': '每日安排',
-    'task-overview': '任务总览',
     'week-matrix': '周矩阵',
     'time-block': '时间块',
+    icebox: '待排期箱',
     project: '项目文档',
   };
   const quantity = isQuantityTask(block.header);
@@ -138,7 +138,8 @@ const ProjectTaskBlockModal: React.FC = () => {
               <strong>{block.header.date ? formatDate(block.header.date, 'M月D日') : (quantity ? '需要设置' : '未排期')}</strong>
             </div>
             <div><Tag size={14} /><span>标签</span><strong>{block.header.tag || '未分类'}</strong></div>
-            <div>{quantity ? <Hash size={14} /> : <Clock3 size={14} />}<span>{quantity ? '数量进度' : '预计时长'}</span><strong>{quantity ? `${getQuantityCompleted(block.header)}/${getQuantityTotal(block.header)} ${getQuantityUnit(block.header)}` : `${block.header.duration} 分钟`}</strong></div>
+            <div>{quantity ? <Hash size={14} /> : <Clock3 size={14} />}<span>{quantity ? '数量进度' : '预计时长'}</span><strong>{quantity ? `${getQuantityCompleted(block.header)}/${getQuantityTotal(block.header)} ${getQuantityUnit(block.header)}` : `${getTaskEstimatedMinutes(block.header)} 分钟`}</strong></div>
+            {quantity && <div><Clock3 size={14} /><span>每日预计投入</span><strong>{getTaskEstimatedMinutes(block.header)} 分钟</strong></div>}
             <div><Layers3 size={14} /><span>知识关联</span><strong>{graphNodeCount > 0 ? `${graphNodeCount} 个节点` : '未绑定'}</strong></div>
           </div>
           <SmartTaskBlockCard
@@ -162,7 +163,7 @@ const ProjectTaskBlockModal: React.FC = () => {
               )}
             </div>
           )}
-          <p className="ptm-date-change-hint">修改名称、日期、标签或进度后，项目文档、任务总览、周矩阵和每日安排会读取同一份任务数据。</p>
+          <p className="ptm-date-change-hint">修改名称、日期、标签或进度后，项目文档、周矩阵和每日安排会读取同一份任务数据。</p>
         </div>
         <footer className="ptm-footer">
           <div className="ptm-footer-context"><ListTodo size={14} /><span>{quantity ? '数量任务通过每日完成量推进总进度，不记录时长' : '完成状态会同步更新项目、日程、复习和知识节点'}</span></div>

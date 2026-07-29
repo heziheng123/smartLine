@@ -291,17 +291,12 @@ test('a divergent Liveblocks batch is repaired before a stale group copy can dri
 
   await expect.poll(() => readCompletionCopies(page)).toEqual({ task: false, group: false });
 
-  await page.getByTitle('项目规划').click();
-  await page.getByRole('menuitemradio', { name: '全部任务' }).click();
-  const overviewCard = page.locator('[data-block-id="grouped-completion-block"]');
-  await expect(overviewCard).toBeVisible();
-  await expect(overviewCard.getByRole('button', { name: /^完成：/ })).toBeVisible();
-  await overviewCard.getByRole('button', { name: /^完成：/ }).click();
+  const projectCard = await openProjectDocument(page);
+  await expect(projectCard).toBeVisible();
+  await projectCard.locator('.stb-check').click();
   await expect.poll(() => readCompletionCopies(page)).toEqual({ task: true, group: true });
-  await page.locator('.task-overview-stats button').filter({ hasText: '已完成' }).click();
-  await page.locator('.task-overview-section-header').filter({ hasText: '已完成' }).click();
-  await expect(overviewCard).toBeVisible();
-  await overviewCard.getByRole('button', { name: /^取消完成：/ }).click();
+  await expect(projectCard).toHaveClass(/stb-card--done/);
+  await projectCard.locator('.stb-check').click();
   await expect.poll(() => readCompletionCopies(page)).toEqual({ task: false, group: false });
 });
 

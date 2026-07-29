@@ -37,7 +37,7 @@ export {
 } from './workspaceSyncQueueCore';
 
 function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
-  const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones']
+  const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones', 'lifeStages']
     .some((key) => fields[key as WorkspaceStorageField] !== undefined);
   if (hasTimelineFields) {
     const current = useTimelineStore.getState();
@@ -46,12 +46,14 @@ function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unkn
       groups: fields.groups ?? current.groups,
       notes: fields.notes ?? current.notes,
       milestones: fields.milestones ?? current.milestones,
+      lifeStages: fields.lifeStages ?? current.lifeStages,
     });
     useTimelineStore.setState({
       tasks: normalized.tasks,
       groups: normalized.groups,
       notes: normalized.notes,
       milestones: normalized.milestones,
+      lifeStages: normalized.lifeStages,
     });
   }
 
@@ -97,7 +99,7 @@ function isWorkspaceMessage(value: unknown): value is {
   if (record.type === 'queue-ready') return true;
   if (!record.fields || typeof record.fields !== 'object' || Array.isArray(record.fields)) return false;
   const allowed = new Set<WorkspaceStorageField>([
-    'tasks', 'groups', 'notes', 'milestones',
+    'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
     'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
     'schedules', 'retrospectives', 'nodes',
   ]);

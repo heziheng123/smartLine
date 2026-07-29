@@ -86,7 +86,7 @@ const project = {
         tag: '背诵',
         tagColor: '#10b981',
         date: today,
-        duration: 0,
+        duration: 30,
         isCompleted: false,
         quantityUnit: '页',
         quantityTotal: 10,
@@ -161,7 +161,7 @@ const daily = {
 const ebb = {
   reviewTasks: [{
     id: 'backlog-review',
-    topicName: '三十分钟复习',
+    topicName: '普通难度复习',
     dueDate: today,
     originalDueDate: today,
     roundOrder: 1,
@@ -221,7 +221,8 @@ test.beforeEach(async ({ page }) => {
 test('week matrix shows de-duplicated workload and the filtered backlog count', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
   const todayHeader = page.locator(`.wmv-row--header [data-date="${today}"]`);
-  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(`4项 · 120/${todayCapacityMinutes}m`);
+  // 60m project + 30m project + 30m quantity daily investment + 15m normal review.
+  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(`4项 · 135/${todayCapacityMinutes}m`);
   await expect(page.getByRole('button', { name: '待排期箱，26 个任务' })).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) > 900) {
     const [workspaceBox, contentBox] = await Promise.all([

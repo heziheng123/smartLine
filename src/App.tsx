@@ -28,22 +28,16 @@ import '@/styles/smart-block.css';
 import '@/styles/lazy-dialog.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
-type ProjectWorkspaceView = 'timeline' | 'overview';
 type TimelineNavigateDetail = {
-  view?: AppModule | 'task-overview';
+  view?: AppModule;
   taskId?: string;
   blockId?: string;
 };
 
-const PROJECT_WORKSPACE_VIEW_KEY = 'project-workspace-view-v1';
-
-function loadProjectWorkspaceView(): ProjectWorkspaceView {
-  try {
-    return localStorage.getItem(PROJECT_WORKSPACE_VIEW_KEY) === 'overview' ? 'overview' : 'timeline';
-  } catch {
-    return 'timeline';
-  }
-}
+const RETIRED_PROJECT_VIEW_STORAGE_KEYS = [
+  'project-workspace-view-v1',
+  'task-overview-preferences-v1',
+] as const;
 
 function mapLiveblocksStatus(status: string | undefined) {
   if (status === 'connected') return 'connected' as const;
@@ -53,11 +47,11 @@ function mapLiveblocksStatus(status: string | undefined) {
 }
 
 const loadTimelineView = () => import('@/components/TimelineView');
+const loadLifeMapView = () => import('@/components/lifeMap/LifeMapView');
 const loadEbbView = () => import('@/ebb/components/EbbView');
 const loadDailyScheduleView = () => import('@/components/dailySchedule/DailyScheduleView');
 const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDocumentView');
 const loadWeekMatrixView = () => import('@/components/smartBlock/WeekMatrixView');
-const loadTaskOverviewView = () => import('@/components/smartBlock/TaskOverviewView');
 const loadKnowledgeGraphView = () => import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView }));
 const loadTaskDialog = () => import('@/components/TaskDialog');
 const loadGroupDialog = () => import('@/components/GroupDialog');
@@ -68,6 +62,7 @@ const loadIceboxPalette = () => import('@/components/smartBlock/IceboxPalette')
   .then((module) => ({ default: module.IceboxPalette }));
 
 const TimelineView = React.lazy(loadTimelineView);
+const LifeMapView = React.lazy(loadLifeMapView);
 const EbbView = React.lazy(async () => {
   const retryKey = 'smart-line-lazy-retry-ebb';
   try {
@@ -89,7 +84,6 @@ const EbbView = React.lazy(async () => {
 const DailyScheduleView = React.lazy(loadDailyScheduleView);
 const ProjectDocumentView = React.lazy(loadProjectDocumentView);
 const WeekMatrixView = React.lazy(loadWeekMatrixView);
-const TaskOverviewView = React.lazy(loadTaskOverviewView);
 const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
 const TaskDialog = React.lazy(loadTaskDialog);
 const GroupDialog = React.lazy(loadGroupDialog);
@@ -155,6 +149,7 @@ const App: React.FC = () => {
     groups,
     notes,
     milestones,
+    lifeStages,
     updateTask,
     deleteTask,
     restoreTask,
@@ -169,6 +164,9 @@ const App: React.FC = () => {
     addMilestone,
     updateMilestone,
     deleteMilestone,
+    addLifeStage,
+    updateLifeStage,
+    deleteLifeStage,
     importData,
     exportData,
     updateBlockHeader,
@@ -180,6 +178,7 @@ const App: React.FC = () => {
       groups: s.groups,
       notes: s.notes,
       milestones: s.milestones,
+      lifeStages: s.lifeStages,
       updateTask: s.updateTask,
       deleteTask: s.deleteTask,
       restoreTask: s.restoreTask,
@@ -194,6 +193,9 @@ const App: React.FC = () => {
       addMilestone: s.addMilestone,
       updateMilestone: s.updateMilestone,
       deleteMilestone: s.deleteMilestone,
+      addLifeStage: s.addLifeStage,
+      updateLifeStage: s.updateLifeStage,
+      deleteLifeStage: s.deleteLifeStage,
       importData: s.importData,
       exportData: s.exportData,
       updateBlockHeader: s.updateBlockHeader,
@@ -208,6 +210,7 @@ const App: React.FC = () => {
       groups,
       notes,
       milestones,
+      lifeStages,
       updateTask,
       deleteTask,
       restoreTask,
@@ -222,6 +225,9 @@ const App: React.FC = () => {
       addMilestone,
       updateMilestone,
       deleteMilestone,
+      addLifeStage,
+      updateLifeStage,
+      deleteLifeStage,
       importData,
       exportData,
       updateBlockHeader,
@@ -231,6 +237,7 @@ const App: React.FC = () => {
       groups,
       notes,
       milestones,
+      lifeStages,
       updateTask,
       deleteTask,
       restoreTask,
@@ -245,6 +252,9 @@ const App: React.FC = () => {
       addMilestone,
       updateMilestone,
       deleteMilestone,
+      addLifeStage,
+      updateLifeStage,
+      deleteLifeStage,
       importData,
       exportData,
       updateBlockHeader,
@@ -286,16 +296,15 @@ const App: React.FC = () => {
 
   // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
   const [currentView, setCurrentView] = useState<AppModule>('timeline');
-  const [projectWorkspaceView, setProjectWorkspaceView] = useState<ProjectWorkspaceView>(loadProjectWorkspaceView);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   React.useEffect(() => {
     try {
-      localStorage.setItem(PROJECT_WORKSPACE_VIEW_KEY, projectWorkspaceView);
+      RETIRED_PROJECT_VIEW_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
     } catch {
-      // 视图偏好写入失败不应影响项目数据和页面使用。
+      // Retired UI preferences never contain project or task data.
     }
-  }, [projectWorkspaceView]);
+  }, []);
 
   React.useEffect(() => {
     const handleConflict = () => setSyncNotice('检测到多设备同步冲突，本地修改已保留。请打开同步设置处理。');
@@ -479,15 +488,10 @@ const App: React.FC = () => {
     const handleNav = (event: Event) => {
       const e = event as CustomEvent<TimelineNavigateDetail>;
       const detail = e.detail;
-      if (detail?.view === 'task-overview') {
-        setCurrentView('timeline');
-        setProjectWorkspaceView('overview');
-      } else if (detail?.view) {
+      if (detail?.view) {
         setCurrentView(detail.view);
       }
       if (detail?.taskId) {
-        // 带任务定位的返回需要显示项目文档抽屉，因此回到项目时间轴。
-        if (detail.view === 'timeline') setProjectWorkspaceView('timeline');
         setDrawerTaskId(detail.taskId);
       }
       setDrawerBlockId(detail?.blockId ?? null);
@@ -750,7 +754,8 @@ const App: React.FC = () => {
   }, []);
 
   const preloadView = useCallback((view: AppModule) => {
-    if (view === 'timeline') { void loadTimelineView(); void loadTaskOverviewView(); return; }
+    if (view === 'life-map') { void loadLifeMapView(); return; }
+    if (view === 'timeline') { void loadTimelineView(); return; }
     if (view === 'ebb') { void loadEbbView(); return; }
     if (view === 'daily-schedule') { void loadDailyScheduleView(); return; }
     if (view === 'week-matrix') { void loadWeekMatrixView(); return; }
@@ -766,7 +771,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`tl-app ${(currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
+    <div className={`tl-app ${(currentView === 'life-map' || currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
       <Toolbar
         currentView={currentView}
         onViewChange={setCurrentView}
@@ -778,8 +783,6 @@ const App: React.FC = () => {
         onAddMilestone={handleAddMilestone}
         onOpenSync={handleOpenSync}
         onViewPreload={preloadView}
-        projectWorkspaceView={projectWorkspaceView}
-        onProjectWorkspaceViewChange={setProjectWorkspaceView}
       />
 
       {syncNotice && (
@@ -792,12 +795,52 @@ const App: React.FC = () => {
 
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
       <ViewErrorBoundary
-        viewName={currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
+        viewName={currentView === 'life-map' ? '人生地图' : currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
         resetKey={currentView}
         safeModeKey={currentView === 'ebb' ? 'smart-line-ebb-safe-mode' : undefined}
         onExit={currentView === 'timeline' ? undefined : () => setCurrentView('timeline')}
       >
       <AnimatePresence mode="wait">
+        {currentView === 'life-map' && (
+          <motion.div
+            key="life-map"
+            id="view-life-map"
+            role="tabpanel"
+            className="tl-app-split tl-app-split--ebb"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
+                <LifeMapView
+                  tasks={weekMatrixTasks}
+                  groups={store.groups}
+                  notes={store.notes}
+                  milestones={store.milestones}
+                  lifeStages={store.lifeStages}
+                  onCreateLifeStage={store.addLifeStage}
+                  onUpdateLifeStage={store.updateLifeStage}
+                  onDeleteLifeStage={store.deleteLifeStage}
+                  onCreateNote={store.addNote}
+                  onUpdateNote={store.updateNote}
+                  onDeleteNote={store.deleteNote}
+                  onCreateMilestone={store.addMilestone}
+                  onUpdateMilestone={store.updateMilestone}
+                  onDeleteMilestone={store.deleteMilestone}
+                  onOpenTask={(taskId, blockId) => {
+                    setCurrentView('timeline');
+                    setDrawerTaskId(taskId);
+                    setDrawerBlockId(blockId ?? null);
+                    if (blockId) setDrawerFocusRequest((value) => value + 1);
+                  }}
+                />
+              </Suspense>
+            </div>
+          </motion.div>
+        )}
+
         {currentView === 'ebb' && (
           <motion.div 
             key="ebb"
@@ -894,11 +937,10 @@ const App: React.FC = () => {
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
           >
             <div className="project-workspace-content">
-              {projectWorkspaceView === 'timeline' ? (
-                <>
-                  <div className="tl-app-main">
-                    <Suspense fallback={<ViewFallback />}>
-                      <TimelineView
+              <>
+                <div className="tl-app-main">
+                  <Suspense fallback={<ViewFallback />}>
+                    <TimelineView
                         tasks={store.tasks}
                         groups={store.groups}
                         notes={store.notes}
@@ -925,14 +967,14 @@ const App: React.FC = () => {
                           }
                           rescheduleProjectTask(dragData.taskId, dragData.blockId, targetDate);
                         }}
-                      />
-                    </Suspense>
-                  </div>
+                    />
+                  </Suspense>
+                </div>
 
-                  {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
-                  <AnimatePresence mode="popLayout">
-                    {drawerTask && (
-                      <motion.div
+                {/* 项目文档视图面板（仅 open 时渲染，挤压左侧甘特图） */}
+                <AnimatePresence mode="popLayout">
+                  {drawerTask && (
+                    <motion.div
                         key={drawerTask.id}
                         initial={{ width: 0, opacity: 0, x: 20 }}
                         animate={{ width: 450, opacity: 1, x: 0 }}
@@ -940,27 +982,20 @@ const App: React.FC = () => {
                         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                         style={{ overflow: 'hidden', borderLeft: '1px solid #E5E7EB', background: '#fff', flexShrink: 0 }}
                       >
-                        <Suspense fallback={<ViewFallback />}>
-                          <ProjectDocumentView
+                      <Suspense fallback={<ViewFallback />}>
+                        <ProjectDocumentView
                             task={drawerTask}
                             focusBlockId={drawerBlockId}
                             focusRequest={drawerFocusRequest}
                             onClose={handleCloseDrawer}
                             onUpdateTask={handleUpdateTaskMeta}
                             onDeleteTask={handleDeleteTaskFromDrawer}
-                          />
-                        </Suspense>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </>
-              ) : (
-                <div className="tl-app-main project-workspace-overview">
-                  <Suspense fallback={<ViewFallback />}>
-                    <TaskOverviewView />
-                  </Suspense>
-                </div>
-              )}
+                        />
+                      </Suspense>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </>
             </div>
           </motion.div>
         )}
@@ -1019,7 +1054,7 @@ const App: React.FC = () => {
 
       {/* 项目时间线保留悬浮入口；周矩阵使用不遮挡日期列的内嵌右侧抽屉。 */}
       <AnimatePresence>
-        {currentView === 'timeline' && projectWorkspaceView === 'timeline' && (
+        {currentView === 'timeline' && (
           <Suspense fallback={null}>
             <IceboxPalette />
           </Suspense>

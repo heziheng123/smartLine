@@ -2123,6 +2123,30 @@
   font-size: 13px;
 }
 
+.eb-round-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #64748B;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.eb-round-duration select {
+  max-width: 92px;
+  padding: 3px 18px 3px 5px;
+  border: 1px solid #E2E8F0;
+  border-radius: 5px;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+}
+
+.eb-round-duration select:disabled {
+  background: #F8FAFC;
+  color: #94A3B8;
+}
+
 .eb-reschedule-mode {
   display: flex;
   flex-direction: column;

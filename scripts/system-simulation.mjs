@@ -69,7 +69,6 @@ try {
     timelineDataModule,
     ebbDataModule,
     projectTaskCommands,
-    projectTaskQuery,
     projectTaskEffects,
     ebbTaskSyncPlanner,
     graphBindingModule,
@@ -101,7 +100,6 @@ try {
     load('/src/store/timelineData.ts'),
     load('/src/ebb/dataNormalization.ts'),
     load('/src/services/projectTaskCommands.ts'),
-    load('/src/domain/projectTaskQuery.ts'),
     load('/src/domain/projectTaskEffects.ts'),
     load('/src/ebb/taskSyncPlanner.ts'),
     load('/src/graph/bindingStore.ts'),
@@ -214,11 +212,12 @@ try {
     nodes = [],
     tasks = [],
     groups = [],
+    lifeStages = [],
     reviewTasks = [],
     schedules = {},
     retrospectives = {},
   } = {}) => {
-    useTimelineStore.setState({ tasks, groups, notes: [], milestones: [], isHydrated: true });
+    useTimelineStore.setState({ tasks, groups, notes: [], milestones: [], lifeStages, isHydrated: true });
     useGraphStore.setState({ nodes, isHydrated: true });
     useEbbStore.setState({
       reviewTasks,
@@ -791,8 +790,8 @@ try {
   check('EBB 标准化会过滤无效日期、去重 ID、修复重复轮次和大纲循环', () => {
     const normalized = ebbModule.normalizeEbbData({
       reviewTasks: [
-        { id: 'r1', topicName: '主题', dueDate: '2026-07-18', roundOrder: 1, isCompleted: false },
-        { id: 'r2', topicName: '主题', dueDate: '2026-07-19', roundOrder: 1, isCompleted: false },
+        { id: 'r1', topicName: '主题', dueDate: '2026-07-18', roundOrder: 1, isCompleted: false, baseDurationMinutes: 0, durationOverrideMinutes: -5 },
+        { id: 'r2', topicName: '主题', dueDate: '2026-07-19', roundOrder: 1, isCompleted: false, baseDurationMinutes: 12, durationOverrideMinutes: 17 },
         { id: 'bad', topicName: '坏日期', dueDate: '2026-02-30', isCompleted: false },
       ],
       inboxItems: [],
@@ -804,6 +803,10 @@ try {
     });
     assert.equal(normalized.reviewTasks.some((task) => task.id === 'bad'), false);
     assert.equal(new Set(normalized.reviewTasks.map((task) => task.roundOrder)).size, 2);
+    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r1').baseDurationMinutes, undefined);
+    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r1').durationOverrideMinutes, undefined);
+    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r2').baseDurationMinutes, 15);
+    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r2').durationOverrideMinutes, 20);
     const outlineById = new Map(normalized.outlineNodes.map((item) => [item.id, item]));
     for (const item of normalized.outlineNodes) {
       assert.notEqual(outlineById.get(item.parentId)?.parentId, item.id);
@@ -837,7 +840,11 @@ try {
   check('每日安排标准化拒绝零时长、24:00 和重复 ID 时间块', () => {
     const normalized = dailyModule.normalizeDailySchedules({
       '2026-07-18': {
-        date: '2026-07-18', items: [],
+        date: '2026-07-18',
+        items: [
+          { id: 'item-round', sourceId: 'free-round', name: '十二分钟', source: 'free', timeSlot: 'morning', order: 0, duration: 12 },
+          { id: 'item-zero', sourceId: 'free-zero-item', name: '无效时长', source: 'free', timeSlot: 'morning', order: 1, duration: 0 },
+        ],
         blocks: [
           { id: 'ok', sourceId: 'free-ok', name: '正常', source: 'free', startTime: '23:15', endTime: '23:45' },
           { id: 'zero', sourceId: 'free-zero', name: '零时长', source: 'free', startTime: '23:45', endTime: '23:45' },
@@ -847,6 +854,8 @@ try {
       },
     });
     assert.deepEqual(normalized['2026-07-18'].blocks.map((block) => block.id), ['ok']);
+    assert.equal(normalized['2026-07-18'].items[0].duration, 15);
+    assert.equal(normalized['2026-07-18'].items[1].duration, undefined);
   });
 
   check('每日复盘兼容旧数据并隔离无效生活安排完成日期', () => {
@@ -1122,6 +1131,29 @@ try {
     assert.ok(result.summary.issues.some((issue) => /重复/.test(issue)));
     assert.ok(result.summary.issues.some((issue) => /时间/.test(issue)));
     assert.ok(result.summary.issues.some((issue) => /轮次/.test(issue)));
+  });
+
+  check('人生阶段进入完整工作区备份并接受严格日期校验', () => {
+    resetStores({
+      lifeStages: [{
+        id: 'stage-exam',
+        name: '考研准备期',
+        start: '2026-07-01',
+        end: '2026-12-31',
+        color: '#7C6FE6',
+      }],
+    });
+    const backup = backupModule.createWorkspaceBackup();
+    assert.equal(backup.timeline.lifeStages.length, 1);
+    assert.equal(backup.timeline.lifeStages[0].name, '考研准备期');
+    const valid = backupModule.validateWorkspaceBackup(backup);
+    assert.equal(valid.errors.length, 0);
+    assert.equal(valid.summary.lifeStages, 1);
+
+    const impossible = structuredClone(backup);
+    impossible.timeline.lifeStages[0].start = '2026-02-31';
+    const invalid = backupModule.validateWorkspaceBackup(impossible);
+    assert.ok(invalid.errors.some((error) => /人生阶段/.test(error)));
   });
 
   check('单词任务作为项目任务块保存，累计数量由初始值和每日记录共同派生', () => {
@@ -1708,28 +1740,6 @@ try {
     assert.equal(supplemental.reviewTasks.at(-1).isSupplemental, true);
   });
 
-  check('任务总览筛选、排序和统计共享同一查询规则', () => {
-    const records = [
-      { id: 'overdue', header: { ...smartBlock('a', '逾期', [], false).header, date: '2026-07-10' } },
-      { id: 'today', header: { ...smartBlock('b', '今天', [], false).header, date: '2026-07-23' } },
-      { id: 'unscheduled', header: { ...smartBlock('c', '未排期', [], false).header, date: undefined } },
-      { id: 'completed', header: { ...smartBlock('d', '完成', [], false).header, date: '2026-07-23', isCompleted: true } },
-    ];
-    const toRecord = (item) => ({
-      projectId: 'p1', tag: item.header.tag, title: item.header.title,
-      searchableText: item.header.title, header: item.header,
-    });
-    const pending = projectTaskQuery.filterAndSortProjectTasks(
-      records,
-      toRecord,
-      { query: '', projectId: 'all', tag: 'all', status: 'pending', date: 'all' },
-      '2026-07-23',
-    );
-    assert.deepEqual(pending.map((item) => item.id), ['overdue', 'today', 'unscheduled']);
-    const stats = projectTaskQuery.summarizeProjectTasks(records, (item) => item.header, '2026-07-23');
-    assert.deepEqual(stats, { total: 4, pending: 3, today: 1, overdue: 1, unscheduled: 1, completed: 1 });
-  });
-
   check('旧数量任务缺少日期时按进度记录或项目开始日恢复，并能被备份校验识别', () => {
     const missingWithRecord = {
       taskKind: 'vocabulary',
@@ -1964,6 +1974,7 @@ try {
     });
     assert.deepEqual(dates.map((date) => workloads.get(date).quantityCount), [1, 1, 1]);
     assert.deepEqual(dates.map((date) => workloads.get(date).taskCount), [1, 1, 1]);
+    assert.deepEqual(dates.map((date) => workloads.get(date).totalMinutes), [30, 30, 30]);
   });
 
   check('backlog project filters use stable IDs and full paths for duplicate project names', () => {

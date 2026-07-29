@@ -7,6 +7,7 @@ import dayjs from 'dayjs';
 import type { ReviewTask, ComplexityLevel, TagStat, TopicStat, EbbSettings } from './types';
 import { getPointWeight, getIntervalsForComplexity, parseIntervals } from './complexity';
 import { todayStr, addDays, isBeforeDay, isAfterDay, diffDays, formatDate } from '@/utils/dateSafe';
+import { getReviewRoundDuration } from './duration';
 
 // ── 工具函数 ────────────────────────────────────────────────
 
@@ -191,6 +192,7 @@ export function buildNextRoundTask(
     outlineNodeId: lastTask.outlineNodeId,
     graphNodeId: lastTask.graphNodeId,
     complexity: lastTask.complexity,
+    baseDurationMinutes: lastTask.baseDurationMinutes,
     smStatus: 'scheduled',
   };
 }
@@ -204,6 +206,7 @@ export interface GenerateTasksInput {
   startDate: string;
   intervals: number[];
   outlineNodeId?: string;
+  baseDurationMinutes?: number;
 }
 
 export interface GenerateTasksResult {
@@ -274,6 +277,7 @@ export function generateTasks(
       tag: input.tag,
       outlineNodeId: input.outlineNodeId,
       complexity: input.complexity,
+      baseDurationMinutes: input.baseDurationMinutes,
       smStatus: 'scheduled',
     });
   }
@@ -452,6 +456,9 @@ export function computeTopicStats(
       .filter((t) => !t.isCompleted && !isOverdue(t))
       .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
     const nextDueDate = futurePending[0]?.dueDate;
+    const nextPending = group
+      .filter((t) => !t.isCompleted)
+      .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''))[0];
 
     let earnedPoints = 0;
     let totalPoints = 0;
@@ -477,6 +484,9 @@ export function computeTopicStats(
       pendingRounds,
       overdueRounds,
       nextDueDate,
+      nextDurationMinutes: nextPending
+        ? getReviewRoundDuration(nextPending, roundMap.get(nextPending.id) ?? nextPending.roundOrder ?? 1)
+        : undefined,
       totalPoints,
       earnedPoints,
       ratio: totalRounds > 0 ? completedRounds / totalRounds : 0,
