@@ -8,12 +8,14 @@ import {
   ChevronRight,
   Clock3,
   RotateCcw,
+  Tags,
   X,
 } from 'lucide-react';
 import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
 import type { ReviewTask } from '../types';
 import {
   getDailyReviewCandidates,
+  type DailyReviewCandidate,
   type DailyReviewPlan,
   type DailyReviewPlanRequest,
 } from '../dailyReviewPlanning';
@@ -58,6 +60,33 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
     const task = taskById.get(candidate.taskId);
     return sum + (task ? getReviewRoundDuration(task, candidate.round) : 15);
   }, 0), [candidates, keptIds, taskById]);
+  const groupedCandidates = useMemo(() => {
+    const byTag = new Map<string, Map<number, DailyReviewCandidate[]>>();
+    candidates.forEach((candidate) => {
+      const task = taskById.get(candidate.taskId);
+      const tag = task?.tag?.trim() || '未设置标签';
+      const byRound = byTag.get(tag) ?? new Map<number, DailyReviewCandidate[]>();
+      const items = byRound.get(candidate.round) ?? [];
+      items.push(candidate);
+      byRound.set(candidate.round, items);
+      byTag.set(tag, byRound);
+    });
+    return [...byTag.entries()]
+      .sort(([left], [right]) => {
+        if (left === '未设置标签') return 1;
+        if (right === '未设置标签') return -1;
+        return left.localeCompare(right, 'zh-CN');
+      })
+      .map(([tag, rounds]) => ({
+        tag,
+        rounds: [...rounds.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([round, items]) => ({
+            round,
+            items: [...items].sort((left, right) => left.topicName.localeCompare(right.topicName, 'zh-CN')),
+          })),
+      }));
+  }, [candidates, taskById]);
 
   const toggleKeep = (taskId: string) => {
     setError('');
@@ -68,6 +97,18 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
       } else {
         next.add(taskId);
       }
+      return next;
+    });
+  };
+
+  const setGroupKept = (taskIds: string[], keep: boolean) => {
+    setError('');
+    setKeptIds((current) => {
+      const next = new Set(current);
+      taskIds.forEach((taskId) => {
+        if (keep) next.add(taskId);
+        else next.delete(taskId);
+      });
       return next;
     });
   };
@@ -126,13 +167,37 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
                 <span><RotateCcw size={13} />明晚再次选择</span>
               </div>
               <div className="eb-daily-plan-list">
-                {candidates.map((candidate) => {
+                {groupedCandidates.map((group) => {
+                  const groupItems = group.rounds.flatMap((round) => round.items);
+                  const groupKeptCount = groupItems.filter((candidate) => keptIds.has(candidate.taskId)).length;
+                  const groupMinutes = groupItems.reduce((sum, candidate) => {
+                    if (!keptIds.has(candidate.taskId)) return sum;
+                    const task = taskById.get(candidate.taskId);
+                    return sum + (task ? getReviewRoundDuration(task, candidate.round) : 15);
+                  }, 0);
+                  return <section className="eb-daily-plan-tag-group" key={group.tag} aria-label={group.tag === '未设置标签' ? group.tag : `${group.tag}标签`}>
+                    <header className="eb-daily-plan-tag-header">
+                      <div><span><Tags size={14} /></span><strong>{group.tag}</strong><small>{groupItems.length} 个主题 · {group.rounds.length} 个轮次</small></div>
+                      <em>{groupKeptCount} 已选{groupKeptCount > 0 ? ` · 约 ${groupMinutes}m` : ''}</em>
+                    </header>
+                    <div className="eb-daily-plan-round-list">
+                      {group.rounds.map((roundGroup) => {
+                        const roundIds = roundGroup.items.map((candidate) => candidate.taskId);
+                        const allRoundKept = roundIds.every((taskId) => keptIds.has(taskId));
+                        const roundKeptCount = roundIds.filter((taskId) => keptIds.has(taskId)).length;
+                        return <section className="eb-daily-plan-round-group" key={`${group.tag}:${roundGroup.round}`} aria-label={`${group.tag}第${roundGroup.round}轮`}>
+                          <header className="eb-daily-plan-round-header">
+                            <div><strong>第 {roundGroup.round} 轮</strong><span>{roundGroup.items.length} 项 · 已选 {roundKeptCount}</span></div>
+                            <button type="button" onClick={() => setGroupKept(roundIds, !allRoundKept)}>{allRoundKept ? '本轮取消' : '本轮全选'}</button>
+                          </header>
+                          <div className="eb-daily-plan-round-cards">
+                            {roundGroup.items.map((candidate) => {
                   const task = taskById.get(candidate.taskId);
                   const kept = keptIds.has(candidate.taskId);
                   const nextDeferralCount = candidate.previousDecision === 'defer'
                     ? candidate.deferralCount
                     : candidate.deferralCount + 1;
-                  return (
+                              return (
                     <article
                       key={candidate.taskId}
                       className={`eb-daily-plan-card ${kept ? 'is-kept' : 'is-deferred'}`}
@@ -173,7 +238,13 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
                         )}
                       </div>
                     </article>
-                  );
+                              );
+                            })}
+                          </div>
+                        </section>;
+                      })}
+                    </div>
+                  </section>;
                 })}
               </div>
             </>

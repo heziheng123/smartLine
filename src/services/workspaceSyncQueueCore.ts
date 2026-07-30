@@ -3,6 +3,8 @@ import { hashWorkspaceValue } from './workspaceSyncCore';
 
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones' | 'lifeStages'
+  | 'lifeMapAreas' | 'lifeMapStages' | 'lifeMapThemes' | 'lifeMapGoals'
+  | 'lifeMapSystems' | 'lifeMapSystemCheckIns' | 'lifeMapEvents' | 'lifeMapFocuses' | 'lifeMapNotes' | 'lifeMapRelations' | 'lifeMapReviews'
   | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
   | 'schedules' | 'retrospectives' | 'nodes';
 
@@ -25,6 +27,8 @@ export interface WorkspaceConflictRecord {
   detectedAt: string;
   remoteUpdatedAt: string;
   pending: PendingWorkspaceSync;
+  remoteFields?: Partial<Record<WorkspaceStorageField, unknown>>;
+  conflictingFields?: WorkspaceStorageField[];
 }
 
 export interface QueueWorkspaceFieldOptions {
@@ -206,9 +210,37 @@ export async function clearPendingWorkspaceSync(
   await clearOperation;
 }
 
+/**
+ * Atomically acknowledges whatever queue revision currently contains the
+ * exact values that were written to cloud storage. A revision token may have
+ * changed while keeping the same final values; a genuinely newer/different
+ * edit is serialized after this operation or fails the value comparison and
+ * is therefore never deleted.
+ */
+export async function acknowledgeAppliedWorkspaceSync(
+  appliedFields: Partial<Record<WorkspaceStorageField, unknown>>,
+): Promise<boolean> {
+  const acknowledgeOperation = writeChain.then(async () => {
+    const appliedHash = await hashWorkspaceValue(appliedFields);
+    const emergency = volatilePending ?? readEmergencyPending();
+    if (emergency && await hashWorkspaceValue(emergency.fields) !== appliedHash) return false;
+
+    const durable = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
+    if (durable && await hashWorkspaceValue(durable.fields) !== appliedHash) return false;
+
+    if (emergency) clearEmergencyPending(emergency);
+    if (durable) await queueStorage.removeItem(QUEUE_KEY);
+    return true;
+  });
+  writeChain = acknowledgeOperation.then(() => undefined, () => undefined);
+  return acknowledgeOperation;
+}
+
 export async function preserveWorkspaceConflict(
   pending: PendingWorkspaceSync,
   remoteUpdatedAt: string,
+  remoteFields?: Partial<Record<WorkspaceStorageField, unknown>>,
+  conflictingFields?: WorkspaceStorageField[],
 ): Promise<void> {
   const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
   const record: WorkspaceConflictRecord = {
@@ -216,6 +248,8 @@ export async function preserveWorkspaceConflict(
     detectedAt: new Date().toISOString(),
     remoteUpdatedAt,
     pending,
+    remoteFields,
+    conflictingFields,
   };
   await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts].slice(0, 20));
   await clearPendingWorkspaceSync(pending);
@@ -228,4 +262,17 @@ export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[
 export async function removeWorkspaceConflict(id: string): Promise<void> {
   const conflicts = await listWorkspaceConflicts();
   await queueStorage.setItem(CONFLICTS_KEY, conflicts.filter((item) => item.id !== id));
+}
+
+export async function replaceWorkspaceConflictPending(
+  id: string,
+  pending: PendingWorkspaceSync | null,
+): Promise<void> {
+  const conflicts = await listWorkspaceConflicts();
+  await queueStorage.setItem(
+    CONFLICTS_KEY,
+    pending
+      ? conflicts.map((item) => item.id === id ? { ...item, pending } : item)
+      : conflicts.filter((item) => item.id !== id),
+  );
 }

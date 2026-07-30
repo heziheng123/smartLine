@@ -6,6 +6,11 @@ const setLifeMapZoom = async (page: Page, zoom: 'year' | 'month' | 'week' | 'day
   await page.getByRole('option', { name: new RegExp(`^${label}`) }).click();
 };
 
+const selectLifeMapArea = async (page: Page, areaName = '学习成长') => {
+  await page.locator('.life-map-scope__trigger').click();
+  await page.getByRole('menu', { name: '选择人生领域' }).getByRole('menuitemradio', { name: new RegExp(areaName) }).click();
+};
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
@@ -126,26 +131,47 @@ test.beforeEach(async ({ page }) => {
       ],
       lifeStages: [{ id: 'exam-stage', name: '考研准备期', start: '2026-06-01', end: '2027-12-31', color: '#7C6FE6' }],
     }));
+    const legacy = JSON.parse(localStorage.getItem('smart-timeline-data:mirror') ?? '{}') as {
+      tasks: Array<{ id: string; name: string; start: string; end: string; color?: string }>;
+      notes: Array<{ id: string; name: string; date: string; endDate?: string; type: 'pin' | 'range'; color?: string; placement?: 'above' | 'below' }>;
+      milestones: Array<{ id: string; name: string; date: string; color?: string; placement?: 'above' | 'below'; importance?: 'normal' | 'important' | 'core' }>;
+      lifeStages: Array<{ id: string; name: string; start: string; end: string; color?: string }>;
+    };
+    const synced = { createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', revision: 1 };
+    localStorage.setItem('line-life-map-storage-v1:mirror', JSON.stringify({
+      lifeMapAreas: [{ id: 'learning', name: '学习成长', color: '#6366F1', icon: '学', order: 1, ...synced }],
+      lifeMapStages: legacy.lifeStages.map((item) => ({ ...item, ...synced })),
+      lifeMapThemes: [],
+      lifeMapGoals: [{ id: 'study-plan', areaId: 'learning', name: '备战研究生考试', start: '2026-07-01', targetDate: '2027-12-31', status: 'active', isCore: true, progress: 18, ...synced }, ...legacy.tasks.map((item) => ({ id: item.id, areaId: 'learning', name: item.name, start: item.start, targetDate: item.end, color: item.color, status: 'active', progress: 0, ...synced }))],
+      lifeMapSystems: [{ id: 'study-rhythm', areaId: 'learning', name: '保持稳定复习', start: '2026-07-01', status: 'active', frequency: 'daily', targetCount: 1, durationMinutes: 60, ...synced }],
+      lifeMapSystemCheckIns: [{ id: 'rhythm-check', systemId: 'study-rhythm', date: '2026-07-30', count: 1, ...synced }],
+      lifeMapEvents: legacy.milestones.map((item) => ({ ...item, areaId: 'learning', importance: item.importance ?? 'important', ...synced })),
+      lifeMapFocuses: legacy.notes.filter((item) => item.type === 'range' && item.endDate).map((item) => ({ id: item.id, areaId: 'learning', name: item.name, start: item.date, end: item.endDate, color: item.color, placement: item.placement, ...synced })),
+      lifeMapNotes: legacy.notes.filter((item) => item.type === 'pin').map((item) => ({ ...item, areaId: 'learning', ...synced })),
+      lifeMapRelations: [],
+      lifeMapReviews: [],
+    }));
   });
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
 
-test('life map renders fixed events and drills from a month action into its project', async ({ page }) => {
+test('life map renders independent goals, systems and fixed events without project tasks', async ({ page }) => {
   await page.getByTitle('人生地图').click();
 
   const projectBand = page.getByRole('button', { name: '2027考研时间条带' });
   await expect(projectBand).toBeVisible();
-  await expect(projectBand).toHaveCSS('background-color', 'rgb(91, 106, 240)');
-  await expect(projectBand).toHaveCSS('border-left-color', /rgb/);
+  await expect(projectBand).toHaveClass(/is-life-goal/);
+  await expect(projectBand.locator('.life-line__goal-endpoint')).toBeVisible();
   await expect(projectBand).toContainText('2027考研');
   await expect(page.locator('.life-line__node.is-project')).toHaveCount(0);
   const fixedEvent = page.locator('.life-line__node.is-milestone').filter({ hasText: '六级成绩公布' });
   await expect(fixedEvent).toBeVisible();
   await expect(fixedEvent).toHaveClass(/is-importance-important/);
   await expect(page.locator('.life-line__node.is-action')).toHaveCount(0);
-  await expect(page.getByLabel('每日任务节奏带')).toBeVisible();
-  await expect(page.locator('.life-line__task-marker')).toHaveCount(3);
+  await expect(page.getByLabel('每日任务节奏带')).toHaveCount(0);
+  await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
+  await expect(page.locator('.life-line__project-band.is-life-system').filter({ hasText: '保持稳定复习' })).toBeVisible();
 
   await setLifeMapZoom(page, 'day');
   const todayPosition = await page.locator('.life-line__today').evaluate((element) => {
@@ -157,13 +183,8 @@ test('life map renders fixed events and drills from a month action into its proj
   expect(todayPosition.left).toBeLessThan(todayPosition.viewportRight);
   expect(await page.locator('.life-line__tick').count()).toBeLessThan(300);
 
-  await page.getByRole('button', { name: '完成马原第一章，2026年8月4日', exact: true }).click();
-  const inspector = page.locator('.life-line__task-inspector');
-  await expect(inspector).toBeVisible();
-  await inspector.locator('.life-line__task-inspector-list button').filter({ hasText: '完成马原第一章' }).click();
-  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('.pdv-container')).toBeVisible();
-  await expect(page.locator('.stb-card').filter({ hasText: '完成马原第一章' })).toBeVisible();
+  await projectBand.dblclick();
+  await expect(page.locator('.life-map-editor form').getByRole('heading', { name: '编辑目标' })).toBeVisible();
 });
 
 test('life map keeps fixed events separate from movable actions', async ({ page }) => {
@@ -230,21 +251,21 @@ test('life map persists a manually chosen card lane across semantic zoom', async
   await expect(card).toHaveAttribute('data-layout-lane', manualLane ?? '0');
 });
 
-test('life map shows every project and places each one independently above or below the axis', async ({ page }) => {
+test('life map keeps every independent goal visible and lets the user move it across the axis', async ({ page }) => {
   await page.getByTitle('人生地图').click();
 
-  const phaseA = page.locator('[data-project-id="phase-a"]');
-  const phaseB = page.locator('[data-project-id="phase-b"]');
-  const overlap = page.locator('[data-project-id="phase-overlap"]');
-  const mainProject = page.locator('[data-project-id="graduate-exam"]');
-  const overlapThree = page.locator('[data-project-id="phase-overlap-3"]');
+  const phaseA = page.locator('[data-project-id="goal:phase-a"]');
+  const phaseB = page.locator('[data-project-id="goal:phase-b"]');
+  const overlap = page.locator('[data-project-id="goal:phase-overlap"]');
+  const mainProject = page.locator('[data-project-id="goal:graduate-exam"]');
+  const overlapThree = page.locator('[data-project-id="goal:phase-overlap-3"]');
 
-  await expect(phaseA).toHaveAttribute('data-band-level', '0');
-  await expect(phaseB).toHaveAttribute('data-band-level', '0');
-  await expect(mainProject).toHaveAttribute('data-band-level', '0');
+  await expect(phaseA).toBeVisible();
+  await expect(phaseB).toBeVisible();
+  await expect(mainProject).toBeVisible();
   await expect(phaseA).toHaveAttribute('data-band-side', 'above');
-  await expect(overlap).toHaveAttribute('data-band-side', 'below');
-  await expect(overlap).toHaveAttribute('data-band-level', '0');
+  await expect(overlap).toHaveAttribute('data-band-side', 'above');
+  await expect(overlap).toHaveAttribute('data-band-level', /^\d+$/);
   await expect(overlapThree).toBeVisible();
   await expect(page.getByText('项目概览', { exact: true })).toHaveCount(0);
 
@@ -259,13 +280,13 @@ test('life map shows every project and places each one independently above or be
   await expect(phaseB).toHaveAttribute('data-band-level', /^\d+$/);
   const phaseBTop = await phaseB.evaluate((element) => (element as HTMLElement).offsetTop);
   expect(phaseBTop).toBeGreaterThan(axisTopBeforeMove);
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('life-map:project-sides') ?? '{}')['phase-b'])).toBe('below');
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('life-map:project-sides') ?? '{}')['goal:phase-b'])).toBe('below');
 
   const axisTopAfterMove = await axis.evaluate((element) => (element as HTMLElement).offsetTop);
   expect(Math.abs(axisTopAfterMove - axisTopBeforeMove)).toBeLessThan(1);
 });
 
-test('life map keeps the command bar compact and focuses a selected project', async ({ page }) => {
+test('life map keeps the command bar compact and focuses a selected goal', async ({ page }) => {
   await page.getByTitle('人生地图').click();
 
   const toolbar = page.locator('.life-line__toolbar');
@@ -279,18 +300,18 @@ test('life map keeps the command bar compact and focuses a selected project', as
   await expect(scaleOptions.getByRole('option')).toHaveCount(4);
   await expect(scaleOptions.getByRole('option', { name: /^月视图/ })).toHaveAttribute('aria-selected', 'true');
   await expect(scaleOptions).toContainText('全局规划');
-  await expect(scaleOptions).toContainText('每日安排');
+  await expect(scaleOptions).toContainText('当天记录');
   await page.keyboard.press('Escape');
   await toolbar.getByRole('button', { name: '添加到时间线' }).click();
   await expect(toolbar.getByRole('textbox', { name: '自然语言快速输入' })).toBeVisible();
   await page.keyboard.press('Escape');
 
-  const selected = page.locator('[data-project-id="graduate-exam"]');
+  const selected = page.locator('[data-project-id="goal:graduate-exam"]');
   await selected.hover();
   await expect(selected).toHaveClass(/is-related/);
-  await expect(page.locator('[data-project-id="phase-a"]')).toHaveClass(/is-muted/);
+  await expect(page.locator('[data-project-id="goal:phase-a"]')).toHaveClass(/is-muted/);
   await page.locator('.life-line__toolbar').hover();
-  await expect(page.locator('[data-project-id="phase-a"]')).not.toHaveClass(/is-muted/);
+  await expect(page.locator('[data-project-id="goal:phase-a"]')).not.toHaveClass(/is-muted/);
 
   await selected.click();
   await expect(selected).toHaveClass(/is-selected/);
@@ -299,7 +320,7 @@ test('life map keeps the command bar compact and focuses a selected project', as
   await expect(page.locator('.life-line__project-focus-card').getByRole('button', { name: '支撑', exact: true })).toHaveCount(0);
   await expect(page.locator('.life-line__project-focus-card').getByRole('button', { name: '日常', exact: true })).toHaveCount(0);
   await expect(page.locator('.life-line__project-focus-card').getByRole('button', { name: '暂停', exact: true })).toHaveCount(0);
-  await expect(page.locator('[data-project-id="phase-a"]')).toHaveClass(/is-muted/);
+  await expect(page.locator('[data-project-id="goal:phase-a"]')).toHaveClass(/is-muted/);
 
   const scroller = page.locator('.life-line__scroller');
   await scroller.evaluate((element) => { element.scrollLeft += 260; });
@@ -315,6 +336,7 @@ test('life map keeps the command bar compact and focuses a selected project', as
 
 test('life map creates a persistent range annotation directly on the canvas', async ({ page }) => {
   await page.getByTitle('人生地图').click();
+  await selectLifeMapArea(page);
   await page.getByRole('button', { name: '添加到时间线' }).click();
   await page.getByRole('button', { name: '区间标注工具' }).click();
 
@@ -432,6 +454,7 @@ test('life map keeps consecutive weekly plans on one continuous rail', async ({ 
 
 test('life map supports focus, layers, minimap and natural-language creation', async ({ page }) => {
   await page.getByTitle('人生地图').click();
+  await selectLifeMapArea(page);
 
   await page.getByRole('button', { name: '视图设置' }).click();
   await page.getByRole('button', { name: '开启聚焦' }).click();
@@ -439,8 +462,9 @@ test('life map supports focus, layers, minimap and natural-language creation', a
   await page.getByRole('button', { name: '显示小地图' }).click();
   await expect(page.getByRole('slider', { name: '人生地图全局导航' })).toBeVisible();
 
-  await page.locator('.life-line__view-menu button').filter({ hasText: '普通任务' }).click();
-  await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
+  await page.locator('.life-line__view-menu button').filter({ hasText: '目标与长期系统' }).click();
+  await expect(page.locator('.life-line__project-band.is-life-goal')).toHaveCount(0);
+  await expect(page.locator('.life-line__project-band.is-life-system')).toHaveCount(0);
 
   await page.getByRole('button', { name: '添加到时间线' }).click();
   const quickInput = page.getByRole('textbox', { name: '自然语言快速输入' });
@@ -493,25 +517,20 @@ test('life map directly resizes a range and supports undo', async ({ page }) => 
   await expect(page.locator('.life-line__draft-editor').getByLabel('开始')).toHaveValue('2026-08-05');
 });
 
-test('life map applies semantic zoom to task density', async ({ page }) => {
+test('life map preserves independent planning semantics across zoom levels', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   await expect(page.locator('.life-line__today')).toHaveCSS('width', '2px');
-  await expect(page.getByLabel('每日任务节奏带')).toBeVisible();
-  await expect(page.locator('.life-line__task-marker')).toHaveCount(3);
-  await expect(page.locator('.life-line__task-marker-label')).toHaveCount(0);
-  await page.locator('.life-line__task-marker').first().hover();
-  await expect(page.locator('.life-line__task-tooltip').first()).toBeVisible();
-  await expect(page.locator('.life-line__task-pulse').first().locator('i')).not.toHaveCount(0);
-  const rhythmHeight = await page.locator('.life-line__task-pulse').first().evaluate((element) => element.getBoundingClientRect().height);
-  expect(rhythmHeight).toBeGreaterThanOrEqual(5);
-  await expect(page.locator('.life-line__task-marker b')).toHaveCount(0);
+  await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
+  await expect(page.locator('.life-line__project-band.is-life-goal').first()).toBeVisible();
+  await expect(page.locator('.life-line__project-band.is-life-goal').first().locator('.life-line__goal-endpoint')).toBeVisible();
+  await expect(page.locator('.life-line__project-band.is-life-system').first()).toBeVisible();
+  await expect(page.locator('.life-line__project-band.is-life-system').first()).toHaveClass(/is-open-ended/);
   await setLifeMapZoom(page, 'week');
-  await expect(page.locator('.life-line__task-marker-label')).toHaveCount(0);
-  await expect(page.locator('.life-line__task-marker')).toHaveCount(3);
-  await expect(page.locator('.life-line__task-count').filter({ hasText: '2' })).toBeVisible();
+  await expect(page.locator('.life-line__project-band.is-life-goal').first()).toBeVisible();
+  await expect(page.locator('.life-line__project-band.is-life-system').first()).toBeVisible();
   await setLifeMapZoom(page, 'year');
   await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '2027考研时间条带' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /备战研究生考试时间条带/ })).toBeVisible();
   await expect(page.locator('.life-line__node.is-milestone').filter({ hasText: '六级成绩公布' })).toHaveCount(0);
   await expect(page.locator('.life-line__anchor.is-milestone[title*="六级成绩公布"]')).toBeVisible();
   await expect(page.locator('.life-line__anchor.is-milestone.is-importance-normal[title*="阶段模拟考试"]')).toBeVisible();
@@ -604,7 +623,7 @@ test('life map coalesces continuous scrolling while pinned chrome follows every 
   expect(stageTitle.x + stageTitle.width).toBeLessThanOrEqual(viewport.x + viewport.width);
 });
 
-test('life map surfaces stages, priorities, goal chains, countdowns and workload at a glance', async ({ page }) => {
+test('life map surfaces stages, a core goal and the next milestone without project-planning chrome', async ({ page }) => {
   await page.getByTitle('人生地图').click();
 
   const summary = page.getByLabel('当前规划摘要');
@@ -612,9 +631,9 @@ test('life map surfaces stages, priorities, goal chains, countdowns and workload
   await expect(summary).toContainText('考研准备期');
   await expect(summary.getByRole('button', { name: '编辑当前人生阶段' })).toBeVisible();
   await expect(summary).toContainText('核心');
-  await expect(summary).toContainText('2027考研');
+  await expect(summary).toContainText('备战研究生考试');
   await expect(summary).toContainText('六级成绩公布');
-  await expect(summary).toContainText('本周');
+  await expect(summary).not.toContainText('本周');
 
   const stageRail = page.getByLabel('人生阶段');
   await expect(stageRail.locator('.life-line__stage-rail-title')).toHaveCount(0);
@@ -622,22 +641,16 @@ test('life map surfaces stages, priorities, goal chains, countdowns and workload
   await expect(stageRail.getByRole('button', { name: '考研准备期人生阶段', exact: true })).toBeVisible();
   await expect(stageRail.locator('.life-line__stage-band.is-current')).toContainText('当前');
   await expect(stageRail.locator('.life-line__stage-zone.is-current')).toBeVisible();
-  await expect(page.getByLabel('目标链')).toHaveCount(0);
-  await page.locator('[data-project-id="phase-b"]').click();
-  await expect(page.getByLabel('目标链').locator(':scope > path')).not.toHaveCount(0);
   await expect(page.getByLabel('计划负荷分布')).toHaveCount(0);
   await page.getByRole('button', { name: '视图设置' }).click();
-  await page.locator('.life-line__view-menu button').filter({ hasText: '计划负荷' }).click();
-  await expect(page.getByLabel('计划负荷分布')).toBeVisible();
+  await expect(page.locator('.life-line__view-menu')).not.toContainText('计划负荷');
+  await expect(page.locator('.life-line__view-menu')).not.toContainText('普通任务');
   await page.getByRole('button', { name: '视图设置' }).click();
 
-  const phaseA = page.locator('[data-project-id="phase-a"]');
+  const phaseA = page.locator('[data-project-id="goal:phase-a"]');
   await phaseA.click();
-  await page.getByRole('button', { name: '设为核心项目' }).click();
-  await expect(phaseA).toHaveAttribute('data-project-rank', 'core');
-  await expect(page.getByRole('button', { name: '设为核心项目' })).toContainText('已是核心');
-  await expect(page.getByRole('button', { name: '设为核心项目' })).toBeDisabled();
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('life-map:project-ranks') ?? '{}')['phase-a'])).toBe('core');
+  await expect(page.getByRole('button', { name: '编辑', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '设为核心项目' })).toHaveCount(0);
 });
 
 test('life stage rail provides direct create and edit actions', async ({ page }) => {
@@ -647,7 +660,7 @@ test('life stage rail provides direct create and edit actions', async ({ page })
   const stageEditor = page.locator('.life-line__stage-editor');
   await expect(stageEditor).toContainText('编辑人生阶段');
   await expect(stageEditor.getByLabel('阶段名称')).toHaveValue('考研准备期');
-  await expect(stageEditor).toContainText('不会创建项目、项目分组或任务');
+  await expect(stageEditor).toContainText('不会自动创建目标或长期系统');
   await stageEditor.getByRole('button', { name: '取消' }).click();
 
   await page.getByRole('button', { name: '添加到时间线' }).click();
@@ -673,13 +686,15 @@ test('life map supports command jump and creates a dedicated planning review', a
   const search = page.getByRole('textbox', { name: '搜索人生地图' });
   await search.fill('Phase B');
   await page.locator('.life-line__jump-results').getByRole('button', { name: /Phase B/ }).click();
-  await expect(page.locator('[data-project-id="phase-b"]')).toHaveClass(/is-selected/);
+  await expect(page.locator('[data-project-id="goal:phase-b"]')).toHaveClass(/is-selected/);
 
   await page.getByRole('button', { name: '添加到时间线' }).click();
-  await page.getByRole('button', { name: '添加规划复盘' }).click();
-  const editor = page.locator('.life-line__draft-editor');
-  await expect(editor.getByLabel('内容')).toHaveValue(/^复盘：/);
-  await editor.getByRole('button', { name: '添加到画布' }).click();
-  await expect(page.locator('.life-line__node.is-review')).toBeVisible();
-  await expect(page.locator('.life-line__anchor.is-review')).toBeVisible();
+  await page.getByRole('button', { name: '新建周期复盘' }).click();
+  const editor = page.locator('.life-map-editor form');
+  await expect(editor.getByRole('heading', { name: '新建周期复盘' })).toBeVisible();
+  await editor.getByLabel('复盘标题').fill('七月计划复盘');
+  await editor.getByLabel('本周期发生了什么').fill('本月完成了核心学习任务。');
+  await editor.getByLabel('下一周期如何调整').fill('降低并行项目数量。');
+  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByRole('button', { name: '复盘 · 七月计划复盘时间条带' })).toBeVisible();
 });

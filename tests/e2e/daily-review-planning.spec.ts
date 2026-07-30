@@ -32,7 +32,7 @@ const reviewTasks = [
   {
     id: 'auto-source', topicName: '重点关系知识', graphNodeId: 'rolling-node-a',
     dueDate: addDays(today, -2), originalDueDate: addDays(today, -2), roundOrder: 1,
-    isCompleted: true, completedDate: today, complexity: 'hard' as const, smStatus: 'confirmed' as const,
+    isCompleted: true, completedDate: today, tag: '政治', complexity: 'hard' as const, smStatus: 'confirmed' as const,
     completionSource: 'project-task' as const,
     completionSourceTaskId: 'source-project',
     completionSourceBlockId: 'source-block',
@@ -44,29 +44,29 @@ const reviewTasks = [
   {
     id: 'rolling-a1', topicName: '重点关系知识', graphNodeId: 'rolling-node-a',
     dueDate: today, originalDueDate: today, roundOrder: 2,
-    isCompleted: false, complexity: 'hard' as const, smStatus: 'scheduled' as const,
+    isCompleted: false, tag: '政治', complexity: 'hard' as const, smStatus: 'scheduled' as const,
   },
   {
     id: 'rolling-a2', topicName: '重点关系知识', graphNodeId: 'rolling-node-a',
     dueDate: addDays(today, 3), originalDueDate: addDays(today, 3), roundOrder: 3,
-    isCompleted: false, complexity: 'hard' as const, smStatus: 'scheduled' as const,
+    isCompleted: false, tag: '政治', complexity: 'hard' as const, smStatus: 'scheduled' as const,
   },
   {
     id: 'rolling-b1', topicName: '常规关系知识', graphNodeId: 'rolling-node-b',
     dueDate: tomorrow, originalDueDate: tomorrow, roundOrder: 1,
-    isCompleted: false, complexity: 'normal' as const, smStatus: 'scheduled' as const,
+    isCompleted: false, tag: '英语', complexity: 'normal' as const, smStatus: 'scheduled' as const,
   },
   {
     id: 'rolling-b2', topicName: '常规关系知识', graphNodeId: 'rolling-node-b',
     dueDate: addDays(today, 4), originalDueDate: addDays(today, 4), roundOrder: 2,
-    isCompleted: false, complexity: 'normal' as const, smStatus: 'scheduled' as const,
+    isCompleted: false, tag: '英语', complexity: 'normal' as const, smStatus: 'scheduled' as const,
   },
 ];
 
 const extraReviewTasks = [
   {
     id: 'rolling-c1', topicName: '额外复习主题C', dueDate: tomorrow, originalDueDate: tomorrow,
-    roundOrder: 1, isCompleted: false, complexity: 'normal' as const, smStatus: 'scheduled' as const,
+    roundOrder: 1, isCompleted: false, tag: '政治', complexity: 'normal' as const, smStatus: 'scheduled' as const,
   },
   {
     id: 'rolling-d1', topicName: '额外复习主题D', dueDate: tomorrow, originalDueDate: tomorrow,
@@ -129,6 +129,8 @@ test('nightly selection keeps tomorrow, rolls the rest one day and preserves eve
   const dialog = page.getByRole('dialog', { name: '明日复习选择' });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('.eb-daily-plan-card')).toHaveCount(2);
+  await expect(dialog.getByRole('region', { name: '政治标签' })).toContainText('第 2 轮');
+  await expect(dialog.getByRole('region', { name: '英语标签' })).toContainText('第 1 轮');
   await expect(dialog).toContainText('后续 1 轮保持间隔联动');
 
   const important = dialog.locator('.eb-daily-plan-card').filter({ hasText: '重点关系知识' });
@@ -247,6 +249,12 @@ test('nightly selection allows keeping more than the configured daily task limit
   await page.getByRole('button', { name: '明日选择' }).click();
   const dialog = page.getByRole('dialog', { name: '明日复习选择' });
   await expect(dialog.locator('.eb-daily-plan-card')).toHaveCount(4);
+  const politics = dialog.getByRole('region', { name: '政治标签' });
+  await expect(politics.getByRole('region', { name: '政治第1轮' })).toContainText('额外复习主题C');
+  await expect(politics.getByRole('region', { name: '政治第2轮' })).toContainText('重点关系知识');
+  await expect(dialog.getByRole('region', { name: '未设置标签', exact: true })).toContainText('额外复习主题D');
+  await politics.getByRole('region', { name: '政治第1轮' }).getByRole('button', { name: '本轮全选' }).click();
+  await expect(politics.getByRole('region', { name: '政治第1轮' }).getByRole('button', { name: '本轮取消' })).toBeVisible();
   const unselectedButtons = dialog.getByRole('button', { name: '保留明天' });
   while (await unselectedButtons.count() > 0) {
     await unselectedButtons.first().click();

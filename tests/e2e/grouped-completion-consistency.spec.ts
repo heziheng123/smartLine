@@ -92,7 +92,11 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.tl-dock')).toBeVisible();
   await expect.poll(() => page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/store/index.ts?t='))
+      ?? '/src/store/index.ts';
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
     const state = useTimelineStore.getState();
     return state.isHydrated
       && state.tasks.some((task) => task.id === 'grouped-completion-project');
@@ -109,7 +113,11 @@ async function openProjectDocument(page: Page) {
 
 async function readCompletionCopies(page: Page) {
   return page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/store/index.ts?t='))
+      ?? '/src/store/index.ts';
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
     const task = useTimelineStore.getState().tasks.find((item) => item.id === 'grouped-completion-project');
     const child = useTimelineStore.getState().groups
       .flatMap((group) => group.children)
@@ -125,7 +133,11 @@ async function readCompletionCopies(page: Page) {
 
 async function readNodeStatus(page: Page) {
   return page.evaluate(async () => {
-    const { useGraphStore } = await import('/src/graph/store.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/graph/store.ts?t='))
+      ?? '/src/graph/store.ts';
+    const { useGraphStore } = await import(/* @vite-ignore */ moduleUrl);
     return useGraphStore.getState().nodes
       .find((node) => node.id === 'completion-node')?.status;
   });
@@ -170,7 +182,11 @@ test('project document text blocks can be deleted and stay deleted after reload'
   await expect(textCard).toHaveCount(0);
 
   await expect.poll(() => page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/store/index.ts?t='))
+      ?? '/src/store/index.ts';
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
     const state = useTimelineStore.getState();
     const taskHasBlock = state.tasks
       .find((task) => task.id === 'grouped-completion-project')
@@ -204,7 +220,11 @@ test('completed task without automatic review activates its knowledge node in bl
   await expect.poll(() => readNodeStatus(page)).toBe('activated');
 
   const reviewCount = await page.evaluate(async () => {
-    const { useEbbStore } = await import('/src/ebb/store.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/ebb/store.ts?t='))
+      ?? '/src/ebb/store.ts';
+    const { useEbbStore } = await import(/* @vite-ignore */ moduleUrl);
     return useEbbStore.getState().reviewTasks
       .filter((task) => task.graphNodeId === 'completion-node' && !task.isArchived)
       .length;
@@ -234,7 +254,11 @@ test('a remote legacy project without blocks cannot break linked-task cancellati
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
   await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/store/index.ts?t='))
+      ?? '/src/store/index.ts';
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
     const state = useTimelineStore.getState();
     useTimelineStore.setState({
       tasks: [
@@ -259,7 +283,11 @@ test('a remote legacy project without blocks cannot break linked-task cancellati
   expect(pageErrors).toEqual([]);
 
   const repairedBlocks = await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/store/index.ts?t='))
+      ?? '/src/store/index.ts';
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
     return useTimelineStore.getState().tasks
       .find((task) => task.id === 'remote-legacy-without-blocks')?.blocks;
   });
@@ -268,7 +296,11 @@ test('a remote legacy project without blocks cannot break linked-task cancellati
 
 test('a divergent Liveblocks batch is repaired before a stale group copy can drive the UI', async ({ page }) => {
   await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const moduleUrl = performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => name.includes('/src/store/index.ts?t='))
+      ?? '/src/store/index.ts';
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
     const setCompleted = (task: Task, value: boolean) => ({
       ...task,
       blocks: task.blocks.map((block) => block.id === 'grouped-completion-block'

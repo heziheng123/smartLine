@@ -8,12 +8,15 @@ import {
 import { useGraphStore } from '@/graph/store';
 import { normalizeGraphNodes } from '@/graph/store';
 import { normalizeTimelineData } from '@/store/timelineData';
+import { useLifeMapStore } from '@/lifeMap/store';
+import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
 import {
   isWorkspaceQueueSuppressed,
   listWorkspaceConflicts,
   queueWorkspaceFields,
   removeWorkspaceConflict,
+  replaceWorkspaceConflictPending,
   setWorkspaceQueueSuppressed,
   WORKSPACE_QUEUE_EVENT,
   workspaceQueueChannel,
@@ -35,6 +38,7 @@ export {
   type WorkspaceConflictRecord,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
+export { acknowledgeAppliedWorkspaceSync } from './workspaceSyncQueueCore';
 
 function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
   const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones', 'lifeStages']
@@ -55,6 +59,13 @@ function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unkn
       milestones: normalized.milestones,
       lifeStages: normalized.lifeStages,
     });
+  }
+
+  const hasLifeMapFields = LIFE_MAP_FIELDS.some((key) => fields[key] !== undefined);
+  if (hasLifeMapFields) {
+    const current = useLifeMapStore.getState();
+    const source = Object.fromEntries(LIFE_MAP_FIELDS.map((key) => [key, fields[key] ?? current[key]]));
+    useLifeMapStore.setState(normalizeLifeMapData(source));
   }
 
   const hasEbbFields = ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings']
@@ -100,6 +111,7 @@ function isWorkspaceMessage(value: unknown): value is {
   if (!record.fields || typeof record.fields !== 'object' || Array.isArray(record.fields)) return false;
   const allowed = new Set<WorkspaceStorageField>([
     'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
+    ...LIFE_MAP_FIELDS,
     'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
     'schedules', 'retrospectives', 'nodes',
   ]);
@@ -147,6 +159,39 @@ export async function restoreWorkspaceConflict(id: string): Promise<void> {
   await removeWorkspaceConflict(id);
 }
 
+export async function restoreWorkspaceConflictFields(
+  id: string,
+  selected: WorkspaceStorageField[],
+): Promise<void> {
+  const selectedSet = new Set(selected);
+  if (selectedSet.size === 0) throw new Error('请至少选择一个要恢复的数据字段。');
+  const conflicts = await listWorkspaceConflicts();
+  const conflict = conflicts.find((item) => item.id === id);
+  if (!conflict) throw new Error('冲突副本不存在。');
+  const pickedFields = Object.fromEntries(Object.entries(conflict.pending.fields).filter(([key]) => selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
+  if (Object.keys(pickedFields).length === 0) throw new Error('所选字段已不在冲突副本中。');
+  const pickedBase = Object.fromEntries(Object.entries(conflict.pending.baseFields ?? {}).filter(([key]) => selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
+
+  setWorkspaceQueueSuppressed(true);
+  try {
+    applyWorkspaceFields(pickedFields);
+  } finally {
+    setWorkspaceQueueSuppressed(false);
+  }
+  queueWorkspaceFields(pickedFields, pickedBase, { bypassSuppression: true });
+
+  const remainingFields = Object.fromEntries(Object.entries(conflict.pending.fields).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
+  const remainingBaseFields = Object.fromEntries(Object.entries(conflict.pending.baseFields ?? {}).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
+  const remainingBaseHashes = Object.fromEntries(Object.entries(conflict.pending.baseHashes ?? {}).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, string>>;
+  await replaceWorkspaceConflictPending(id, Object.keys(remainingFields).length ? {
+    ...conflict.pending,
+    fields: remainingFields,
+    baseFields: remainingBaseFields,
+    baseHashes: remainingBaseHashes,
+    updatedAt: new Date().toISOString(),
+  } : null);
+}
+
 function isUnifiedWorkspaceConfigured(): boolean {
   try {
     const settings = JSON.parse(
@@ -165,6 +210,7 @@ function isWorkspaceStorageReady(): boolean {
     useEbbStore.getState(),
     useDailyScheduleStore.getState(),
     useGraphStore.getState(),
+    useLifeMapStore.getState(),
   ];
   return stores.every((state) => (
     state.liveblocks?.room?.getStatus() === 'connected'
@@ -178,6 +224,7 @@ export function startWorkspaceQueueTracking(): () => void {
   let ebb = useEbbStore.getState();
   let daily = useDailyScheduleStore.getState();
   let graph = useGraphStore.getState();
+  let lifeMap = useLifeMapStore.getState();
 
   const shouldQueue = () => (
     isUnifiedWorkspaceConfigured()
@@ -279,6 +326,21 @@ export function startWorkspaceQueueTracking(): () => void {
           { nodes: previous.nodes },
           { preservePendingFields: true },
         );
+      }
+    }),
+    useLifeMapStore.subscribe((state) => {
+      const previous = lifeMap;
+      lifeMap = state;
+      const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      LIFE_MAP_FIELDS.forEach((field) => {
+        if (state[field] !== previous[field]) {
+          changed[field] = state[field];
+          base[field] = previous[field];
+        }
+      });
+      if (!isWorkspaceQueueSuppressed() && shouldQueue() && Object.keys(changed).length) {
+        queueWorkspaceFields(changed, base, { preservePendingFields: true });
       }
     }),
   ];

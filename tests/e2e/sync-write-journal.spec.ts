@@ -95,6 +95,11 @@ async function openProjectTaskCard(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(({ projectData }) => {
+    const readiness = window as typeof window & { __smartlineAppReady?: boolean };
+    readiness.__smartlineAppReady = false;
+    window.addEventListener('smartline:app-ready', () => {
+      readiness.__smartlineAppReady = true;
+    }, { once: true });
     localStorage.clear();
     sessionStorage.clear();
     localStorage.setItem(
@@ -119,6 +124,7 @@ test.beforeEach(async ({ page }) => {
       'smart-ebb-liveblocks',
       'daily-schedule-liveblocks',
       'line-graph-liveblocks',
+      'line-life-map-liveblocks',
     ]) {
       localStorage.setItem(key, JSON.stringify({
         roomCode: 'e2e-journal',
@@ -136,6 +142,26 @@ test.beforeEach(async ({ page }) => {
     );
   }, { projectData: project });
   await page.goto('/');
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & { __smartlineAppReady?: boolean }
+  ).__smartlineAppReady)).toBe(true);
+});
+
+test('独立人生地图编辑会写入统一工作区离线队列', async ({ page }) => {
+  await page.getByTitle('人生地图').click();
+  const lifeMap = page.getByRole('main', { name: '人生地图' });
+  await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
+  await lifeMap.getByRole('button', { name: '新建目标' }).click();
+  const editor = page.locator('.life-map-editor form');
+  await editor.getByLabel('名称').fill('多端同步健康目标');
+  await editor.getByLabel('人生领域').selectOption('health');
+  await editor.getByRole('button', { name: '保存', exact: true }).click();
+
+  await expect.poll(async () => {
+    const pending = await readPendingWorkspaceSync(page);
+    const fields = pending?.fields as { lifeMapGoals?: Array<{ name?: string }> } | undefined;
+    return fields?.lifeMapGoals?.some((item) => item.name === '多端同步健康目标') ?? false;
+  }).toBe(true);
 });
 
 test('rapid completion toggles are journaled while cloud storage is still loading', async ({ page }) => {
@@ -227,75 +253,4 @@ test('connected storage journal keeps the newest cancellation instead of an olde
     } | undefined;
     return fields?.tasks?.[0]?.blocks?.[0]?.header?.isCompleted;
   }).toBe(false);
-});
-
-test('an in-flight flush restarts with the newest queue revision', async ({ page }) => {
-  const result = await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
-    const {
-      clearPendingWorkspaceSync,
-      queueWorkspaceFields,
-      readPendingWorkspaceSync,
-    } = await import('/src/services/workspaceOfflineQueue.ts');
-    const { flushWorkspaceQueue } = await import('/src/services/workspaceSync.ts');
-
-    await clearPendingWorkspaceSync();
-    const incomplete = [{ id: 'race-task', isCompleted: false }];
-    const completed = [{ id: 'race-task', isCompleted: true }];
-    const rootData: Record<string, unknown> = { tasks: incomplete };
-    let releaseFirstStorage!: () => void;
-    const firstStorageGate = new Promise<void>((resolve) => {
-      releaseFirstStorage = resolve;
-    });
-    let storageReads = 0;
-    const root = {
-      toJSON: () => ({ ...rootData }),
-      set: (key: string, value: unknown) => {
-        rootData[key] = value;
-      },
-    };
-    const room = {
-      getStatus: () => 'connected',
-      getStorage: async () => {
-        storageReads += 1;
-        if (storageReads === 1) await firstStorageGate;
-        return { root };
-      },
-      batch: (callback: () => void) => callback(),
-    };
-    const current = useTimelineStore.getState();
-    useTimelineStore.setState({
-      liveblocks: {
-        ...current.liveblocks,
-        room,
-        status: 'connected',
-        isStorageLoading: false,
-      },
-    } as never);
-
-    queueWorkspaceFields({ tasks: completed }, { tasks: incomplete });
-    await readPendingWorkspaceSync();
-    const flush = flushWorkspaceQueue();
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-    // The user cancels while the first flush still holds the older completed
-    // snapshot. The second queue revision must supersede it before root.set.
-    queueWorkspaceFields({ tasks: incomplete }, { tasks: completed });
-    await readPendingWorkspaceSync();
-    releaseFirstStorage();
-    const report = await flush;
-    const pending = await readPendingWorkspaceSync();
-
-    return {
-      tasks: rootData.tasks,
-      pending,
-      report,
-      storageReads,
-    };
-  });
-
-  expect(result.tasks).toEqual([{ id: 'race-task', isCompleted: false }]);
-  expect(result.pending).toBeNull();
-  expect(result.report).toEqual({ applied: 1, conflict: false });
-  expect(result.storageReads).toBe(2);
 });

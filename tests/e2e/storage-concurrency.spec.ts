@@ -4,6 +4,7 @@ const EXPECTED_STORES = [
   'daily_schedule_data',
   'ebb_data',
   'graph_data',
+  'life_map_data',
   'local-forage-detect-blob-support',
   'timeline_data',
   'workspace_snapshot_chunks',

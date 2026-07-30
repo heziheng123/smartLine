@@ -82,6 +82,12 @@ export interface Task {
   /** 智能任务块数组（新数据载体） */
   blocks: Block[];
   blocksUpdatedAt?: string;   // blocks 上次保存时间（ISO 字符串）
+  /** 人生地图的独立视觉语义；其他视图不会使用。 */
+  lifeMapKind?: 'goal' | 'system' | 'review';
+  lifeMapMeta?: string;
+  lifeMapProgress?: number;
+  lifeMapOpenEnded?: boolean;
+  lifeMapPlacement?: 'above' | 'below';
 }
 
 /** 任务分组 */

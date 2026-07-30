@@ -17,12 +17,13 @@
 .life-line button { font: inherit; }
 .life-line__frame { max-width: 1800px; margin-right: auto; margin-left: auto; overflow: visible; }
 .life-line__sr-heading { width: 1px; height: 1px; position: absolute; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-.life-line__toolbar { min-height: 48px; position: relative; z-index: 220; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 0 2px 6px; border-bottom: 1px solid var(--lm-border); box-sizing: border-box; background: #fbfbfa; }
+.life-line__toolbar { min-height: 48px; position: relative; z-index: 220; display: grid; grid-template-columns: auto minmax(110px,1fr) auto; align-items: center; gap: 12px; padding: 0 2px 6px; border-bottom: 1px solid var(--lm-border); box-sizing: border-box; background: #fbfbfa; }
 .life-line__brand { min-width: 0; display: flex; align-items: center; gap: 8px; color: #5d6471; }
 .life-line__brand > svg { color: var(--lm-accent); }
 .life-line__brand h1 { margin: 0; color: var(--lm-ink); font-size: 16px; letter-spacing: -.02em; }
 .life-line__brand > span { padding-left: 8px; border-left: 1px solid #dfe1e6; color: #687184; font-size: 11px; font-weight: 650; }
 .life-line__controls { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.life-line__toolbar-scope { min-width: 0; display: flex; align-items: center; }
 .life-line__menu-control { position: relative; }
 .life-line__add-button,
 .life-line__jump-button,
@@ -54,6 +55,8 @@
 .life-line__add-menu small { display: block; }
 .life-line__add-menu strong { color: #30394a; font-size: 10px; }
 .life-line__add-menu small { margin-top: 3px; color: #9299a6; font-size: 8px; }
+.life-line__add-section-label { margin: 5px 7px 2px; padding-top: 7px; border-top: 1px solid #eceef3; color: #989fab; font-size: 8px; font-weight: 750; letter-spacing: .04em; }
+.life-line__quick-error + .life-line__add-section-label, .life-line__quick-entry + .life-line__add-section-label { margin-top: 7px; }
 .life-line__view-menu { width: 248px; right: 0; }
 .life-line__jump-menu { width: 300px; right: 0; padding: 8px; }
 .life-line__jump-menu > label { height: 35px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #dfe2e8; border-radius: 7px; color: #9098a5; background: #f8f9fb; }
@@ -121,6 +124,8 @@
 .life-line__status-line .is-load-low strong { color: #3d8d74; }
 .life-line__status-line .is-load-medium strong { color: #a9772e; }
 .life-line__status-line .is-load-high strong { color: #b75c5c; }
+.life-line__status-line > * { flex: 1 1 0; }
+.life-line__status-line > :last-child { padding-right: 4px; }
 .life-line__hint { min-height: 28px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 6px; padding: 0 8px; border-radius: 7px; color: #737d8c; background: var(--lm-accent-soft); font-size: 8px; }
 .life-line__hint span { color: var(--lm-accent); font-weight: 750; }
 .life-line__hint button { margin-left: 4px; padding: 2px 5px; border: 0; border-radius: 4px; color: var(--lm-accent); background: #fff; font-size: 8px; cursor: pointer; }
@@ -203,6 +208,20 @@
 .life-line__project-band.is-rank-core strong { font-weight: 850; }
 .life-line__project-band.is-rank-routine { border-right-style: dotted; border-left-style: dotted; }
 .life-line__project-band.is-rank-paused { outline: 1px dashed var(--band-border-color); outline-offset: -2px; }
+.life-line__project-band.is-life-goal { height: 27px; border: 1px solid color-mix(in srgb, var(--band-border-color), white 38%); border-radius: 8px; background: color-mix(in srgb, var(--band-color), white 34%); box-shadow: 0 2px 7px color-mix(in srgb, var(--band-border-color), transparent 88%); }
+.life-line__project-band.is-life-goal > span { height: 24px; padding-right: 12px; }
+.life-line__project-band.is-life-goal .life-line__project-progress { height: 3px; bottom: 0; border-radius: 0 2px 2px 6px; background: var(--band-border-color); opacity: .82; }
+.life-line__goal-endpoint { width: 9px; height: 9px; position: absolute; z-index: 4; right: -5px; top: 8px; border: 2px solid #fff; border-radius: 50%; box-sizing: border-box; background: var(--band-border-color); box-shadow: 0 0 0 1px var(--band-border-color); }
+.life-line__project-band.is-life-system { height: 21px; border: 1px dashed color-mix(in srgb, var(--band-border-color), white 32%); border-radius: 5px; background-color: color-mix(in srgb, var(--band-color), white 55%); background-image: radial-gradient(circle at 4px 50%, color-mix(in srgb, var(--band-border-color), transparent 48%) 1.2px, transparent 1.4px); background-size: 10px 100%; box-shadow: none; }
+.life-line__project-band.is-life-system > span { height: 19px; background: linear-gradient(90deg, color-mix(in srgb, var(--band-color), white 22%) 0 42%, transparent 76%); }
+.life-line__project-band.is-life-system .life-line__project-progress { height: 2px; bottom: -1px; background: var(--band-border-color); opacity: .65; }
+.life-line__project-band.is-life-system.is-open-ended { border-right-color: transparent; -webkit-mask-image: linear-gradient(90deg,#000 0,#000 calc(100% - 28px),transparent 100%); mask-image: linear-gradient(90deg,#000 0,#000 calc(100% - 28px),transparent 100%); }
+.life-line__project-band.is-life-review { height: 18px; border: 1px solid #cbd1db; border-radius: 9px; color: #687184; background: rgba(248,250,252,.94); box-shadow: none; }
+.life-line__project-band.is-life-review > span { height: 16px; }
+.life-line__project-band.is-life-review .life-line__project-progress { display: none; }
+.life-line__annotation-callout.is-theme { border-style: dashed; background: rgba(255,255,255,.9); box-shadow: 0 4px 14px rgba(30,41,59,.06); }
+.life-line__annotation-callout.is-theme strong { font-weight: 720; letter-spacing: .01em; }
+.life-line__add-menu button.is-secondary { min-height: 38px; opacity: .86; }
 .life-line.is-zoom-year .life-line__project-band { box-shadow: none; }
 .life-line.is-zoom-year .life-line__project-band:not(.is-rank-core) { height: 17px; margin-top: 3px; }
 .life-line.is-zoom-year .life-line__project-band:not(.is-rank-core)::before,
@@ -348,7 +367,7 @@
 .life-line__interaction-layer.is-note { cursor: copy; }
 .life-line__interaction-layer.is-milestone { cursor: cell; }
 .life-line__selection-preview { position: absolute; z-index: 31; border: 1px dashed #6d63e8; border-radius: 3px; background: rgba(109,99,232,.07); pointer-events: none; }
-.life-line__draft-editor { width: 326px; position: fixed; z-index: 160; top: 70px; right: 16px; padding: 0; overflow: hidden; border: 1px solid #daddE7; border-radius: 12px; color: #364052; background: rgba(255,255,255,.985); box-shadow: 0 22px 60px rgba(30,41,59,.18); backdrop-filter: blur(14px); }
+.life-line__draft-editor { width: 326px; position: fixed; z-index: 260; top: 70px; right: 16px; padding: 0; overflow: hidden; border: 1px solid #daddE7; border-radius: 12px; color: #364052; background: rgba(255,255,255,.985); box-shadow: 0 22px 60px rgba(30,41,59,.18); backdrop-filter: blur(14px); }
 .life-line__draft-editor > header { min-height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 13px; border-bottom: 1px solid #eceef3; background: #fafbfc; }
 .life-line__draft-editor > header > div { display: flex; flex-direction: column; gap: 3px; }
 .life-line__draft-editor > header span { color: #969da8; font-size: 8px; }
@@ -387,7 +406,7 @@
 .life-line__draft-editor > footer button.is-primary { border-color: #6366f1; color: #fff; background: #6366f1; }
 .life-line__draft-editor > footer button.is-primary:disabled { opacity: .45; cursor: not-allowed; }
 .life-line__draft-editor > footer button.is-danger { border-color: #f1d5d5; color: #c45c5c; background: #fff8f8; }
-.life-line__stage-editor { width: 342px; position: fixed; z-index: 165; top: 122px; right: 16px; padding: 0; overflow: hidden; border: 1px solid #daddE7; border-radius: 12px; color: #364052; background: rgba(255,255,255,.99); box-shadow: 0 22px 60px rgba(30,41,59,.18); backdrop-filter: blur(14px); }
+.life-line__stage-editor { width: 342px; position: fixed; z-index: 265; top: 122px; right: 16px; padding: 0; overflow: hidden; border: 1px solid #daddE7; border-radius: 12px; color: #364052; background: rgba(255,255,255,.99); box-shadow: 0 22px 60px rgba(30,41,59,.18); backdrop-filter: blur(14px); }
 .life-line__stage-editor > header { min-height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 13px; border-bottom: 1px solid #eceef3; background: #fafbfc; }
 .life-line__stage-editor > header > div { display: flex; flex-direction: column; gap: 3px; }
 .life-line__stage-editor > header span { color: #969da8; font-size: 8px; }
@@ -469,7 +488,7 @@
 .life-line__task-inspector > footer { padding: 8px 12px; border-top: 1px solid #eceef3; color: #9aa1ad; background: #fafbfc; font-size: 7px; }
 @media (max-width: 760px) {
   .life-line { padding: 6px 8px 82px; }
-  .life-line__toolbar { grid-template-columns: minmax(0,1fr) auto; gap: 5px; padding: 0 1px 6px; }
+  .life-line__toolbar { grid-template-columns: auto minmax(34px,1fr) auto; gap: 5px; padding: 0 1px 6px; }
   .life-line__brand { gap: 5px; }
   .life-line__brand h1 { font-size: 12px; }
   .life-line__brand > span { padding-left: 5px; font-size: 8px; }

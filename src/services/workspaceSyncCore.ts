@@ -177,6 +177,6 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: 
 }
 
 export async function hashWorkspaceBackup(backup: WorkspaceBackup): Promise<string> {
-  const data = { timeline: backup.timeline, ebb: backup.ebb, daily: backup.daily, graph: backup.graph };
+  const data = { timeline: backup.timeline, lifeMap: backup.lifeMap, ebb: backup.ebb, daily: backup.daily, graph: backup.graph };
   return await hashWorkspaceValue(data);
 }

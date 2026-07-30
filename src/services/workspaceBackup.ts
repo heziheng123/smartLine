@@ -16,8 +16,11 @@ import { parseSourceId } from '@/components/dailySchedule/conversion';
 import { getReviewTopicKey } from '@/ebb/scheduler';
 import { createScopedStorage } from '@/utils/persistence';
 import { isContinuousTask } from '@/domain/taskRules';
+import { useLifeMapStore } from '@/lifeMap/store';
+import { LIFE_MAP_FIELDS, activeLifeMapItems, normalizeLifeMapData, validateLifeMapData } from '@/lifeMap/data';
+import type { LifeMapData } from '@/lifeMap/types';
 
-export const WORKSPACE_SCHEMA_VERSION = 2;
+export const WORKSPACE_SCHEMA_VERSION = 4;
 const snapshotStorage = createScopedStorage('workspace_snapshots');
 const snapshotChunkStorage = createScopedStorage('workspace_snapshot_chunks');
 
@@ -28,6 +31,7 @@ export interface WorkspaceBackup {
   exportedAt: string;
   deviceId: string;
   timeline: TimelineData & { lifeStages: LifeStage[] };
+  lifeMap: LifeMapData;
   ebb: EbbData;
   graph: GraphData;
   daily: {
@@ -41,6 +45,8 @@ export interface WorkspaceBackupSummary {
   tasks: number;
   groups: number;
   lifeStages: number;
+  lifeMapItems: number;
+  lifeMapAreas: number;
   projectDocuments: number;
   reviewTasks: number;
   dailyDays: number;
@@ -61,7 +67,7 @@ export interface WorkspaceSnapshot {
   storedBytes?: number;
 }
 
-type SnapshotSection = 'header' | 'timeline' | 'ebb' | 'graph' | 'daily' | 'settings';
+type SnapshotSection = 'header' | 'timeline' | 'lifeMap' | 'ebb' | 'graph' | 'daily' | 'settings';
 
 interface SnapshotChunk {
   encoding: 'gzip' | 'json';
@@ -105,8 +111,9 @@ export function createWorkspaceBackup(): WorkspaceBackup {
   const ebb = useEbbStore.getState();
   const graph = useGraphStore.getState();
   const daily = useDailyScheduleStore.getState();
+  const lifeMap = useLifeMapStore.getState();
 
-  if (!timeline.isHydrated || !ebb.isHydrated || !graph.isHydrated || !daily.isHydrated) {
+  if (!timeline.isHydrated || !ebb.isHydrated || !graph.isHydrated || !daily.isHydrated || !lifeMap.isHydrated) {
     throw new Error('工作区数据仍在加载，请稍后再试。');
   }
   const backup: WorkspaceBackup = {
@@ -122,6 +129,7 @@ export function createWorkspaceBackup(): WorkspaceBackup {
       milestones: timeline.milestones,
       lifeStages: timeline.lifeStages,
     },
+    lifeMap: normalizeLifeMapData(lifeMap),
     ebb: {
       reviewTasks: ebb.reviewTasks,
       inboxItems: ebb.inboxItems,
@@ -172,13 +180,14 @@ export function validateWorkspaceBackup(value: unknown): {
   if (!isRecord(value) || value.kind !== 'smart-line-workspace') {
     return { errors: ['这不是 Smart Line 完整工作区备份文件。'] };
   }
-  if (value.schemaVersion !== 1 && value.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3 && value.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
     errors.push(`不支持的备份版本：${String(value.schemaVersion)}。`);
   }
   const timeline = value.timeline;
   const ebb = value.ebb;
   const graph = value.graph;
   const daily = value.daily;
+  if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) errors.push(...validateLifeMapData(value.lifeMap));
   if (!isRecord(timeline) || !Array.isArray(timeline.tasks) || !Array.isArray(timeline.groups)
     || !Array.isArray(timeline.notes) || !Array.isArray(timeline.milestones)
     || (timeline.lifeStages !== undefined && !Array.isArray(timeline.lifeStages))) {
@@ -200,6 +209,7 @@ export function validateWorkspaceBackup(value: unknown): {
       ...rawBackup.timeline,
       lifeStages: Array.isArray(rawBackup.timeline.lifeStages) ? rawBackup.timeline.lifeStages : [],
     },
+    lifeMap: normalizeLifeMapData(isRecord(value.lifeMap) ? value.lifeMap : undefined),
     daily: {
       schedules: rawBackup.daily.schedules,
       retrospectives: normalizeDailyRetrospectives(
@@ -235,6 +245,9 @@ export function validateWorkspaceBackup(value: unknown): {
     && typeof stage.id === 'string' && typeof stage.name === 'string'
     && isDate(stage.start) && isDate(stage.end))) {
     errors.push('人生阶段包含缺失字段或无效日期。');
+  }
+  if (!Object.values(backup.lifeMap).every(Array.isArray)) {
+    errors.push('人生地图独立数据格式无效。');
   }
   if (!backup.ebb.reviewTasks.every((task) => isRecord(task)
     && typeof task.id === 'string' && typeof task.topicName === 'string'
@@ -316,6 +329,19 @@ export function validateWorkspaceBackup(value: unknown): {
     ['EBB 大纲', backup.ebb.outlineNodes],
     ['知识节点', backup.graph.nodes],
   ];
+  collections.push(
+    ['人生地图领域', backup.lifeMap.lifeMapAreas],
+    ['人生地图阶段', backup.lifeMap.lifeMapStages],
+    ['人生地图主题', backup.lifeMap.lifeMapThemes],
+    ['人生地图目标', backup.lifeMap.lifeMapGoals],
+    ['人生地图长期系统', backup.lifeMap.lifeMapSystems],
+    ['人生地图系统记录', backup.lifeMap.lifeMapSystemCheckIns],
+    ['人生地图关键事件', backup.lifeMap.lifeMapEvents],
+    ['人生地图重点', backup.lifeMap.lifeMapFocuses],
+    ['人生地图便签', backup.lifeMap.lifeMapNotes],
+    ['人生地图关联', backup.lifeMap.lifeMapRelations],
+    ['人生地图周期复盘', backup.lifeMap.lifeMapReviews],
+  );
   for (const [label, items] of collections) {
     if (!hasUniqueIds(items)) issues.push(`${label}存在重复 ID`);
   }
@@ -504,6 +530,15 @@ export function validateWorkspaceBackup(value: unknown): {
       tasks: backup.timeline.tasks.length,
       groups: backup.timeline.groups.length,
       lifeStages: backup.timeline.lifeStages.length,
+      lifeMapAreas: activeLifeMapItems(backup.lifeMap.lifeMapAreas).length,
+      lifeMapItems: activeLifeMapItems(backup.lifeMap.lifeMapStages).length
+        + activeLifeMapItems(backup.lifeMap.lifeMapThemes).length
+        + activeLifeMapItems(backup.lifeMap.lifeMapGoals).length
+        + activeLifeMapItems(backup.lifeMap.lifeMapSystems).length
+        + activeLifeMapItems(backup.lifeMap.lifeMapEvents).length
+        + activeLifeMapItems(backup.lifeMap.lifeMapFocuses).length
+        + activeLifeMapItems(backup.lifeMap.lifeMapNotes).length
+        + activeLifeMapItems(backup.lifeMap.lifeMapReviews).length,
       projectDocuments: backup.timeline.tasks.filter((task) => task.blocks.length > 0).length,
       reviewTasks: backup.ebb.reviewTasks.length,
       dailyDays: Object.keys(backup.daily.schedules).length,
@@ -551,6 +586,7 @@ function snapshotSections(backup: WorkspaceBackup): Record<SnapshotSection, unkn
       exportedAt: backup.exportedAt, deviceId: backup.deviceId,
     },
     timeline: backup.timeline,
+    lifeMap: backup.lifeMap,
     ebb: backup.ebb,
     graph: backup.graph,
     daily: backup.daily,
@@ -635,6 +671,7 @@ export async function materializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot):
   return {
     ...header,
     timeline: values.timeline as WorkspaceBackup['timeline'],
+    lifeMap: normalizeLifeMapData(values.lifeMap),
     ebb: values.ebb as WorkspaceBackup['ebb'],
     graph: values.graph as WorkspaceBackup['graph'],
     daily: values.daily as WorkspaceBackup['daily'],
@@ -664,6 +701,7 @@ export async function restoreWorkspaceBackup(backup: WorkspaceBackup): Promise<v
   const apply = async (source: WorkspaceBackup) => {
     const safe = deepClone(source);
     useTimelineStore.getState().replaceData(safe.timeline);
+    useLifeMapStore.getState().replaceLifeMapData(safe.lifeMap);
     useEbbStore.getState().replaceEbbData(safe.ebb);
     useGraphStore.getState().replaceGraphData(safe.graph);
     useDailyScheduleStore.getState().replaceSchedules(safe.daily.schedules);
@@ -715,6 +753,9 @@ function markWorkspaceChanged() {
 useTimelineStore.subscribe((state, previous) => {
   if (state.tasks !== previous.tasks || state.groups !== previous.groups || state.notes !== previous.notes
     || state.milestones !== previous.milestones || state.lifeStages !== previous.lifeStages) markWorkspaceChanged();
+});
+useLifeMapStore.subscribe((state, previous) => {
+  if (LIFE_MAP_FIELDS.some((field) => state[field] !== previous[field])) markWorkspaceChanged();
 });
 useEbbStore.subscribe((state, previous) => {
   if (state.reviewTasks !== previous.reviewTasks || state.inboxItems !== previous.inboxItems || state.outlineNodes !== previous.outlineNodes || state.ebbSettings !== previous.ebbSettings) markWorkspaceChanged();

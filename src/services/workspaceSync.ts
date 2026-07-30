@@ -3,6 +3,8 @@ import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
+import { LIFE_MAP_ROOM_PREFIX, useLifeMapStore } from '@/lifeMap/store';
+import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { liveblocksClient } from '@/store/client';
 import {
   createLocalSnapshot,
@@ -14,12 +16,14 @@ import {
 } from './workspaceBackup';
 import {
   WORKSPACE_QUEUE_EVENT,
+  acknowledgeAppliedWorkspaceSync,
   clearPendingWorkspaceSync,
   getPendingWorkspaceSyncToken,
   preserveWorkspaceConflict,
   readPendingWorkspaceSync,
   setWorkspaceQueueSuppressed,
-} from './workspaceOfflineQueue';
+  type WorkspaceStorageField,
+} from './workspaceSyncQueueCore';
 import { buildUnifiedRoomId, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, withTimeout } from './workspaceSyncCore';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
@@ -50,6 +54,7 @@ export interface WorkspaceMigrationReport {
 const SETTINGS_KEY = 'smart-line-sync-architecture-v1';
 const EXPECTED_KEYS = [
   'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
+  ...LIFE_MAP_FIELDS,
   'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
   'schedules', 'retrospectives', 'nodes',
 ] as const;
@@ -77,10 +82,11 @@ function enableAll(code: string): void {
   useEbbStore.getState().enableSync(code);
   useDailyScheduleStore.getState().enableSync(code);
   useGraphStore.getState().enableSync(code);
+  useLifeMapStore.getState().enableSync(code);
 }
 
 export function disconnectWorkspace(disable = false): void {
-  const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState()];
+  const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState(), useLifeMapStore.getState()];
   stores.forEach((store) => store.liveblocks?.leaveRoom?.());
   if (disable) stores.forEach((store) => store.disableSync());
 }
@@ -90,14 +96,16 @@ export function connectLegacyWorkspace(fallbackCode?: string): void {
   const ebb = useEbbStore.getState();
   const daily = useDailyScheduleStore.getState();
   const graph = useGraphStore.getState();
-  const code = fallbackCode || timeline.syncRoomCode || ebb.syncRoomCode || daily.syncRoomCode || graph.syncRoomCode;
+  const lifeMap = useLifeMapStore.getState();
+  const code = fallbackCode || timeline.syncRoomCode || ebb.syncRoomCode || daily.syncRoomCode || graph.syncRoomCode || lifeMap.syncRoomCode;
   if (!code) return;
-  const existing = timeline.syncEnabled || ebb.syncEnabled || daily.syncEnabled || graph.syncEnabled;
+  const existing = timeline.syncEnabled || ebb.syncEnabled || daily.syncEnabled || graph.syncEnabled || lifeMap.syncEnabled;
   if (!existing) enableAll(code);
   if (timeline.syncEnabled) timeline.liveblocks?.enterRoom?.(timeline.syncRoomCode || code);
   if (ebb.syncEnabled) ebb.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebb.syncRoomCode || code}`);
   if (daily.syncEnabled) daily.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${daily.syncRoomCode || code}`);
   if (graph.syncEnabled) graph.liveblocks?.enterRoom?.(`graph-${graph.syncRoomCode || code}`);
+  if (lifeMap.syncEnabled) lifeMap.liveblocks?.enterRoom?.(`${LIFE_MAP_ROOM_PREFIX}${lifeMap.syncRoomCode || code}`);
 }
 
 export function connectUnifiedWorkspace(roomCode: string, roomId?: string): string {
@@ -109,6 +117,7 @@ export function connectUnifiedWorkspace(roomCode: string, roomId?: string): stri
   useEbbStore.getState().liveblocks?.enterRoom?.(targetRoomId);
   useDailyScheduleStore.getState().liveblocks?.enterRoom?.(targetRoomId);
   useGraphStore.getState().liveblocks?.enterRoom?.(targetRoomId);
+  useLifeMapStore.getState().liveblocks?.enterRoom?.(targetRoomId);
   ensureQueueListener();
   void waitForUnifiedStorage()
     .then(() => flushWorkspaceQueue())
@@ -125,7 +134,7 @@ export function activateUnifiedWorkspace(roomCode: string, identity: string): st
 
 export function reconnectConfiguredWorkspace(): void {
   const settings = readWorkspaceSyncSettings();
-  const anyEnabled = [useTimelineStore, useEbbStore, useDailyScheduleStore, useGraphStore]
+  const anyEnabled = [useTimelineStore, useEbbStore, useDailyScheduleStore, useGraphStore, useLifeMapStore]
     .some((store) => store.getState().syncEnabled);
   if (!anyEnabled) return;
   if (settings.architecture === 'unified' && settings.unifiedRoomId) {
@@ -162,6 +171,9 @@ function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): Wor
         : {},
     },
     graph: { nodes: Array.isArray(root.nodes) ? root.nodes as WorkspaceBackup['graph']['nodes'] : [] },
+    lifeMap: LIFE_MAP_FIELDS.some((field) => root[field] !== undefined)
+      ? normalizeLifeMapData(root)
+      : base.lifeMap,
   };
 }
 
@@ -187,10 +199,10 @@ async function inspectRoom(roomId: string, label: string): Promise<Record<string
 
 export async function inspectLegacyWorkspace(roomCode: string): Promise<{ backup: WorkspaceBackup; summary: WorkspaceBackupSummary; hash: string }> {
   const base = createWorkspaceBackup();
-  const roomIds = [roomCode, `${EBB_ROOM_PREFIX}${roomCode}`, `${DAILY_ROOM_PREFIX}${roomCode}`, `graph-${roomCode}`];
+  const roomIds = [roomCode, `${EBB_ROOM_PREFIX}${roomCode}`, `${DAILY_ROOM_PREFIX}${roomCode}`, `graph-${roomCode}`, `${LIFE_MAP_ROOM_PREFIX}${roomCode}`];
   const labels = ['旧时间轴房间', '旧 EBB 房间', '旧每日安排房间', '旧知识大盘房间'];
-  const [timeline, ebb, daily, graph] = await Promise.all(roomIds.map((roomId, index) => inspectRoom(roomId, labels[index])));
-  const backup = rootToBackup({ ...timeline, ...ebb, ...daily, ...graph }, base);
+  const [timeline, ebb, daily, graph, lifeMap] = await Promise.all(roomIds.map((roomId, index) => inspectRoom(roomId, labels[index] ?? '旧人生地图房间')));
+  const backup = rootToBackup({ ...timeline, ...ebb, ...daily, ...graph, ...lifeMap }, base);
   return { backup, summary: summaryOf(backup), hash: await hashWorkspaceBackup(backup) };
 }
 
@@ -198,7 +210,7 @@ function waitForUnifiedStorage(timeoutMs = 20_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const timer = window.setInterval(() => {
-      const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState()];
+      const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState(), useLifeMapStore.getState()];
       const ready = stores.every((store) => store.liveblocks?.status === 'connected' && !store.liveblocks?.isStorageLoading);
       if (ready) {
         window.clearInterval(timer);
@@ -267,7 +279,10 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
   }
 
   if (fieldConflicts.length > 0 || metadataConflict) {
-    await preserveWorkspaceConflict(pending, remoteUpdatedAt);
+    const pendingKeys = Object.keys(pending.fields) as WorkspaceStorageField[];
+    const remoteFields = Object.fromEntries(pendingKeys.map((key) => [key, rootJson[key]])) as Partial<Record<WorkspaceStorageField, unknown>>;
+    const conflictingFields = [...new Set(fieldConflicts.map((path) => path.split(/[.[]/, 1)[0] as WorkspaceStorageField))];
+    await preserveWorkspaceConflict(pending, remoteUpdatedAt, remoteFields, metadataConflict ? pendingKeys : conflictingFields);
     window.dispatchEvent(new CustomEvent(WORKSPACE_CONFLICT_EVENT));
     return { applied: 0, conflict: true };
   }
@@ -283,10 +298,25 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
         deviceId: pending.deviceId,
       } as Json);
     });
+    // Keep tracking suppressed until the exact queue revision applied above is
+    // durably removed. Releasing suppression first lets the Liveblocks echo
+    // recreate an identical pending record while IndexedDB is still clearing.
+    await clearPendingWorkspaceSync(pending);
+    // A newer local revision may have landed after the last pre-batch check.
+    // Never report a successful flush while a journal entry is still pending:
+    // keep suppression active and immediately drain the newest revision. This
+    // also absorbs a same-value storage echo without deleting a genuinely
+    // newer edit blindly.
+    let remaining = await readPendingWorkspaceSync();
+    if (remaining && await acknowledgeAppliedWorkspaceSync(pending.fields)) {
+      remaining = await readPendingWorkspaceSync();
+    }
+    if (remaining) {
+      return flushWorkspaceQueue();
+    }
   } finally {
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
   }
-  await clearPendingWorkspaceSync(pending);
   return { applied: Object.keys(merged.fields).length, conflict: false };
 }
 
@@ -304,6 +334,7 @@ function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> 
     schedules: backup.daily.schedules as unknown as Json,
     retrospectives: backup.daily.retrospectives as unknown as Json,
     nodes: backup.graph.nodes as unknown as Json,
+    ...Object.fromEntries(LIFE_MAP_FIELDS.map((field) => [field, backup.lifeMap[field] as unknown as Json])),
   };
 }
 

@@ -77,6 +77,7 @@ try {
     ebbComplexity,
     operationHistoryModule,
     dailyRetrospectiveModule,
+    lifeMapModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -108,12 +109,14 @@ try {
     load('/src/ebb/complexity.ts'),
     load('/src/services/operationHistory.ts'),
     load('/src/domain/dailyRetrospective.ts'),
+    load('/src/lifeMap/store.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
   const { useGraphStore } = graphModule;
   const { useEbbStore } = ebbModule;
   const { useDailyScheduleStore } = dailyModule;
+  const { useLifeMapStore } = lifeMapModule;
   const { useGraphBindingStore } = graphBindingModule;
   const {
     buildRootNodeMap,
@@ -228,6 +231,7 @@ try {
       isHydrated: true,
     });
     useDailyScheduleStore.setState({ schedules, retrospectives, isHydrated: true });
+    useLifeMapStore.setState({ isHydrated: true });
   };
 
   const smartBlock = (id, title, graphNodeIds, autoSyncEbb = true) => ({
@@ -1103,6 +1107,7 @@ try {
       exportedAt: new Date().toISOString(),
       deviceId: 'system-simulation',
       timeline: { tasks: [project('p1', [smartBlock('dup', '任务', ['missing-node']), smartBlock('dup', '重复', [])])], groups: [], notes: [], milestones: [] },
+      lifeMap: backupModule.createWorkspaceBackup().lifeMap,
       graph: { nodes: [] },
       ebb: {
         reviewTasks: [
@@ -2006,6 +2011,30 @@ try {
     }], '2026-07-24', '2026-07-24');
     assert.deepEqual(projected.pending, []);
     assert.equal(projected.completed[0].id, 'completed-overdue');
+  });
+
+  check('独立人生地图进入完整备份并兼容旧版工作区升级', () => {
+    resetStores();
+    useLifeMapStore.getState().addGoal({
+      areaId: 'health',
+      name: '恢复稳定作息',
+      start: '2026-07-30',
+      targetDate: '2026-09-30',
+    });
+    const backup = backupModule.createWorkspaceBackup();
+    assert.equal(backup.schemaVersion, 4);
+    assert.equal(backup.lifeMap.lifeMapGoals.length, 1);
+    const valid = backupModule.validateWorkspaceBackup(backup);
+    assert.equal(valid.errors.length, 0);
+    assert.equal(valid.summary.lifeMapItems, 1);
+
+    const oldBackup = structuredClone(backup);
+    oldBackup.schemaVersion = 2;
+    delete oldBackup.lifeMap;
+    const upgraded = backupModule.validateWorkspaceBackup(oldBackup);
+    assert.equal(upgraded.errors.length, 0);
+    assert.equal(upgraded.backup.schemaVersion, 4);
+    assert.equal(upgraded.summary.lifeMapItems, 0);
   });
 
   let passed = 0;

@@ -10,11 +10,12 @@
     "test:auth": "node --experimental-strip-types --test tests/auth/github-auth.test.ts tests/auth/storage-auth.test.ts",
     "test:sync": "node --experimental-strip-types --test tests/sync/workspace-sync.test.ts tests/sync/service-worker-policy.test.ts",
     "test:duration": "node --experimental-strip-types --test tests/domain/duration.test.ts",
+    "test:life-map": "node --experimental-strip-types --test tests/domain/life-map.test.ts",
     "test:security": "node scripts/security-check.mjs",
     "test:system": "node scripts/system-simulation.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:all": "npm run test:security && npm run test:auth && npm run test:sync && npm run test:duration && npm run test:system && npm run test:e2e",
+    "test:all": "npm run test:security && npm run test:auth && npm run test:sync && npm run test:duration && npm run test:life-map && npm run test:system && npm run test:e2e",
     "preview": "vite preview",
     "check": "tsc -b --noEmit && npx depcheck",
     "audit": "npm audit"

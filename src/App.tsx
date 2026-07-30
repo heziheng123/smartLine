@@ -47,7 +47,7 @@ function mapLiveblocksStatus(status: string | undefined) {
 }
 
 const loadTimelineView = () => import('@/components/TimelineView');
-const loadLifeMapView = () => import('@/components/lifeMap/LifeMapView');
+const loadLifeMapView = () => import('@/components/lifeMap/LifeMapWorkspace');
 const loadEbbView = () => import('@/ebb/components/EbbView');
 const loadDailyScheduleView = () => import('@/components/dailySchedule/DailyScheduleView');
 const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDocumentView');
@@ -104,6 +104,7 @@ const DialogLoadingFallback = () => (
 import { useGraphStore } from '@/graph/store';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { useLifeMapStore } from '@/lifeMap/store';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
 import { reconnectConfiguredWorkspace, WORKSPACE_CONFLICT_EVENT } from '@/services/workspaceSync';
 import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking, WORKSPACE_QUEUE_ERROR_EVENT } from '@/services/workspaceOfflineQueue';
@@ -138,6 +139,10 @@ const App: React.FC = () => {
   const ebbLiveStatus = useEbbStore((state) => state.liveblocks?.status);
   const dailyLiveStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
   const graphLiveStatus = useGraphStore((state) => state.liveblocks?.status);
+  const lifeMapLiveStatus = useLifeMapStore((state) => state.liveblocks?.status);
+  const { isHydrated: isLifeMapHydrated, hydrateStore: hydrateLifeMapStore } = useLifeMapStore(
+    useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
+  );
 
   // 选择性订阅：只关心 tasks/groups/notes/milestones 数据切片 + 各 CRUD 方法。
   // CRUD 方法在 zustand 中是 store 创建时一次性定义的稳定引用，
@@ -340,6 +345,11 @@ const App: React.FC = () => {
     if (!isHydrated) {
       hydrateStore();
     }
+    // 人生地图允许独立编辑，必须尽早恢复本地数据。若延迟到空闲阶段，
+    // 用户可能先写入默认状态，随后又被 IndexedDB 中的真实数据覆盖。
+    if (!isLifeMapHydrated) {
+      hydrateLifeMapStore();
+    }
     const hydrateSecondaryStores = () => {
       if (!isGraphHydrated) hydrateGraphStore();
       if (!isEbbHydrated) hydrateEbbStore();
@@ -360,10 +370,19 @@ const App: React.FC = () => {
     hydrateEbbStore,
     isDailyHydrated,
     hydrateDailyStore,
+    isLifeMapHydrated,
+    hydrateLifeMapStore,
   ]);
 
   React.useEffect(() => {
-    if (!isHydrated) return;
+    if (!isHydrated || !isLifeMapHydrated) return;
+    useLifeMapStore.getState().importLegacyTimelineData({ lifeStages, milestones, notes });
+  }, [isHydrated, isLifeMapHydrated, lifeStages, milestones, notes]);
+
+  React.useEffect(() => {
+    // “应用已就绪”意味着所有可编辑数据域均已恢复，避免自动化或用户操作
+    // 与任一模块的异步 hydration 发生竞争。
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;
     let secondFrame = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
@@ -374,7 +393,7 @@ const App: React.FC = () => {
       window.cancelAnimationFrame(firstFrame);
       window.cancelAnimationFrame(secondFrame);
     };
-  }, [isHydrated]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated]);
 
   React.useEffect(() => {
     if (!isHydrated || hasAlignedDisplayYear.current) return;
@@ -392,6 +411,7 @@ const App: React.FC = () => {
       || !isGraphHydrated
       || !isEbbHydrated
       || !isDailyHydrated
+      || !isLifeMapHydrated
       || hasAttemptedAutoReconnect.current
     ) {
       return;
@@ -408,25 +428,26 @@ const App: React.FC = () => {
       window.removeEventListener('online', reconnect);
       stopCoordinator();
     };
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated]);
 
   React.useEffect(() => {
-    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated) return;
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;
     const stopTracking = startWorkspaceQueueTracking();
     const stopCrossTab = startWorkspaceCrossTabDataSync();
     return () => { stopTracking(); stopCrossTab(); };
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated]);
 
   React.useEffect(() => {
-    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated) return;
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;
     const stores = [
       useTimelineStore.getState(),
       useEbbStore.getState(),
       useDailyScheduleStore.getState(),
       useGraphStore.getState(),
+      useLifeMapStore.getState(),
     ];
     const syncEnabled = stores.some((state) => state.syncEnabled);
-    const allConnected = [timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus]
+    const allConnected = [timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus, lifeMapLiveStatus]
       .every((status) => status === 'connected');
     if (syncEnabled && !allConnected) return;
     const today = dayjs().format('YYYY-MM-DD');
@@ -435,7 +456,7 @@ const App: React.FC = () => {
     createLocalSnapshot('每日自动快照')
       .then(() => localStorage.setItem(key, today))
       .catch((error) => console.warn('[workspace] 自动快照失败：', error));
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus, lifeMapLiveStatus]);
 
   React.useEffect(() => {
     if (timelineLiveStatus) {
@@ -462,11 +483,16 @@ const App: React.FC = () => {
   }, [graphLiveStatus]);
 
   React.useEffect(() => {
+    if (lifeMapLiveStatus) useLifeMapStore.getState().setSyncStatus(mapLiveblocksStatus(lifeMapLiveStatus));
+  }, [lifeMapLiveStatus]);
+
+  React.useEffect(() => {
     const statuses = {
       timeline: timelineLiveStatus,
       ebb: ebbLiveStatus,
       daily: dailyLiveStatus,
       graph: graphLiveStatus,
+      lifeMap: lifeMapLiveStatus,
     };
     let current: Record<string, string> = {};
     try { current = JSON.parse(localStorage.getItem('smart-line-sync-last-connected') ?? '{}') as Record<string, string>; }
@@ -481,7 +507,7 @@ const App: React.FC = () => {
       previousLiveStatuses.current[key] = status;
     }
     if (changed) localStorage.setItem('smart-line-sync-last-connected', JSON.stringify(current));
-  }, [timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus]);
+  }, [timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus, lifeMapLiveStatus]);
 
   // 全局漫游导航监听
   React.useEffect(() => {
@@ -814,28 +840,7 @@ const App: React.FC = () => {
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
-                <LifeMapView
-                  tasks={weekMatrixTasks}
-                  groups={store.groups}
-                  notes={store.notes}
-                  milestones={store.milestones}
-                  lifeStages={store.lifeStages}
-                  onCreateLifeStage={store.addLifeStage}
-                  onUpdateLifeStage={store.updateLifeStage}
-                  onDeleteLifeStage={store.deleteLifeStage}
-                  onCreateNote={store.addNote}
-                  onUpdateNote={store.updateNote}
-                  onDeleteNote={store.deleteNote}
-                  onCreateMilestone={store.addMilestone}
-                  onUpdateMilestone={store.updateMilestone}
-                  onDeleteMilestone={store.deleteMilestone}
-                  onOpenTask={(taskId, blockId) => {
-                    setCurrentView('timeline');
-                    setDrawerTaskId(taskId);
-                    setDrawerBlockId(blockId ?? null);
-                    if (blockId) setDrawerFocusRequest((value) => value + 1);
-                  }}
-                />
+                <LifeMapView />
               </Suspense>
             </div>
           </motion.div>

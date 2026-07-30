@@ -5501,7 +5501,23 @@
 .eb-daily-plan-body { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; overflow: hidden; background: #f8fafc; }
 .eb-daily-plan-guide { display: flex; flex-wrap: wrap; gap: 7px; }
 .eb-daily-plan-guide span { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border-radius: 999px; background: #fff; color: #64748b; font-size: 10px; box-shadow: inset 0 0 0 1px #e2e8f0; }
-.eb-daily-plan-list { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 7px; padding-right: 3px; overflow-y: auto; }
+.eb-daily-plan-list { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 12px; padding-right: 3px; overflow-y: auto; }
+.eb-daily-plan-tag-group { overflow: hidden; flex: none; border: 1px solid #dfe5ef; border-radius: 14px; background: #fff; box-shadow: 0 2px 8px rgba(15,23,42,.035); }
+.eb-daily-plan-tag-header { position: sticky; top: 0; z-index: 2; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 11px; border-bottom: 1px solid #e8edf4; background: rgba(248,250,252,.96); backdrop-filter: blur(8px); }
+.eb-daily-plan-tag-header > div { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.eb-daily-plan-tag-header > div > span { flex: none; width: 25px; height: 25px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: #eef2ff; color: #6366f1; }
+.eb-daily-plan-tag-header strong { overflow: hidden; color: #263247; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.eb-daily-plan-tag-header small { color: #94a3b8; font-size: 9px; white-space: nowrap; }
+.eb-daily-plan-tag-header em { flex: none; color: #6366f1; font-size: 9px; font-style: normal; font-weight: 700; }
+.eb-daily-plan-round-list { display: flex; flex-direction: column; gap: 9px; padding: 9px; background: #f8fafc; }
+.eb-daily-plan-round-group { overflow: hidden; border: 1px solid #e7ebf2; border-radius: 11px; background: #fff; }
+.eb-daily-plan-round-header { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 9px; border-bottom: 1px solid #edf0f5; background: #fbfcfe; }
+.eb-daily-plan-round-header > div { display: flex; align-items: baseline; gap: 7px; }
+.eb-daily-plan-round-header strong { color: #475569; font-size: 10px; }
+.eb-daily-plan-round-header span { color: #94a3b8; font-size: 9px; }
+.eb-daily-plan-round-header button { flex: none; min-height: 24px; padding: 0 8px; border: 1px solid #d8deea; border-radius: 7px; background: #fff; color: #64748b; font-size: 9px; font-weight: 700; cursor: pointer; }
+.eb-daily-plan-round-header button:hover { border-color: #a5b4fc; color: #4f46e5; }
+.eb-daily-plan-round-cards { display: flex; flex-direction: column; gap: 6px; padding: 7px; }
 .eb-daily-plan-card { display: grid; grid-template-columns: 108px minmax(0,1fr) 110px; align-items: center; gap: 12px; padding: 11px 12px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; transition: border-color .15s ease,box-shadow .15s ease,background .15s ease; }
 .eb-daily-plan-card.is-kept { border-color: #a5b4fc; background: #f5f7ff; box-shadow: 0 0 0 2px rgba(99,102,241,.06); }
 .eb-daily-plan-card.is-deferred { border-color: #e2e8f0; }
@@ -5532,8 +5548,16 @@
   .eb-panel.eb-daily-plan-panel { width: 100vw; height: 100dvh; max-width: none; max-height: none; border: 0; border-radius: 0; }
   .eb-daily-plan-capacity { align-items: flex-start; flex-direction: column; gap: 6px; }
   .eb-daily-plan-capacity small { white-space: normal; }
+  .eb-daily-plan-body { padding: 12px; }
+  .eb-daily-plan-tag-header { align-items: flex-start; }
+  .eb-daily-plan-tag-header > div { flex-wrap: wrap; }
+  .eb-daily-plan-tag-header small { width: calc(100% - 32px); margin-left: 32px; white-space: normal; }
+  .eb-daily-plan-round-list { padding: 7px; }
+  .eb-daily-plan-round-cards { padding: 6px; }
   .eb-daily-plan-card { grid-template-columns: 1fr auto; }
   .eb-daily-plan-choice { grid-column: 1 / -1; justify-self: stretch; }
+  .eb-daily-plan-card-title { align-items: flex-start; flex-wrap: wrap; }
+  .eb-daily-plan-card-title strong { flex-basis: 100%; display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .eb-daily-plan-destination { justify-content: flex-end; }
   .eb-daily-plan-footer { align-items: stretch; flex-direction: column; }
   .eb-daily-plan-footer > div:last-child { display: grid; grid-template-columns: 1fr 1.4fr; }
