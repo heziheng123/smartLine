@@ -6,7 +6,7 @@ import { useGraphStore } from '../store';
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
-import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, Focus, MoveRight, Check } from 'lucide-react';
+import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, Focus, MoveRight, Check, ListFilter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { TimeCapsuleModal } from '@/components/GlobalSearch';
@@ -44,6 +44,28 @@ type NodeRollupStats = {
 };
 
 type NodeVisualState = 'inactive' | 'completed-no-review' | 'reviewing' | 'mastered';
+
+type GraphRadiusMode = 'overview' | 'reading' | 'expanded';
+type GraphStatusFilter = 'all' | 'inactive' | 'overdue' | 'reviewing' | 'completed-no-review' | 'mastered';
+type DockPanel = 'view' | 'filter' | 'search' | null;
+
+const GRAPH_RADIUS_FLOOR: Record<GraphRadiusMode, number> = {
+  overview: 0,
+  reading: 640,
+  expanded: 880,
+};
+
+const GRAPH_STATUS_OPTIONS: Array<{
+  value: Exclude<GraphStatusFilter, 'all'>;
+  label: string;
+  dotClass: string;
+}> = [
+  { value: 'inactive', label: '未激活', dotClass: 'bg-slate-500' },
+  { value: 'overdue', label: '严重逾期', dotClass: 'bg-rose-500' },
+  { value: 'completed-no-review', label: '已完成 · 无需复习', dotClass: 'bg-blue-500' },
+  { value: 'reviewing', label: '复习中', dotClass: 'bg-emerald-500' },
+  { value: 'mastered', label: '已掌握', dotClass: 'bg-amber-500' },
+];
 
 const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
   inactive: '#64748b',
@@ -156,12 +178,14 @@ export const KnowledgeGraphView: React.FC = () => {
 
   // Filter States
   const [selectedRootFilter, setSelectedRootFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<
-    'all' | 'inactive' | 'overdue' | 'reviewing' | 'completed-no-review' | 'mastered'
-  >('all');
+  const [radiusMode, setRadiusMode] = useState<GraphRadiusMode>('overview');
+  const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [activeDockPanel, setActiveDockPanel] = useState<DockPanel>(null);
+  const [isViewportShifted, setIsViewportShifted] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const dockControlsRef = useRef<HTMLDivElement>(null);
+  const dockPanelRef = useRef<HTMLDivElement>(null);
 
   // Portal into Dock
   const dockPortalTarget = document.getElementById('tl-dock-portal-target');
@@ -179,8 +203,38 @@ export const KnowledgeGraphView: React.FC = () => {
     return localStorage.getItem('knowledge-graph-hint-dismissed') !== 'true';
   });
 
+  useEffect(() => {
+    if (!activeDockPanel) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!dockControlsRef.current?.contains(target) && !dockPanelRef.current?.contains(target)) {
+        setActiveDockPanel(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActiveDockPanel(null);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeDockPanel]);
+
+  useEffect(() => {
+    if (activeDockPanel !== 'search') return;
+    const timer = window.setTimeout(() => searchInputRef.current?.focus(), 50);
+    return () => window.clearTimeout(timer);
+  }, [activeDockPanel]);
+
   // Rotation angles for islands
   const [islandRotations, setIslandRotations] = useState<Record<string, number>>({});
+
+  const focusRoot = useCallback((rootId: string) => {
+    setSelectedRootFilter(rootId);
+    setRadiusMode(rootId === 'all' ? 'overview' : 'reading');
+  }, []);
 
   useEffect(() => {
     if (!isHydrated) hydrateStore();
@@ -429,8 +483,9 @@ export const KnowledgeGraphView: React.FC = () => {
 
     // Calculate grid layout for islands
     const cols = Math.ceil(Math.sqrt(rootsToProcess.length));
-    const baseRadius = rootsToProcess.length === 1 
-      ? Math.max(100, Math.min(dimensions.width, dimensions.height) / 2 - 60)
+    const naturalRadius = Math.max(100, Math.min(dimensions.width, dimensions.height) / 2 - 60);
+    const baseRadius = rootsToProcess.length === 1
+      ? Math.max(naturalRadius, GRAPH_RADIUS_FLOOR[radiusMode])
       : 400; // 折中方案：从 500 回调到 400，既保证文字展示量，又不会导致环太宽显得笨重
     
     const cellWidth = baseRadius * 2 + 160;
@@ -516,7 +571,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     return { islands, allFlatNodes };
-  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, getNodeVisualState, dimensions.width, dimensions.height, allNodes, activationStates]);
+  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, getNodeVisualState, dimensions.width, dimensions.height, allNodes, activationStates, radiusMode]);
 
   const arcGenerator = useMemo(() => {
     return arc<HierarchyRectangularNode<ViewNode>>()
@@ -529,6 +584,53 @@ export const KnowledgeGraphView: React.FC = () => {
   }, []);
 
   const rootNodes = useMemo(() => nodes.filter(n => !n.parentId), [nodes]);
+  const hasFocusedRoot = selectedRootFilter !== 'all' && nodes.some((node) => node.id === selectedRootFilter);
+  const canExpandRadius = rootNodes.length === 1 || hasFocusedRoot;
+
+  useEffect(() => {
+    if (!canExpandRadius && radiusMode !== 'overview') setRadiusMode('overview');
+  }, [canExpandRadius, radiusMode]);
+
+  const changeRadiusMode = useCallback((mode: GraphRadiusMode) => {
+    if (mode === 'overview') {
+      focusRoot('all');
+      return;
+    }
+
+    if (!canExpandRadius) {
+      let targetRootId = rootNodes[0]?.id;
+      let current = selectedNodeId ? nodes.find((node) => node.id === selectedNodeId) : undefined;
+      const visited = new Set<string>();
+      while (current?.parentId && !visited.has(current.id)) {
+        visited.add(current.id);
+        const parent = nodes.find((node) => node.id === current?.parentId);
+        if (!parent) break;
+        current = parent;
+      }
+      if (current && !current.parentId) targetRootId = current.id;
+      if (targetRootId) setSelectedRootFilter(targetRootId);
+    }
+    setRadiusMode(mode);
+  }, [canExpandRadius, focusRoot, nodes, rootNodes, selectedNodeId]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<Exclude<GraphStatusFilter, 'all'>, number> = {
+      inactive: 0,
+      overdue: 0,
+      reviewing: 0,
+      'completed-no-review': 0,
+      mastered: 0,
+    };
+    islandsData.allFlatNodes.forEach((node: ViewNode) => {
+      if (node.isVirtual) return;
+      if (node.visualState === 'inactive') counts.inactive += 1;
+      if (node.isActivated && node.overdueCount > 0) counts.overdue += 1;
+      if (node.visualState === 'reviewing' && node.overdueCount === 0) counts.reviewing += 1;
+      if (node.visualState === 'completed-no-review') counts['completed-no-review'] += 1;
+      if (node.visualState === 'mastered') counts.mastered += 1;
+    });
+    return counts;
+  }, [islandsData.allFlatNodes]);
 
   const matchingNodeIds = useMemo(() => {
     if (statusFilter === 'all' && !searchQuery.trim()) return null;
@@ -571,6 +673,7 @@ export const KnowledgeGraphView: React.FC = () => {
       .scaleExtent([0.1, 4])
       .on('zoom', (event) => {
         select(gRef.current).attr('transform', event.transform);
+        if (event.sourceEvent) setIsViewportShifted(true);
       });
     svg.call(zoomBehaviorRef.current);
   }, [isHydrated]);
@@ -578,6 +681,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const zoomToFit = useCallback(() => {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
     const svg = select(svgRef.current);
+    setIsViewportShifted(false);
     
     if (islandsData.islands.length > 1) {
       const cols = Math.ceil(Math.sqrt(islandsData.islands.length));
@@ -601,7 +705,7 @@ export const KnowledgeGraphView: React.FC = () => {
   useEffect(() => {
     const timer = setTimeout(zoomToFit, 100);
     return () => clearTimeout(timer);
-  }, [zoomToFit, selectedRootFilter]);
+  }, [zoomToFit, selectedRootFilter, radiusMode]);
 
   const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId), [nodes, selectedNodeId]);
   const selectedActivationState = selectedNodeId
@@ -924,89 +1028,213 @@ export const KnowledgeGraphView: React.FC = () => {
 
       {/* Portal Dock Controls */}
       {dockPortalTarget && createPortal(
-          <motion.div
-            layout
-            key="knowledge-graph-actions"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            transition={{ type: "spring", stiffness: 400, damping: 30 }}
-            className="flex items-center gap-2 px-1"
-          >
-            <div className="relative group flex items-center bg-slate-100/50 hover:bg-slate-200/60 rounded-lg px-2 py-1.5 transition-all cursor-pointer border border-transparent shadow-sm">
-              <Command size={14} className="text-slate-500 group-hover:text-blue-500 transition-colors shrink-0" />
-              <select 
-                className="appearance-none bg-transparent border-none outline-none focus:ring-0 text-[13px] font-semibold text-slate-700 cursor-pointer pl-1.5 pr-5 min-w-[60px] max-w-[120px] truncate"
-                value={selectedRootFilter}
-                onChange={e => setSelectedRootFilter(e.target.value)}
-              >
-                <option value="all">全景视角</option>
-                {rootNodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-              </select>
-              <ChevronDown size={14} className="text-slate-400 absolute right-1.5 pointer-events-none" />
-            </div>
-            
-            <div className="tl-dock-divider mx-0.5" />
-            
-            <button 
-              onClick={zoomToFit}
-              className="tl-dock-btn text-slate-500 hover:text-blue-600"
-              title="视角归中"
+        <motion.div
+          ref={dockControlsRef}
+          layout
+          key="knowledge-graph-actions"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 20 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+          className="flex items-center gap-1 px-1"
+          data-testid="knowledge-graph-dock-actions"
+        >
+          <div className="tl-dock-divider mx-0.5" />
+
+          <div className="tl-dock-popover-wrap">
+            <button
+              type="button"
+              className={`tl-dock-btn ${activeDockPanel === 'view' || selectedRootFilter !== 'all' || radiusMode !== 'overview' ? 'tl-dock-btn--view-active' : ''}`}
+              onClick={() => setActiveDockPanel((panel) => panel === 'view' ? null : 'view')}
+              title="视图设置"
+              aria-label="知识大盘视图"
+              aria-haspopup="dialog"
+              aria-expanded={activeDockPanel === 'view'}
             >
-              <Focus size={16} />
+              <Settings2 size={17} />
             </button>
+            {activeDockPanel === 'view' && createPortal(
+              <div
+                ref={dockPanelRef}
+                className="tl-dock-popover p-3"
+                style={{ position: 'fixed', left: '50%', bottom: 88, zIndex: 12000, width: 'min(300px, calc(100vw - 24px))', transform: 'translateX(-50%)' }}
+                role="dialog"
+                aria-label="知识大盘视图设置"
+              >
+                <div className="flex items-center justify-between gap-3 pb-3">
+                  <div>
+                    <div className="text-xs font-bold text-slate-800">视图设置</div>
+                    <div className="mt-0.5 text-[10px] text-slate-400">选择知识范围与标题显示空间</div>
+                  </div>
+                  <button type="button" className="p-1 text-slate-400 hover:text-slate-700" onClick={() => setActiveDockPanel(null)} aria-label="关闭视图设置">
+                    <X size={14} />
+                  </button>
+                </div>
 
-            <div className="tl-dock-divider mx-0.5" />
+                <label className="block text-[10px] font-semibold text-slate-500">
+                  查看范围
+                  <span className="relative mt-1.5 flex items-center">
+                    <Command size={14} className="pointer-events-none absolute left-3 text-slate-400" />
+                    <select
+                      aria-label="知识大盘视角"
+                      className="h-9 w-full appearance-none rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-xs font-semibold text-slate-700 outline-none transition focus:border-indigo-300 focus:bg-white"
+                      value={selectedRootFilter}
+                      onChange={(event) => focusRoot(event.target.value)}
+                    >
+                      <option value="all">全部知识盘</option>
+                      {hasFocusedRoot && !rootNodes.some((node) => node.id === selectedRootFilter) && (
+                        <option value={selectedRootFilter}>{nodes.find((node) => node.id === selectedRootFilter)?.name ?? '当前分支'}</option>
+                      )}
+                      {rootNodes.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}
+                    </select>
+                    <ChevronDown size={14} className="pointer-events-none absolute right-3 text-slate-400" />
+                  </span>
+                </label>
 
-            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-100/50 rounded-full shadow-sm">
-              <button
-                onClick={() => setStatusFilter(prev => prev === 'inactive' ? 'all' : 'inactive')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'inactive' ? 'bg-slate-500 scale-110 shadow-[0_0_8px_rgba(100,116,139,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-slate-500 hover:scale-110'}`}
-                title="查看未激活"
-              />
-              <button 
-                onClick={() => setStatusFilter(prev => prev === 'overdue' ? 'all' : 'overdue')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'overdue' ? 'bg-rose-500 scale-110 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-rose-400 hover:scale-110'}`}
-                title="查看严重逾期"
-              />
-              <button
-                onClick={() => setStatusFilter(prev => prev === 'completed-no-review' ? 'all' : 'completed-no-review')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'completed-no-review' ? 'bg-blue-500 scale-110 shadow-[0_0_8px_rgba(59,130,246,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-blue-500 hover:scale-110'}`}
-                title="查看已完成且无需复习"
-              />
-              <button 
-                onClick={() => setStatusFilter(prev => prev === 'reviewing' ? 'all' : 'reviewing')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'reviewing' ? 'bg-emerald-500 scale-110 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-emerald-400 hover:scale-110'}`}
-                title="查看复习中"
-              />
-              <button 
-                onClick={() => setStatusFilter(prev => prev === 'mastered' ? 'all' : 'mastered')}
-                className={`w-3.5 h-3.5 rounded-full shrink-0 transition-all duration-300 ${statusFilter === 'mastered' ? 'bg-amber-500 scale-110 shadow-[0_0_8px_rgba(245,158,11,0.4)]' : statusFilter !== 'all' ? 'bg-slate-300/50 opacity-50' : 'bg-amber-400 hover:scale-110'}`}
-                title="查看已掌握"
-              />
-            </div>
-            <div className="tl-dock-divider mx-0.5" />
-            <div className="flex items-center group relative h-[36px]">
-              <button className="tl-dock-btn" onClick={() => { setIsSearchExpanded(true); setTimeout(() => searchInputRef.current?.focus(), 50); }} title="搜索知识">
-                <Search size={16} className={`transition-colors ${searchQuery ? 'text-blue-600' : 'text-slate-500'}`} />
-              </button>
-              <AnimatePresence>
-                {(isSearchExpanded || searchQuery) && (
-                  <motion.div initial={{ width: 0, opacity: 0 }} animate={{ width: 120, opacity: 1 }} exit={{ width: 0, opacity: 0 }} className="flex items-center overflow-hidden">
-                    <input ref={searchInputRef} type="text" placeholder="搜索..." className="bg-transparent border-none outline-none text-[13px] font-medium w-full text-slate-700 pl-1 pr-6" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onBlur={() => { if (!searchQuery) setIsSearchExpanded(false); }} />
-                    {searchQuery && <button onClick={() => { setSearchQuery(''); setIsSearchExpanded(false); }} className="absolute right-1 text-slate-400 p-0.5 z-10"><X size={14} /></button>}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.div>,
+                <div className="mt-3 text-[10px] font-semibold text-slate-500">大盘尺寸</div>
+                <div className="mt-1.5 grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="知识大盘大小">
+                  {(['overview', 'reading', 'expanded'] as GraphRadiusMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`h-8 rounded-md text-[11px] font-semibold transition ${radiusMode === mode ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:bg-white/70 hover:text-slate-700'}`}
+                      onClick={() => changeRadiusMode(mode)}
+                      aria-pressed={radiusMode === mode}
+                    >
+                      {{ overview: '总览', reading: '阅读', expanded: '展开' }[mode]}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 text-[10px] leading-4 text-slate-400">
+                  {canExpandRadius ? '阅读和展开会扩大真实半径，让节点标题显示更多文字。' : '选择阅读或展开时，将自动进入当前或第一个知识盘。'}
+                </div>
+              </div>,
+              document.body
+            )}
+          </div>
+
+          <div className="tl-dock-popover-wrap">
+            <button
+              type="button"
+              className={`tl-dock-btn ${activeDockPanel === 'filter' || statusFilter !== 'all' ? 'tl-dock-btn--view-active' : ''}`}
+              onClick={() => setActiveDockPanel((panel) => panel === 'filter' ? null : 'filter')}
+              title="知识状态筛选"
+              aria-label="知识状态筛选"
+              aria-haspopup="dialog"
+              aria-expanded={activeDockPanel === 'filter'}
+            >
+              <ListFilter size={17} />
+              {statusFilter !== 'all' && <span className="tl-dock-status-badge">1</span>}
+            </button>
+            {activeDockPanel === 'filter' && createPortal(
+              <div
+                ref={dockPanelRef}
+                className="tl-dock-popover p-2"
+                style={{ position: 'fixed', left: '50%', bottom: 88, zIndex: 12000, width: 'min(250px, calc(100vw - 24px))', transform: 'translateX(-50%)' }}
+                role="dialog"
+                aria-label="知识状态筛选菜单"
+              >
+                <div className="px-2 pb-2 pt-1 text-xs font-bold text-slate-800">知识状态</div>
+                <button
+                  type="button"
+                  className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition ${statusFilter === 'all' ? 'bg-indigo-50 font-semibold text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => { setStatusFilter('all'); setActiveDockPanel(null); }}
+                >
+                  <span className="flex h-4 w-4 items-center justify-center">{statusFilter === 'all' && <Check size={13} />}</span>
+                  <span className="flex-1">全部状态</span>
+                  <span className="text-[10px] text-slate-400">{islandsData.allFlatNodes.filter((node: ViewNode) => !node.isVirtual).length}</span>
+                </button>
+                {GRAPH_STATUS_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition ${statusFilter === option.value ? 'bg-indigo-50 font-semibold text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                    onClick={() => { setStatusFilter(option.value); setActiveDockPanel(null); }}
+                  >
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${option.dotClass}`} />
+                    <span className="flex-1">{option.label}</span>
+                    <span className="text-[10px] text-slate-400">{statusCounts[option.value]}</span>
+                    <span className="flex h-4 w-4 items-center justify-center">{statusFilter === option.value && <Check size={13} />}</span>
+                  </button>
+                ))}
+              </div>,
+              document.body
+            )}
+          </div>
+
+          <div className="tl-dock-popover-wrap">
+            <button
+              type="button"
+              className={`tl-dock-btn ${activeDockPanel === 'search' || searchQuery ? 'tl-dock-btn--view-active' : ''}`}
+              onClick={() => setActiveDockPanel((panel) => panel === 'search' ? null : 'search')}
+              title="搜索知识"
+              aria-label="搜索知识"
+              aria-haspopup="dialog"
+              aria-expanded={activeDockPanel === 'search'}
+            >
+              <Search size={17} />
+              {searchQuery && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-indigo-500 ring-2 ring-white" />}
+            </button>
+            {activeDockPanel === 'search' && createPortal(
+              <div
+                ref={dockPanelRef}
+                className="tl-dock-popover p-3"
+                style={{ position: 'fixed', left: '50%', bottom: 88, zIndex: 12000, width: 'min(280px, calc(100vw - 24px))', transform: 'translateX(-50%)' }}
+                role="search"
+                aria-label="搜索知识节点"
+              >
+                <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 focus-within:border-indigo-300 focus-within:bg-white">
+                  <Search size={15} className="shrink-0 text-slate-400" />
+                  <input
+                    ref={searchInputRef}
+                    type="search"
+                    placeholder="输入节点标题"
+                    className="min-w-0 flex-1 border-none bg-transparent text-xs font-medium text-slate-700 outline-none"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                  />
+                  {searchQuery && (
+                    <button type="button" onClick={() => setSearchQuery('')} className="p-1 text-slate-400 hover:text-slate-700" aria-label="清除知识搜索">
+                      <X size={14} />
+                    </button>
+                  )}
+                </label>
+                <div className="mt-2 text-[10px] text-slate-400">匹配的节点及其路径会保持高亮。</div>
+              </div>,
+              document.body
+            )}
+          </div>
+
+          <AnimatePresence initial={false}>
+            {isViewportShifted && (
+              <motion.button
+                initial={{ opacity: 0, width: 0, scale: 0.8 }}
+                animate={{ opacity: 1, width: 36, scale: 1 }}
+                exit={{ opacity: 0, width: 0, scale: 0.8 }}
+                type="button"
+                onClick={zoomToFit}
+                className="tl-dock-btn overflow-hidden text-slate-500 hover:text-blue-600"
+                title="视角归中"
+                aria-label="视角归中"
+              >
+                <Focus size={17} className="shrink-0" />
+              </motion.button>
+            )}
+          </AnimatePresence>
+        </motion.div>,
         dockPortalTarget
       )}
 
       {capsuleNodeId && <TimeCapsuleModal nodeId={capsuleNodeId} onClose={() => setCapsuleNodeId(null)} />}
 
       {/* SVG Sunburst Canvas */}
-      <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" style={{ touchAction: 'none' }}>
+      <svg
+        ref={svgRef}
+        className="w-full h-full cursor-grab active:cursor-grabbing"
+        style={{ touchAction: 'none' }}
+        data-radius-mode={radiusMode}
+        data-island-radius={islandsData.islands[0]?.radius ?? 0}
+      >
         <rect width="100%" height="100%" fill="transparent" style={{ pointerEvents: 'all' }} onClick={() => {
           if (bindingSession.active) return;
           if (isMoveMode && selectedNodeId) {
@@ -1108,6 +1336,7 @@ export const KnowledgeGraphView: React.FC = () => {
                   return (
                     <g 
                       key={node.id}
+                      data-node-id={node.id}
                       role="button"
                       tabIndex={0}
                       aria-label={`知识节点：${node.data.name}`}
@@ -1115,7 +1344,7 @@ export const KnowledgeGraphView: React.FC = () => {
                         e.stopPropagation(); 
                         if (bindingSession.active) {
                           if (node.data.isLeaf) bindingSession.toggleNode(node.id);
-                          else setSelectedRootFilter(node.id);
+                          else focusRoot(node.id);
                           return;
                         }
                         if (isMoveMode && selectedNodeId && selectedNodeId !== node.id) {
@@ -1140,15 +1369,15 @@ export const KnowledgeGraphView: React.FC = () => {
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         if (bindingSession.active) {
-                          if (!node.data.isLeaf) setSelectedRootFilter(node.id);
+                          if (!node.data.isLeaf) focusRoot(node.id);
                           return;
                         }
                         if (node.depth > 0 && !node.data.isLeaf) {
-                          setSelectedRootFilter(node.id);
+                          focusRoot(node.id);
                         } else if (node.depth === 0 && selectedRootFilter !== 'all') {
-                          setSelectedRootFilter('all');
+                          focusRoot('all');
                         } else if (node.depth === 0 && selectedRootFilter === 'all') {
-                          setSelectedRootFilter(node.id);
+                          focusRoot(node.id);
                         }
                       }}
                       className={`cursor-pointer transition-opacity duration-300 ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
