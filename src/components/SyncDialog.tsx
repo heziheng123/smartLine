@@ -21,8 +21,7 @@ import {
   type SnapshotStorageStats,
 } from '@/services/workspaceBackup';
 import {
-  activateUnifiedWorkspace,
-  connectUnifiedWorkspace,
+  activateUnifiedWorkspaceSafely,
   disconnectWorkspace,
   downloadMigrationReport,
   inspectLegacyWorkspace,
@@ -184,7 +183,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
     if (architecture.architecture === 'unified') {
-      connectUnifiedWorkspace(architecture.roomCode || code, architecture.unifiedRoomId);
+      void reconnectConfiguredWorkspace().catch((error) => {
+        setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接失败。');
+      });
       return;
     }
     if (key === 'timeline') {
@@ -205,7 +206,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     }
   }, [timeline, ebb, daily, graph, lifeMap, architecture]);
 
-  const handleConnectAll = useCallback(() => {
+  const handleConnectAll = useCallback(async () => {
     if (!isCurrentTabSyncLeader()) {
       setRestoreMessage('另一个标签页正在负责云同步。请在主标签页执行连接或迁移。');
       return;
@@ -220,12 +221,36 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     if (!fallbackCode) return;
 
     if (architecture.architecture === 'unified') {
-      reconnectConfiguredWorkspace();
+      try {
+        if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
+          const result = await activateUnifiedWorkspaceSafely(fallbackCode, auth.userId || auth.login || 'owner');
+          setArchitecture(readWorkspaceSyncSettings());
+          setRestoreMessage(result.source === 'cloud'
+            ? '本机没有规划内容，已安全连接并加载云端工作区。'
+            : result.source === 'matching'
+              ? '本机与云端数据一致，已安全重新连接。'
+              : '云端为空，已安全重新连接并准备上传本机工作区。');
+        } else {
+          await reconnectConfiguredWorkspace();
+        }
+      } catch (error) {
+        setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接失败。');
+      }
       return;
     }
     if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
-      activateUnifiedWorkspace(fallbackCode, auth.userId || auth.login || 'owner');
-      setArchitecture(readWorkspaceSyncSettings());
+      try {
+        setRestoreMessage('正在检查本机与云端数据，连接前会先创建本地快照…');
+        const result = await activateUnifiedWorkspaceSafely(fallbackCode, auth.userId || auth.login || 'owner');
+        setArchitecture(readWorkspaceSyncSettings());
+        setRestoreMessage(result.source === 'cloud'
+          ? '本机没有规划内容，已安全连接并加载云端工作区。'
+          : result.source === 'matching'
+            ? '本机与云端数据一致，已安全连接。'
+            : '云端为空，已安全连接并准备上传本机工作区。');
+      } catch (error) {
+        setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接前检查失败。');
+      }
       return;
     }
 

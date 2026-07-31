@@ -1107,6 +1107,7 @@ registerUndoExecutor('timeline-remove-created-block', (raw) => {
   let lastGroups: unknown = null;
   let lastNotes: unknown = null;
   let lastMilestones: unknown = null;
+  let lastLifeStages: unknown = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   useTimelineStore.subscribe((state) => {
@@ -1118,7 +1119,8 @@ registerUndoExecutor('timeline-remove-created-block', (raw) => {
       !tasksChanged &&
       !groupsChanged &&
       state.notes === lastNotes &&
-      state.milestones === lastMilestones
+      state.milestones === lastMilestones &&
+      state.lifeStages === lastLifeStages
     ) {
       return;
     }
@@ -1126,6 +1128,7 @@ registerUndoExecutor('timeline-remove-created-block', (raw) => {
     lastGroups = state.groups;
     lastNotes = state.notes;
     lastMilestones = state.milestones;
+    lastLifeStages = state.lifeStages;
 
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -1134,6 +1137,7 @@ registerUndoExecutor('timeline-remove-created-block', (raw) => {
         groups: state.groups,
         notes: state.notes,
         milestones: state.milestones,
+        lifeStages: state.lifeStages,
       });
     }, 500);
 

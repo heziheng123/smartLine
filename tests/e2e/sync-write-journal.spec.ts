@@ -53,6 +53,27 @@ async function readPendingWorkspaceSync(page: Page) {
   });
 }
 
+async function readPersistedTimelineData(page: Page) {
+  return await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('smart-timeline');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      if (!database.objectStoreNames.contains('timeline_data')) return null;
+      return await new Promise<Record<string, unknown> | null>((resolve, reject) => {
+        const transaction = database.transaction('timeline_data', 'readonly');
+        const request = transaction.objectStore('timeline_data').get('smart-timeline-data');
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      database.close();
+    }
+  });
+}
+
 async function simulateConnectedStorageLoading(page: Page) {
   await page.evaluate(async () => {
     const storeModuleUrl = '/src/store/index.ts';
@@ -161,6 +182,35 @@ test('独立人生地图编辑会写入统一工作区离线队列', async ({ pa
     const pending = await readPendingWorkspaceSync(page);
     const fields = pending?.fields as { lifeMapGoals?: Array<{ name?: string }> } | undefined;
     return fields?.lifeMapGoals?.some((item) => item.name === '多端同步健康目标') ?? false;
+  }).toBe(true);
+});
+
+test('远端式人生阶段更新会落盘，并在统一工作区未就绪时进入兜底队列', async ({ page }) => {
+  const remoteStage = {
+    id: 'remote-life-stage',
+    name: '远端人生阶段',
+    start: today,
+    end: today,
+  };
+
+  // Liveblocks hydration updates the outer Zustand store directly rather than
+  // calling addLifeStage, so this reproduces the path that relies on the store
+  // persistence subscription and the offline fallback subscription.
+  await page.evaluate(async (stage) => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    useTimelineStore.setState({ lifeStages: [stage] });
+  }, remoteStage);
+
+  await expect.poll(async () => {
+    const pending = await readPendingWorkspaceSync(page);
+    const fields = pending?.fields as { lifeStages?: Array<{ id?: string }> } | undefined;
+    return fields?.lifeStages?.some((stage) => stage.id === remoteStage.id) ?? false;
+  }).toBe(true);
+
+  await expect.poll(async () => {
+    const persisted = await readPersistedTimelineData(page);
+    const lifeStages = persisted?.lifeStages as Array<{ id?: string }> | undefined;
+    return lifeStages?.some((stage) => stage.id === remoteStage.id) ?? false;
   }).toBe(true);
 });
 

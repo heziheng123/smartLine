@@ -23,6 +23,7 @@ interface LifeMapViewProps {
   onCreateMilestone: (milestone: Milestone) => void;
   onUpdateMilestone: (milestone: Milestone) => void;
   onDeleteMilestone: (milestoneId: string) => void;
+  onUpdateProjectPlacement?: (taskId: string, placement: ProjectSide) => void;
   toolbarScope?: React.ReactNode;
   onCreateGoal?: () => void;
   onCreateSystem?: () => void;
@@ -75,6 +76,7 @@ interface LineNode {
   duration?: number;
   isReview?: boolean;
   importance?: MilestoneImportance;
+  layoutLane?: number;
 }
 
 interface RangeSegment {
@@ -95,7 +97,9 @@ interface RangeSegment {
   meta?: string;
   openEnded?: boolean;
   preferredSide?: ProjectSide;
+  placementIsManual?: boolean;
   annotationKind?: 'theme' | 'focus';
+  layoutLane?: number;
 }
 
 interface PositionedProjectBand extends RangeSegment {
@@ -186,11 +190,6 @@ interface DirectDrag {
   startLane?: number;
 }
 
-interface ManualNodeLayout {
-  side: NodeSide;
-  lane: number;
-}
-
 interface MilestoneLeaderGroup {
   key: string;
   date: Dayjs;
@@ -223,58 +222,9 @@ const STAGE_RAIL_BAND_TOP = 10;
 const STAGE_RAIL_LANE_GAP = 24;
 const STAGE_CONTENT_GAP = 12;
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
-const PROJECT_SIDE_STORAGE_KEY = 'life-map:project-sides';
-const PROJECT_RANK_STORAGE_KEY = 'life-map:project-ranks';
-const NODE_LAYOUT_STORAGE_KEY = 'life-map:node-layouts';
 const WEEKLY_FOCUS_COLOR = '#6D63E8';
 const MILESTONE_COLOR = '#E58A2B';
 const NOTE_COLOR = '#64748B';
-
-function loadProjectSides(): Record<string, ProjectSide> {
-  if (typeof window === 'undefined') return {};
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(PROJECT_SIDE_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(stored).filter((entry): entry is [string, ProjectSide] => entry[1] === 'above' || entry[1] === 'below'));
-  } catch {
-    return {};
-  }
-}
-
-function loadProjectRanks(): Record<string, ProjectRank> {
-  if (typeof window === 'undefined') return {};
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(PROJECT_RANK_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
-    // Older versions exposed support/routine/paused as manual choices. Only an
-    // explicit core designation remains user-controlled; other roles now fall
-    // back to the project's own data and the automatic map hierarchy.
-    const normalized = Object.fromEntries(Object.entries(stored).filter((entry): entry is [string, ProjectRank] => entry[1] === 'core'));
-    if (Object.keys(normalized).length !== Object.keys(stored).length) {
-      window.localStorage.setItem(PROJECT_RANK_STORAGE_KEY, JSON.stringify(normalized));
-    }
-    return normalized;
-  } catch {
-    return {};
-  }
-}
-
-function loadNodeLayouts(): Record<string, ManualNodeLayout> {
-  if (typeof window === 'undefined') return {};
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(NODE_LAYOUT_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(stored).filter((entry): entry is [string, ManualNodeLayout] => {
-      const value = entry[1] as Partial<ManualNodeLayout> | null;
-      return Boolean(value && (value.side === 'top' || value.side === 'bottom') && Number.isInteger(value.lane) && Number(value.lane) >= 0);
-    }));
-  } catch {
-    return {};
-  }
-}
-
-function nodeLayoutKey(node: Pick<LineNode, 'kind' | 'noteId' | 'milestoneId'>): string | undefined {
-  if (node.kind === 'milestone' && node.milestoneId) return `milestone:${node.milestoneId}`;
-  if (node.kind === 'note' && node.noteId) return `note:${node.noteId}`;
-  return undefined;
-}
 
 function clampCardCenterToViewport(
   anchorX: number,
@@ -468,6 +418,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   onCreateMilestone,
   onUpdateMilestone,
   onDeleteMilestone,
+  onUpdateProjectPlacement,
   toolbarScope,
   onCreateGoal,
   onCreateSystem,
@@ -503,9 +454,6 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const [jumpQuery, setJumpQuery] = useState('');
   const [showMinimap, setShowMinimap] = useState(false);
   const [focusMode, setFocusMode] = useState<FocusMode>('off');
-  const [projectSides, setProjectSides] = useState<Record<string, ProjectSide>>(loadProjectSides);
-  const [projectRanks] = useState<Record<string, ProjectRank>>(loadProjectRanks);
-  const [manualNodeLayouts, setManualNodeLayouts] = useState<Record<string, ManualNodeLayout>>(loadNodeLayouts);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [hoveredProjectId, setHoveredProjectId] = useState<string | null>(null);
   const [viewport, setViewport] = useState({ scrollLeft: 0, width: 1 });
@@ -521,30 +469,8 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const suppressClickRef = useRef(false);
 
   const setProjectSide = useCallback((taskId: string, side: ProjectSide) => {
-    setProjectSides((current) => {
-      const next = { ...current, [taskId]: side };
-      try {
-        window.localStorage.setItem(PROJECT_SIDE_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // The layout still updates for this session when storage is unavailable.
-      }
-      return next;
-    });
-  }, []);
-
-  const setManualNodeLayout = useCallback((key: string, layout: ManualNodeLayout | null) => {
-    setManualNodeLayouts((current) => {
-      const next = { ...current };
-      if (layout) next[key] = layout;
-      else delete next[key];
-      try {
-        window.localStorage.setItem(NODE_LAYOUT_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Keep the in-memory preference when persistent storage is unavailable.
-      }
-      return next;
-    });
-  }, []);
+    onUpdateProjectPlacement?.(taskId, side);
+  }, [onUpdateProjectPlacement]);
 
   const groupById = useMemo(() => new Map(groups.map((group) => [group.id, {
     name: group.name,
@@ -563,7 +489,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       const color = resolveTaskTheme(task, group?.color).backgroundColor;
       const rank = task.lifeMapKind
         ? task.isMain ? 'core' : task.lifeMapKind === 'goal' ? 'support' : task.lifeMapKind === 'review' ? 'paused' : 'routine'
-        : projectRanks[task.id] ?? (task.isMain ? 'core' : task.groupId ? 'support' : 'routine');
+        : task.isMain ? 'core' : task.groupId ? 'support' : 'routine';
       nextRanges.push({
         id: `range:${task.id}`,
         title: task.name,
@@ -579,7 +505,8 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         lifeMapKind: task.lifeMapKind,
         meta: task.lifeMapMeta,
         openEnded: task.lifeMapOpenEnded,
-        preferredSide: task.lifeMapPlacement,
+        preferredSide: task.lifeMapPlacement ?? (task.lifeMapKind === 'goal' ? 'above' : task.lifeMapKind === 'system' ? 'below' : undefined),
+        placementIsManual: task.lifeMapPlacement !== undefined,
       });
 
       getSmartTaskBlocks(task.blocks ?? []).filter((block) => !block.header.isArchived).forEach((block) => {
@@ -619,14 +546,14 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
 
     milestones.filter((item) => validDate(item.date)).forEach((item) => nextNodes.push({
       id: `milestone:${item.id}`, kind: 'milestone', title: item.name, subtitle: `${item.date} · ${milestoneCountdown(dayjs(item.date), today)}`,
-        date: dayjs(item.date), color: MILESTONE_COLOR, milestoneId: item.id, placement: item.placement ?? 'below', importance: item.importance ?? 'important',
+        date: dayjs(item.date), color: MILESTONE_COLOR, milestoneId: item.id, placement: item.placement ?? 'below', importance: item.importance ?? 'important', layoutLane: item.layoutLane,
     }));
 
     notes.filter((item) => validDate(item.date)).forEach((item) => {
       const start = dayjs(item.date);
       const end = validDate(item.endDate) ? dayjs(item.endDate) : start;
       if (item.type === 'range' && validDate(item.endDate)) {
-        nextRanges.push({ id: `note-range:${item.id}`, noteId: item.id, title: item.name, start, end, color: item.color ?? WEEKLY_FOCUS_COLOR, kind: 'note', progress: 0, placement: item.placement ?? 'above', annotationKind: item.id.startsWith('theme:') ? 'theme' : 'focus' });
+        nextRanges.push({ id: `note-range:${item.id}`, noteId: item.id, title: item.name, start, end, color: item.color ?? WEEKLY_FOCUS_COLOR, kind: 'note', progress: 0, placement: item.placement ?? 'above', annotationKind: item.id.startsWith('theme:') ? 'theme' : 'focus', layoutLane: item.layoutLane });
       } else {
         const isReview = /^复盘[：:·\s]/.test(item.name);
         nextNodes.push({
@@ -636,13 +563,14 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
           color: NOTE_COLOR,
           noteId: item.id,
           placement: item.placement ?? 'above',
+          layoutLane: item.layoutLane,
           isReview,
         });
       }
     });
 
     return { nodes: nextNodes.sort((left, right) => left.date.valueOf() - right.date.valueOf()), ranges: nextRanges };
-  }, [groupById, milestones, notes, projectRanks, tasks, today]);
+  }, [groupById, milestones, notes, tasks, today]);
 
   const bounds = useMemo(() => {
     const dates = [
@@ -723,7 +651,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         const left = dateToX(range.start);
         const width = Math.max(6, dateToX(range.end.add(1, 'day')) - left);
         const right = left + width;
-        const preferredSide = range.taskId ? projectSides[range.taskId] ?? range.preferredSide : range.preferredSide;
+        const preferredSide = range.preferredSide;
         const nextLevel = (side: ProjectSide) => {
           const availableLevel = levelRightEdges[side].findIndex((rightEdge) => rightEdge <= left + 0.5);
           return availableLevel === -1 ? levelRightEdges[side].length : availableLevel;
@@ -741,7 +669,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         }
         return { ...range, left, width, level, side };
       });
-  }, [dateToX, projectSides, ranges]);
+  }, [dateToX, ranges]);
 
   const goalLinks = useMemo<GoalLink[]>(() => {
     const byGroup = new Map<string, PositionedProjectBand[]>();
@@ -769,7 +697,8 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       : [0, cardGap, -cardGap, cardGap * 2, -cardGap * 2];
     const positioned = ranges
       .filter((range) => range.kind === 'note')
-      .sort((left, right) => left.start.valueOf() - right.start.valueOf())
+      .sort((left, right) => (right.layoutLane === undefined ? 0 : 1) - (left.layoutLane === undefined ? 0 : 1)
+        || left.start.valueOf() - right.start.valueOf())
       .map((range) => {
         const left = dateToX(range.start);
         const width = Math.max(16, dateToX(range.end.add(1, 'day')) - left);
@@ -790,21 +719,27 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         let level = 0;
         let cardX = anchorX;
         let placed = false;
-        for (level = 0; level <= cardRows[placement].length && !placed; level += 1) {
-          const row = cardRows[placement][level] ?? [];
+        const laneOrder: number[] = [];
+        if (range.layoutLane !== undefined) laneOrder.push(range.layoutLane);
+        for (let candidateLane = 0; candidateLane <= cardRows[placement].length + 1; candidateLane += 1) {
+          if (!laneOrder.includes(candidateLane)) laneOrder.push(candidateLane);
+        }
+        for (const candidateLane of laneOrder) {
+          const row = cardRows[placement][candidateLane] ?? [];
           for (const offset of candidateOffsets) {
             const candidateX = Math.max(halfCard + 4, Math.min(canvasWidth - halfCard - 4, anchorX + offset));
             const box = { left: candidateX - halfCard, right: candidateX + halfCard };
             if (row.every((existing) => box.right + cardGap <= existing.left || box.left >= existing.right + cardGap)) {
-              if (!cardRows[placement][level]) cardRows[placement][level] = row;
+              if (!cardRows[placement][candidateLane]) cardRows[placement][candidateLane] = row;
               row.push(box);
               cardX = candidateX;
+              level = candidateLane;
               placed = true;
               break;
             }
           }
+          if (placed) break;
         }
-        level = Math.max(0, level - 1);
         const markLevels = markRightEdges[placement];
         let markLevel = markLevels.findIndex((rightEdge) => rightEdge <= left + 0.5);
         if (markLevel === -1) {
@@ -869,27 +804,21 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       .filter((node) => node.kind !== 'action' && node.kind !== 'deadline')
       .filter((node) => (layers.completed || !node.completed) && (node.kind === 'milestone' ? layers.milestones : layers.notes))
       .filter((node) => shouldShowNodeCard(node, zoom))
-      .map((node) => ({ node, key: nodeLayoutKey(node) }))
-      .sort((left, right) => {
-        const leftPinned = left.key && manualNodeLayouts[left.key] ? 1 : 0;
-        const rightPinned = right.key && manualNodeLayouts[right.key] ? 1 : 0;
-        return rightPinned - leftPinned
-          || left.node.date.valueOf() - right.node.date.valueOf()
-          || left.node.id.localeCompare(right.node.id);
-      });
+      .sort((left, right) => (right.layoutLane === undefined ? 0 : 1) - (left.layoutLane === undefined ? 0 : 1)
+        || left.date.valueOf() - right.date.valueOf()
+        || left.id.localeCompare(right.id));
 
-    return candidates.map(({ node, key: layoutKey }) => {
+    return candidates.map((node) => {
       const anchorX = dateToX(node.date);
       const width = nodeWidth;
-      const manualLayout = layoutKey ? manualNodeLayouts[layoutKey] : undefined;
-      const side: NodeSide = manualLayout?.side ?? (node.placement === 'above' ? 'top' : 'bottom');
+      const side: NodeSide = node.placement === 'above' ? 'top' : 'bottom';
       const zone = node.kind === 'milestone' ? 'milestone' : 'note';
       const key = `${side}:${zone}`;
       const rows = rowBoxes[key] ?? [];
       const x = clampCardCenterToViewport(anchorX, width, canvasWidth, viewport);
       const box = { left: x - width / 2, right: x + width / 2 };
       const laneOrder: number[] = [];
-      if (manualLayout) laneOrder.push(manualLayout.lane);
+      if (node.layoutLane !== undefined) laneOrder.push(node.layoutLane);
       for (let candidateLane = 0; candidateLane <= rows.length + 1; candidateLane += 1) {
         if (!laneOrder.includes(candidateLane)) laneOrder.push(candidateLane);
       }
@@ -900,9 +829,9 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       if (!rows[lane]) rows[lane] = [];
       rows[lane].push(box);
       rowBoxes[key] = rows;
-      return { ...node, anchorX, x, width, side, lane, layoutSource: manualLayout ? 'manual' : 'auto' };
+      return { ...node, anchorX, x, width, side, lane, layoutSource: node.layoutLane === undefined ? 'auto' : 'manual' };
     });
-  }, [canvasWidth, dateToX, layers.completed, layers.milestones, layers.notes, manualNodeLayouts, nodes, viewport, zoom]);
+  }, [canvasWidth, dateToX, layers.completed, layers.milestones, layers.notes, nodes, viewport, zoom]);
   const nodeLaneCount = (side: NodeSide, kind: 'note' | 'milestone') => nodePlacements
     .filter((node) => node.side === side && node.kind === kind)
     .reduce((count, node) => Math.max(count, node.lane + 1), 0);
@@ -1358,16 +1287,17 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     if (!draft || !draft.name.trim() || !validDate(draft.start)) return;
     if (draft.kind === 'range' && (!validDate(draft.end) || draft.end < draft.start)) return;
     if (draft.kind === 'milestone') {
-      const milestone: Milestone = { id: draft.id ?? crypto.randomUUID(), name: draft.name.trim(), date: draft.start, color: MILESTONE_COLOR, placement: draft.placement, importance: draft.importance ?? 'important' };
+      const existingMilestone = draft.id ? milestones.find((item) => item.id === draft.id) : undefined;
+      const milestone: Milestone = { id: draft.id ?? crypto.randomUUID(), name: draft.name.trim(), date: draft.start, color: MILESTONE_COLOR, placement: draft.placement, importance: draft.importance ?? 'important', layoutLane: existingMilestone?.layoutLane };
       if (draft.id) {
-        const before = milestones.find((item) => item.id === draft.id);
+        const before = existingMilestone;
         if (before) commitMilestoneUpdate(before, milestone, '编辑关键日期'); else onUpdateMilestone(milestone);
-        setManualNodeLayout(`milestone:${draft.id}`, null);
       } else {
         onCreateMilestone(milestone);
         pushHistory({ label: '创建关键日期', undo: () => onDeleteMilestone(milestone.id), redo: () => onCreateMilestone(milestone) });
       }
     } else {
+      const existingNote = draft.id ? notes.find((item) => item.id === draft.id) : undefined;
       const note: Note = {
         id: draft.id ?? crypto.randomUUID(),
         name: draft.name.trim(),
@@ -1376,11 +1306,11 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         type: draft.kind === 'range' ? 'range' : 'pin',
         color: draft.kind === 'range' ? WEEKLY_FOCUS_COLOR : NOTE_COLOR,
         placement: draft.placement,
+        layoutLane: existingNote?.layoutLane,
       };
       if (draft.id) {
-        const before = notes.find((item) => item.id === draft.id);
+        const before = existingNote;
         if (before) commitNoteUpdate(before, note, '编辑批注'); else onUpdateNote(note);
-        if (draft.kind !== 'range') setManualNodeLayout(`note:${draft.id}`, null);
       } else {
         onCreateNote(note);
         pushHistory({ label: '创建批注', undo: () => onDeleteNote(note.id), redo: () => onCreateNote(note) });
@@ -1395,12 +1325,10 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       const before = milestones.find((item) => item.id === draft.id);
       onDeleteMilestone(draft.id);
       if (before) pushHistory({ label: '删除关键日期', undo: () => onCreateMilestone(before), redo: () => onDeleteMilestone(before.id) });
-      setManualNodeLayout(`milestone:${draft.id}`, null);
     } else {
       const before = notes.find((item) => item.id === draft.id);
       onDeleteNote(draft.id);
       if (before) pushHistory({ label: '删除批注', undo: () => onCreateNote(before), redo: () => onDeleteNote(before.id) });
-      setManualNodeLayout(`note:${draft.id}`, null);
     }
     setDraft(null);
   };
@@ -1438,29 +1366,33 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     const side: NodeSide = placement === 'above' ? 'top' : 'bottom';
     const moved = Math.abs(event.clientX - directDrag.startClientX) > 3 || Math.abs(deltaY) > 3;
 
-    if (moved && (directDrag.kind === 'note-card' || directDrag.kind === 'milestone-card')) {
-      const sameSide = directDrag.startSide === side;
-      const laneDelta = sameSide ? Math.round((side === 'top' ? -deltaY : deltaY) / NODE_GAP_Y) : 0;
-      const preferredLane = Math.max(0, Math.min(8, (sameSide ? directDrag.startLane ?? 0 : 0) + laneDelta));
-      const layoutKey = `${directDrag.kind === 'milestone-card' ? 'milestone' : 'note'}:${directDrag.id}`;
-      setManualNodeLayout(layoutKey, { side, lane: preferredLane });
-    }
-
     if (directDrag.kind === 'milestone-card') {
       const before = milestones.find((item) => item.id === directDrag.id);
-      if (before && (deltaDays !== 0 || placement !== (before.placement ?? 'below'))) {
-        commitMilestoneUpdate(before, { ...before, date: dayjs(before.date).add(deltaDays, 'day').format('YYYY-MM-DD'), placement });
+      if (before && moved) {
+        const sameSide = directDrag.startSide === side;
+        const laneDelta = sameSide ? Math.round((side === 'top' ? -deltaY : deltaY) / NODE_GAP_Y) : 0;
+        const preferredLane = Math.max(0, Math.min(8, (sameSide ? directDrag.startLane ?? 0 : 0) + laneDelta));
+        commitMilestoneUpdate(before, {
+          ...before,
+          date: dayjs(before.date).add(deltaDays, 'day').format('YYYY-MM-DD'),
+          placement,
+          layoutLane: preferredLane,
+        });
       }
     } else {
       const before = notes.find((item) => item.id === directDrag.id);
       if (before) {
         if (directDrag.kind === 'note-card') {
-          if (deltaDays !== 0 || placement !== (before.placement ?? (before.type === 'range' ? 'above' : 'above'))) {
+          if (moved) {
+            const sameSide = directDrag.startSide === side;
+            const laneDelta = sameSide ? Math.round((side === 'top' ? -deltaY : deltaY) / NODE_GAP_Y) : 0;
+            const preferredLane = Math.max(0, Math.min(8, (sameSide ? directDrag.startLane ?? 0 : 0) + laneDelta));
             commitNoteUpdate(before, {
               ...before,
               date: dayjs(before.date).add(deltaDays, 'day').format('YYYY-MM-DD'),
               endDate: before.endDate ? dayjs(before.endDate).add(deltaDays, 'day').format('YYYY-MM-DD') : undefined,
               placement,
+              layoutLane: preferredLane,
             });
           }
         } else if (before.endDate) {
@@ -1776,7 +1708,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                 data-band-level={band.level}
                 data-band-side={band.side}
                 data-project-rank={band.rank}
-                data-layout-source={band.taskId && projectSides[band.taskId] ? 'manual' : 'auto'}
+                  data-layout-source={band.placementIsManual ? 'manual' : 'auto'}
               >
                 <span style={{ width: labelWidth, transform: `translateX(${labelOffset}px)` }}><strong>{band.title}</strong><em>{band.meta ?? `${Math.round(band.progress * 100)}%`}</em></span>
                 <i className="life-line__project-progress" style={{ width: `${Math.round(band.progress * 100)}%` }} aria-hidden="true" />

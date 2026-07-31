@@ -15,11 +15,71 @@ export interface WorkspaceFieldChangeSet {
   baseFields: Record<string, unknown>;
 }
 
+export interface WorkspaceContentCounts {
+  tasks: number;
+  groups: number;
+  lifeStages: number;
+  lifeMapItems: number;
+  reviewTasks: number;
+  dailyDays: number;
+  retrospectiveDays: number;
+  graphNodes: number;
+}
+
+export type UnifiedActivationDecision = 'new' | 'matching' | 'cloud' | 'conflict';
+
+export function assertWorkspaceSchemaSupported(
+  root: Record<string, unknown>,
+  supportedVersion: number,
+): void {
+  const metadata = root.metadata && typeof root.metadata === 'object'
+    ? root.metadata as Record<string, unknown>
+    : {};
+  const schemaVersion = typeof metadata.schemaVersion === 'number'
+    ? metadata.schemaVersion
+    : 0;
+  if (schemaVersion > supportedVersion) {
+    throw new Error(`云端工作区由更新版本的应用创建（数据版本 ${schemaVersion}），当前版本仅支持到 ${supportedVersion}。请先更新应用，已阻止连接以避免覆盖数据。`);
+  }
+}
+
+export function workspaceHasUserContent(summary: WorkspaceContentCounts): boolean {
+  return summary.tasks > 0
+    || summary.groups > 0
+    || summary.lifeStages > 0
+    || summary.lifeMapItems > 0
+    || summary.reviewTasks > 0
+    || summary.dailyDays > 0
+    || summary.retrospectiveDays > 0
+    || summary.graphNodes > 0;
+}
+
+export function decideUnifiedWorkspaceActivation(
+  hasRemoteStorage: boolean,
+  localHash: string,
+  remoteHash: string,
+  localSummary: WorkspaceContentCounts,
+  remoteSummary: WorkspaceContentCounts,
+): UnifiedActivationDecision {
+  if (!hasRemoteStorage) return 'new';
+  if (localHash === remoteHash) return 'matching';
+  if (!workspaceHasUserContent(localSummary)) return 'cloud';
+  if (!workspaceHasUserContent(remoteSummary)) return 'new';
+  return 'conflict';
+}
+
 export function isWorkspaceStoreStorageReady(state: WorkspaceStoreReadiness): boolean {
   return state.syncEnabled === true
     && state.liveblocks?.room?.getStatus() === 'connected'
     && state.liveblocks?.status === 'connected'
     && !state.liveblocks?.isStorageLoading;
+}
+
+export function shouldBackfillLegacyLifeMapSync(
+  hasExistingWorkspaceSync: boolean,
+  lifeMapSyncEnabled: boolean,
+): boolean {
+  return hasExistingWorkspaceSync && !lifeMapSyncEnabled;
 }
 
 export function collectWorkspaceFieldChanges(

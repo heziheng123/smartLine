@@ -35,13 +35,14 @@ interface MatrixViewProps {
   tasks: ReviewTask[];
   settings: EbbSettings;
   taskActions: TaskActions;
+  selectedDate?: string;
   isUnlinkedTask?: (sourceId: string) => boolean;
 }
 
 type FilterStatus = 'all' | 'pending' | 'completed';
 type SortBy = 'date' | 'ratio';
 
-const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions }) => {
+const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, selectedDate }) => {
   const [filterTag, setFilterTag] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('date');
@@ -202,6 +203,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions })
                 tagColor={getReviewCategoryColor(category, settings.tagColors)}
                 topicTasks={topicTasks}
                 taskActions={taskActions}
+                selectedDate={selectedDate}
               />
             );
           })
@@ -222,9 +224,10 @@ interface TopicRowProps {
   tagColor?: string;
   topicTasks: ReviewTask[];
   taskActions: TaskActions;
+  selectedDate?: string;
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, taskActions }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, taskActions, selectedDate }) => {
   const [expanded, setExpanded] = useState(false);
 
   const ratio = stat.ratio;
@@ -236,6 +239,7 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
   const isNextOverdue = nextTask ? isOverdue(nextTask) : false;
   const isNextToday = nextTask ? isDueToday(nextTask) : false;
   const isAllDone = stat.completedRounds === stat.totalRounds && stat.totalRounds > 0;
+  const hasSelectedDate = Boolean(selectedDate && topicTasks.some((task) => task.dueDate === selectedDate));
 
   // 左边框颜色
   const accentColor = isAllDone ? '#10B981' : isNextOverdue ? '#EF4444' : isNextToday ? '#F59E0B' : '#3B82F6';
@@ -252,7 +256,7 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
     )[0];
 
   return (
-    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''}`} style={{ '--accent': accentColor, contentVisibility: 'auto', containIntrinsicSize: '92px' } as React.CSSProperties}>
+    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''} ${hasSelectedDate ? 'is-date-match' : ''}`} style={{ '--accent': accentColor, contentVisibility: 'auto', containIntrinsicSize: '92px' } as React.CSSProperties}>
       <div className="eb-topic-row-main" onClick={() => setExpanded(!expanded)}>
         {/* 圆形进度环 */}
         <div className="eb-progress-ring" style={{ '--ring-color': ringColor } as React.CSSProperties}>
@@ -380,7 +384,7 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
                   <button
                     type="button"
                     key={t.id}
-                    className={`flex flex-col items-center justify-center w-14 h-14 rounded-full border-[1.5px] ${ringColor} ${bgColor} transition-all`}
+                    className={`flex flex-col items-center justify-center w-14 h-14 rounded-full border-[1.5px] ${ringColor} ${bgColor} ${selectedDate === t.dueDate ? 'ring-2 ring-indigo-300 ring-offset-1' : ''} transition-all`}
                     onClick={() => taskActions.onToggle(t.id)}
                     title={t.isCompleted ? `取消第 ${idx + 1} 轮完成` : `标记第 ${idx + 1} 轮完成`}
                     aria-label={t.isCompleted ? `取消第 ${idx + 1} 轮完成` : `标记第 ${idx + 1} 轮完成`}

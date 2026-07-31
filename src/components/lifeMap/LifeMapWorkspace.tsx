@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
-import { ArrowDown, ArrowUp, ChevronDown, Eye, EyeOff, ListFilter, Settings2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, Eye, EyeOff, ListFilter, Palette, Settings2, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
 import { activeLifeMapItems, hasIndependentLifeMapContent } from '@/lifeMap/data';
@@ -60,6 +60,7 @@ const LifeMapWorkspace: React.FC = () => {
     addReview: state.addReview,
     updateReview: state.updateReview,
     deleteReview: state.deleteReview,
+    migrateLegacyLayouts: state.migrateLegacyLayouts,
   })));
   const [selectedAreaId, setSelectedAreaId] = useState<string>('all');
   const [editor, setEditor] = useState<EditorState>(null);
@@ -92,6 +93,11 @@ const LifeMapWorkspace: React.FC = () => {
   const [toolbarMenu, setToolbarMenu] = useState<ToolbarMenu>(null);
   const [checkInDate, setCheckInDate] = useState(defaultDate);
   const toolbarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!store.isHydrated) return;
+    store.migrateLegacyLayouts();
+  }, [store]);
 
   const areas = useMemo(
     () => activeLifeMapItems(store.lifeMapAreas).filter((area) => !area.isHidden).sort((a, b) => a.order - b.order),
@@ -152,7 +158,7 @@ const LifeMapWorkspace: React.FC = () => {
       id: `goal:${item.id}`, name: item.name, start: item.start, end: item.targetDate,
       color: item.color ?? areaById.get(item.areaId)?.color, groupId: item.areaId,
       isMain: item.isCore, completed: item.status === 'completed', blocks: [], lifeMapKind: 'goal' as const,
-      lifeMapMeta: metricLabel, lifeMapProgress: resolvedProgress, lifeMapPlacement: 'above' as const,
+      lifeMapMeta: metricLabel, lifeMapProgress: resolvedProgress, lifeMapPlacement: item.placement,
       };
     }),
     ...systems.map((item) => {
@@ -164,7 +170,7 @@ const LifeMapWorkspace: React.FC = () => {
       completed: item.status === 'completed', blocks: [], lifeMapKind: 'system' as const,
       lifeMapMeta: `${stats.label} ${stats.completed}/${stats.target}${item.unit ?? '次'}`,
       lifeMapProgress: stats.target > 0 ? Math.min(100, Math.round(stats.completed / stats.target * 100)) : 0,
-      lifeMapOpenEnded: !item.end, lifeMapPlacement: 'below' as const,
+      lifeMapOpenEnded: !item.end, lifeMapPlacement: item.placement,
       };
     }),
     ...reviews.map((item) => ({
@@ -175,13 +181,13 @@ const LifeMapWorkspace: React.FC = () => {
   ], [areaById, checkIns, goals, groups, reviews, systemStats, systems]);
 
   const notes = useMemo<Note[]>(() => [
-    ...themes.map((item) => ({ id: `theme:${item.id}`, name: `主题 · ${item.name}`, date: item.start, endDate: item.end, type: 'range' as const, color: item.color, placement: item.placement ?? 'above' })),
-    ...focuses.map((item) => ({ id: item.id, name: item.name, date: item.start, endDate: item.end, type: 'range' as const, color: item.color, placement: item.placement })),
-    ...lifeNotes.map((item) => ({ id: item.id, name: item.name, date: item.date, endDate: item.endDate, type: item.type, color: item.color, placement: item.placement })),
+    ...themes.map((item) => ({ id: `theme:${item.id}`, name: `主题 · ${item.name}`, date: item.start, endDate: item.end, type: 'range' as const, color: item.color, placement: item.placement ?? 'above', layoutLane: item.layoutLane })),
+    ...focuses.map((item) => ({ id: item.id, name: item.name, date: item.start, endDate: item.end, type: 'range' as const, color: item.color, placement: item.placement, layoutLane: item.layoutLane })),
+    ...lifeNotes.map((item) => ({ id: item.id, name: item.name, date: item.date, endDate: item.endDate, type: item.type, color: item.color, placement: item.placement, layoutLane: item.layoutLane })),
   ], [focuses, lifeNotes, themes]);
   const milestones = useMemo<Milestone[]>(() => events.map((item) => ({
     id: item.id, name: item.name, date: item.date,
-    color: item.color ?? areaById.get(item.areaId)?.color, placement: item.placement, importance: item.importance,
+    color: item.color ?? areaById.get(item.areaId)?.color, placement: item.placement, importance: item.importance, layoutLane: item.layoutLane,
   })), [areaById, events]);
   const stages = useMemo<LifeStage[]>(() => activeLifeMapItems(store.lifeMapStages).map((item) => ({
     id: item.id, name: item.name, start: item.start, end: item.end, color: item.color,
@@ -414,6 +420,10 @@ const LifeMapWorkspace: React.FC = () => {
       onCreateTheme={() => openCreate('theme')}
       onCreateArea={() => openCreate('area')}
       onCreateReview={() => openCreate('review')}
+      onUpdateProjectPlacement={(id, placement) => {
+        if (id.startsWith('goal:')) store.updateGoal(id.slice('goal:'.length), { placement });
+        else if (id.startsWith('system:')) store.updateSystem(id.slice('system:'.length), { placement });
+      }}
       annotationAreaRequired={selectedAreaId === 'all'}
       onRequireAnnotationArea={() => setToolbarMenu('areas')}
       onCreateLifeStage={(item) => store.addStage({ id: item.id.replace(/^stage:/, ''), name: item.name, start: item.start, end: item.end, color: item.color })}
@@ -424,16 +434,16 @@ const LifeMapWorkspace: React.FC = () => {
         : store.addNote({ id: item.id.replace(/^note:/, ''), areaId: editorAreaId, name: item.name, date: item.date, endDate: item.endDate, type: item.type, color: item.color, placement: item.placement })}
       onUpdateNote={(item) => {
         if (item.id.startsWith('theme:') && item.endDate) {
-          store.updateTheme(item.id.replace(/^theme:/, ''), { name: item.name.replace(/^主题\s*[·・]\s*/, ''), start: item.date, end: item.endDate, color: item.color, placement: item.placement });
+          store.updateTheme(item.id.replace(/^theme:/, ''), { name: item.name.replace(/^主题\s*[·・]\s*/, ''), start: item.date, end: item.endDate, color: item.color, placement: item.placement, layoutLane: item.layoutLane });
         } else if (focuses.some((focus) => focus.id === item.id) && item.endDate) {
-          store.updateFocus(item.id, { name: item.name, start: item.date, end: item.endDate, color: item.color, placement: item.placement });
+          store.updateFocus(item.id, { name: item.name, start: item.date, end: item.endDate, color: item.color, placement: item.placement, layoutLane: item.layoutLane });
         } else {
-          store.updateNote(item.id, { name: item.name, date: item.date, endDate: item.endDate, type: item.type, color: item.color, placement: item.placement });
+          store.updateNote(item.id, { name: item.name, date: item.date, endDate: item.endDate, type: item.type, color: item.color, placement: item.placement, layoutLane: item.layoutLane });
         }
       }}
       onDeleteNote={(id) => id.startsWith('theme:') ? store.deleteTheme(id.replace(/^theme:/, '')) : focuses.some((focus) => focus.id === id) ? store.deleteFocus(id) : store.deleteNote(id)}
       onCreateMilestone={(item) => store.addEvent({ id: item.id.replace(/^event:/, ''), areaId: editorAreaId, name: item.name, date: item.date, color: item.color, placement: item.placement, importance: item.importance })}
-      onUpdateMilestone={(item) => store.updateEvent(item.id.replace(/^event:/, ''), { name: item.name, date: item.date, color: item.color, placement: item.placement, importance: item.importance })}
+      onUpdateMilestone={(item) => store.updateEvent(item.id.replace(/^event:/, ''), { name: item.name, date: item.date, color: item.color, placement: item.placement, importance: item.importance, layoutLane: item.layoutLane })}
       onDeleteMilestone={(id) => store.deleteEvent(id.replace(/^event:/, ''))}
       onOpenTask={openEntity}
     />
@@ -455,7 +465,7 @@ const LifeMapWorkspace: React.FC = () => {
       </section>
     </div>}
     {editor && <div className="life-map-editor" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null); }}>
-      <form onSubmit={saveEditor}>
+      <form className={`life-map-editor__panel life-map-editor__panel--${editor.kind}`} onSubmit={saveEditor}>
         <header><div><small>独立人生规划</small><h2>{editor.id ? '编辑' : '新建'}{editor.kind === 'goal' ? '目标' : editor.kind === 'system' ? '长期系统' : editor.kind === 'theme' ? '领域主题' : editor.kind === 'review' ? '周期复盘' : '人生领域'}</h2></div><button type="button" onClick={() => setEditor(null)} aria-label="关闭"><X /></button></header>
         <label>{editor.kind === 'review' ? '复盘标题' : '名称'}<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={editor.kind === 'goal' ? '例如：体重稳定到 70kg' : editor.kind === 'system' ? '例如：每周跑步' : editor.kind === 'review' ? '例如：七月复盘' : '写下真正重要的方向'} /></label>
         {!['area', 'review'].includes(editor.kind) && <label>人生领域<select required value={draftAreaId} onChange={(event) => { const areaId = event.target.value; setDraftAreaId(areaId); setColor(areaById.get(areaId)?.color ?? color); }}>{areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}</select></label>}
@@ -467,7 +477,7 @@ const LifeMapWorkspace: React.FC = () => {
         {editor.kind === 'system' && <div className="life-map-editor__dates"><label>频率<select value={frequency} onChange={(event) => setFrequency(event.target.value as LifeSystem['frequency'])}><option value="daily">每天</option><option value="weekly">每周</option><option value="monthly">每月</option></select></label><label>目标次数<input type="number" min={1} value={targetCount} onChange={(event) => setTargetCount(Number(event.target.value))} /></label><label>每次分钟<input type="number" min={5} step={5} value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} /></label></div>}
         {['goal', 'system'].includes(editor.kind) && <label>单位<input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="次、公里、分、元…" /></label>}
         {editor.kind === 'review' && <><label>本周期发生了什么<textarea rows={5} value={reflection} onChange={(event) => setReflection(event.target.value)} placeholder="结果、感受、意外和原因…" /></label><label>下一周期如何调整<textarea rows={4} value={adjustments} onChange={(event) => setAdjustments(event.target.value)} placeholder="保留什么、停止什么、开始什么…" /></label>{editor.id && <div className="life-map-review-snapshot"><b>保存时快照</b><span>{editingReview?.snapshot.goals.length ?? 0} 个目标 · {editingReview?.snapshot.systems.length ?? 0} 个长期系统</span>{reviewChanges.length ? <ul>{reviewChanges.slice(0, 6).map((change) => <li key={change}>{change}</li>)}</ul> : <small>与保存快照相比，暂无新的状态变化。</small>}</div>}</>}
-        {editor.kind !== 'review' && <label>识别色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label>}
+        {editor.kind !== 'review' && <label className="life-map-editor__color-field">识别色<span className="life-map-editor__color-control"><span className="life-map-editor__color-swatch" style={{ background: color }}><Palette size={16} /></span><span><b>{color.toUpperCase()}</b><small>用于时间线上的快速识别</small></span><input aria-label="选择识别色" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></span></label>}
         {editor.kind === 'system' && editor.id && editingSystemStats && <div className="life-map-editor__checkin"><span><b>{editingSystemStats.label} {editingSystemStats.completed}/{editingSystemStats.target}{unit || '次'}</b><small>按自己的周期统计，不再强制折算成本周</small></span><div className="life-map-editor__checkin-row"><input aria-label="打卡日期" type="date" value={checkInDate} onChange={(event) => setCheckInDate(event.target.value)} /><button type="button" disabled={selectedDateCheckIn <= 0} onClick={() => store.setSystemCheckIn(editor.id!, checkInDate, selectedDateCheckIn - 1)}>−</button><b>{selectedDateCheckIn}</b><button type="button" onClick={() => store.addSystemCheckIn(editor.id!, checkInDate)}>+</button></div><small>可补记过去日期，也可以用减号纠正误操作；记录会多端同步。</small></div>}
         {formError && <div className={formError.startsWith('已') ? 'life-map-editor__success' : 'life-map-editor__error'} role="alert">{formError}</div>}
         <footer>{editor.id && <button className="is-danger" type="button" onClick={deleteEditorItem}>删除</button>}<span /><button type="button" onClick={() => setEditor(null)}>取消</button><button className="is-primary" type="submit">保存</button></footer>

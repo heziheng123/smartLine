@@ -34,6 +34,8 @@ import {
   SlidersHorizontal,
   MoreHorizontal,
   CalendarCheck2,
+  Calendar,
+  CalendarRange,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -55,6 +57,7 @@ import MatrixView from './MatrixView';
 import BoardView from './BoardView';
 import BatchAdjustPanel from './BatchAdjustPanel';
 import DailyReviewPlanner from './DailyReviewPlanner';
+import { planReviewRoundReschedule, type ReviewRescheduleMode } from '../reschedulePlanning';
 
 type ViewTab = 'matrix' | 'board';
 
@@ -82,6 +85,7 @@ const EbbView: React.FC = () => {
     popUndo,
     applyBatchReviewAdjustment,
     applyDailyReviewPlan,
+    rescheduleReviewRounds,
   } = useEbbStore(
     useShallow((s) => ({
       isHydrated: s.isHydrated,
@@ -100,6 +104,7 @@ const EbbView: React.FC = () => {
       popUndo: s.popUndo,
       applyBatchReviewAdjustment: s.applyBatchReviewAdjustment,
       applyDailyReviewPlan: s.applyDailyReviewPlan,
+      rescheduleReviewRounds: s.rescheduleReviewRounds,
     })),
   );
 
@@ -138,6 +143,7 @@ const EbbView: React.FC = () => {
       popUndo,
       applyBatchReviewAdjustment,
       applyDailyReviewPlan,
+      rescheduleReviewRounds,
     }),
     [
       reviewTasks,
@@ -154,6 +160,7 @@ const EbbView: React.FC = () => {
       popUndo,
       applyBatchReviewAdjustment,
       applyDailyReviewPlan,
+      rescheduleReviewRounds,
     ],
   );
   const [activeTab, setActiveTab] = useState<ViewTab>('matrix');
@@ -167,6 +174,7 @@ const EbbView: React.FC = () => {
   const [timelineTopic, setTimelineTopic] = useState<string | null>(null);
   const [batchAdjustOpen, setBatchAdjustOpen] = useState(false);
   const [dailyPlanOpen, setDailyPlanOpen] = useState(false);
+  const [pendingDragReschedule, setPendingDragReschedule] = useState<{ taskId: string; targetDate: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -308,6 +316,26 @@ const EbbView: React.FC = () => {
     [store, showToast],
   );
 
+  const applyDraggedReschedule = useCallback((mode: ReviewRescheduleMode) => {
+    if (!pendingDragReschedule) return;
+    try {
+      const plan = planReviewRoundReschedule(
+        store.reviewTasks,
+        pendingDragReschedule.taskId,
+        pendingDragReschedule.targetDate,
+        mode,
+      );
+      store.rescheduleReviewRounds(plan.updates);
+      showToast(mode === 'single'
+        ? `已将“${plan.topicName}”R${plan.round}改期到 ${plan.targetDate}`
+        : `已调整“${plan.topicName}”R${plan.round}及后续 ${plan.updates.length} 轮`);
+      setSelectedDate(plan.targetDate);
+      setPendingDragReschedule(null);
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : '轮次改期失败');
+    }
+  }, [pendingDragReschedule, showToast, store]);
+
   // 拖拽改期（看板视图）
   const handleDndEnd = useCallback(
     async (result: DropResult) => {
@@ -333,7 +361,9 @@ const EbbView: React.FC = () => {
         }
       } else if (colId.startsWith('ebb-day-')) {
         const newDate = colId.replace('ebb-day-', '');
-        if (rescheduleTask(draggableId, newDate)) showToast('已改期');
+        const selectedTask = store.reviewTasks.find((task) => task.id === draggableId);
+        if (!selectedTask || selectedTask.dueDate === newDate) return;
+        setPendingDragReschedule({ taskId: draggableId, targetDate: newDate });
       }
     },
     [store, showToast, rescheduleTask],
@@ -423,6 +453,20 @@ const EbbView: React.FC = () => {
               快速添加
             </button>
           </div>
+          <section className="eb-stats-bar" aria-label="复习概览">
+            <div className="eb-stats-cards">
+              <div className="eb-stat-card"><span className="eb-stat-icon"><LibraryBig size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.topicCount}</span><span className="eb-stat-label">学习内容</span></div>
+              <div className="eb-stat-card"><span className="eb-stat-icon"><ListChecks size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.total}</span><span className="eb-stat-label">总任务</span></div>
+              <div className={`eb-stat-card ${stats.todayDue > 0 ? 'eb-stat-card--warn' : ''}`}><span className="eb-stat-icon"><AlarmClock size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayDue}</span><span className="eb-stat-label">今日到期</span></div>
+              <div className={`eb-stat-card ${stats.overdue > 0 ? 'eb-stat-card--danger' : ''}`}><span className="eb-stat-icon"><TriangleAlert size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.overdue}</span><span className="eb-stat-label">逾期</span></div>
+              <div className="eb-stat-card"><span className="eb-stat-icon"><Target size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayPoints}</span><span className="eb-stat-label">今日积分</span></div>
+              <div className="eb-stat-card"><span className="eb-stat-icon"><ChartNoAxesColumn size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.weekPoints}</span><span className="eb-stat-label">本周积分</span></div>
+            </div>
+            <div className="eb-stats-progress">
+              <div className="eb-stats-progress-info"><span>完成率</span><span className="eb-stats-progress-num">{stats.completed}/{stats.total} · {Math.round(stats.ratio * 100)}%</span></div>
+              <div className="eb-stats-progress-bar"><div className="eb-stats-progress-fill" style={{ width: `${stats.ratio * 100}%` }} /></div>
+            </div>
+          </section>
           <div className="eb-nav-right">
             <button
               type="button"
@@ -479,52 +523,6 @@ const EbbView: React.FC = () => {
         )}
 
         {/* ── 统计区 ──────────────────────────────────────── */}
-        <section className="eb-stats-bar">
-          <div className="eb-stats-cards">
-            <div className="eb-stat-card">
-              <span className="eb-stat-icon"><LibraryBig size={15} aria-hidden="true" /></span>
-              <span className="eb-stat-value">{stats.topicCount}</span>
-              <span className="eb-stat-label">学习内容</span>
-            </div>
-            <div className="eb-stat-card">
-              <span className="eb-stat-icon"><ListChecks size={15} aria-hidden="true" /></span>
-              <span className="eb-stat-value">{stats.total}</span>
-              <span className="eb-stat-label">总任务</span>
-            </div>
-            <div className={`eb-stat-card ${stats.todayDue > 0 ? 'eb-stat-card--warn' : ''}`}>
-              <span className="eb-stat-icon"><AlarmClock size={15} aria-hidden="true" /></span>
-              <span className="eb-stat-value">{stats.todayDue}</span>
-              <span className="eb-stat-label">今日到期</span>
-            </div>
-            <div className={`eb-stat-card ${stats.overdue > 0 ? 'eb-stat-card--danger' : ''}`}>
-              <span className="eb-stat-icon"><TriangleAlert size={15} aria-hidden="true" /></span>
-              <span className="eb-stat-value">{stats.overdue}</span>
-              <span className="eb-stat-label">逾期</span>
-            </div>
-            <div className="eb-stat-card">
-              <span className="eb-stat-icon"><Target size={15} aria-hidden="true" /></span>
-              <span className="eb-stat-value">{stats.todayPoints}</span>
-              <span className="eb-stat-label">今日积分</span>
-            </div>
-            <div className="eb-stat-card">
-              <span className="eb-stat-icon"><ChartNoAxesColumn size={15} aria-hidden="true" /></span>
-              <span className="eb-stat-value">{stats.weekPoints}</span>
-              <span className="eb-stat-label">本周积分</span>
-            </div>
-          </div>
-          <div className="eb-stats-progress">
-            <div className="eb-stats-progress-info">
-              <span>整体完成率</span>
-              <span className="eb-stats-progress-num">
-                {stats.completed}/{stats.total} · {Math.round(stats.ratio * 100)}%
-              </span>
-            </div>
-            <div className="eb-stats-progress-bar">
-              <div className="eb-stats-progress-fill" style={{ width: `${stats.ratio * 100}%` }} />
-            </div>
-          </div>
-        </section>
-
         {/* ── 撤销条 ──────────────────────────────────────── */}
         {hasUndo && lastUndo && (
           <div className="eb-undo-bar">
@@ -564,46 +562,24 @@ const EbbView: React.FC = () => {
           </button>
         </nav>
 
-        {/* ── 视图内容（左日历栏 + 右视图） ─────────────── */}
+        {/* ── 全宽视图内容 ─────────────────────────────── */}
         <div className="eb-main-wrap">
-          <aside className="eb-cal-sidebar">
-            <MiniCalendarInline
-              tasks={store.reviewTasks}
-              settings={store.ebbSettings}
-              selectedDate={selectedDate}
-              onSelectDate={setSelectedDate}
-            />
-            <div className="eb-cal-sidebar-tasks">
-              <div className="eb-cal-sidebar-date-header">
-                <div className="eb-cal-sidebar-date-main">
-                  <span className="eb-cal-sidebar-date-num">{Number(selectedDate.split('-')[2])}</span>
-                  <div className="eb-cal-sidebar-date-info">
-                    <span className="eb-cal-sidebar-date-month">{formatDate(selectedDate, 'YYYY年MM月')}</span>
-                    <span className="eb-cal-sidebar-date-week">
-                      {selectedDate === todayStr() ? '今天' :
-                       selectedDate === addDays(todayStr(), -1) ? '昨天' :
-                       selectedDate === addDays(todayStr(), 1) ? '明天' :
-                       ['周日','周一','周二','周三','周四','周五','周六'][getDayOfWeek(selectedDate)]}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <DayTaskList
-                tasks={store.reviewTasks}
-                settings={store.ebbSettings}
-                selectedDate={selectedDate}
-                taskActions={taskActions}
-              />
-            </div>
-          </aside>
           <main className="eb-main">
             {activeTab === 'matrix' && (
-              <div id="matrix-panel" role="tabpanel" aria-labelledby="tab-matrix" className="h-full">
-                <MatrixView
+              <div id="matrix-panel" role="tabpanel" aria-labelledby="tab-matrix" className="h-full eb-matrix-panel">
+                <CompactWeekStrip
                   tasks={store.reviewTasks}
-                  settings={store.ebbSettings}
-                  taskActions={taskActions}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
                 />
+                <div className="eb-matrix-panel-content">
+                  <MatrixView
+                    tasks={store.reviewTasks}
+                    settings={store.ebbSettings}
+                    taskActions={taskActions}
+                    selectedDate={selectedDate}
+                  />
+                </div>
               </div>
             )}
             {activeTab === 'board' && (
@@ -612,6 +588,8 @@ const EbbView: React.FC = () => {
                   tasks={store.reviewTasks}
                   settings={store.ebbSettings}
                   taskActions={taskActions}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
                 />
               </div>
             )}
@@ -687,6 +665,36 @@ const EbbView: React.FC = () => {
           />
         )}
 
+        {pendingDragReschedule && (() => {
+          const task = store.reviewTasks.find((item) => item.id === pendingDragReschedule.taskId);
+          if (!task) return null;
+          const topicRounds = store.reviewTasks
+            .filter((item) => !item.isArchived && getReviewTopicKey(item) === getReviewTopicKey(task))
+            .sort((left, right) => (left.roundOrder ?? 0) - (right.roundOrder ?? 0));
+          const targetIndex = topicRounds.findIndex((item) => item.id === task.id);
+          const followingCount = topicRounds.slice(targetIndex).filter((item) => !item.isCompleted).length;
+          const round = task.roundOrder ?? targetIndex + 1;
+          return <div className="eb-drag-reschedule-overlay" onClick={() => setPendingDragReschedule(null)}>
+            <div className="eb-drag-reschedule" role="dialog" aria-modal="true" aria-label="选择轮次改期范围" onClick={(event) => event.stopPropagation()}>
+              <div className="eb-drag-reschedule-head">
+                <span>拖拽改期</span>
+                <button type="button" onClick={() => setPendingDragReschedule(null)} aria-label="取消改期"><X size={16} /></button>
+              </div>
+              <h3>{task.topicName} · R{round}</h3>
+              <p><b>{task.dueDate}</b><span>→</span><b>{pendingDragReschedule.targetDate}</b></p>
+              <div className="eb-drag-reschedule-options">
+                <button type="button" onClick={() => applyDraggedReschedule('single')}>
+                  <span><Calendar size={17} /></span><strong>仅调整 R{round}</strong><small>其他轮次保持原日期</small>
+                </button>
+                {followingCount > 1 && <button type="button" onClick={() => applyDraggedReschedule('following')}>
+                  <span><CalendarRange size={17} /></span><strong>R{round} 及后续一起移动</strong><small>保持间隔，共影响 {followingCount} 轮</small>
+                </button>}
+              </div>
+              <button type="button" className="eb-drag-reschedule-cancel" onClick={() => setPendingDragReschedule(null)}>取消</button>
+            </div>
+          </div>;
+        })()}
+
         {/* Toast */}
         {toast && <div className="eb-toast">{toast}</div>}
       </div>
@@ -695,6 +703,57 @@ const EbbView: React.FC = () => {
 };
 
 // ── 当日任务列表（左侧栏用） ────────────────────────────────
+const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
+
+const CompactWeekStrip: React.FC<{
+  tasks: ReviewTask[];
+  selectedDate: string;
+  onSelectDate: (date: string) => void;
+}> = ({ tasks, selectedDate, onSelectDate }) => {
+  const weekday = getDayOfWeek(selectedDate);
+  const weekStart = addDays(selectedDate, weekday === 0 ? -6 : 1 - weekday);
+  const dates = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const today = todayStr();
+  const metrics = useMemo(() => {
+    const byDate = new Map<string, { total: number; completed: number; overdue: number }>();
+    tasks.forEach((task) => {
+      if (task.isArchived) return;
+      const value = byDate.get(task.dueDate) ?? { total: 0, completed: 0, overdue: 0 };
+      value.total += 1;
+      if (task.isCompleted) value.completed += 1;
+      else if (isOverdue(task)) value.overdue += 1;
+      byDate.set(task.dueDate, value);
+    });
+    return byDate;
+  }, [tasks]);
+
+  return <div className="eb-compact-week" aria-label="矩阵日期选择">
+    <div className="eb-compact-week-nav">
+      <button type="button" onClick={() => onSelectDate(addDays(selectedDate, -7))} aria-label="上一周"><ChevronLeft size={15} /></button>
+      <strong>{formatDate(weekStart, 'M月D日')}—{formatDate(addDays(weekStart, 6), 'M月D日')}</strong>
+      <button type="button" onClick={() => onSelectDate(addDays(selectedDate, 7))} aria-label="下一周"><ChevronRight size={15} /></button>
+      <button type="button" className="is-today" onClick={() => onSelectDate(today)}>今天</button>
+    </div>
+    <div className="eb-compact-week-days">
+      {dates.map((date) => {
+        const value = metrics.get(date) ?? { total: 0, completed: 0, overdue: 0 };
+        const allDone = value.total > 0 && value.completed === value.total;
+        return <button
+          key={date}
+          type="button"
+          className={`${date === selectedDate ? 'is-selected' : ''} ${date === today ? 'is-today' : ''} ${value.overdue > 0 ? 'has-overdue' : ''} ${allDone ? 'is-done' : ''}`}
+          onClick={() => onSelectDate(date)}
+          title={`${formatDate(date, 'M月D日')} · ${value.total} 个复习轮次`}
+        >
+          <span>{WEEKDAY_SHORT[getDayOfWeek(date)]}</span>
+          <strong>{Number(date.slice(8))}</strong>
+          <small>{value.total > 0 ? `${value.total}轮` : '无'}</small>
+        </button>;
+      })}
+    </div>
+  </div>;
+};
+
 interface DayTaskListProps {
   tasks: ReviewTask[];
   settings: EbbSettings;
@@ -709,7 +768,7 @@ interface DayTaskListProps {
   };
 }
 
-const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate, taskActions }) => {
+export const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate, taskActions }) => {
   const graphNodes = useGraphStore((state) => state.nodes);
   const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
   const dayTasks = useMemo(
@@ -848,7 +907,7 @@ const DayTaskList: React.FC<DayTaskListProps> = ({ tasks, settings, selectedDate
 };
 
 // 内联迷你日历（增强版）
-const MiniCalendarInline: React.FC<{
+export const MiniCalendarInline: React.FC<{
   tasks: ReviewTask[];
   settings: EbbSettings;
   selectedDate: string;

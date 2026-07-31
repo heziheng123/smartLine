@@ -65,6 +65,29 @@ function clearPersistedParentStatuses(nodes: GraphNode[]): GraphNode[] {
   );
 }
 
+function collectNodeCascadeIds(nodes: GraphNode[], rootId: string): string[] {
+  if (!nodes.some((node) => node.id === rootId)) return [];
+  const collected = new Set<string>([rootId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of nodes) {
+      if (node.parentId && collected.has(node.parentId) && !collected.has(node.id)) {
+        collected.add(node.id);
+        changed = true;
+      }
+    }
+  }
+  return [...collected];
+}
+
+function removeDeletedNodeReferences(nodeIds: string[]): void {
+  if (nodeIds.length === 0) return;
+  useTimelineStore.getState().removeGraphNodeReferences(nodeIds);
+  useEbbStore.getState().removeGraphNodeReferences(nodeIds);
+  useDailyScheduleStore.getState().removeRetrospectiveNodeReferences(nodeIds);
+}
+
 export function normalizeGraphNodes(value: unknown): GraphNode[] {
   const nodes = Array.isArray(value) ? value.filter(isValidGraphNode) : [];
   const deduplicated = new Map<string, GraphNode>();
@@ -265,21 +288,13 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
         },
 
         deleteNode: (id: string) => {
-          set((state) => {
-            const deletedNode = state.nodes.find((node) => node.id === id);
-            // 找到要删除的节点及其所有子孙节点
-            const toDelete = new Set<string>([id]);
-            let changed = true;
-            while (changed) {
-              changed = false;
-              for (const n of state.nodes) {
-                if (n.parentId && toDelete.has(n.parentId) && !toDelete.has(n.id)) {
-                  toDelete.add(n.id);
-                  changed = true;
-                }
-              }
-            }
+          const currentNodes = get().nodes;
+          const deletedIds = collectNodeCascadeIds(currentNodes, id);
+          if (deletedIds.length === 0) return;
+          const toDelete = new Set(deletedIds);
+          const deletedNode = currentNodes.find((node) => node.id === id);
 
+          set((state) => {
             const newData = {
               nodes: state.nodes
                 .filter((node) => !toDelete.has(node.id))
@@ -291,6 +306,12 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             };
             return newData;
           });
+
+          // Reference cleanup belongs to the explicit local delete command.
+          // Never infer deletion from a smaller `nodes` snapshot: Liveblocks
+          // hydration and offline reconciliation can temporarily publish such
+          // a snapshot before pending local nodes are restored.
+          removeDeletedNodeReferences(deletedIds);
         },
 
         restoreNode: (node: GraphNode, childrenIds: string[]) => {
@@ -388,17 +409,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
   let lastNodes: unknown = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  useGraphStore.subscribe((state, previousState) => {
-    const currentNodeIds = new Set(state.nodes.map((node) => node.id));
-    const deletedNodeIds = previousState.nodes
-      .map((node) => node.id)
-      .filter((nodeId) => !currentNodeIds.has(nodeId));
-    if (deletedNodeIds.length > 0) {
-      useTimelineStore.getState().removeGraphNodeReferences(deletedNodeIds);
-      useEbbStore.getState().removeGraphNodeReferences(deletedNodeIds);
-      useDailyScheduleStore.getState().removeRetrospectiveNodeReferences(deletedNodeIds);
-    }
-
+  useGraphStore.subscribe((state) => {
     if (state.nodes === lastNodes) return;
     lastNodes = state.nodes;
     saveGraphData({ nodes: state.nodes });

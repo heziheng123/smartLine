@@ -12,7 +12,9 @@ import {
   X,
 } from 'lucide-react';
 import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
+import { useGraphStore } from '@/graph/store';
 import type { ReviewTask } from '../types';
+import { buildRootNodeMap, resolveReviewCategory } from '../category';
 import {
   getDailyReviewCandidates,
   type DailyReviewCandidate,
@@ -48,6 +50,8 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
     () => new Map(reviewTasks.map((task) => [task.id, task])),
     [reviewTasks],
   );
+  const graphNodes = useGraphStore((state) => state.nodes);
+  const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
   const [keptIds, setKeptIds] = useState(() => new Set(
     candidates
       .filter((candidate) => candidate.previousDecision === 'keep')
@@ -61,32 +65,41 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
     return sum + (task ? getReviewRoundDuration(task, candidate.round) : 15);
   }, 0), [candidates, keptIds, taskById]);
   const groupedCandidates = useMemo(() => {
-    const byTag = new Map<string, Map<number, DailyReviewCandidate[]>>();
+    const byCategory = new Map<string, {
+      label: string;
+      rounds: Map<number, DailyReviewCandidate[]>;
+    }>();
     candidates.forEach((candidate) => {
       const task = taskById.get(candidate.taskId);
-      const tag = task?.tag?.trim() || '未设置标签';
-      const byRound = byTag.get(tag) ?? new Map<number, DailyReviewCandidate[]>();
-      const items = byRound.get(candidate.round) ?? [];
+      const category = task ? resolveReviewCategory(task, rootByNodeId) : null;
+      const categoryKey = category?.key ?? 'uncategorized';
+      const categoryLabel = category?.label ?? '未设置标签';
+      const group = byCategory.get(categoryKey) ?? {
+        label: categoryLabel,
+        rounds: new Map<number, DailyReviewCandidate[]>(),
+      };
+      const items = group.rounds.get(candidate.round) ?? [];
       items.push(candidate);
-      byRound.set(candidate.round, items);
-      byTag.set(tag, byRound);
+      group.rounds.set(candidate.round, items);
+      byCategory.set(categoryKey, group);
     });
-    return [...byTag.entries()]
-      .sort(([left], [right]) => {
-        if (left === '未设置标签') return 1;
-        if (right === '未设置标签') return -1;
-        return left.localeCompare(right, 'zh-CN');
+    return [...byCategory.entries()]
+      .sort(([, left], [, right]) => {
+        if (left.label === '未设置标签') return 1;
+        if (right.label === '未设置标签') return -1;
+        return left.label.localeCompare(right.label, 'zh-CN');
       })
-      .map(([tag, rounds]) => ({
-        tag,
-        rounds: [...rounds.entries()]
+      .map(([key, group]) => ({
+        key,
+        tag: group.label,
+        rounds: [...group.rounds.entries()]
           .sort(([left], [right]) => left - right)
           .map(([round, items]) => ({
             round,
             items: [...items].sort((left, right) => left.topicName.localeCompare(right.topicName, 'zh-CN')),
           })),
       }));
-  }, [candidates, taskById]);
+  }, [candidates, rootByNodeId, taskById]);
 
   const toggleKeep = (taskId: string) => {
     setError('');
@@ -175,7 +188,7 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
                     const task = taskById.get(candidate.taskId);
                     return sum + (task ? getReviewRoundDuration(task, candidate.round) : 15);
                   }, 0);
-                  return <section className="eb-daily-plan-tag-group" key={group.tag} aria-label={group.tag === '未设置标签' ? group.tag : `${group.tag}标签`}>
+                  return <section className="eb-daily-plan-tag-group" key={group.key} aria-label={group.tag === '未设置标签' ? group.tag : `${group.tag}标签`}>
                     <header className="eb-daily-plan-tag-header">
                       <div><span><Tags size={14} /></span><strong>{group.tag}</strong><small>{groupItems.length} 个主题 · {group.rounds.length} 个轮次</small></div>
                       <em>{groupKeptCount} 已选{groupKeptCount > 0 ? ` · 约 ${groupMinutes}m` : ''}</em>

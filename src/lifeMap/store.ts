@@ -9,6 +9,7 @@ import {
   LIFE_MAP_FIELDS,
   createEmptyLifeMapData,
   hasIndependentLifeMapContent,
+  migrateLegacyLifeMapLayouts,
   normalizeLifeMapData,
 } from './data';
 import type {
@@ -30,6 +31,9 @@ const STORAGE_KEY = 'line-life-map-storage-v1';
 const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
 const SYNC_SETTINGS_KEY = 'line-life-map-liveblocks';
 const LEGACY_MIGRATION_KEY = 'line-life-map-legacy-migrated-v1';
+const LEGACY_PROJECT_SIDE_KEY = 'life-map:project-sides';
+const LEGACY_NODE_LAYOUT_KEY = 'life-map:node-layouts';
+const LEGACY_PROJECT_RANK_KEY = 'life-map:project-ranks';
 export const LIFE_MAP_ROOM_PREFIX = 'life-map-';
 const lifeMapStorage = createScopedStorage('life_map_data');
 
@@ -89,6 +93,7 @@ interface LifeMapStore extends LifeMapData {
   updateReview: (id: string, updates: Partial<Omit<LifeReview, 'id' | 'createdAt'>>) => void;
   deleteReview: (id: string) => void;
   replaceLifeMapData: (data: LifeMapData) => void;
+  migrateLegacyLayouts: () => boolean;
   importLegacyTimelineData: (legacy: { lifeStages: LifeStage[]; milestones: Milestone[]; notes: Note[] }) => boolean;
 }
 
@@ -274,6 +279,37 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
         updateReview: (id, updates) => updateCollection('lifeMapReviews', id, updates),
         deleteReview: (id) => deleteFromCollection('lifeMapReviews', id),
         replaceLifeMapData: (data) => set(normalizeLifeMapData(data)),
+        migrateLegacyLayouts: () => {
+          const readRecord = (key: string): Record<string, unknown> => {
+            try {
+              const value = JSON.parse(localStorage.getItem(key) ?? '{}') as unknown;
+              return value && typeof value === 'object' && !Array.isArray(value)
+                ? value as Record<string, unknown>
+                : {};
+            } catch {
+              return {};
+            }
+          };
+          const projectSides = readRecord(LEGACY_PROJECT_SIDE_KEY);
+          const nodeLayouts = readRecord(LEGACY_NODE_LAYOUT_KEY);
+          const legacyEntryCount = Object.keys(projectSides).length + Object.keys(nodeLayouts).length;
+          if (legacyEntryCount === 0) {
+            try { localStorage.removeItem(LEGACY_PROJECT_RANK_KEY); } catch { /* optional legacy cleanup */ }
+            return false;
+          }
+          const migration = migrateLegacyLifeMapLayouts(normalizeLifeMapData(get()), { projectSides, nodeLayouts });
+          if (migration.changed) set(migration.data);
+          // Do not discard unmatched layout entries before synchronized entities
+          // have hydrated. A later workspace render will retry the migration.
+          if (migration.matched === legacyEntryCount) {
+            try {
+              localStorage.removeItem(LEGACY_PROJECT_SIDE_KEY);
+              localStorage.removeItem(LEGACY_NODE_LAYOUT_KEY);
+              localStorage.removeItem(LEGACY_PROJECT_RANK_KEY);
+            } catch { /* synchronized entity fields are already authoritative */ }
+          }
+          return migration.changed;
+        },
         importLegacyTimelineData: (legacy) => {
           if (localStorage.getItem(LEGACY_MIGRATION_KEY) === 'done') return false;
           const current = normalizeLifeMapData(get());

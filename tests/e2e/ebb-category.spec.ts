@@ -84,14 +84,14 @@ test('EBB uses the knowledge root as the category while preserving standalone ma
   await expect(linkedRow.locator('.eb-topic-row-tag')).toHaveCSS('background-color', 'rgba(217, 184, 196, 0.25)');
 });
 
-test('EBB board cards use the same root category as the matrix', async ({ page }) => {
+test('EBB weekly round cards use the same root category as the matrix', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
   await page.getByRole('tab', { name: '看板视图' }).click();
 
-  const linkedCard = page.locator('.eb-board-card').filter({ hasText: '战国教育' });
-  const manualCard = page.locator('.eb-board-card').filter({ hasText: '独立复习主题' });
-  await expect(linkedCard.locator('.eb-board-card-tag')).toHaveText('教育学');
-  await expect(linkedCard.locator('.eb-board-card-tag')).toHaveCSS('background-color', 'rgba(168, 196, 217, 0.25)');
-  await expect(manualCard.locator('.eb-board-card-tag')).toHaveText('手动标签');
+  const linkedCard = page.locator('.eb-week-round-card').filter({ hasText: '战国教育' });
+  const manualCard = page.locator('.eb-week-round-card').filter({ hasText: '独立复习主题' });
+  await expect(linkedCard).toContainText('教育学');
+  await expect(linkedCard).toHaveCSS('border-left-color', 'rgb(168, 196, 217)');
+  await expect(manualCard).toContainText('手动标签');
   await expect(page.getByText('战国后期教育论著 导学', { exact: true })).toHaveCount(0);
 });

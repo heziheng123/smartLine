@@ -5,6 +5,7 @@ import {
   activeLifeMapItems,
   createEmptyLifeMapData,
   hasIndependentLifeMapContent,
+  migrateLegacyLifeMapLayouts,
   normalizeLifeMapData,
 } from '../../src/lifeMap/data.ts';
 import { mergeWorkspaceFieldChanges } from '../../src/services/workspaceSyncCore.ts';
@@ -87,6 +88,39 @@ test('目标进度可根据起始值、当前值和目标值自动计算增加�
   assert.equal(calculateGoalProgress({ progressMode: 'auto', initialValue: 50, currentValue: 60, targetValue: 75 }), 40);
   assert.equal(calculateGoalProgress({ progressMode: 'auto', initialValue: 80, currentValue: 74, targetValue: 70 }), 60);
   assert.equal(calculateGoalProgress({ progressMode: 'manual', progress: 37 }), 37);
+});
+
+test('旧的本机人生地图布局会迁移到可同步实体字段且不会覆盖已有云端偏好', () => {
+  const source = normalizeLifeMapData({
+    lifeMapGoals: [
+      { id: 'goal-local', areaId: 'health', name: '运动', start: '2026-07-01', targetDate: '2026-08-01', status: 'active', ...meta },
+      { id: 'goal-cloud', areaId: 'health', name: '睡眠', start: '2026-07-01', targetDate: '2026-08-01', status: 'active', placement: 'above', ...meta },
+    ],
+    lifeMapEvents: [
+      { id: 'exam', areaId: 'learning', name: '考试', date: '2026-08-20', ...meta },
+    ],
+    lifeMapThemes: [
+      { id: 'health-theme', areaId: 'health', name: '恢复', start: '2026-07-01', end: '2026-09-01', ...meta },
+    ],
+  });
+  const result = migrateLegacyLifeMapLayouts(source, {
+    projectSides: { 'goal:goal-local': 'below', 'goal:goal-cloud': 'below' },
+    nodeLayouts: {
+      'milestone:exam': { side: 'top', lane: 3 },
+      'note:theme:health-theme': { side: 'bottom', lane: 2 },
+    },
+  }, '2026-07-31T00:00:00.000Z');
+  assert.equal(result.changed, true);
+  assert.equal(result.data.lifeMapGoals.find((item) => item.id === 'goal-local')?.placement, 'below');
+  assert.equal(result.data.lifeMapGoals.find((item) => item.id === 'goal-cloud')?.placement, 'above');
+  assert.deepEqual(
+    result.data.lifeMapEvents.find((item) => item.id === 'exam') && {
+      placement: result.data.lifeMapEvents.find((item) => item.id === 'exam')?.placement,
+      lane: result.data.lifeMapEvents.find((item) => item.id === 'exam')?.layoutLane,
+    },
+    { placement: 'above', lane: 3 },
+  );
+  assert.equal(result.data.lifeMapThemes.find((item) => item.id === 'health-theme')?.layoutLane, 2);
 });
 
 test('长期系统严格按每天、每周和每月各自周期统计，不再换算成本周', () => {

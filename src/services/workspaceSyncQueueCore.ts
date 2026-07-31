@@ -50,6 +50,7 @@ const QUEUE_KEY = 'pending-v1';
 const CONFLICTS_KEY = 'conflicts-v1';
 const DEVICE_KEY = 'smart-line-device-id';
 const EMERGENCY_QUEUE_KEY = 'smart-line-workspace-sync-emergency-v1';
+const QUEUE_LOCK_NAME = 'smart-line-workspace-sync-queue-v1';
 export const WORKSPACE_QUEUE_EVENT = 'smartline:workspace-queue';
 export const WORKSPACE_QUEUE_ERROR_EVENT = 'smartline:workspace-queue-error';
 export const workspaceQueueTabId = crypto.randomUUID();
@@ -64,6 +65,12 @@ export const workspaceQueueChannel = !isBrowserRuntime
 let writeChain = Promise.resolve();
 let trackingSuppressionDepth = 0;
 let volatilePending: PendingWorkspaceSync | null = null;
+
+async function withQueueStorageLock<T>(operation: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks?.request) return operation();
+  return locks.request(QUEUE_LOCK_NAME, { mode: 'exclusive' }, operation);
+}
 
 function readEmergencyPending(): PendingWorkspaceSync | null {
   try {
@@ -120,7 +127,7 @@ export function queueWorkspaceFields(
   if (Object.keys(fields).length === 0) return;
 
   let attemptedPending: PendingWorkspaceSync | null = null;
-  writeChain = writeChain.then(async () => {
+  writeChain = writeChain.then(() => withQueueStorageLock(async () => {
     let durablePending: PendingWorkspaceSync | null = null;
     try {
       durablePending = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
@@ -163,7 +170,7 @@ export function queueWorkspaceFields(
       type: 'queue-ready',
       source: workspaceQueueTabId,
     });
-  }).catch((error) => {
+  })).catch((error) => {
     if (attemptedPending) preserveEmergencyPending(attemptedPending);
     console.warn('[workspace-queue] 保存待同步变更失败：', error);
   });
@@ -189,7 +196,7 @@ export function getPendingWorkspaceSyncToken(
 export async function clearPendingWorkspaceSync(
   expected?: Pick<PendingWorkspaceSync, 'writeId' | 'updatedAt' | 'deviceId'>,
 ): Promise<void> {
-  const clearOperation = writeChain.then(async () => {
+  const clearOperation = writeChain.then(() => withQueueStorageLock(async () => {
     const emergency = volatilePending ?? readEmergencyPending();
     if (emergency && (!expected || getPendingWorkspaceSyncToken(emergency) === getPendingWorkspaceSyncToken(expected))) {
       clearEmergencyPending(expected);
@@ -203,7 +210,7 @@ export async function clearPendingWorkspaceSync(
       if (emergency) return;
       throw error;
     }
-  });
+  }));
   // Queue clearing participates in the same serialization chain as writes, so
   // a late writer can never be deleted by an older flush.
   writeChain = clearOperation.catch(() => undefined);
@@ -220,7 +227,7 @@ export async function clearPendingWorkspaceSync(
 export async function acknowledgeAppliedWorkspaceSync(
   appliedFields: Partial<Record<WorkspaceStorageField, unknown>>,
 ): Promise<boolean> {
-  const acknowledgeOperation = writeChain.then(async () => {
+  const acknowledgeOperation = writeChain.then(() => withQueueStorageLock(async () => {
     const appliedHash = await hashWorkspaceValue(appliedFields);
     const emergency = volatilePending ?? readEmergencyPending();
     if (emergency && await hashWorkspaceValue(emergency.fields) !== appliedHash) return false;
@@ -231,7 +238,7 @@ export async function acknowledgeAppliedWorkspaceSync(
     if (emergency) clearEmergencyPending(emergency);
     if (durable) await queueStorage.removeItem(QUEUE_KEY);
     return true;
-  });
+  }));
   writeChain = acknowledgeOperation.then(() => undefined, () => undefined);
   return acknowledgeOperation;
 }
@@ -242,16 +249,20 @@ export async function preserveWorkspaceConflict(
   remoteFields?: Partial<Record<WorkspaceStorageField, unknown>>,
   conflictingFields?: WorkspaceStorageField[],
 ): Promise<void> {
-  const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
-  const record: WorkspaceConflictRecord = {
-    id: crypto.randomUUID(),
-    detectedAt: new Date().toISOString(),
-    remoteUpdatedAt,
-    pending,
-    remoteFields,
-    conflictingFields,
-  };
-  await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts].slice(0, 20));
+  await withQueueStorageLock(async () => {
+    const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
+    const record: WorkspaceConflictRecord = {
+      id: crypto.randomUUID(),
+      detectedAt: new Date().toISOString(),
+      remoteUpdatedAt,
+      pending,
+      remoteFields,
+      conflictingFields,
+    };
+    // Unresolved edits are user data. Never silently evict an older conflict
+    // merely because more conflicts were detected later.
+    await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts]);
+  });
   await clearPendingWorkspaceSync(pending);
 }
 
@@ -260,19 +271,23 @@ export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[
 }
 
 export async function removeWorkspaceConflict(id: string): Promise<void> {
-  const conflicts = await listWorkspaceConflicts();
-  await queueStorage.setItem(CONFLICTS_KEY, conflicts.filter((item) => item.id !== id));
+  await withQueueStorageLock(async () => {
+    const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
+    await queueStorage.setItem(CONFLICTS_KEY, conflicts.filter((item) => item.id !== id));
+  });
 }
 
 export async function replaceWorkspaceConflictPending(
   id: string,
   pending: PendingWorkspaceSync | null,
 ): Promise<void> {
-  const conflicts = await listWorkspaceConflicts();
-  await queueStorage.setItem(
-    CONFLICTS_KEY,
-    pending
-      ? conflicts.map((item) => item.id === id ? { ...item, pending } : item)
-      : conflicts.filter((item) => item.id !== id),
-  );
+  await withQueueStorageLock(async () => {
+    const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
+    await queueStorage.setItem(
+      CONFLICTS_KEY,
+      pending
+        ? conflicts.map((item) => item.id === id ? { ...item, pending } : item)
+        : conflicts.filter((item) => item.id !== id),
+    );
+  });
 }

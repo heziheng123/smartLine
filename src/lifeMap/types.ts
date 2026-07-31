@@ -1,5 +1,6 @@
 export type LifeMapPlacement = 'above' | 'below';
 export type LifeMapStatus = 'active' | 'completed' | 'paused' | 'archived';
+export type LifeMapLayoutLane = number;
 
 export interface LifeMapSyncMeta {
   createdAt: string;
@@ -33,6 +34,7 @@ export interface LifeTheme extends LifeMapSyncMeta {
   end: string;
   color?: string;
   placement?: LifeMapPlacement;
+  layoutLane?: LifeMapLayoutLane;
 }
 
 export interface LifeGoal extends LifeMapSyncMeta {
@@ -101,6 +103,7 @@ export interface LifeEvent extends LifeMapSyncMeta {
   date: string;
   color?: string;
   placement?: LifeMapPlacement;
+  layoutLane?: LifeMapLayoutLane;
   importance?: 'normal' | 'important' | 'core';
 }
 
@@ -112,6 +115,7 @@ export interface LifeFocus extends LifeMapSyncMeta {
   end: string;
   color?: string;
   placement?: LifeMapPlacement;
+  layoutLane?: LifeMapLayoutLane;
 }
 
 export interface LifeMapNote extends LifeMapSyncMeta {
@@ -123,6 +127,7 @@ export interface LifeMapNote extends LifeMapSyncMeta {
   type: 'pin' | 'range';
   color?: string;
   placement?: LifeMapPlacement;
+  layoutLane?: LifeMapLayoutLane;
 }
 
 export interface LifeRelation extends LifeMapSyncMeta {

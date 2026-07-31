@@ -1,48 +1,20 @@
-// ============================================================
-// Ebb - 看板视图
-// 三列（待复习/进行中/已完成）+ 拖拽改状态 + 标签泳道
-// 每个主题只显示一张卡片（按主题聚合，非按轮次）
-// ============================================================
-
-import React, { useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
+import React, { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
-import { Clock3, ListChecks, Plus, RotateCcw, Search } from 'lucide-react';
-import type { ReviewTask, EbbSettings, ComplexityLevel } from '../types';
-import { computeRounds, getReviewTopicKey, isOverdue, isDueToday, getDateLabel } from '../scheduler';
-import { getPointWeight } from '../complexity';
-import { getReviewRoundDuration } from '../duration';
-import { ROUND_COLORS } from '../constants';
-import type { TaskActions } from './MatrixView';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, ListChecks, Search } from 'lucide-react';
+import { addDays, formatDate, getDayOfWeek, todayStr } from '@/utils/dateSafe';
 import { useGraphStore } from '@/graph/store';
-import {
-  buildRootNodeMap,
-  getReviewCategoryColor,
-  resolveReviewCategory,
-  type ReviewCategory,
-} from '../category';
+import type { EbbSettings, ReviewTask } from '../types';
+import { computeRounds, getDateLabel, getReviewTopicKey, isOverdue } from '../scheduler';
+import { getReviewRoundDuration } from '../duration';
+import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '../category';
+import type { TaskActions } from './MatrixView';
 
-// ── 错误边界（捕获渲染异常，避免白屏）──────────────────────
 class BoardErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-  componentDidCatch(_error: Error, info: ErrorInfo) {
-    // 占位：错误已记录在 state 中展示
-    void info;
-  }
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(_error: Error, info: ErrorInfo) { void info; }
   render() {
-    if (this.state.error) {
-      return (
-        <div style={{ padding: 20, color: '#991B1B', background: '#FEE2E2', borderRadius: 8, margin: 16, fontFamily: 'monospace', whiteSpace: 'pre-wrap', fontSize: 12 }}>
-          <strong>BoardView 渲染错误：</strong>
-          {'\n\n'}
-          {this.state.error.message}
-          {'\n\n'}
-          {this.state.error.stack}
-        </div>
-      );
-    }
+    if (this.state.error) return <div className="eb-week-board-error">轮次排期加载失败：{this.state.error.message}</div>;
     return this.props.children;
   }
 }
@@ -51,452 +23,212 @@ interface BoardViewProps {
   tasks: ReviewTask[];
   settings: EbbSettings;
   taskActions: TaskActions;
+  selectedDate: string;
+  onSelectDate: (date: string) => void;
 }
 
-/** 主题聚合后的看板卡片数据 */
-interface TopicCardData {
-  topicKey: string;
-  topicName: string;
-  tag?: string;
-  category: ReviewCategory | null;
-  complexity?: ComplexityLevel;
-  group: ReviewTask[];
-  totalRounds: number;
-  completedRounds: number;
-  /** 下一轮待完成的任务（最早未完成的轮次） */
-  nextTask?: ReviewTask;
-  nextRound: number;
-  /** 是否有今日/逾期未完成任务 */
-  hasUrgent: boolean;
-  /** 主题总积分 */
-  totalPoints: number;
-  earnedPoints: number;
-  /** 关联的大盘节点 ID（取组内第一个任务的） */
-  graphNodeId?: string;
-}
+const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions }) => {
+const getWeekStart = (date: string) => {
+  const weekday = getDayOfWeek(date);
+  return addDays(date, weekday === 0 ? -6 : 1 - weekday);
+};
+
+const shiftMonth = (date: string, amount: number) => {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const totalMonths = year * 12 + month - 1 + amount;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonth = totalMonths % 12 + 1;
+  const maxDay = new Date(targetYear, targetMonth, 0).getDate();
+  return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
+};
+
+const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, selectedDate, onSelectDate }) => {
+  const [cursor, setCursor] = useState(selectedDate || todayStr());
+  const [rangeMode, setRangeMode] = useState<'week' | 'month'>('week');
   const [query, setQuery] = useState('');
-  const [groupByType, setGroupByType] = useState<'none' | 'tag' | 'rootNode'>('none');
-
-  const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [pendingOnly, setPendingOnly] = useState(false);
   const graphNodes = useGraphStore((state) => state.nodes);
   const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
+  const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
+  const weekStart = useMemo(() => getWeekStart(cursor), [cursor]);
+  const dates = useMemo(() => {
+    if (rangeMode === 'week') return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+    const monthStart = `${cursor.slice(0, 7)}-01`;
+    const daysInMonth = new Date(Number(cursor.slice(0, 4)), Number(cursor.slice(5, 7)), 0).getDate();
+    return Array.from({ length: daysInMonth }, (_, index) => addDays(monthStart, index));
+  }, [cursor, rangeMode, weekStart]);
+  const today = todayStr();
 
-  // 按主题聚合 + 三列拆分
-  const columns = useMemo(() => {
-    // 1. 按 topicName 聚合
-    const byTopic = new Map<string, ReviewTask[]>();
-    for (const t of tasks) {
-      const topicKey = getReviewTopicKey(t);
-      const g = byTopic.get(topicKey) ?? [];
-      g.push(t);
-      byTopic.set(topicKey, g);
-    }
+  useEffect(() => setCursor(selectedDate), [selectedDate]);
 
-    // 2. 为每个主题计算聚合数据
-    const topicCards: TopicCardData[] = [];
-    for (const [topicKey, group] of byTopic) {
-      const topicName = group[0]?.topicName ?? '';
-      const totalRounds = totalRoundsMap.get(topicKey) ?? group.length;
-      const completedTasks = group.filter((t) => t.isCompleted);
-      const completedRounds = completedTasks.length;
-      const uncompleted = group
-        .filter((t) => !t.isCompleted)
-        .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
-      const nextTask = uncompleted[0];
-      const nextRound = nextTask ? roundMap.get(nextTask.id) ?? 0 : 0;
-      const hasUrgent = uncompleted.some((t) => isOverdue(t) || isDueToday(t));
+  const decorated = useMemo(() => tasks.filter((task) => !task.isArchived).map((task) => {
+    const category = resolveReviewCategory(task, rootByNodeId);
+    return {
+      task,
+      category,
+      categoryLabel: category?.label ?? '未分类',
+      categoryColor: getReviewCategoryColor(category, settings.tagColors) ?? '#94A3B8',
+      round: roundMap.get(task.id) ?? task.roundOrder ?? 1,
+      totalRounds: totalRoundsMap.get(getReviewTopicKey(task)) ?? 1,
+    };
+  }), [rootByNodeId, roundMap, settings.tagColors, tasks, totalRoundsMap]);
 
-      // 积分计算
-      let totalPoints = 0;
-      let earnedPoints = 0;
-      for (const t of group) {
-        const r = roundMap.get(t.id) ?? 0;
-        if (t.complexity) {
-          const w = getPointWeight(r, t.complexity, settings.complexityConfigs);
-          totalPoints += w;
-          if (t.isCompleted) earnedPoints += w;
-        }
-      }
+  const categories = useMemo(() => [...new Set(decorated.map((item) => item.categoryLabel))]
+    .sort((a, b) => a.localeCompare(b, 'zh-CN')), [decorated]);
 
-      const firstTask = group[0];
-      const category = firstTask ? resolveReviewCategory(firstTask, rootByNodeId) : null;
-      topicCards.push({
-        topicKey,
-        topicName,
-        tag: category?.label,
-        category,
-        complexity: firstTask?.complexity,
-        group,
-        totalRounds,
-        completedRounds,
-        nextTask,
-        nextRound,
-        hasUrgent,
-        totalPoints,
-        earnedPoints,
-        graphNodeId: firstTask?.graphNodeId,
-      });
-    }
-
-    // 3. 三列分类（主题级别）
-    const pending: TopicCardData[] = [];   // 待复习：有今日/逾期未完成
-    const progress: TopicCardData[] = [];  // 进行中：未完成但无今日/逾期（未来轮次）
-    const done: TopicCardData[] = [];      // 已完成：所有轮次均完成
-
-    for (const card of topicCards) {
-      if (card.completedRounds >= card.totalRounds) {
-        done.push(card);
-      } else if (card.hasUrgent) {
-        pending.push(card);
-      } else {
-        progress.push(card);
-      }
-    }
-
-    // 排序
-    pending.sort((a, b) => (a.nextTask?.dueDate || '').localeCompare(b.nextTask?.dueDate || ''));
-    progress.sort((a, b) => (a.nextTask?.dueDate || '').localeCompare(b.nextTask?.dueDate || ''));
-    done.sort((a, b) => {
-      const aDate = a.group
-        .map((t) => t.completedDate || '')
-        .sort()
-        .pop() || '';
-      const bDate = b.group
-        .map((t) => t.completedDate || '')
-        .sort()
-        .pop() || '';
-      return bDate.localeCompare(aDate);
+  const tasksByDate = useMemo(() => {
+    const result = new Map<string, typeof decorated>();
+    dates.forEach((date) => result.set(date, []));
+    const normalizedQuery = query.trim().toLowerCase();
+    decorated.forEach((item) => {
+      if (!result.has(item.task.dueDate)) return;
+      if (pendingOnly && item.task.isCompleted) return;
+      if (categoryFilter && item.categoryLabel !== categoryFilter) return;
+      if (normalizedQuery && !item.task.topicName.toLowerCase().includes(normalizedQuery)
+        && !item.categoryLabel.toLowerCase().includes(normalizedQuery)) return;
+      result.get(item.task.dueDate)!.push(item);
     });
+    result.forEach((items) => items.sort((left, right) =>
+      Number(left.task.isCompleted) - Number(right.task.isCompleted)
+      || left.task.topicName.localeCompare(right.task.topicName, 'zh-CN')
+      || left.round - right.round));
+    return result;
+  }, [categoryFilter, dates, decorated, pendingOnly, query]);
 
-    return { pending, progress, done };
-  }, [tasks, roundMap, totalRoundsMap, settings.complexityConfigs, rootByNodeId]);
+  const selectedSummary = useMemo(() => {
+    const items = decorated.filter((item) => item.task.dueDate === selectedDate);
+    const completed = items.filter((item) => item.task.isCompleted).length;
+    const overdue = items.filter((item) => isOverdue(item.task)).length;
+    const totalMinutes = items.reduce((sum, item) => sum + getReviewRoundDuration(item.task, item.round), 0);
+    const remainingMinutes = items
+      .filter((item) => !item.task.isCompleted)
+      .reduce((sum, item) => sum + getReviewRoundDuration(item.task, item.round), 0);
+    return { total: items.length, completed, overdue, totalMinutes, remainingMinutes };
+  }, [decorated, selectedDate]);
 
-  // 筛选（memo 化：避免每次渲染都重新创建闭包）
-  const filterTasks = useMemo(
-    () => (list: TopicCardData[]) => {
-      if (!query.trim()) return list;
-      const q = query.toLowerCase();
-      return list.filter(
-        (t) => t.topicName.toLowerCase().includes(q) || (t.tag || '').toLowerCase().includes(q),
-      );
-    },
-    [query],
-  );
-
-  // 泳道分组逻辑
-  const groupedTasksFn = useMemo(
-    () => (list: TopicCardData[]) => {
-      const map = new Map<string, TopicCardData[]>();
-      for (const t of list) {
-        let groupKey = '无分类';
-        
-        if (groupByType === 'tag') {
-          groupKey = t.tag || '无标签';
-        } else if (groupByType === 'rootNode') {
-          groupKey = t.category?.kind === 'root' ? t.category.label : '无大盘关联';
-        }
-
-        if (!map.has(groupKey)) map.set(groupKey, []);
-        map.get(groupKey)!.push(t);
-      }
-      return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    },
-    [groupByType],
-  );
-
-  // colConfig 包含已筛选列表，依赖 query 和 columns
-  const colConfig = useMemo(
-    () => [
-      { id: 'board-col-today', title: '待复习', icon: '🔴', tasks: filterTasks(columns.pending), color: '#EF4444' },
-      { id: 'board-col-future', title: '进行中', icon: '🟡', tasks: filterTasks(columns.progress), color: '#F59E0B' },
-      { id: 'board-col-done', title: '已完成', icon: '✅', tasks: filterTasks(columns.done), color: '#10B981' },
-    ],
-    [filterTasks, columns],
-  );
-
-  return (
-    <div className="eb-board">
-      {/* 筛选栏 */}
-      <div className="eb-filter-bar">
-        <div className="eb-filter-search">
-          <Search size={14} />
-          <input
-            type="text"
-            placeholder="搜索主题或标签..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+  return <div className="eb-week-board">
+    <div className="eb-week-board-toolbar">
+      <div className="eb-week-board-nav">
+        <button type="button" onClick={() => {
+          const nextDate = rangeMode === 'week' ? addDays(selectedDate, -7) : shiftMonth(selectedDate, -1);
+          setCursor(nextDate);
+          onSelectDate(nextDate);
+        }} aria-label={rangeMode === 'week' ? '上一周' : '上个月'}><ChevronLeft size={16} /></button>
+        <strong>{rangeMode === 'week' ? `${formatDate(weekStart, 'M月D日')}—${formatDate(addDays(weekStart, 6), 'M月D日')}` : formatDate(`${cursor.slice(0, 7)}-01`, 'YYYY年MM月')}</strong>
+        <button type="button" onClick={() => {
+          const nextDate = rangeMode === 'week' ? addDays(selectedDate, 7) : shiftMonth(selectedDate, 1);
+          setCursor(nextDate);
+          onSelectDate(nextDate);
+        }} aria-label={rangeMode === 'week' ? '下一周' : '下个月'}><ChevronRight size={16} /></button>
+        <button type="button" className="is-today" onClick={() => { setCursor(today); onSelectDate(today); }}>今天</button>
+        <div className="eb-week-board-range" role="group" aria-label="轮次排期时间范围">
+          <button type="button" className={rangeMode === 'week' ? 'is-active' : ''} onClick={() => setRangeMode('week')}>周</button>
+          <button type="button" className={rangeMode === 'month' ? 'is-active' : ''} onClick={() => setRangeMode('month')}>月</button>
         </div>
-        <label className="eb-filter-check">
-          <select 
-            className="eb-filter-select" 
-            style={{ marginLeft: 8 }}
-            value={groupByType} 
-            onChange={(e) => setGroupByType(e.target.value as 'none' | 'tag' | 'rootNode')}
-          >
-            <option value="none">不分组</option>
-            <option value="tag">按标签分组</option>
-            <option value="rootNode">按大盘根节点分组</option>
-          </select>
-        </label>
       </div>
-
-      {/* 看板列 */}
-      <div className="eb-board-columns">
-        {colConfig.map((col) => (
-          <Droppable droppableId={col.id} key={col.id}>
-            {(provided, snapshot) => (
-              <div
-                ref={provided.innerRef}
-                {...provided.droppableProps}
-                className={`eb-board-col ${snapshot.isDraggingOver ? 'eb-board-col--over' : ''}`}
-                style={{ '--col-color': col.color } as React.CSSProperties}
-              >
-                <div className="eb-board-col-header">
-                  <span className="eb-board-col-icon">{col.icon}</span>
-                  <span className="eb-board-col-title">{col.title}</span>
-                  <span className="eb-board-col-count">{col.tasks.length}</span>
-                </div>
-
-                <div className="eb-board-col-body">
-                  {groupByType !== 'none' ? (
-                    groupedTasksFn(col.tasks).map(([groupKey, tagTasks]) => (
-                      <Droppable droppableId={`${col.id}::${groupKey}`} key={groupKey}>
-                        {(laneProvided, laneSnapshot) => (
-                          <div
-                            ref={laneProvided.innerRef}
-                            {...laneProvided.droppableProps}
-                            className={`eb-board-lane ${laneSnapshot.isDraggingOver ? 'eb-board-lane--over' : ''}`}
-                          >
-                            <div className="eb-board-lane-header">
-                              <span
-                                className="eb-board-lane-dot"
-                                style={{
-                                  backgroundColor: getReviewCategoryColor(
-                                    tagTasks[0]?.category ?? null,
-                                    settings.tagColors,
-                                  ) ?? '#9CA3AF',
-                                }}
-                              />
-                              <span className="eb-board-lane-name">{groupKey}</span>
-                              <span className="eb-board-lane-count">{tagTasks.length}</span>
-                            </div>
-                            {tagTasks.map((t, i) => (
-                              <BoardCard
-                                key={t.topicKey}
-                                card={t}
-                                index={i}
-                                settings={settings}
-                                taskActions={taskActions}
-                              />
-                            ))}
-                            {tagTasks.length === 0 && (
-                              <div className="eb-board-empty">拖拽任务到此处</div>
-                            )}
-                            {laneProvided.placeholder}
-                          </div>
-                        )}
-                      </Droppable>
-                    ))
-                  ) : (
-                    col.tasks.map((t, i) => (
-                      <BoardCard
-                        key={t.topicKey}
-                        card={t}
-                        index={i}
-                        settings={settings}
-                        taskActions={taskActions}
-                      />
-                    ))
-                  )}
-                  {col.tasks.length === 0 && groupByType === 'none' && (
-                    <div className="eb-board-empty">拖拽任务到此处</div>
-                  )}
-                  {provided.placeholder}
-                </div>
-              </div>
-            )}
-          </Droppable>
-        ))}
+      <div className="eb-week-board-filters">
+        <label className="eb-week-board-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索复习主题" /></label>
+        <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="筛选复习分类">
+          <option value="">全部分类</option>
+          {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+        </select>
+        <button type="button" className={pendingOnly ? 'is-active' : ''} onClick={() => setPendingOnly((value) => !value)} aria-pressed={pendingOnly}>只看未完成</button>
       </div>
     </div>
-  );
-};
 
-// ── 看板卡片（主题级别）────────────────────────────────────
-interface BoardCardProps {
-  card: TopicCardData;
-  index: number;
-  settings: EbbSettings;
-  taskActions: TaskActions;
-}
+    <div className="eb-week-board-summary" aria-live="polite">
+      <div>
+        <strong>{formatDate(selectedDate, 'M月D日')} · {WEEKDAY_LABELS[getDayOfWeek(selectedDate)]}</strong>
+        {selectedDate === today && <em>今天</em>}
+      </div>
+      <span>{selectedSummary.total} 轮 · {selectedSummary.totalMinutes} 分钟</span>
+      <span>已完成 {selectedSummary.completed}/{selectedSummary.total}</span>
+      {selectedSummary.overdue > 0 && <span className="is-overdue">逾期 {selectedSummary.overdue}</span>}
+      <span>预计剩余 {selectedSummary.remainingMinutes} 分钟</span>
+    </div>
 
-  const BoardCard: React.FC<BoardCardProps> = ({ card, index, settings, taskActions }) => {
-  const { topicKey, topicName, group, totalRounds, completedRounds, nextTask, nextRound, complexity } = card;
-  const isAllDone = completedRounds >= totalRounds;
-
-  // 下一轮积分
-  const points = nextTask && complexity
-    ? getPointWeight(nextRound, complexity, settings.complexityConfigs)
-    : 0;
-
-  // 日期标签：未完成时显示下一轮到期日；全部完成时显示最后完成日
-  const dateForLabel = nextTask
-    ? nextTask.dueDate
-    : (group
-        .map((t) => t.completedDate || t.dueDate)
-        .sort()
-        .pop() || '');
-  const dateLabel = dateForLabel ? getDateLabel(dateForLabel, isAllDone) : null;
-
-  const tagColor = getReviewCategoryColor(card.category, settings.tagColors);
-
-  // 优先级圆点
-  const priorityColor = isAllDone
-    ? '#10B981'
-    : card.hasUrgent
-      ? (nextTask && isOverdue(nextTask) ? '#EF4444' : '#F59E0B')
-      : '#3B82F6';
-
-  // 轮次颜色：显示当前进度轮次
-  const progressRound = Math.min(completedRounds + 1, totalRounds);
-  const roundColor = ROUND_COLORS[(progressRound - 1) % ROUND_COLORS.length];
-
-  // 拖拽 ID：使用下一轮任务 ID（已完成主题使用首个任务 ID 作为占位）
-  const draggableId = nextTask?.id || group[0]?.id || topicName;
-  const managementTask = nextTask ?? group[group.length - 1];
-  const latestCompletedTask = [...group]
-    .filter((task) => task.isCompleted)
-    .sort((a, b) =>
-      (b.roundOrder ?? 0) - (a.roundOrder ?? 0)
-      || (b.completedDate || '').localeCompare(a.completedDate || '')
-      || (b.dueDate || '').localeCompare(a.dueDate || ''),
-    )[0];
-
-  const cardContent = (
-    <div onClick={() => {}}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-        <span className="eb-board-card-dot" style={{ backgroundColor: priorityColor }} />
-        <div className="eb-board-card-main">
-          <span
-            className="eb-board-card-name"
-            onClick={(e) => { e.stopPropagation(); taskActions.onOpenTimeline(topicKey); }}
+    <div
+      className={`eb-week-board-grid ${rangeMode === 'month' ? 'is-month' : ''}`}
+    >
+      <div
+        className="eb-week-board-columns"
+        style={rangeMode === 'month' ? { gridTemplateColumns: `repeat(${dates.length}, minmax(136px, 150px))` } : undefined}
+      >
+        {dates.map((date, dateIndex) => {
+        const items = tasksByDate.get(date) ?? [];
+        const minutes = items.reduce((sum, item) => sum + getReviewRoundDuration(item.task, item.round), 0);
+        const completedCount = items.filter((item) => item.task.isCompleted).length;
+        const overdueCount = items.filter((item) => isOverdue(item.task)).length;
+        const allDone = items.length > 0 && completedCount === items.length;
+        const thresholds = settings.loadThresholds ?? [2, 4, 6, 9];
+        const loadLevel = items.length === 0 ? 0
+          : items.length <= thresholds[0] ? 1
+            : items.length <= thresholds[1] ? 2
+              : items.length <= thresholds[2] ? 3
+                : items.length <= thresholds[3] ? 4 : 5;
+        const isToday = date === today;
+        const isSelected = date === selectedDate;
+        return <Droppable droppableId={`ebb-day-${date}`} key={date}>
+          {(provided, snapshot) => <section
+            ref={provided.innerRef}
+            {...provided.droppableProps}
+            data-date={date}
+            className={`eb-week-day ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''} ${snapshot.isDraggingOver ? 'is-drag-over' : ''} ${dateIndex > 0 && getDayOfWeek(date) === 1 ? 'is-week-start' : ''}`}
+            onClick={() => onSelectDate(date)}
           >
-            {topicName}
-          </span>
-          <div className="eb-board-card-meta">
-            {card.tag && (
-              <span
-                className="eb-board-card-tag"
-                style={tagColor ? { backgroundColor: `${tagColor}40`, color: '#374151' } : undefined}
-              >
-                {card.tag}
-              </span>
-            )}
-            <span className="eb-board-card-round" style={{ color: roundColor }}>
-              R{completedRounds}/{totalRounds}
-            </span>
-            {dateLabel && (
-              <span className={`eb-board-card-date eb-date-pill eb-date-pill--${dateLabel.variant}`}>
-                {dateLabel.text}
-              </span>
-            )}
-            {nextTask && <span className="eb-board-card-points"><Clock3 size={11} />{getReviewRoundDuration(nextTask, nextRound)}分钟</span>}
-            {points > 0 && <span className="eb-board-card-points">{points}分</span>}
-          </div>
-        </div>
-        <div className="eb-board-card-actions">
-          {latestCompletedTask && (
-            <button
-              type="button"
-              className="eb-icon-btn"
-              onClick={(e) => { e.stopPropagation(); taskActions.onToggle(latestCompletedTask.id); }}
-              title="取消最近一轮完成"
-              aria-label={`取消${topicName}最近一轮完成`}
-            >
-              <RotateCcw size={14} />
-            </button>
-          )}
-          {nextTask && (
-            <>
-              <button
-                type="button"
-                className="eb-icon-btn"
-                onClick={(e) => { e.stopPropagation(); taskActions.onToggle(nextTask.id); }}
-                title="标记当前轮次完成"
-              >
-                ✓
-              </button>
-              <button
-                type="button"
-                className="eb-icon-btn"
-                onClick={(e) => { e.stopPropagation(); taskActions.onReschedule(nextTask.id); }}
-                title="改期"
-              >
-                📅
-              </button>
-            </>
-          )}
-          {managementTask && (
-            <>
-              <button
-                type="button"
-                className="eb-icon-btn"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  taskActions.onAddRound(managementTask);
-                }}
-                title="追加一轮"
-                aria-label={`为${topicName}追加一轮`}
-              >
-                <Plus size={14} />
-              </button>
-              <button
-                type="button"
-                className="eb-icon-btn"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  taskActions.onOpenRounds(managementTask);
-                }}
-                title="管理全部轮次"
-                aria-label={`管理${topicName}的全部轮次`}
-              >
-                <ListChecks size={14} />
-              </button>
-            </>
-          )}
-        </div>
+            <header>
+              <span>{WEEKDAY_LABELS[getDayOfWeek(date)]}</span>
+              <strong>{Number(date.slice(8))}</strong>
+              <small>{items.length}轮 · {minutes}m</small>
+              <i className={`eb-week-day-load is-level-${loadLevel} ${overdueCount > 0 ? 'has-overdue' : ''} ${allDone ? 'is-done' : ''}`} aria-hidden="true" />
+            </header>
+            <div className="eb-week-day-cards">
+              {items.map((item, index) => {
+                const dateLabel = getDateLabel(item.task.dueDate, item.task.isCompleted);
+                const changed = Boolean(item.task.originalDueDate && item.task.originalDueDate !== item.task.dueDate);
+                return <Draggable draggableId={item.task.id} index={index} key={item.task.id} isDragDisabled={item.task.isCompleted}>
+                  {(dragProvided, dragSnapshot) => <article
+                    ref={dragProvided.innerRef}
+                    {...dragProvided.draggableProps}
+                    {...dragProvided.dragHandleProps}
+                    className={`eb-week-round-card ${item.task.isCompleted ? 'is-completed' : ''} ${isOverdue(item.task) ? 'is-overdue' : ''} ${dragSnapshot.isDragging ? 'is-dragging' : ''}`}
+                    style={{ ...dragProvided.draggableProps.style, '--round-color': item.categoryColor } as unknown as React.CSSProperties}
+                    onClick={(event) => { event.stopPropagation(); taskActions.onOpenTimeline(getReviewTopicKey(item.task)); }}
+                    title={item.task.isCompleted
+                      ? '已完成轮次不能直接改期；如需调整，请先取消完成'
+                      : changed
+                        ? `原计划 ${item.task.originalDueDate}，当前 ${item.task.dueDate}；拖到其他日期可再次改期`
+                        : `${item.task.topicName} · 第${item.round}轮；拖到其他日期改期`}
+                  >
+                    <div className="eb-week-round-card-title"><span>{item.task.topicName}</span>{changed && <i aria-label="日期已调整" />}</div>
+                    <div className="eb-week-round-card-meta">
+                      <b>{item.task.isCompleted && <Check size={11} />}R{item.round}/{item.totalRounds}</b>
+                      <span><Clock3 size={11} />{getReviewRoundDuration(item.task, item.round)}m</span>
+                      <em>{dateLabel.text}</em>
+                    </div>
+                    <div className="eb-week-round-card-footer">
+                      <span style={{ color: item.categoryColor }}>{item.categoryLabel}</span>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); taskActions.onOpenRounds(item.task); }} aria-label={`管理${item.task.topicName}的全部轮次`}><ListChecks size={13} /></button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); void taskActions.onToggle(item.task.id); }} aria-label={item.task.isCompleted ? `取消第${item.round}轮完成` : `标记第${item.round}轮完成`}><Check size={13} /></button>
+                    </div>
+                  </article>}
+                </Draggable>;
+              })}
+              {items.length === 0 && <div className="eb-week-day-empty"><CalendarDays size={18} /><span>暂无轮次</span></div>}
+              {provided.placeholder}
+            </div>
+          </section>}
+        </Droppable>;
+        })}
       </div>
     </div>
-  );
-
-  return (
-    <Draggable draggableId={draggableId} index={index} isDragDisabled={isAllDone}>
-      {(provided, snapshot) => (
-        <div
-          ref={provided.innerRef}
-          {...provided.draggableProps}
-          {...provided.dragHandleProps}
-          className={`eb-board-card ${snapshot.isDragging ? 'eb-board-card--dragging' : ''} ${isAllDone ? 'eb-board-card--done' : ''}`}
-          style={{
-            ...provided.draggableProps.style,
-            ...(isAllDone ? { pointerEvents: 'auto' as const } : undefined),
-          }}
-        >
-          {cardContent}
-        </div>
-      )}
-    </Draggable>
-  );
+  </div>;
 };
 
-// 用 ErrorBoundary 包裹导出，捕获渲染错误以避免白屏
-const BoardViewWithBoundary: React.FC<BoardViewProps> = (props) => (
-  <BoardErrorBoundary>
-    <BoardView {...props} />
-  </BoardErrorBoundary>
-);
+const BoardViewWithBoundary: React.FC<BoardViewProps> = (props) => <BoardErrorBoundary><BoardView {...props} /></BoardErrorBoundary>;
 
 export default BoardViewWithBoundary;

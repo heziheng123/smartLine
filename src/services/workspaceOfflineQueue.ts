@@ -251,6 +251,10 @@ export function startWorkspaceQueueTracking(): () => void {
         changed.milestones = state.milestones;
         base.milestones = timeline.milestones;
       }
+      if (state.lifeStages !== timeline.lifeStages) {
+        changed.lifeStages = state.lifeStages;
+        base.lifeStages = timeline.lifeStages;
+      }
       timeline = state;
       if (
         !isWorkspaceQueueSuppressed()

@@ -11,6 +11,7 @@ export interface SmartLineR2Bucket {
   put(key: string, value: ReadableStream<Uint8Array> | ArrayBuffer | string, options?: {
     httpMetadata?: { contentType?: string };
     customMetadata?: Record<string, string>;
+    onlyIf?: Headers | { etagMatches?: string; etagDoesNotMatch?: string };
   }): Promise<unknown>;
   get(key: string): Promise<R2StoredObject | null>;
   delete(key: string): Promise<void>;

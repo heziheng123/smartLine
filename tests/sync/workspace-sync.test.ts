@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assertWorkspaceSchemaSupported,
   buildUnifiedRoomId,
   collectWorkspaceFieldChanges,
+  decideUnifiedWorkspaceActivation,
   findWorkspaceFieldConflicts,
   hashWorkspaceBackup,
   hashWorkspaceValue,
   isWorkspaceStoreStorageReady,
   mergeWorkspaceFieldChanges,
+  shouldBackfillLegacyLifeMapSync,
   withTimeout,
 } from '../../src/services/workspaceSyncCore.ts';
 import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
@@ -15,7 +18,7 @@ import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
 function backup(): WorkspaceBackup {
   return {
     kind: 'smart-line-workspace',
-    schemaVersion: 2,
+    schemaVersion: 4,
     revision: 1,
     exportedAt: '2026-07-21T00:00:00.000Z',
     deviceId: 'device-a',
@@ -32,9 +35,35 @@ function backup(): WorkspaceBackup {
     },
     daily: { schedules: {}, retrospectives: {} },
     graph: { nodes: [] },
+    lifeMap: {
+      areas: [], themes: [], goals: [], systems: [], systemLogs: [],
+      events: [], focuses: [], notes: [], relations: [], reviews: [],
+    },
     settings: {},
   };
 }
+
+const emptyCounts = {
+  tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0,
+  reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0,
+};
+
+test('first unified connection never overlays two different non-empty workspaces', () => {
+  const nonEmpty = { ...emptyCounts, tasks: 1 };
+  assert.equal(decideUnifiedWorkspaceActivation(false, 'local', 'remote', nonEmpty, nonEmpty), 'new');
+  assert.equal(decideUnifiedWorkspaceActivation(true, 'same', 'same', nonEmpty, nonEmpty), 'matching');
+  assert.equal(decideUnifiedWorkspaceActivation(true, 'local', 'remote', emptyCounts, nonEmpty), 'cloud');
+  assert.equal(decideUnifiedWorkspaceActivation(true, 'local', 'remote', nonEmpty, emptyCounts), 'new');
+  assert.equal(decideUnifiedWorkspaceActivation(true, 'local', 'remote', nonEmpty, nonEmpty), 'conflict');
+});
+
+test('future cloud schemas are rejected before the room can hydrate local stores', () => {
+  assert.doesNotThrow(() => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 4 } }, 4));
+  assert.throws(
+    () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 5 } }, 4),
+    /5/,
+  );
+});
 
 test('unified room names are stable and contain only safe characters', () => {
   assert.equal(
@@ -174,6 +203,12 @@ test('workspace storage is writable only after connection and storage hydration 
     }),
     true,
   );
+});
+
+test('legacy workspaces automatically include Life Map after the module is introduced', () => {
+  assert.equal(shouldBackfillLegacyLifeMapSync(true, false), true);
+  assert.equal(shouldBackfillLegacyLifeMapSync(true, true), false);
+  assert.equal(shouldBackfillLegacyLifeMapSync(false, false), false);
 });
 
 test('local write journal captures only changed mapped fields and their baseline', () => {

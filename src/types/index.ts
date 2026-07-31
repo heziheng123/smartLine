@@ -111,6 +111,7 @@ export interface Note {
   color?: string;         // 标记颜色（默认琥珀色 #F59E0B）
   notePath?: string;      // 关联笔记路径
   placement?: 'above' | 'below'; // 人生地图批注文字位置
+  layoutLane?: number;     // 人生地图人工轨道偏好
 }
 
 /** 里程碑 */
@@ -121,6 +122,7 @@ export interface Milestone {
   color?: string;         // 标记颜色
   placement?: 'above' | 'below'; // 人生地图批注文字位置
   importance?: 'normal' | 'important' | 'core'; // 人生地图关键日期等级
+  layoutLane?: number;     // 人生地图人工轨道偏好
 }
 
 /** 人生地图中独立录入的人生阶段，不属于项目或项目分组 */

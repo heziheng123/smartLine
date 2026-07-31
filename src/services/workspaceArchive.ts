@@ -27,9 +27,24 @@ async function fetchArchive(input: RequestInfo | URL, init: RequestInit, timeout
 export async function saveWorkspacePeriodArchive<T>(period: string, data: T): Promise<void> {
   assertPeriod(period);
   const archive: WorkspacePeriodArchive<T> = { version: 1, period, archivedAt: new Date().toISOString(), data };
-  const response = await fetchArchive(`/api/archives/${period}`, {
-    method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(archive),
+  const current = await fetchArchive(`/api/archives/${period}`, {
+    method: 'HEAD', credentials: 'same-origin', cache: 'no-store',
   });
+  if (current.status !== 404 && !current.ok) {
+    throw new Error((await current.json().catch(() => null))?.error || '无法检查云端历史归档版本。');
+  }
+  const etag = current.headers.get('ETag');
+  if (current.ok && !etag) throw new Error('云端历史归档缺少版本标识，已停止覆盖。');
+  const response = await fetchArchive(`/api/archives/${period}`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(etag ? { 'If-Match': etag } : { 'If-None-Match': '*' }),
+    },
+    body: JSON.stringify(archive),
+  });
+  if (response.status === 409) throw new Error('另一台设备刚刚更新了该月归档，请重新加载后再保存。');
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || '历史归档保存失败。');
 }
 

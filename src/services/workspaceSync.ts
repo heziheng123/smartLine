@@ -24,7 +24,7 @@ import {
   setWorkspaceQueueSuppressed,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
-import { buildUnifiedRoomId, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, withTimeout } from './workspaceSyncCore';
+import { assertWorkspaceSchemaSupported, buildUnifiedRoomId, decideUnifiedWorkspaceActivation, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, shouldBackfillLegacyLifeMapSync, withTimeout } from './workspaceSyncCore';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
 export type SyncArchitecture = 'legacy' | 'unified';
@@ -49,6 +49,11 @@ export interface WorkspaceMigrationReport {
   targetSummary: WorkspaceBackupSummary;
   verified: boolean;
   legacyRoomsPreserved: true;
+}
+
+export interface UnifiedWorkspaceActivationResult {
+  roomId: string;
+  source: 'new' | 'matching' | 'cloud';
 }
 
 const SETTINGS_KEY = 'smart-line-sync-architecture-v1';
@@ -101,11 +106,23 @@ export function connectLegacyWorkspace(fallbackCode?: string): void {
   if (!code) return;
   const existing = timeline.syncEnabled || ebb.syncEnabled || daily.syncEnabled || graph.syncEnabled || lifeMap.syncEnabled;
   if (!existing) enableAll(code);
-  if (timeline.syncEnabled) timeline.liveblocks?.enterRoom?.(timeline.syncRoomCode || code);
-  if (ebb.syncEnabled) ebb.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${ebb.syncRoomCode || code}`);
-  if (daily.syncEnabled) daily.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${daily.syncRoomCode || code}`);
-  if (graph.syncEnabled) graph.liveblocks?.enterRoom?.(`graph-${graph.syncRoomCode || code}`);
-  if (lifeMap.syncEnabled) lifeMap.liveblocks?.enterRoom?.(`${LIFE_MAP_ROOM_PREFIX}${lifeMap.syncRoomCode || code}`);
+
+  // Life Map was added after the original four legacy modules. Existing users
+  // therefore have a valid workspace code but no module-specific Life Map
+  // setting. Backfill that setting once so the new module joins the same
+  // workspace automatically on every device instead of remaining local-only.
+  if (shouldBackfillLegacyLifeMapSync(existing, lifeMap.syncEnabled)) lifeMap.enableSync(code);
+
+  const connectedTimeline = useTimelineStore.getState();
+  const connectedEbb = useEbbStore.getState();
+  const connectedDaily = useDailyScheduleStore.getState();
+  const connectedGraph = useGraphStore.getState();
+  const connectedLifeMap = useLifeMapStore.getState();
+  if (connectedTimeline.syncEnabled) connectedTimeline.liveblocks?.enterRoom?.(connectedTimeline.syncRoomCode || code);
+  if (connectedEbb.syncEnabled) connectedEbb.liveblocks?.enterRoom?.(`${EBB_ROOM_PREFIX}${connectedEbb.syncRoomCode || code}`);
+  if (connectedDaily.syncEnabled) connectedDaily.liveblocks?.enterRoom?.(`${DAILY_ROOM_PREFIX}${connectedDaily.syncRoomCode || code}`);
+  if (connectedGraph.syncEnabled) connectedGraph.liveblocks?.enterRoom?.(`graph-${connectedGraph.syncRoomCode || code}`);
+  if (connectedLifeMap.syncEnabled) connectedLifeMap.liveblocks?.enterRoom?.(`${LIFE_MAP_ROOM_PREFIX}${connectedLifeMap.syncRoomCode || code}`);
 }
 
 export function connectUnifiedWorkspace(roomCode: string, roomId?: string): string {
@@ -132,12 +149,14 @@ export function activateUnifiedWorkspace(roomCode: string, identity: string): st
   return connectUnifiedWorkspace(roomCode, roomId);
 }
 
-export function reconnectConfiguredWorkspace(): void {
+export async function reconnectConfiguredWorkspace(): Promise<void> {
   const settings = readWorkspaceSyncSettings();
   const anyEnabled = [useTimelineStore, useEbbStore, useDailyScheduleStore, useGraphStore, useLifeMapStore]
     .some((store) => store.getState().syncEnabled);
   if (!anyEnabled) return;
   if (settings.architecture === 'unified' && settings.unifiedRoomId) {
+    const root = await inspectRoom(settings.unifiedRoomId, '统一工作区');
+    assertWorkspaceSchemaSupported(root, WORKSPACE_SCHEMA_VERSION);
     connectUnifiedWorkspace(settings.roomCode, settings.unifiedRoomId);
   } else {
     connectLegacyWorkspace(settings.roomCode);
@@ -197,6 +216,41 @@ async function inspectRoom(roomId: string, label: string): Promise<Record<string
   }
 }
 
+/**
+ * First-time unified activation is deliberately fail-closed.  Empty devices
+ * may join an existing cloud workspace and equal workspaces may reconnect, but
+ * two different non-empty workspaces are never silently overlaid.
+ */
+export async function activateUnifiedWorkspaceSafely(
+  roomCode: string,
+  identity: string,
+): Promise<UnifiedWorkspaceActivationResult> {
+  const targetRoomId = buildUnifiedRoomId(roomCode, identity);
+  const local = createWorkspaceBackup();
+  await createLocalSnapshot('首次连接统一工作区前');
+  const remoteRoot = await inspectRoom(targetRoomId, '统一工作区');
+  assertWorkspaceSchemaSupported(remoteRoot, WORKSPACE_SCHEMA_VERSION);
+  const hasRemoteStorage = EXPECTED_KEYS.some((key) => remoteRoot[key] !== undefined);
+
+  const remote = rootToBackup(remoteRoot, local);
+  const [localHash, remoteHash] = await Promise.all([
+    hashWorkspaceBackup(local),
+    hashWorkspaceBackup(remote),
+  ]);
+  const [localSummary, remoteSummary] = [summaryOf(local), summaryOf(remote)];
+  const decision = decideUnifiedWorkspaceActivation(hasRemoteStorage, localHash, remoteHash, localSummary, remoteSummary);
+  if (decision !== 'conflict') {
+    return { roomId: activateUnifiedWorkspace(roomCode, identity), source: decision };
+  }
+
+  throw new Error(
+    `本机和云端都已有不同数据，已阻止自动连接以避免覆盖。`
+      + `本机：${localSummary.tasks} 个项目、${localSummary.lifeMapItems} 项人生规划、${localSummary.reviewTasks} 个复习轮次；`
+      + `云端：${remoteSummary.tasks} 个项目、${remoteSummary.lifeMapItems} 项人生规划、${remoteSummary.reviewTasks} 个复习轮次。`
+      + `连接前本地快照已经保存，请先导出备份或使用迁移工具明确处理数据方向。`,
+  );
+}
+
 export async function inspectLegacyWorkspace(roomCode: string): Promise<{ backup: WorkspaceBackup; summary: WorkspaceBackupSummary; hash: string }> {
   const base = createWorkspaceBackup();
   const roomIds = [roomCode, `${EBB_ROOM_PREFIX}${roomCode}`, `${DAILY_ROOM_PREFIX}${roomCode}`, `graph-${roomCode}`, `${LIFE_MAP_ROOM_PREFIX}${roomCode}`];
@@ -243,6 +297,7 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
   const metadata = rootJson.metadata && typeof rootJson.metadata === 'object'
     ? rootJson.metadata as Record<string, unknown>
     : {};
+  assertWorkspaceSchemaSupported(rootJson, WORKSPACE_SCHEMA_VERSION);
   const remoteUpdatedAt = typeof metadata.updatedAt === 'string' ? metadata.updatedAt : '';
   const remoteDeviceId = typeof metadata.deviceId === 'string' ? metadata.deviceId : '';
   const merged = mergeWorkspaceFieldChanges(
@@ -349,6 +404,7 @@ export async function migrateLegacyWorkspace(roomCode: string, identity: string)
   await createLocalSnapshot('统一工作区迁移前');
   const targetRoomId = buildUnifiedRoomId(roomCode, identity);
   const existingRoot = await inspectRoom(targetRoomId, '统一工作区目标房间');
+  assertWorkspaceSchemaSupported(existingRoot, WORKSPACE_SCHEMA_VERSION);
   const hasExistingData = EXPECTED_KEYS.some((key) => existingRoot[key] !== undefined);
 
   if (hasExistingData) {

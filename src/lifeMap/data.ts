@@ -11,6 +11,7 @@ import type {
   LifeSystemCheckIn,
   LifeTheme,
   LifeReview,
+  LifeMapPlacement,
 } from './types';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -94,6 +95,12 @@ function hasBase(value: unknown): value is Record<string, unknown> {
     && hasMeta(value);
 }
 
+function hasValidLayout(value: Record<string, unknown>): boolean {
+  return (value.placement === undefined || value.placement === 'above' || value.placement === 'below')
+    && (value.layoutLane === undefined
+      || (typeof value.layoutLane === 'number' && Number.isInteger(value.layoutLane) && value.layoutLane >= 0 && value.layoutLane <= 8));
+}
+
 function validArea(value: unknown): value is LifeArea {
   return hasBase(value)
     && typeof value.color === 'string'
@@ -107,6 +114,7 @@ function validStage(value: unknown): value is LifeMapStage {
 
 function validAreaRange(value: unknown): value is LifeTheme | LifeFocus {
   return hasBase(value)
+    && hasValidLayout(value)
     && typeof value.areaId === 'string'
     && isLifeMapDate(value.start)
     && isLifeMapDate(value.end)
@@ -115,6 +123,7 @@ function validAreaRange(value: unknown): value is LifeTheme | LifeFocus {
 
 function validGoal(value: unknown): value is LifeGoal {
   return hasBase(value)
+    && hasValidLayout(value)
     && typeof value.areaId === 'string'
     && isLifeMapDate(value.start)
     && isLifeMapDate(value.targetDate)
@@ -129,6 +138,7 @@ function validGoal(value: unknown): value is LifeGoal {
 
 function validSystem(value: unknown): value is LifeSystem {
   return hasBase(value)
+    && hasValidLayout(value)
     && typeof value.areaId === 'string'
     && isLifeMapDate(value.start)
     && (value.end === undefined || isLifeMapDate(value.end))
@@ -170,16 +180,98 @@ function validReview(value: unknown): value is LifeReview {
 }
 
 function validEvent(value: unknown): value is LifeEvent {
-  return hasBase(value) && typeof value.areaId === 'string' && isLifeMapDate(value.date);
+  return hasBase(value) && hasValidLayout(value) && typeof value.areaId === 'string' && isLifeMapDate(value.date);
 }
 
 function validNote(value: unknown): value is LifeMapNote {
   return hasBase(value)
+    && hasValidLayout(value)
     && typeof value.areaId === 'string'
     && isLifeMapDate(value.date)
     && (value.endDate === undefined || isLifeMapDate(value.endDate))
     && (value.endDate === undefined || value.date <= value.endDate)
     && (value.type === 'pin' || value.type === 'range');
+}
+
+export interface LegacyLifeMapLayoutData {
+  projectSides?: Record<string, unknown>;
+  nodeLayouts?: Record<string, unknown>;
+}
+
+/**
+ * Converts the old device-local layout maps into fields on synchronized life-map
+ * entities. Existing synchronized preferences always win, so opening an older
+ * device cannot overwrite a placement already chosen elsewhere.
+ */
+export function migrateLegacyLifeMapLayouts(
+  input: LifeMapData,
+  legacy: LegacyLifeMapLayoutData,
+  now = new Date().toISOString(),
+): { data: LifeMapData; changed: boolean; matched: number } {
+  let changed = false;
+  let matched = 0;
+  const projectSides = legacy.projectSides ?? {};
+  const nodeLayouts = legacy.nodeLayouts ?? {};
+  const revisedLayout = <T extends { placement?: LifeMapPlacement; layoutLane?: number; updatedAt: string; revision: number }>(
+    item: T,
+    placement: LifeMapPlacement | undefined,
+    layoutLane?: number,
+  ): T => {
+    matched += 1;
+    if (item.placement !== undefined || item.layoutLane !== undefined) return item;
+    const validLane = Number.isInteger(layoutLane) && Number(layoutLane) >= 0 && Number(layoutLane) <= 8
+      ? Number(layoutLane)
+      : undefined;
+    if (!placement && validLane === undefined) return item;
+    changed = true;
+    return {
+      ...item,
+      ...(placement ? { placement } : {}),
+      ...(validLane === undefined ? {} : { layoutLane: validLane }),
+      updatedAt: now,
+      revision: Math.max(1, item.revision + 1),
+    };
+  };
+  const projectPlacement = (key: string): LifeMapPlacement | undefined => {
+    const value = projectSides[key];
+    return value === 'above' || value === 'below' ? value : undefined;
+  };
+  const nodeLayout = (key: string): { placement?: LifeMapPlacement; lane?: number } => {
+    const value = nodeLayouts[key];
+    if (!isRecord(value)) return {};
+    return {
+      placement: value.side === 'top' ? 'above' : value.side === 'bottom' ? 'below' : undefined,
+      lane: typeof value.lane === 'number' ? value.lane : undefined,
+    };
+  };
+  const data: LifeMapData = {
+    ...input,
+    lifeMapGoals: input.lifeMapGoals.map((item) => {
+      const placement = projectPlacement(`goal:${item.id}`);
+      return placement ? revisedLayout(item, placement) : item;
+    }),
+    lifeMapSystems: input.lifeMapSystems.map((item) => {
+      const placement = projectPlacement(`system:${item.id}`);
+      return placement ? revisedLayout(item, placement) : item;
+    }),
+    lifeMapEvents: input.lifeMapEvents.map((item) => {
+      const layout = nodeLayout(`milestone:${item.id}`);
+      return layout.placement || layout.lane !== undefined ? revisedLayout(item, layout.placement, layout.lane) : item;
+    }),
+    lifeMapThemes: input.lifeMapThemes.map((item) => {
+      const layout = nodeLayout(`note:theme:${item.id}`);
+      return layout.placement || layout.lane !== undefined ? revisedLayout(item, layout.placement, layout.lane) : item;
+    }),
+    lifeMapFocuses: input.lifeMapFocuses.map((item) => {
+      const layout = nodeLayout(`note:${item.id}`);
+      return layout.placement || layout.lane !== undefined ? revisedLayout(item, layout.placement, layout.lane) : item;
+    }),
+    lifeMapNotes: input.lifeMapNotes.map((item) => {
+      const layout = nodeLayout(`note:${item.id}`);
+      return layout.placement || layout.lane !== undefined ? revisedLayout(item, layout.placement, layout.lane) : item;
+    }),
+  };
+  return { data, changed, matched };
 }
 
 function validRelation(value: unknown): value is LifeRelation {

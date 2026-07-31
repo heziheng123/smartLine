@@ -44,6 +44,47 @@ test('concurrent first-load tabs initialize one complete storage schema without 
   expect(consoleMessages.filter((message) => message.includes('`ref` is not a prop'))).toEqual([]);
 });
 
+test('simultaneous offline edits from two tabs preserve every changed workspace field', async ({ context }) => {
+  const [first, second] = await Promise.all([context.newPage(), context.newPage()]);
+  await Promise.all([first.goto('/'), second.goto('/')]);
+  await Promise.all([
+    expect(first.locator('.tl-dock')).toBeVisible(),
+    expect(second.locator('.tl-dock')).toBeVisible(),
+  ]);
+
+  await Promise.all([
+    first.evaluate(async () => {
+      const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+      queue.queueWorkspaceFields(
+        { tasks: [{ id: 'tab-a-task', name: 'tab-a-task' }] },
+        { tasks: [] },
+      );
+      await queue.readPendingWorkspaceSync();
+    }),
+    second.evaluate(async () => {
+      const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+      queue.queueWorkspaceFields(
+        { nodes: [{ id: 'tab-b-node', title: 'tab-b-node' }] },
+        { nodes: [] },
+      );
+      await queue.readPendingWorkspaceSync();
+    }),
+  ]);
+
+  await expect.poll(() => first.evaluate(async () => {
+    const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+    const pending = await queue.readPendingWorkspaceSync();
+    return Object.keys(pending?.fields ?? {}).sort();
+  })).toEqual(['nodes', 'tasks']);
+
+  const pending = await first.evaluate(async () => {
+    const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+    return queue.readPendingWorkspaceSync();
+  });
+  expect(pending?.fields.tasks).toEqual([{ id: 'tab-a-task', name: 'tab-a-task' }]);
+  expect(pending?.fields.nodes).toEqual([{ id: 'tab-b-node', title: 'tab-b-node' }]);
+});
+
 test('storage schema upgrade preserves data written by an older app version', async ({ page }) => {
   await page.route('**/__storage-seed__', (route) => route.fulfill({
     status: 200,

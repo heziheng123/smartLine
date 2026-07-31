@@ -243,7 +243,10 @@ test('life map persists a manually chosen card lane across semantic zoom', async
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 62, { steps: 6 });
   await page.mouse.up();
 
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('life-map:node-layouts') ?? '{}')['milestone:cet-certificate']?.lane)).toBeGreaterThan(beforeLane);
+  await expect.poll(() => page.evaluate(() => {
+    const data = JSON.parse(localStorage.getItem('line-life-map-storage-v1:mirror') ?? '{}');
+    return data.lifeMapEvents?.find((item: { id?: string }) => item.id === 'cet-certificate')?.layoutLane;
+  })).toBeGreaterThan(beforeLane);
   await expect(card).toHaveAttribute('data-layout-source', 'manual');
   const manualLane = await card.getAttribute('data-layout-lane');
   await setLifeMapZoom(page, 'week');
@@ -280,7 +283,10 @@ test('life map keeps every independent goal visible and lets the user move it ac
   await expect(phaseB).toHaveAttribute('data-band-level', /^\d+$/);
   const phaseBTop = await phaseB.evaluate((element) => (element as HTMLElement).offsetTop);
   expect(phaseBTop).toBeGreaterThan(axisTopBeforeMove);
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('life-map:project-sides') ?? '{}')['goal:phase-b'])).toBe('below');
+  await expect.poll(() => page.evaluate(() => {
+    const data = JSON.parse(localStorage.getItem('line-life-map-storage-v1:mirror') ?? '{}');
+    return data.lifeMapGoals?.find((item: { id?: string }) => item.id === 'phase-b')?.placement;
+  })).toBe('below');
 
   const axisTopAfterMove = await axis.evaluate((element) => (element as HTMLElement).offsetTop);
   expect(Math.abs(axisTopAfterMove - axisTopBeforeMove)).toBeLessThan(1);

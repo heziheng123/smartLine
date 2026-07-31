@@ -419,10 +419,19 @@ const App: React.FC = () => {
 
     hasAttemptedAutoReconnect.current = true;
     const stopCoordinator = startWorkspaceTabCoordinator({
-      onLeader: reconnectConfiguredWorkspace,
+      onLeader: () => {
+        void reconnectConfiguredWorkspace().catch((error) => {
+          setSyncNotice(error instanceof Error ? error.message : '云端工作区自动连接失败。');
+        });
+      },
       onFollower: () => disconnectWorkspace(false),
     });
-    const reconnect = () => { if (isCurrentTabSyncLeader()) reconnectConfiguredWorkspace(); };
+    const reconnect = () => {
+      if (!isCurrentTabSyncLeader()) return;
+      void reconnectConfiguredWorkspace().catch((error) => {
+        setSyncNotice(error instanceof Error ? error.message : '云端工作区重新连接失败。');
+      });
+    };
     window.addEventListener('online', reconnect);
     return () => {
       window.removeEventListener('online', reconnect);
