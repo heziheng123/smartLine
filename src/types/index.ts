@@ -83,11 +83,15 @@ export interface Task {
   blocks: Block[];
   blocksUpdatedAt?: string;   // blocks 上次保存时间（ISO 字符串）
   /** 人生地图的独立视觉语义；其他视图不会使用。 */
-  lifeMapKind?: 'goal' | 'system' | 'review';
+  lifeMapKind?: 'goal' | 'plan' | 'phase' | 'system' | 'review';
+  /** 计划阶段所属的主计划任务 ID，仅供人生地图布局使用。 */
+  lifeMapParentId?: string;
   lifeMapMeta?: string;
   lifeMapProgress?: number;
   lifeMapOpenEnded?: boolean;
   lifeMapPlacement?: 'above' | 'below';
+  lifeMapMaintenanceActive?: boolean;
+  lifeMapMaintenanceReason?: string;
 }
 
 /** 任务分组 */

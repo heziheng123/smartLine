@@ -9,6 +9,13 @@ export interface LifeMapSyncMeta {
   deletedAt?: string;
 }
 
+export interface LifeMaintenancePeriod {
+  id: string;
+  start: string;
+  end?: string;
+  reason?: string;
+}
+
 export interface LifeArea extends LifeMapSyncMeta {
   id: string;
   name: string;
@@ -16,6 +23,7 @@ export interface LifeArea extends LifeMapSyncMeta {
   icon?: string;
   order: number;
   isHidden?: boolean;
+  maintenancePeriods?: LifeMaintenancePeriod[];
 }
 
 export interface LifeMapStage extends LifeMapSyncMeta {
@@ -54,6 +62,13 @@ export interface LifeGoal extends LifeMapSyncMeta {
   targetValue?: number;
   unit?: string;
   isCore?: boolean;
+  /** 旧数据未设置时按普通目标处理。主计划与计划阶段共用目标集合，以沿用同一套同步与备份链路。 */
+  kind?: 'goal' | 'plan' | 'phase';
+  /** 仅计划阶段使用，指向 kind=plan 的 LifeGoal。 */
+  parentGoalId?: string;
+  /** 面向时间线展示的简短说明或阶段结果。 */
+  summary?: string;
+  maintenancePeriods?: LifeMaintenancePeriod[];
 }
 
 export interface LifeSystem extends LifeMapSyncMeta {
@@ -69,6 +84,8 @@ export interface LifeSystem extends LifeMapSyncMeta {
   targetCount: number;
   unit?: string;
   durationMinutes?: number;
+  /** 运行时也可合并所属领域的维护期，用于正确扣除目标次数。 */
+  maintenancePeriods?: LifeMaintenancePeriod[];
 }
 
 export interface LifeSystemCheckIn extends LifeMapSyncMeta {

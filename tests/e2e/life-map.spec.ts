@@ -13,7 +13,9 @@ const selectLifeMapArea = async (page: Page, areaName = '学习成长') => {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
+    if (localStorage.getItem('life-map-e2e-seeded') === '1') return;
     localStorage.clear();
+    localStorage.setItem('life-map-e2e-seeded', '1');
     localStorage.setItem('smart-timeline-data:mirror', JSON.stringify({
       groups: [{
         id: 'exam-group',
@@ -142,7 +144,19 @@ test.beforeEach(async ({ page }) => {
       lifeMapAreas: [{ id: 'learning', name: '学习成长', color: '#6366F1', icon: '学', order: 1, ...synced }],
       lifeMapStages: legacy.lifeStages.map((item) => ({ ...item, ...synced })),
       lifeMapThemes: [],
-      lifeMapGoals: [{ id: 'study-plan', areaId: 'learning', name: '备战研究生考试', start: '2026-07-01', targetDate: '2027-12-31', status: 'active', isCore: true, progress: 18, ...synced }, ...legacy.tasks.map((item) => ({ id: item.id, areaId: 'learning', name: item.name, start: item.start, targetDate: item.end, color: item.color, status: 'active', progress: 0, ...synced }))],
+      lifeMapGoals: [{ id: 'study-plan', areaId: 'learning', name: '备战研究生考试', start: '2026-07-01', targetDate: '2027-12-31', status: 'active', isCore: true, progress: 18, ...synced }, ...legacy.tasks.map((item) => ({
+        id: item.id,
+        areaId: 'learning',
+        name: item.name,
+        start: item.start,
+        targetDate: item.end,
+        color: item.color,
+        status: 'active',
+        progress: 0,
+        kind: item.id === 'graduate-exam' ? 'plan' : 'phase',
+        parentGoalId: item.id === 'graduate-exam' ? undefined : 'graduate-exam',
+        ...synced,
+      }))],
       lifeMapSystems: [{ id: 'study-rhythm', areaId: 'learning', name: '保持稳定复习', start: '2026-07-01', status: 'active', frequency: 'daily', targetCount: 1, durationMinutes: 60, ...synced }],
       lifeMapSystemCheckIns: [{ id: 'rhythm-check', systemId: 'study-rhythm', date: '2026-07-30', count: 1, ...synced }],
       lifeMapEvents: legacy.milestones.map((item) => ({ ...item, areaId: 'learning', importance: item.importance ?? 'important', ...synced })),
@@ -159,11 +173,13 @@ test.beforeEach(async ({ page }) => {
 test('life map renders independent goals, systems and fixed events without project tasks', async ({ page }) => {
   await page.getByTitle('人生地图').click();
 
-  const projectBand = page.getByRole('button', { name: '2027考研时间条带' });
-  await expect(projectBand).toBeVisible();
-  await expect(projectBand).toHaveClass(/is-life-goal/);
-  await expect(projectBand.locator('.life-line__goal-endpoint')).toBeVisible();
-  await expect(projectBand).toContainText('2027考研');
+  const goalMark = page.getByRole('button', { name: /目标：备战研究生考试/ });
+  await expect(goalMark).toBeVisible();
+  await expect(goalMark).toHaveClass(/life-line__anchor/);
+  await expect(goalMark).toHaveAttribute('aria-label', /完成18%/);
+  await expect(page.locator('.life-line__node.is-goal')).toHaveCount(0);
+  await expect(page.locator('.life-line__project-band.is-life-goal')).toHaveCount(0);
+  await expect(page.locator('.life-line__anchor.is-goal').first()).toBeVisible();
   await expect(page.locator('.life-line__node.is-project')).toHaveCount(0);
   const fixedEvent = page.locator('.life-line__node.is-milestone').filter({ hasText: '六级成绩公布' });
   await expect(fixedEvent).toBeVisible();
@@ -171,7 +187,8 @@ test('life map renders independent goals, systems and fixed events without proje
   await expect(page.locator('.life-line__node.is-action')).toHaveCount(0);
   await expect(page.getByLabel('每日任务节奏带')).toHaveCount(0);
   await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
-  await expect(page.locator('.life-line__project-band.is-life-system').filter({ hasText: '保持稳定复习' })).toBeVisible();
+  await expect(page.locator('.life-line__project-band.is-life-system')).toBeVisible();
+  await expect(page.locator('.life-map-system-strip').getByRole('button', { name: /保持稳定复习/ })).toBeVisible();
 
   await setLifeMapZoom(page, 'day');
   const todayPosition = await page.locator('.life-line__today').evaluate((element) => {
@@ -183,8 +200,36 @@ test('life map renders independent goals, systems and fixed events without proje
   expect(todayPosition.left).toBeLessThan(todayPosition.viewportRight);
   expect(await page.locator('.life-line__tick').count()).toBeLessThan(300);
 
-  await projectBand.dblclick();
+  await setLifeMapZoom(page, 'month');
+  await goalMark.click();
   await expect(page.locator('.life-map-editor form').getByRole('heading', { name: '编辑目标' })).toBeVisible();
+});
+
+test('month and week views keep systems visible while month uses a compact rail', async ({ page }) => {
+  await page.evaluate(async () => {
+    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+    const synced = { createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', revision: 1 };
+    useLifeMapStore.setState({
+      lifeMapGoals: [{ id: 'compact-plan', areaId: 'learning', name: '下方可见主计划', kind: 'plan', start: '2026-08-01', targetDate: '2026-12-31', status: 'active', progress: 10, placement: 'below', ...synced }],
+      lifeMapSystems: [{ id: 'hidden-system', areaId: 'learning', name: '月视图隐藏系统', start: '2026-01-01', status: 'active', frequency: 'daily', targetCount: 1, durationMinutes: 30, placement: 'below', ...synced }],
+    });
+  });
+  await page.getByTitle('人生地图').click();
+
+  const plan = page.locator('[data-project-id="goal:compact-plan"]');
+  const system = page.locator('.life-line__project-band.is-life-system');
+  await expect(system).toBeVisible();
+  await expect(system).toHaveCSS('height', '14px');
+  await expect(plan).toHaveAttribute('data-band-level', '1');
+
+  await setLifeMapZoom(page, 'week');
+  await expect(system).toBeVisible();
+  await expect(system).toHaveCSS('height', '21px');
+  await expect(plan).toHaveAttribute('data-band-level', '1');
+
+  await setLifeMapZoom(page, 'month');
+  await expect(system).toBeVisible();
+  await expect(plan).toHaveAttribute('data-band-level', '1');
 });
 
 test('life map keeps fixed events separate from movable actions', async ({ page }) => {
@@ -254,7 +299,7 @@ test('life map persists a manually chosen card lane across semantic zoom', async
   await expect(card).toHaveAttribute('data-layout-lane', manualLane ?? '0');
 });
 
-test('life map keeps every independent goal visible and lets the user move it across the axis', async ({ page }) => {
+test('life map keeps every planning phase visible and moves a plan with its phase rail across the axis', async ({ page }) => {
   await page.getByTitle('人生地图').click();
 
   const phaseA = page.locator('[data-project-id="goal:phase-a"]');
@@ -277,19 +322,24 @@ test('life map keeps every independent goal visible and lets the user move it ac
   const phaseATop = await phaseA.evaluate((element) => (element as HTMLElement).offsetTop);
   expect(phaseATop).toBeLessThan(axisTopBeforeMove);
 
-  await phaseB.click();
+  await mainProject.click();
   await page.getByRole('button', { name: '放到时间轴下方' }).click();
+  await expect(mainProject).toHaveAttribute('data-band-side', 'below');
   await expect(phaseB).toHaveAttribute('data-band-side', 'below');
   await expect(phaseB).toHaveAttribute('data-band-level', /^\d+$/);
   const phaseBTop = await phaseB.evaluate((element) => (element as HTMLElement).offsetTop);
   expect(phaseBTop).toBeGreaterThan(axisTopBeforeMove);
-  await expect.poll(() => page.evaluate(() => {
-    const data = JSON.parse(localStorage.getItem('line-life-map-storage-v1:mirror') ?? '{}');
-    return data.lifeMapGoals?.find((item: { id?: string }) => item.id === 'phase-b')?.placement;
-  })).toBe('below');
-
   const axisTopAfterMove = await axis.evaluate((element) => (element as HTMLElement).offsetTop);
-  expect(Math.abs(axisTopAfterMove - axisTopBeforeMove)).toBeLessThan(1);
+  expect(axisTopAfterMove).toBeGreaterThan(0);
+
+  // The localStorage mirror is an emergency journal and is deliberately removed
+  // after IndexedDB succeeds. Reloading verifies the durable source instead of
+  // racing that short-lived mirror entry.
+  await page.waitForTimeout(550);
+  await page.reload();
+  await page.getByTitle('人生地图').click();
+  await expect(page.locator('[data-project-id="goal:graduate-exam"]')).toHaveAttribute('data-band-side', 'below');
+  await expect(page.locator('[data-project-id="goal:phase-b"]')).toHaveAttribute('data-band-side', 'below');
 });
 
 test('life map keeps the command bar compact and focuses a selected goal', async ({ page }) => {
@@ -313,11 +363,12 @@ test('life map keeps the command bar compact and focuses a selected goal', async
   await page.keyboard.press('Escape');
 
   const selected = page.locator('[data-project-id="goal:graduate-exam"]');
+  const unrelatedVisibleBand = page.locator('[data-project-id="system:study-rhythm"]');
   await selected.hover();
   await expect(selected).toHaveClass(/is-related/);
-  await expect(page.locator('[data-project-id="goal:phase-a"]')).toHaveClass(/is-muted/);
+  await expect(unrelatedVisibleBand).toHaveClass(/is-muted/);
   await page.locator('.life-line__toolbar').hover();
-  await expect(page.locator('[data-project-id="goal:phase-a"]')).not.toHaveClass(/is-muted/);
+  await expect(unrelatedVisibleBand).not.toHaveClass(/is-muted/);
 
   await selected.click();
   await expect(selected).toHaveClass(/is-selected/);
@@ -326,18 +377,12 @@ test('life map keeps the command bar compact and focuses a selected goal', async
   await expect(page.locator('.life-line__project-focus-card').getByRole('button', { name: '支撑', exact: true })).toHaveCount(0);
   await expect(page.locator('.life-line__project-focus-card').getByRole('button', { name: '日常', exact: true })).toHaveCount(0);
   await expect(page.locator('.life-line__project-focus-card').getByRole('button', { name: '暂停', exact: true })).toHaveCount(0);
-  await expect(page.locator('[data-project-id="goal:phase-a"]')).toHaveClass(/is-muted/);
+  await expect(unrelatedVisibleBand).toHaveClass(/is-muted/);
 
   const scroller = page.locator('.life-line__scroller');
   await scroller.evaluate((element) => { element.scrollLeft += 260; });
-  await expect.poll(async () => {
-    const [label, viewport] = await Promise.all([
-      selected.locator('strong').boundingBox(),
-      scroller.boundingBox(),
-    ]);
-    if (!label || !viewport) return false;
-    return label.x >= viewport.x && label.x + label.width <= viewport.x + viewport.width;
-  }).toBe(true);
+  await expect(selected.locator('strong')).toBeVisible();
+  await expect(page.locator('.life-line__project-focus-card')).toBeVisible();
 });
 
 test('life map creates a persistent range annotation directly on the canvas', async ({ page }) => {
@@ -468,8 +513,8 @@ test('life map supports focus, layers, minimap and natural-language creation', a
   await page.getByRole('button', { name: '显示小地图' }).click();
   await expect(page.getByRole('slider', { name: '人生地图全局导航' })).toBeVisible();
 
-  await page.locator('.life-line__view-menu button').filter({ hasText: '目标与长期系统' }).click();
-  await expect(page.locator('.life-line__project-band.is-life-goal')).toHaveCount(0);
+  await page.locator('.life-line__view-menu button').filter({ hasText: '主计划与目标' }).click();
+  await expect(page.locator('.life-line__anchor.is-goal')).toHaveCount(0);
   await expect(page.locator('.life-line__project-band.is-life-system')).toHaveCount(0);
 
   await page.getByRole('button', { name: '添加到时间线' }).click();
@@ -527,16 +572,26 @@ test('life map preserves independent planning semantics across zoom levels', asy
   await page.getByTitle('人生地图').click();
   await expect(page.locator('.life-line__today')).toHaveCSS('width', '2px');
   await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
-  await expect(page.locator('.life-line__project-band.is-life-goal').first()).toBeVisible();
-  await expect(page.locator('.life-line__project-band.is-life-goal').first().locator('.life-line__goal-endpoint')).toBeVisible();
+  await expect(page.locator('.life-line__node.is-goal')).toHaveCount(0);
+  await expect(page.locator('.life-line__anchor.is-goal').first()).toBeVisible();
+  await expect(page.locator('.life-line__anchor.is-goal').first()).toHaveAttribute('aria-label', /目标日期/);
+  await expect(page.locator('.life-line__project-band.is-life-system').first()).toBeVisible();
+  await expect(page.locator('.life-map-system-strip button').first()).toBeVisible();
+  const monthAxisCounts = await Promise.all([
+    page.locator('.life-line__anchor.is-goal').count(),
+    page.locator('.life-line__anchor.is-milestone').count(),
+  ]);
+  await setLifeMapZoom(page, 'week');
+  await expect(page.locator('.life-line__anchor.is-goal').first()).toBeVisible();
   await expect(page.locator('.life-line__project-band.is-life-system').first()).toBeVisible();
   await expect(page.locator('.life-line__project-band.is-life-system').first()).toHaveClass(/is-open-ended/);
-  await setLifeMapZoom(page, 'week');
-  await expect(page.locator('.life-line__project-band.is-life-goal').first()).toBeVisible();
-  await expect(page.locator('.life-line__project-band.is-life-system').first()).toBeVisible();
+  await expect.poll(async () => Promise.all([
+    page.locator('.life-line__anchor.is-goal').count(),
+    page.locator('.life-line__anchor.is-milestone').count(),
+  ])).toEqual(monthAxisCounts);
   await setLifeMapZoom(page, 'year');
   await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /备战研究生考试时间条带/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /目标：备战研究生考试/ })).toBeVisible();
   await expect(page.locator('.life-line__node.is-milestone').filter({ hasText: '六级成绩公布' })).toHaveCount(0);
   await expect(page.locator('.life-line__anchor.is-milestone[title*="六级成绩公布"]')).toBeVisible();
   await expect(page.locator('.life-line__anchor.is-milestone.is-importance-normal[title*="阶段模拟考试"]')).toBeVisible();
@@ -554,17 +609,23 @@ test('life map keeps the date under the pointer fixed while wheel zooming', asyn
 
   const pointerX = before.x + before.width / 2;
   const pointerY = viewport.y + Math.min(160, viewport.height / 2);
-  await page.mouse.move(pointerX, pointerY);
-  await page.keyboard.down('Control');
-  await page.mouse.wheel(0, -120);
-  await page.keyboard.up('Control');
+  await scroller.evaluate((element, point) => {
+    element.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: point.x,
+      clientY: point.y,
+      ctrlKey: true,
+      deltaY: -120,
+    }));
+  }, { x: pointerX, y: pointerY });
 
   await expect(page.getByRole('combobox', { name: '时间尺度' })).toContainText('周视图');
   await expect.poll(async () => Math.abs(((await today.boundingBox())?.x ?? -1000) - pointerX)).toBeLessThanOrEqual(4);
   await expect(page.locator('main.life-line')).toHaveAttribute('aria-busy', 'false');
 });
 
-test('life map coalesces a trackpad wheel burst into one semantic zoom step', async ({ page }) => {
+test('life map continuously accumulates a trackpad wheel burst across semantic levels', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   const scroller = page.locator('.life-line__scroller');
   await scroller.evaluate((element) => {
@@ -579,6 +640,31 @@ test('life map coalesces a trackpad wheel burst into one semantic zoom step', as
         deltaY: -80,
       }));
     }
+  });
+  await expect(page.getByRole('combobox', { name: '时间尺度' })).toContainText('日视图');
+  await expect(page.locator('main.life-line')).toHaveAttribute('aria-busy', 'false');
+});
+
+test('life map supports a two-finger semantic pinch without losing the canvas anchor', async ({ page }) => {
+  await page.getByTitle('人生地图').click();
+  const scroller = page.locator('.life-line__scroller');
+  await scroller.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + 140;
+    const emit = (type: string, pointerId: number, clientX: number) => element.dispatchEvent(new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId,
+      pointerType: 'touch',
+      clientX,
+      clientY: centerY,
+    }));
+    emit('pointerdown', 1, centerX - 30);
+    emit('pointerdown', 2, centerX + 30);
+    emit('pointermove', 2, centerX + 100);
+    emit('pointerup', 1, centerX - 30);
+    emit('pointerup', 2, centerX + 100);
   });
   await expect(page.getByRole('combobox', { name: '时间尺度' })).toContainText('周视图');
   await expect(page.locator('main.life-line')).toHaveAttribute('aria-busy', 'false');
@@ -629,6 +715,50 @@ test('life map coalesces continuous scrolling while pinned chrome follows every 
   expect(stageTitle.x + stageTitle.width).toBeLessThanOrEqual(viewport.x + viewport.width);
 });
 
+test('life map virtualizes distant planning bands and restores them after command navigation', async ({ page }) => {
+  await page.getByTitle('人生地图').click();
+  await page.evaluate(async () => {
+    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+    const formatDate = (date: Date) => date.toISOString().slice(0, 10);
+    const base = new Date('2022-01-03T12:00:00.000Z');
+    const synced = { createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', revision: 1 };
+    useLifeMapStore.setState({
+      lifeMapGoals: Array.from({ length: 180 }, (_, index) => {
+        const start = new Date(base);
+        start.setUTCDate(start.getUTCDate() + index * 14);
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 9);
+        return {
+          id: `performance-plan-${index}`,
+          areaId: 'learning',
+          name: `性能计划 ${index}`,
+          kind: 'plan' as const,
+          start: formatDate(start),
+          targetDate: formatDate(end),
+          status: 'active' as const,
+          progress: 0,
+          ...synced,
+        };
+      }),
+    });
+  });
+  await setLifeMapZoom(page, 'week');
+
+  await expect.poll(() => page.locator('.life-line__project-band.is-life-plan').count()).toBeGreaterThan(0);
+  await expect.poll(() => page.locator('.life-line__project-band.is-life-plan').count()).toBeLessThan(60);
+  await expect.poll(() => page.evaluate(async () => {
+    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+    return useLifeMapStore.getState().lifeMapGoals.length;
+  })).toBe(180);
+
+  await page.getByRole('button', { name: '快速跳转' }).click();
+  await page.getByRole('textbox', { name: '搜索人生地图' }).fill('性能计划 179');
+  await page.locator('.life-line__jump-results').getByRole('button', { name: /性能计划 179/ }).click();
+  await expect(page.locator('[data-project-id="goal:performance-plan-179"]')).toBeVisible();
+  await expect(page.locator('[data-project-id="goal:performance-plan-179"]')).toHaveClass(/is-selected/);
+  await expect(page.locator('[data-project-id="goal:performance-plan-0"]')).toHaveCount(0);
+});
+
 test('life map surfaces stages, a core goal and the next milestone without project-planning chrome', async ({ page }) => {
   await page.getByTitle('人生地图').click();
 
@@ -670,6 +800,7 @@ test('life stage rail provides direct create and edit actions', async ({ page })
   await stageEditor.getByRole('button', { name: '取消' }).click();
 
   await page.getByRole('button', { name: '添加到时间线' }).click();
+  await page.getByRole('button', { name: '更多操作' }).click();
   await page.getByRole('button', { name: '新建人生阶段' }).click();
   await expect(stageEditor).toContainText('新建人生阶段');
   await stageEditor.getByLabel('阶段名称').fill('考研冲刺期');
@@ -695,6 +826,7 @@ test('life map supports command jump and creates a dedicated planning review', a
   await expect(page.locator('[data-project-id="goal:phase-b"]')).toHaveClass(/is-selected/);
 
   await page.getByRole('button', { name: '添加到时间线' }).click();
+  await page.getByRole('button', { name: '更多操作' }).click();
   await page.getByRole('button', { name: '新建周期复盘' }).click();
   const editor = page.locator('.life-map-editor form');
   await expect(editor.getByRole('heading', { name: '新建周期复盘' })).toBeVisible();

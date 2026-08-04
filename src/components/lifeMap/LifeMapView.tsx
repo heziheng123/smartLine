@@ -1,6 +1,6 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
-import { BookOpenCheck, CalendarRange, Check, ChevronDown, Diamond, Eye, EyeOff, Focus, Highlighter, Layers3, LocateFixed, MousePointer2, Pencil, Plus, Redo2, Repeat2, Search, Sparkles, StickyNote, Target, Trash2, Undo2, X } from 'lucide-react';
+import { BookOpenCheck, CalendarRange, Check, ChevronDown, Diamond, Eye, EyeOff, Focus, Highlighter, Layers3, LocateFixed, Pencil, Plus, Redo2, Repeat2, Search, Sparkles, StickyNote, Target, Trash2, Undo2, X } from 'lucide-react';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
 import { getSmartTaskBlocks } from '@/utils/blocks';
 import { isValidCalendarDate } from '@/utils/dateSafe';
@@ -25,18 +25,23 @@ interface LifeMapViewProps {
   onDeleteMilestone: (milestoneId: string) => void;
   onUpdateProjectPlacement?: (taskId: string, placement: ProjectSide) => void;
   toolbarScope?: React.ReactNode;
+  planningSummary?: React.ReactNode;
   onCreateGoal?: () => void;
+  onCreatePlan?: () => void;
+  onCreatePhase?: () => void;
   onCreateSystem?: () => void;
   onCreateTheme?: () => void;
   onCreateArea?: () => void;
   onCreateReview?: () => void;
+  onRequestPlanShift?: () => void;
+  onManageProjectMaintenance?: (taskId: string) => void;
   annotationAreaRequired?: boolean;
   onRequireAnnotationArea?: () => void;
 }
 
 type ZoomLevel = 'year' | 'month' | 'week' | 'day';
 type NodeSide = 'top' | 'bottom';
-type NodeKind = 'action' | 'deadline' | 'milestone' | 'note';
+type NodeKind = 'action' | 'deadline' | 'milestone' | 'note' | 'goal';
 type CanvasTool = 'select' | 'range' | 'note' | 'milestone';
 type FocusMode = 'off' | 'week' | 'month';
 type ProjectSide = 'above' | 'below';
@@ -77,6 +82,11 @@ interface LineNode {
   isReview?: boolean;
   importance?: MilestoneImportance;
   layoutLane?: number;
+  progress?: number;
+  meta?: string;
+  isCore?: boolean;
+  maintenanceActive?: boolean;
+  maintenanceReason?: string;
 }
 
 interface RangeSegment {
@@ -100,6 +110,9 @@ interface RangeSegment {
   placementIsManual?: boolean;
   annotationKind?: 'theme' | 'focus';
   layoutLane?: number;
+  parentTaskId?: string;
+  maintenanceActive?: boolean;
+  maintenanceReason?: string;
 }
 
 interface PositionedProjectBand extends RangeSegment {
@@ -107,6 +120,19 @@ interface PositionedProjectBand extends RangeSegment {
   width: number;
   level: number;
   side: ProjectSide;
+}
+
+interface PositionedPlanGap {
+  id: string;
+  parentTaskId?: string;
+  parentTitle: string;
+  start: Dayjs;
+  end: Dayjs;
+  left: number;
+  width: number;
+  level: number;
+  side: ProjectSide;
+  color: string;
 }
 
 interface PositionedNode extends LineNode {
@@ -132,6 +158,7 @@ interface PositionedAnnotation extends RangeSegment {
   cardHeight: number;
   laneOffset: number;
   compactSummary: boolean;
+  showDetails: boolean;
 }
 
 interface CanvasDraft {
@@ -213,6 +240,14 @@ const ZOOM_HINTS: Record<ZoomLevel, string> = {
   week: '重点与节奏',
   day: '当天记录',
 };
+const MIN_PIXELS_PER_DAY = ZOOM_META.year.pixelsPerDay;
+const MAX_PIXELS_PER_DAY = ZOOM_META.day.pixelsPerDay;
+function semanticZoomForScale(scale: number): ZoomLevel {
+  if (scale < Math.sqrt(ZOOM_META.year.pixelsPerDay * ZOOM_META.month.pixelsPerDay)) return 'year';
+  if (scale < Math.sqrt(ZOOM_META.month.pixelsPerDay * ZOOM_META.week.pixelsPerDay)) return 'month';
+  if (scale < Math.sqrt(ZOOM_META.week.pixelsPerDay * ZOOM_META.day.pixelsPerDay)) return 'week';
+  return 'day';
+}
 const NODE_GAP_Y = 54;
 const PROJECT_LANE_GAP = 30;
 const PROJECT_ABOVE_OFFSET = 30;
@@ -297,10 +332,10 @@ function buildTicks(start: Dayjs, end: Dayjs, zoom: ZoomLevel): Tick[] {
 }
 
 function shouldShowNodeCard(node: LineNode, zoom: ZoomLevel): boolean {
+  if (node.kind === 'goal') return false;
   if (node.kind === 'milestone') {
     const importance = node.importance ?? 'important';
     if (zoom === 'year') return importance === 'core';
-    if (zoom === 'month') return importance !== 'normal';
     return true;
   }
   if (node.kind === 'note') return zoom !== 'year';
@@ -420,11 +455,16 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   onDeleteMilestone,
   onUpdateProjectPlacement,
   toolbarScope,
+  planningSummary,
   onCreateGoal,
+  onCreatePlan,
+  onCreatePhase,
   onCreateSystem,
   onCreateTheme,
   onCreateArea,
   onCreateReview,
+  onRequestPlanShift,
+  onManageProjectMaintenance,
   annotationAreaRequired = false,
   onRequireAnnotationArea,
 }) => {
@@ -438,9 +478,15 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const scrollFrameRef = useRef<number | null>(null);
   const scrollIdleTimerRef = useRef<number | null>(null);
   const zoomAnimationTimerRef = useRef<number | null>(null);
-  const lastWheelZoomAtRef = useRef(0);
+  const zoomCommitFrameRef = useRef<number | null>(null);
+  const zoomPendingScaleRef = useRef<number | null>(null);
+  const zoomLastCommitAtRef = useRef(0);
+  const pinchPointsRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchGestureRef = useRef<{ distance: number; scale: number; anchorDate: Dayjs; viewportX: number } | null>(null);
   const minimapWindowRef = useRef<HTMLSpanElement>(null);
-  const [zoom, setZoom] = useState<ZoomLevel>('month');
+  const [pixelsPerDay, setPixelsPerDay] = useState(ZOOM_META.month.pixelsPerDay);
+  const zoomScaleRef = useRef(ZOOM_META.month.pixelsPerDay);
+  const zoom = semanticZoomForScale(pixelsPerDay);
   const [centerDate, setCenterDate] = useState(today);
   const [canvasTool, setCanvasTool] = useState<CanvasTool>('select');
   const [dragSelection, setDragSelection] = useState<{ startX: number; currentX: number } | null>(null);
@@ -448,6 +494,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const [stageDraft, setStageDraft] = useState<LifeStage | null>(null);
   const [layers, setLayers] = useState<LayerState>({ projects: true, annotations: true, milestones: true, notes: true, tasks: true, completed: true });
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showAddMore, setShowAddMore] = useState(false);
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showJumpMenu, setShowJumpMenu] = useState(false);
   const [showScaleMenu, setShowScaleMenu] = useState(false);
@@ -488,8 +535,27 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       const group = groupById.get(task.groupId ?? '');
       const color = resolveTaskTheme(task, group?.color).backgroundColor;
       const rank = task.lifeMapKind
-        ? task.isMain ? 'core' : task.lifeMapKind === 'goal' ? 'support' : task.lifeMapKind === 'review' ? 'paused' : 'routine'
+        ? task.isMain ? 'core' : task.lifeMapKind === 'goal' || task.lifeMapKind === 'phase' ? 'support' : task.lifeMapKind === 'review' ? 'paused' : 'routine'
         : task.isMain ? 'core' : task.groupId ? 'support' : 'routine';
+      if (task.lifeMapKind === 'goal') {
+        const progress = Math.max(0, Math.min(1, (task.lifeMapProgress ?? getTaskProgress(task) * 100) / 100));
+        nextNodes.push({
+          id: `goal-node:${task.id}`,
+          kind: 'goal',
+          title: task.name,
+          subtitle: `${task.end} · ${task.lifeMapMeta ?? `${Math.round(progress * 100)}%`}`,
+          date: end,
+          color,
+          taskId: task.id,
+          placement: 'above',
+          completed: task.completed,
+          progress,
+          meta: task.lifeMapMeta,
+          isCore: Boolean(task.isMain),
+          maintenanceActive: task.lifeMapMaintenanceActive,
+          maintenanceReason: task.lifeMapMaintenanceReason,
+        });
+      } else {
       nextRanges.push({
         id: `range:${task.id}`,
         title: task.name,
@@ -505,9 +571,13 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         lifeMapKind: task.lifeMapKind,
         meta: task.lifeMapMeta,
         openEnded: task.lifeMapOpenEnded,
-        preferredSide: task.lifeMapPlacement ?? (task.lifeMapKind === 'goal' ? 'above' : task.lifeMapKind === 'system' ? 'below' : undefined),
+        preferredSide: task.lifeMapPlacement ?? (task.lifeMapKind === 'system' ? 'below' : undefined),
         placementIsManual: task.lifeMapPlacement !== undefined,
+        parentTaskId: task.lifeMapParentId,
+        maintenanceActive: task.lifeMapMaintenanceActive,
+        maintenanceReason: task.lifeMapMaintenanceReason,
       });
+      }
 
       getSmartTaskBlocks(task.blocks ?? []).filter((block) => !block.header.isArchived).forEach((block) => {
         const actionDate = block.header.date ?? block.header.deadline;
@@ -586,7 +656,6 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     };
   }, [lifeStages, nodes, ranges, today]);
 
-  const pixelsPerDay = ZOOM_META[zoom].pixelsPerDay;
   const totalDays = bounds.end.diff(bounds.start, 'day') + 1;
   const canvasWidth = Math.max(1200, Math.ceil(totalDays * pixelsPerDay));
   const ticks = useMemo(() => buildTicks(bounds.start, bounds.end, zoom), [bounds.end, bounds.start, zoom]);
@@ -599,15 +668,20 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     bounds.start.add(Math.max(0, Math.min(canvasWidth, x)) / pixelsPerDay, 'day').startOf('day')
   ), [bounds.start, canvasWidth, pixelsPerDay]);
 
+  const effectiveViewportWidth = Math.max(800, viewport.width);
+  const renderBuffer = Math.max(1600, effectiveViewportWidth * 2.5);
+  const renderWindowLeft = Math.max(0, viewport.scrollLeft - renderBuffer);
+  const renderWindowRight = Math.min(canvasWidth, viewport.scrollLeft + effectiveViewportWidth + renderBuffer);
+  const intersectsRenderWindow = useCallback((left: number, width = 0) => (
+    left + Math.max(1, width) >= renderWindowLeft && left <= renderWindowRight
+  ), [renderWindowLeft, renderWindowRight]);
+
   const renderedTicks = useMemo(() => {
-    if (zoom !== 'day') return ticks;
-    const centerX = Math.max(0, Math.min(canvasWidth, centerDate.diff(bounds.start, 'day', true) * pixelsPerDay));
-    const halfWindow = Math.max(1600, viewport.width * 3);
     return ticks.filter((tick) => {
       const x = tick.date.diff(bounds.start, 'day', true) * pixelsPerDay;
-      return x >= centerX - halfWindow && x <= centerX + halfWindow;
+      return x >= renderWindowLeft && x <= renderWindowRight;
     });
-  }, [bounds.start, canvasWidth, centerDate, pixelsPerDay, ticks, viewport.width, zoom]);
+  }, [bounds.start, pixelsPerDay, renderWindowLeft, renderWindowRight, ticks]);
 
   const stageBands = useMemo<StageBand[]>(() => {
     const levelRightEdges: number[] = [];
@@ -644,9 +718,12 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
 
   const projectBands = useMemo<PositionedProjectBand[]>(() => {
     const levelRightEdges: Record<ProjectSide, number[]> = { above: [], below: [] };
-    return ranges
+    const projectRanges = ranges
       .filter((range) => range.kind === 'project')
-      .sort((left, right) => left.start.valueOf() - right.start.valueOf() || right.end.valueOf() - left.end.valueOf() || left.id.localeCompare(right.id))
+      .filter((range) => range.lifeMapKind !== 'system' || zoom !== 'year')
+      .sort((left, right) => left.start.valueOf() - right.start.valueOf() || right.end.valueOf() - left.end.valueOf() || left.id.localeCompare(right.id));
+    const positionedParents = projectRanges
+      .filter((range) => range.lifeMapKind !== 'phase')
       .map((range) => {
         const left = dateToX(range.start);
         const width = Math.max(6, dateToX(range.end.add(1, 'day')) - left);
@@ -669,12 +746,59 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         }
         return { ...range, left, width, level, side };
       });
-  }, [dateToX, ranges]);
+    const positionedByTaskId = new Map(positionedParents.map((band) => [band.taskId, band]));
+    const positionedPhases = projectRanges
+      .filter((range) => range.lifeMapKind === 'phase')
+      .flatMap((range) => {
+        const parent = positionedByTaskId.get(range.parentTaskId);
+        if (!parent) return [];
+        const left = dateToX(range.start);
+        const width = Math.max(6, dateToX(range.end.add(1, 'day')) - left);
+        return [{ ...range, left, width, level: parent.level, side: parent.side }];
+      });
+    return [...positionedParents, ...positionedPhases];
+  }, [dateToX, ranges, zoom]);
+
+  const planGaps = useMemo<PositionedPlanGap[]>(() => projectBands
+    .filter((band) => band.lifeMapKind === 'plan')
+    .flatMap((plan) => {
+      const phases = projectBands
+        .filter((candidate) => candidate.lifeMapKind === 'phase' && candidate.parentTaskId === plan.taskId)
+        .sort((left, right) => left.start.valueOf() - right.start.valueOf() || left.end.valueOf() - right.end.valueOf());
+      if (phases.length === 0) return [];
+      const gaps: PositionedPlanGap[] = [];
+      let cursor = plan.start;
+      const addGap = (gapStart: Dayjs, gapEnd: Dayjs) => {
+        if (gapEnd.isBefore(gapStart, 'day')) return;
+        const left = dateToX(gapStart);
+        gaps.push({
+          id: `plan-gap:${plan.taskId}:${gapStart.format('YYYY-MM-DD')}`,
+          parentTaskId: plan.taskId,
+          parentTitle: plan.title,
+          start: gapStart,
+          end: gapEnd,
+          left,
+          width: Math.max(4, dateToX(gapEnd.add(1, 'day')) - left),
+          level: plan.level,
+          side: plan.side,
+          color: plan.color,
+        });
+      };
+      phases.forEach((phase) => {
+        const phaseStart = phase.start.isBefore(plan.start, 'day') ? plan.start : phase.start;
+        const phaseEnd = phase.end.isAfter(plan.end, 'day') ? plan.end : phase.end;
+        if (phaseStart.isAfter(cursor, 'day')) addGap(cursor, phaseStart.subtract(1, 'day'));
+        const nextCursor = phaseEnd.add(1, 'day');
+        if (nextCursor.isAfter(cursor, 'day')) cursor = nextCursor;
+      });
+      if (!cursor.isAfter(plan.end, 'day')) addGap(cursor, plan.end);
+      return gaps;
+    }), [dateToX, projectBands]);
 
   const goalLinks = useMemo<GoalLink[]>(() => {
     const byGroup = new Map<string, PositionedProjectBand[]>();
     projectBands.forEach((band) => {
-      if (!band.groupId) return;
+      if (!band.groupId || band.lifeMapKind === 'plan' || band.lifeMapKind === 'phase') return;
       const groupBands = byGroup.get(band.groupId) ?? [];
       groupBands.push(band);
       byGroup.set(band.groupId, groupBands);
@@ -697,14 +821,28 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       : [0, cardGap, -cardGap, cardGap * 2, -cardGap * 2];
     const positioned = ranges
       .filter((range) => range.kind === 'note')
+      .filter((range) => {
+        const left = dateToX(range.start);
+        return intersectsRenderWindow(left, Math.max(16, dateToX(range.end.add(1, 'day')) - left));
+      })
       .sort((left, right) => (right.layoutLane === undefined ? 0 : 1) - (left.layoutLane === undefined ? 0 : 1)
         || left.start.valueOf() - right.start.valueOf())
       .map((range) => {
         const left = dateToX(range.start);
         const width = Math.max(16, dateToX(range.end.add(1, 'day')) - left);
         const isExpanded = expandedAnnotationId === range.noteId;
-        const compactSummary = zoom === 'month' && range.end.diff(range.start, 'day') <= 14 && !isExpanded;
-        const cardWidth = isExpanded
+        const focusWindowStart = mondayOf(centerDate);
+        const focusWindowEnd = focusWindowStart.add(13, 'day');
+        const isNearFocus = range.annotationKind === 'focus'
+          && !range.end.isBefore(focusWindowStart, 'day')
+          && !range.start.isAfter(focusWindowEnd, 'day');
+        const showDetails = zoom === 'month'
+          && isNearFocus
+          && range.end.diff(range.start, 'day') <= 14
+          && range.title.includes('\n');
+        const effectiveExpanded = isExpanded || showDetails;
+        const compactSummary = zoom === 'month' && range.end.diff(range.start, 'day') <= 14 && !isExpanded && !isNearFocus;
+        const cardWidth = effectiveExpanded
           ? 220
           : zoom === 'week'
             ? Math.min(260, Math.max(72, width - 4))
@@ -752,8 +890,8 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
           ? 0
           : compactSummary
             ? 22
-            : getAnnotationCardMetrics(range.title, isExpanded).height;
-        return { ...range, left, width, anchorX, cardX, cardWidth, level, markLevel, placement, cardHeight, compactSummary };
+            : getAnnotationCardMetrics(range.title, effectiveExpanded).height;
+        return { ...range, left, width, anchorX, cardX, cardWidth, level, markLevel, placement, cardHeight, compactSummary, showDetails };
       });
 
     const rowHeights: Record<'above' | 'below', number[]> = { above: [], below: [] };
@@ -769,13 +907,16 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         .slice(0, annotation.level)
         .reduce((offset, height) => offset + height + 12, 0),
     }));
-  }, [canvasWidth, dateToX, expandedAnnotationId, ranges, zoom]);
+  }, [canvasWidth, centerDate, dateToX, expandedAnnotationId, intersectsRenderWindow, ranges, zoom]);
 
-  const visibleProjectBands = layers.projects ? projectBands : [];
+  const visibleProjectBands = layers.projects
+    ? projectBands.filter((band) => band.lifeMapKind !== 'system' || zoom !== 'year')
+    : [];
+  const projectLaneGap = zoom === 'month' ? 22 : PROJECT_LANE_GAP;
   const projectAboveLaneCount = visibleProjectBands.filter((band) => band.side === 'above').reduce((count, band) => Math.max(count, band.level + 1), 0);
   const projectBelowLaneCount = visibleProjectBands.filter((band) => band.side === 'below').reduce((count, band) => Math.max(count, band.level + 1), 0);
-  const projectAboveExtent = projectAboveLaneCount > 0 ? PROJECT_ABOVE_OFFSET + (projectAboveLaneCount - 1) * PROJECT_LANE_GAP : 0;
-  const projectBelowExtent = projectBelowLaneCount > 0 ? PROJECT_BELOW_OFFSET + (projectBelowLaneCount - 1) * PROJECT_LANE_GAP : 0;
+  const projectAboveExtent = projectAboveLaneCount > 0 ? PROJECT_ABOVE_OFFSET + (projectAboveLaneCount - 1) * projectLaneGap : 0;
+  const projectBelowExtent = projectBelowLaneCount > 0 ? PROJECT_BELOW_OFFSET + (projectBelowLaneCount - 1) * projectLaneGap : 0;
   const selectedProjectBand = selectedProjectId ? projectBands.find((band) => band.taskId === selectedProjectId) : undefined;
   const activeProjectId = selectedProjectId ?? hoveredProjectId;
   const visibleAnnotations = useMemo(() => annotations.filter((annotation) => {
@@ -800,19 +941,32 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     const nodeWidth = zoom === 'year' ? 108 : zoom === 'month' ? 132 : 152;
     const cardGap = 10;
     const rowBoxes: Record<string, Array<Array<{ left: number; right: number }>>> = {};
+    const upcomingMilestones = nodes
+      .filter((node) => node.kind === 'milestone' && !node.date.isBefore(today, 'day'))
+      .sort((left, right) => left.date.valueOf() - right.date.valueOf());
+    const featuredMilestoneId = zoom === 'year'
+      ? upcomingMilestones.find((node) => (node.importance ?? 'important') === 'core')?.id
+      : upcomingMilestones[0]?.id;
+    const featuredMilestoneDate = upcomingMilestones.find((node) => node.id === featuredMilestoneId)?.date.format('YYYY-MM-DD');
     const candidates = nodes
       .filter((node) => node.kind !== 'action' && node.kind !== 'deadline')
-      .filter((node) => (layers.completed || !node.completed) && (node.kind === 'milestone' ? layers.milestones : layers.notes))
+      .filter((node) => intersectsRenderWindow(dateToX(node.date)))
+      .filter((node) => (layers.completed || !node.completed) && (node.kind === 'goal' ? layers.projects : node.kind === 'milestone' ? layers.milestones : layers.notes))
       .filter((node) => shouldShowNodeCard(node, zoom))
+      .filter((node) => node.kind !== 'milestone'
+        || zoom === 'week'
+        || zoom === 'day'
+        || zoom === 'month'
+        || node.date.format('YYYY-MM-DD') === featuredMilestoneDate)
       .sort((left, right) => (right.layoutLane === undefined ? 0 : 1) - (left.layoutLane === undefined ? 0 : 1)
         || left.date.valueOf() - right.date.valueOf()
         || left.id.localeCompare(right.id));
 
     return candidates.map((node) => {
       const anchorX = dateToX(node.date);
-      const width = nodeWidth;
+      const width = node.kind === 'goal' ? (node.isCore ? 168 : 150) : nodeWidth;
       const side: NodeSide = node.placement === 'above' ? 'top' : 'bottom';
-      const zone = node.kind === 'milestone' ? 'milestone' : 'note';
+      const zone = node.kind === 'goal' ? 'goal' : node.kind === 'milestone' ? 'milestone' : 'note';
       const key = `${side}:${zone}`;
       const rows = rowBoxes[key] ?? [];
       const x = clampCardCenterToViewport(anchorX, width, canvasWidth, viewport);
@@ -831,7 +985,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       rowBoxes[key] = rows;
       return { ...node, anchorX, x, width, side, lane, layoutSource: node.layoutLane === undefined ? 'auto' : 'manual' };
     });
-  }, [canvasWidth, dateToX, layers.completed, layers.milestones, layers.notes, nodes, viewport, zoom]);
+  }, [canvasWidth, dateToX, intersectsRenderWindow, layers.completed, layers.milestones, layers.notes, layers.projects, nodes, today, viewport, zoom]);
   const nodeLaneCount = (side: NodeSide, kind: 'note' | 'milestone') => nodePlacements
     .filter((node) => node.side === side && node.kind === kind)
     .reduce((count, node) => Math.max(count, node.lane + 1), 0);
@@ -893,7 +1047,9 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const taskMarkerClusters = useMemo<TaskMarkerCluster[]>(() => {
     if (!layers.tasks || zoom === 'year') return [];
     const byDate = new Map<string, TaskMarkerCluster>();
-    nodes.filter((node) => (node.kind === 'action' || node.kind === 'deadline') && (layers.completed || !node.completed)).forEach((node) => {
+    nodes.filter((node) => (node.kind === 'action' || node.kind === 'deadline')
+      && (layers.completed || !node.completed)
+      && intersectsRenderWindow(dateToX(node.date))).forEach((node) => {
       const periodStart = node.date.startOf('day');
       const key = `day:${periodStart.format('YYYY-MM-DD')}`;
       const minutes = node.duration ?? 30;
@@ -913,12 +1069,13 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       });
     });
     return [...byDate.values()].sort((left, right) => left.date.valueOf() - right.date.valueOf());
-  }, [layers.completed, layers.tasks, nodes, zoom]);
+  }, [dateToX, intersectsRenderWindow, layers.completed, layers.tasks, nodes, zoom]);
 
   const anchorEntries = useMemo(() => {
     const visible = nodes.filter((node) => {
       if (node.kind === 'action' || node.kind === 'deadline') return false;
       if (!layers.completed && node.completed) return false;
+      if (node.kind === 'goal') return layers.projects;
       if (node.kind === 'milestone') return layers.milestones;
       return layers.notes && zoom !== 'year';
     });
@@ -942,7 +1099,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       entries.push({ key: `milestones:${date}`, node: representative, count: group.length, titles: group.map((item) => item.title) });
     });
     return entries.sort((left, right) => left.node.date.valueOf() - right.node.date.valueOf());
-  }, [layers.completed, layers.milestones, layers.notes, nodes, zoom]);
+  }, [layers.completed, layers.milestones, layers.notes, layers.projects, nodes, zoom]);
 
   const focusRange = useMemo(() => {
     if (focusMode === 'off') return null;
@@ -956,13 +1113,16 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const selectedTaskCluster = taskMarkerClusters.find((cluster) => cluster.key === selectedTaskDate);
   const currentStage = stageBands.find((stage) => !today.isBefore(stage.start, 'day') && !today.isAfter(stage.end, 'day'));
   const currentStageSource = currentStage ? lifeStages.find((stage) => stage.id === currentStage.id) : undefined;
-  const currentCoreGoal = ranges
-    .filter((range) => range.kind === 'project' && range.lifeMapKind === 'goal' && range.rank === 'core' && !range.end.isBefore(today, 'day'))
-    .sort((left, right) => {
-      const leftActive = !today.isBefore(left.start, 'day') && !today.isAfter(left.end, 'day');
-      const rightActive = !today.isBefore(right.start, 'day') && !today.isAfter(right.end, 'day');
-      return Number(rightActive) - Number(leftActive) || left.start.valueOf() - right.start.valueOf();
-    })[0];
+  const currentCoreGoal = nodes
+    .filter((node) => node.kind === 'goal' && node.isCore && !node.date.isBefore(today, 'day'))
+    .sort((left, right) => left.date.valueOf() - right.date.valueOf())[0]
+    ?? ranges
+      .filter((range) => range.kind === 'project' && range.lifeMapKind === 'plan' && range.rank === 'core' && !range.end.isBefore(today, 'day'))
+      .sort((left, right) => {
+        const leftActive = !today.isBefore(left.start, 'day') && !today.isAfter(left.end, 'day');
+        const rightActive = !today.isBefore(right.start, 'day') && !today.isAfter(right.end, 'day');
+        return Number(rightActive) - Number(leftActive) || left.start.valueOf() - right.start.valueOf();
+      })[0];
   const nextMilestone = nodes
     .filter((node) => node.kind === 'milestone' && !node.date.isBefore(today, 'day'))
     .sort((left, right) => left.date.valueOf() - right.date.valueOf())[0];
@@ -973,7 +1133,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     const results: Array<{ id: string; title: string; meta: string; date: Dayjs; taskId?: string }> = [];
     if (dateMatch.isValid() && /\d/.test(query)) results.push({ id: `date:${query}`, title: `跳到 ${dateMatch.format('YYYY年M月D日')}`, meta: '日期', date: dateMatch });
     tasks.filter((task) => task.name.toLowerCase().includes(query)).slice(0, 4).forEach((task) => results.push({
-      id: `task:${task.id}`, title: task.name, meta: task.lifeMapKind === 'goal' ? '人生目标' : task.lifeMapKind === 'system' ? '长期系统' : task.lifeMapKind === 'review' ? '周期复盘' : '规划', date: midpoint(dayjs(task.start), dayjs(task.end)), taskId: task.id,
+      id: `task:${task.id}`, title: task.name, meta: task.lifeMapKind === 'goal' ? '人生目标' : task.lifeMapKind === 'plan' ? '主计划' : task.lifeMapKind === 'phase' ? '计划阶段' : task.lifeMapKind === 'system' ? '长期系统' : task.lifeMapKind === 'review' ? '周期复盘' : '规划', date: midpoint(dayjs(task.start), dayjs(task.end)), taskId: task.id,
     }));
     groups.filter((group) => group.name.toLowerCase().includes(query)).slice(0, 3).forEach((group) => results.push({
       id: `group:${group.id}`, title: group.name, meta: '人生领域', date: midpoint(dayjs(group.start), dayjs(group.end)),
@@ -1013,6 +1173,25 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     }, 180);
   }, []);
 
+  const scheduleZoomScale = useCallback((nextScale: number) => {
+    zoomPendingScaleRef.current = nextScale;
+    if (zoomCommitFrameRef.current !== null) return;
+    const flush = (timestamp: number) => {
+      const elapsed = timestamp - zoomLastCommitAtRef.current;
+      if (elapsed < 32) {
+        zoomCommitFrameRef.current = window.requestAnimationFrame(flush);
+        return;
+      }
+      zoomCommitFrameRef.current = null;
+      const pendingScale = zoomPendingScaleRef.current;
+      zoomPendingScaleRef.current = null;
+      if (pendingScale === null) return;
+      zoomLastCommitAtRef.current = timestamp;
+      React.startTransition(() => setPixelsPerDay(pendingScale));
+    };
+    zoomCommitFrameRef.current = window.requestAnimationFrame(flush);
+  }, []);
+
   const syncScrollChrome = useCallback((scroller: HTMLDivElement) => {
     const scrollLeft = scroller.scrollLeft;
     const canvas = canvasRef.current;
@@ -1045,7 +1224,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       : [];
     const scroller = scrollerRef.current;
     if (scroller) syncScrollChrome(scroller);
-  }, [layers.projects, projectBands, syncScrollChrome]);
+  }, [layers.projects, projectBands, renderWindowLeft, renderWindowRight, syncScrollChrome]);
 
   useLayoutEffect(() => {
     const zoomAnchor = pendingZoomAnchorRef.current;
@@ -1064,7 +1243,8 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   }, [dateToX, focusDate, today, zoom]);
 
   const changeZoom = useCallback((next: ZoomLevel) => {
-    if (next === zoom) return;
+    const nextScale = ZOOM_META[next].pixelsPerDay;
+    if (Math.abs(nextScale - pixelsPerDay) < .01) return;
     if (scrollIdleTimerRef.current !== null) {
       window.clearTimeout(scrollIdleTimerRef.current);
       scrollIdleTimerRef.current = null;
@@ -1073,8 +1253,9 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     pendingZoomAnchorRef.current = null;
     pendingFocusRef.current = today;
     beginZoomTransition();
-    React.startTransition(() => setZoom(next));
-  }, [beginZoomTransition, today, zoom]);
+    zoomScaleRef.current = nextScale;
+    scheduleZoomScale(nextScale);
+  }, [beginZoomTransition, pixelsPerDay, scheduleZoomScale, today]);
 
   const handleScroll = () => {
     const scroller = scrollerRef.current;
@@ -1121,25 +1302,64 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current);
     if (scrollIdleTimerRef.current !== null) window.clearTimeout(scrollIdleTimerRef.current);
     if (zoomAnimationTimerRef.current !== null) window.clearTimeout(zoomAnimationTimerRef.current);
+    if (zoomCommitFrameRef.current !== null) window.cancelAnimationFrame(zoomCommitFrameRef.current);
+    zoomCommitFrameRef.current = null;
+    zoomPendingScaleRef.current = null;
   }, []);
 
   const handleWheel: React.WheelEventHandler<HTMLDivElement> = (event) => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    const now = performance.now();
-    if (now - lastWheelZoomAtRef.current < 140) return;
-    const index = ZOOM_LEVELS.indexOf(zoom);
-    const nextIndex = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, index + (event.deltaY < 0 ? 1 : -1)));
-    if (nextIndex === index) return;
+    const currentScale = zoomScaleRef.current;
+    const nextScale = Math.max(MIN_PIXELS_PER_DAY, Math.min(MAX_PIXELS_PER_DAY, currentScale * Math.exp(-event.deltaY * .006)));
+    if (Math.abs(nextScale - currentScale) < .005) return;
     const scroller = event.currentTarget;
     const viewportX = Math.max(0, Math.min(scroller.clientWidth, event.clientX - scroller.getBoundingClientRect().left));
     const canvasX = scroller.scrollLeft + viewportX;
-    const anchorDate = bounds.start.add((canvasX / pixelsPerDay) * 86_400_000, 'millisecond');
+    const anchorDate = bounds.start.add((canvasX / currentScale) * 86_400_000, 'millisecond');
     pendingFocusRef.current = null;
     pendingZoomAnchorRef.current = { date: anchorDate, viewportX };
-    lastWheelZoomAtRef.current = now;
     beginZoomTransition();
-    React.startTransition(() => setZoom(ZOOM_LEVELS[nextIndex]));
+    zoomScaleRef.current = nextScale;
+    scheduleZoomScale(nextScale);
+  };
+
+  const startPinch: React.PointerEventHandler<HTMLDivElement> = (event) => {
+    if (event.pointerType !== 'touch') return;
+    pinchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinchPointsRef.current.size !== 2) return;
+    const [first, second] = [...pinchPointsRef.current.values()];
+    const distance = Math.hypot(second.x - first.x, second.y - first.y);
+    const rect = event.currentTarget.getBoundingClientRect();
+    const viewportX = Math.max(0, Math.min(event.currentTarget.clientWidth, (first.x + second.x) / 2 - rect.left));
+    const canvasX = event.currentTarget.scrollLeft + viewportX;
+    pinchGestureRef.current = {
+      distance: Math.max(1, distance),
+      scale: pixelsPerDay,
+      anchorDate: bounds.start.add((canvasX / pixelsPerDay) * 86_400_000, 'millisecond'),
+      viewportX,
+    };
+  };
+
+  const movePinch: React.PointerEventHandler<HTMLDivElement> = (event) => {
+    if (!pinchPointsRef.current.has(event.pointerId)) return;
+    pinchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const gesture = pinchGestureRef.current;
+    if (!gesture || pinchPointsRef.current.size < 2) return;
+    event.preventDefault();
+    const [first, second] = [...pinchPointsRef.current.values()];
+    const distance = Math.hypot(second.x - first.x, second.y - first.y);
+    const nextScale = Math.max(MIN_PIXELS_PER_DAY, Math.min(MAX_PIXELS_PER_DAY, gesture.scale * distance / gesture.distance));
+    pendingFocusRef.current = null;
+    pendingZoomAnchorRef.current = { date: gesture.anchorDate, viewportX: gesture.viewportX };
+    beginZoomTransition();
+    zoomScaleRef.current = nextScale;
+    scheduleZoomScale(nextScale);
+  };
+
+  const endPinch: React.PointerEventHandler<HTMLDivElement> = (event) => {
+    pinchPointsRef.current.delete(event.pointerId);
+    if (pinchPointsRef.current.size < 2) pinchGestureRef.current = null;
   };
 
   const openNoteDraft = useCallback((note: Note) => {
@@ -1547,7 +1767,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
               </div>}
             </div>
             <div className="life-line__menu-control">
-            <button type="button" className={`life-line__add-button ${canvasTool !== 'select' ? 'is-active' : ''}`} onClick={() => { setShowAddMenu((open) => !open); setShowScaleMenu(false); setShowViewMenu(false); setShowJumpMenu(false); }} aria-expanded={showAddMenu} aria-label="添加到时间线"><Plus size={15} /><span>添加</span></button>
+            <button type="button" className={`life-line__add-button ${canvasTool !== 'select' ? 'is-active' : ''}`} onClick={() => { setShowAddMenu((open) => { const next = !open; if (next) setShowAddMore(false); return next; }); setShowScaleMenu(false); setShowViewMenu(false); setShowJumpMenu(false); }} aria-expanded={showAddMenu} aria-label="添加到时间线"><Plus size={15} /><span>添加</span></button>
             {showAddMenu && <div className="life-line__command-menu life-line__add-menu">
               <form className="life-line__quick-entry" onSubmit={(event) => { event.preventDefault(); submitQuickInput(); }}>
                 <Sparkles size={15} />
@@ -1555,27 +1775,21 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                 <button type="submit" className="life-line__quick-submit" aria-label="解析并预览"><Search size={14} /></button>
               </form>
               {quickInputError && <div className="life-line__quick-error">{quickInputError}</div>}
-              {(onCreateGoal || onCreateSystem) && <div className="life-line__add-section-label">人生规划</div>}
-              {onCreateGoal && <button type="button" onClick={() => { onCreateGoal(); setShowAddMenu(false); }} aria-label="新建目标"><Target size={15} /><span><strong>目标</strong><small>有明确结果和目标日期</small></span></button>}
-              {onCreateSystem && <button type="button" onClick={() => { onCreateSystem(); setShowAddMenu(false); }} aria-label="新建长期系统"><Repeat2 size={15} /><span><strong>长期系统</strong><small>需要持续重复的生活规律</small></span></button>}
-              <div className="life-line__add-section-label">时间标注</div>
-              <button type="button" onClick={() => {
-                openNewLifeStage();
-                setShowAddMenu(false);
-              }} aria-label="新建人生阶段"><CalendarRange size={15} /><span><strong>人生阶段</strong><small>独立设置人生周期，不创建项目</small></span></button>
-              {!onCreateReview && <button type="button" onClick={() => {
-                setDraft({ kind: 'note', name: `复盘：${centerDate.format('YYYY年M月')}`, start: centerDate.format('YYYY-MM-DD'), color: '#64748B', x: dateToX(centerDate), placement: 'above' });
-                setCanvasTool('select');
-                setShowAddMenu(false);
-              }} aria-label="添加规划复盘"><BookOpenCheck size={15} /><span><strong>规划复盘</strong><small>记录当前阶段的计划快照与调整</small></span></button>}
+              {(onCreateGoal || onCreatePlan || onCreateSystem) && <div className="life-line__add-section-label is-first">你想做什么？</div>}
+              <div className="life-line__add-intent-grid">
+                {onCreateGoal && <button type="button" onClick={() => { onCreateGoal(); setShowAddMenu(false); }} aria-label="新建目标"><Target size={16} /><span><strong>获得结果</strong><small>分数、金额、体重</small></span></button>}
+                {onCreatePlan && <button type="button" onClick={() => { onCreatePlan(); setShowAddMenu(false); }} aria-label="新建主计划"><Layers3 size={16} /><span><strong>推进事情</strong><small>持续完成一组工作</small></span></button>}
+                {onCreateSystem && <button type="button" onClick={() => { onCreateSystem(); setShowAddMenu(false); }} aria-label="新建长期系统"><Repeat2 size={16} /><span><strong>保持规律</strong><small>运动、睡眠、联系</small></span></button>}
+              </div>
+              <div className="life-line__add-section-label">标记在时间轴上</div>
+              <div className="life-line__add-marker-grid">
               {([
-                ['select', '选择与移动', '编辑、拖动已有内容', <MousePointer2 size={15} />],
-                ['range', '阶段概述', '圈出一周、一个月或任意阶段', <Highlighter size={15} />],
-                ['note', '自由文字', '在某个日期添加说明', <StickyNote size={15} />],
-                ['milestone', '关键日期', '标记考试、截止或纪念日', <Diamond size={15} />],
+                ['milestone', '关键日期', '考试、截止或纪念日', <Diamond size={15} />],
+                ['range', '阶段说明', '圈出一周或一个月', <Highlighter size={15} />],
+                ['note', '文字便签', '在某天添加说明', <StickyNote size={15} />],
               ] as Array<[CanvasTool, string, string, React.ReactNode]>).map(([tool, label, description, icon]) => (
                 <button type="button" key={tool} className={canvasTool === tool ? 'is-active' : ''} onClick={() => {
-                  if (tool !== 'select' && annotationAreaRequired) {
+                  if (annotationAreaRequired) {
                     setQuickInputError('请先选择一个人生领域，再添加时间线内容');
                     onRequireAnnotationArea?.();
                     return;
@@ -1585,17 +1799,25 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                   {icon}<span><strong>{label}</strong><small>{description}</small></span>{canvasTool === tool && <Check size={13} />}
                 </button>
               ))}
-              {(onCreateTheme || onCreateReview || onCreateArea) && <div className="life-line__add-section-label">更多规划</div>}
-              {onCreateTheme && <button type="button" className="is-secondary" onClick={() => { onCreateTheme(); setShowAddMenu(false); }} aria-label="新建领域主题"><Sparkles size={15} /><span><strong>领域主题</strong><small>一段时期内的总体方向</small></span></button>}
-              {onCreateReview && <button type="button" className="is-secondary" onClick={() => { onCreateReview(); setShowAddMenu(false); }} aria-label="新建周期复盘"><BookOpenCheck size={15} /><span><strong>周期复盘</strong><small>保存月度或季度快照并记录调整</small></span></button>}
-              {onCreateArea && <button type="button" className="is-secondary" onClick={() => { onCreateArea(); setShowAddMenu(false); }} aria-label="新建自定义领域"><Plus size={15} /><span><strong>自定义领域</strong><small>仅在默认领域不够用时添加</small></span></button>}
+              </div>
+              <>
+                <button type="button" className={`life-line__add-more-toggle ${showAddMore ? 'is-open' : ''}`} onClick={() => setShowAddMore((open) => !open)} aria-expanded={showAddMore} aria-controls="life-line-add-more"><span><strong>更多操作</strong><small>计划阶段、复盘和管理</small></span><ChevronDown size={14} /></button>
+                {showAddMore && <div className="life-line__add-more-panel" id="life-line-add-more">
+                  <button type="button" onClick={() => { openNewLifeStage(); setShowAddMenu(false); }} aria-label="新建人生阶段"><CalendarRange size={15} /><span><strong>人生阶段</strong><small>设置新的长期人生周期</small></span></button>
+                  {onCreatePhase && <button type="button" onClick={() => { onCreatePhase(); setShowAddMenu(false); }} aria-label="新建计划阶段"><CalendarRange size={15} /><span><strong>计划阶段</strong><small>添加到已有主计划</small></span></button>}
+                  {onRequestPlanShift && <button type="button" onClick={() => { onRequestPlanShift(); setShowAddMenu(false); }} aria-label="批量平移计划"><CalendarRange size={15} /><span><strong>批量平移计划</strong><small>统一顺延计划与阶段</small></span></button>}
+                  {onCreateReview && <button type="button" onClick={() => { onCreateReview(); setShowAddMenu(false); }} aria-label="新建周期复盘"><BookOpenCheck size={15} /><span><strong>周期复盘</strong><small>记录月度或季度调整</small></span></button>}
+                  {onCreateTheme && <button type="button" onClick={() => { onCreateTheme(); setShowAddMenu(false); }} aria-label="新建领域主题"><Sparkles size={15} /><span><strong>领域主题</strong><small>设置一段时期的方向</small></span></button>}
+                  {onCreateArea && <button type="button" onClick={() => { onCreateArea(); setShowAddMenu(false); }} aria-label="新建自定义领域"><Plus size={15} /><span><strong>自定义领域</strong><small>默认领域不够时使用</small></span></button>}
+                </div>}
+              </>
             </div>}
           </div>
             <div className="life-line__menu-control">
               <button type="button" className={`life-line__view-button ${showViewMenu ? 'is-active' : ''}`} onClick={() => { setShowViewMenu((open) => !open); setShowScaleMenu(false); setShowAddMenu(false); setShowJumpMenu(false); }} aria-expanded={showViewMenu} aria-label="视图设置"><Layers3 size={15} /><span>视图</span><ChevronDown size={12} /></button>
               {showViewMenu && <div className="life-line__command-menu life-line__view-menu">
                 <section><header><strong>显示内容</strong></header>
-                  {([['projects', '目标与长期系统'], ['annotations', '主题与阶段概述'], ['milestones', '关键日期'], ['notes', '自由文字'], ['completed', '已完成内容']] as Array<[keyof LayerState, string]>).map(([key, label]) => <button type="button" className="life-line__toggle-row" key={key} onClick={() => setLayers((current) => ({ ...current, [key]: !current[key] }))}>{layers[key] ? <Eye size={13} /> : <EyeOff size={13} />}<span>{label}</span><i className={layers[key] ? 'is-on' : ''} /></button>)}
+              {([['projects', '主计划与目标'], ['annotations', '周重点'], ['milestones', '关键日期'], ['notes', '自由文字'], ['completed', '已完成内容']] as Array<[keyof LayerState, string]>).map(([key, label]) => <button type="button" className="life-line__toggle-row" key={key} onClick={() => setLayers((current) => ({ ...current, [key]: !current[key] }))}>{layers[key] ? <Eye size={13} /> : <EyeOff size={13} />}<span>{label}</span><i className={layers[key] ? 'is-on' : ''} /></button>)}
                 </section>
                 <section className="life-line__view-actions">
                   <button type="button" className={focusMode !== 'off' ? 'is-active' : ''} onClick={() => setFocusMode((current) => current === 'off' ? 'week' : current === 'week' ? 'month' : 'off')}><Focus size={14} /><span>{focusMode === 'week' ? '聚焦本周' : focusMode === 'month' ? '聚焦本月' : '开启聚焦'}</span></button>
@@ -1621,14 +1843,15 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
           <span className="is-core"><small>核心目标</small><strong>{currentCoreGoal?.title ?? '暂无核心目标'}</strong></span>
           <button type="button" className="is-milestone" disabled={!nextMilestone} onClick={() => nextMilestone && focusDate(nextMilestone.date)}><small>下一节点</small><strong>{nextMilestone ? `${nextMilestone.title} · ${milestoneCountdown(nextMilestone.date, today)}` : '暂无关键日期'}</strong></button>
         </div>
+        {planningSummary}
         {canvasTool !== 'select' && <div className="life-line__hint"><span>{canvasTool === 'range' ? '阶段概述' : canvasTool === 'note' ? '自由文字' : '关键日期'}</span>{canvasTool === 'range' ? '在画布上横向拖动选择时间范围' : '在画布对应日期单击放置'}<button type="button" onClick={() => setCanvasTool('select')}>退出</button></div>}
 
-        <div className="life-line__scroller" ref={scrollerRef} onScroll={handleScroll} onWheel={handleWheel} tabIndex={0} aria-label={`人生规划${ZOOM_META[zoom].label}视图时间轴`}>
+        <div className="life-line__scroller" ref={scrollerRef} onScroll={handleScroll} onWheel={handleWheel} onPointerDown={startPinch} onPointerMove={movePinch} onPointerUp={endPinch} onPointerCancel={endPinch} tabIndex={0} aria-label={`人生规划${ZOOM_META[zoom].label}视图时间轴`}>
           <div className="life-line__canvas" ref={canvasRef} style={{ width: canvasWidth, height: canvasHeight }} onDoubleClick={handleCanvasDoubleClick}>
             {focusRange && <div className="life-line__focus-lens" style={{ left: dateToX(focusRange.start), width: Math.max(8, dateToX(focusRange.end.add(1, 'day')) - dateToX(focusRange.start)) }}><span>{focusMode === 'week' ? '本周' : '本月'} · {focusRange.label}</span></div>}
             <div className="life-line__past-shade" style={{ width: dateToX(today) }} aria-hidden="true" />
             <div className="life-line__stages" aria-label="人生阶段">
-              {stageBands.map((stage) => (
+              {stageBands.filter((stage) => intersectsRenderWindow(stage.left, stage.width)).map((stage) => (
                 <div
                   key={`stage-zone:${stage.id}`}
                   className={`life-line__stage-zone ${!today.isBefore(stage.start, 'day') && !today.isAfter(stage.end, 'day') ? 'is-current' : ''}`}
@@ -1637,7 +1860,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                 />
               ))}
               {stageLaneCount > 0 && <div className="life-line__stage-rail" style={{ height: stageRailHeight }} aria-hidden="true" />}
-              {stageBands.map((stage) => {
+              {stageBands.filter((stage) => intersectsRenderWindow(stage.left, stage.width)).map((stage) => {
                 const isCurrent = !today.isBefore(stage.start, 'day') && !today.isAfter(stage.end, 'day');
                 const sourceStage = lifeStages.find((item) => item.id === stage.id);
                 return <div
@@ -1659,17 +1882,17 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             {renderedTicks.map((tick) => <div className={`life-line__tick ${tick.major ? 'is-major' : ''}`} key={tick.date.format('YYYY-MM-DD')} style={{ left: dateToX(tick.date), top: axisY }}><i /><strong>{tick.label}</strong>{tick.sublabel && <span>{tick.sublabel}</span>}</div>)}
             <div className="life-line__today" style={{ left: dateToX(today), height: canvasHeight, '--axis-y': `${axisY}px` } as React.CSSProperties}><i /><span>今天 · {today.format('M月D日')}</span></div>
             {projectAboveLaneCount > 0 && <div className="life-line__project-lane-zone is-above" style={{ top: axisY - projectAboveExtent - 4, height: projectAboveExtent + 2 }} aria-hidden="true" />}
-            {projectBelowLaneCount > 0 && <div className="life-line__project-lane-zone is-below" style={{ top: axisY + PROJECT_BELOW_OFFSET - 4, height: 32 + (projectBelowLaneCount - 1) * PROJECT_LANE_GAP }} aria-hidden="true" />}
+            {projectBelowLaneCount > 0 && <div className="life-line__project-lane-zone is-below" style={{ top: axisY + PROJECT_BELOW_OFFSET - 4, height: 32 + (projectBelowLaneCount - 1) * projectLaneGap }} aria-hidden="true" />}
 
             {layers.projects && activeProjectId && <svg className="life-line__goal-links" width={canvasWidth} height={canvasHeight} aria-label="目标链">
               <defs><marker id="life-line-goal-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" /></marker></defs>
               {goalLinks.filter((link) => link.from.taskId === activeProjectId || link.to.taskId === activeProjectId).map((link) => {
                 const fromY = link.from.side === 'above'
-                  ? axisY - PROJECT_ABOVE_OFFSET - link.from.level * PROJECT_LANE_GAP + 12
-                  : axisY + PROJECT_BELOW_OFFSET + link.from.level * PROJECT_LANE_GAP + 12;
+                  ? axisY - PROJECT_ABOVE_OFFSET - link.from.level * projectLaneGap + 12
+                  : axisY + PROJECT_BELOW_OFFSET + link.from.level * projectLaneGap + 12;
                 const toY = link.to.side === 'above'
-                  ? axisY - PROJECT_ABOVE_OFFSET - link.to.level * PROJECT_LANE_GAP + 12
-                  : axisY + PROJECT_BELOW_OFFSET + link.to.level * PROJECT_LANE_GAP + 12;
+                  ? axisY - PROJECT_ABOVE_OFFSET - link.to.level * projectLaneGap + 12
+                  : axisY + PROJECT_BELOW_OFFSET + link.to.level * projectLaneGap + 12;
                 const fromX = link.from.left + link.from.width;
                 const toX = link.to.left;
                 const middleX = fromX + Math.max(4, (toX - fromX) / 2);
@@ -1677,66 +1900,120 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
               })}
             </svg>}
 
-            {visibleProjectBands.map((band) => {
+            {layers.projects && zoom !== 'year' && planGaps
+              .filter((gap) => intersectsRenderWindow(gap.left, gap.width))
+              .map((gap) => {
+                const top = gap.side === 'above'
+                  ? axisY - PROJECT_ABOVE_OFFSET - gap.level * projectLaneGap + 2
+                  : axisY + PROJECT_BELOW_OFFSET + gap.level * projectLaneGap + 2;
+                const showLabel = gap.width >= 52;
+                return <div
+                  className={`life-line__plan-gap ${showLabel ? 'has-label' : 'is-compact'}`}
+                  key={gap.id}
+                  style={{ left: gap.left, top, width: gap.width, '--band-color': gap.color, '--band-text-color': getTaskTextColor(gap.color) } as React.CSSProperties}
+                  role="note"
+                  aria-label={`${gap.parentTitle}未规划区间：${gap.start.format('YYYY-MM-DD')}至${gap.end.format('YYYY-MM-DD')}`}
+                  title={`${gap.parentTitle} · 未规划 · ${gap.start.format('M月D日')}—${gap.end.format('M月D日')}`}
+                >{showLabel && <span>未规划</span>}</div>;
+              })}
+
+            {visibleProjectBands.filter((band) => intersectsRenderWindow(band.left, band.width)).map((band) => {
+              const parentPlan = band.lifeMapKind === 'phase' ? projectBands.find((candidate) => candidate.taskId === band.parentTaskId) : undefined;
+              const hasPlanPhases = band.lifeMapKind === 'plan' && projectBands.some((candidate) => candidate.parentTaskId === band.taskId);
+              const phaseDensity = band.lifeMapKind !== 'phase' ? undefined
+                : band.width >= 168 ? 'wide'
+                  : band.width >= 92 ? 'medium'
+                    : band.width >= 48 ? 'narrow' : 'compact';
+              const displayTitle = band.lifeMapKind !== 'phase' ? band.title
+                : phaseDensity === 'wide' ? `${parentPlan?.title ?? '主计划'} · ${band.start.format('M月')} ${band.title}`
+                  : phaseDensity === 'medium' ? `${band.start.format('M月')} ${band.title}`
+                    : phaseDensity === 'narrow' ? band.title : band.start.format('M月');
               const labelWidth = Math.min(220, band.width);
-              const labelOffset = Math.max(0, Math.min(
-                Math.max(0, band.width - labelWidth),
-                viewport.scrollLeft + 12 - band.left,
-              ));
+              const labelOffset = band.lifeMapKind === 'phase'
+                ? 0
+                : Math.max(0, Math.min(
+                  Math.max(0, band.width - labelWidth),
+                  viewport.scrollLeft + 12 - band.left,
+                ));
               return (
               <button
                 type="button"
-                className={`life-line__project-band is-${band.side} is-rank-${band.rank ?? 'routine'} ${band.lifeMapKind ? `is-life-${band.lifeMapKind}` : ''} ${band.openEnded ? 'is-open-ended' : ''} ${band.end.isBefore(today, 'day') ? 'is-past' : band.start.isAfter(today, 'day') ? 'is-future' : 'is-current'} ${band.progress >= 1 ? 'is-complete' : ''} ${activeProjectId && activeProjectId !== band.taskId ? 'is-muted' : ''} ${activeProjectId === band.taskId ? 'is-related' : ''} ${selectedProjectId === band.taskId ? 'is-selected' : ''}`}
+                className={`life-line__project-band is-${band.side} is-rank-${band.rank ?? 'routine'} ${band.lifeMapKind ? `is-life-${band.lifeMapKind}` : ''} ${hasPlanPhases ? 'has-phases' : ''} ${band.openEnded ? 'is-open-ended' : ''} ${band.maintenanceActive ? 'is-maintenance' : ''} ${band.end.isBefore(today, 'day') ? 'is-past' : band.start.isAfter(today, 'day') ? 'is-future' : 'is-current'} ${band.progress >= 1 ? 'is-complete' : ''} ${activeProjectId && activeProjectId !== band.taskId ? 'is-muted' : ''} ${activeProjectId === band.taskId ? 'is-related' : ''} ${selectedProjectId === band.taskId ? 'is-selected' : ''}`}
                 key={band.id}
                 style={{
                   left: band.left,
                   width: band.width,
-                  top: band.side === 'above' ? axisY - PROJECT_ABOVE_OFFSET - band.level * PROJECT_LANE_GAP : axisY + PROJECT_BELOW_OFFSET + band.level * PROJECT_LANE_GAP,
+                  top: band.side === 'above' ? axisY - PROJECT_ABOVE_OFFSET - band.level * projectLaneGap : axisY + PROJECT_BELOW_OFFSET + band.level * projectLaneGap,
                   '--band-color': band.color,
                   '--band-border-color': getTaskBorderColor(band.color),
                   '--band-text-color': getTaskTextColor(band.color),
                   '--band-progress': `${Math.round(band.progress * 100)}%`,
                 } as React.CSSProperties}
-                title={`${band.title} · ${band.groupName} · ${band.start.format('YYYY-MM-DD')}${band.openEnded ? '起长期持续' : ` 至 ${band.end.format('YYYY-MM-DD')}`} · ${band.meta ?? `${Math.round(band.progress * 100)}%`}`}
+                title={`${parentPlan ? `${parentPlan.title} · ` : ''}${band.title} · ${band.groupName} · ${band.start.format('YYYY-MM-DD')}${band.openEnded ? '起长期持续' : ` 至 ${band.end.format('YYYY-MM-DD')}`} · ${band.maintenanceActive ? `维护中${band.maintenanceReason ? `：${band.maintenanceReason}` : ''}` : band.meta ?? `${Math.round(band.progress * 100)}%`}`}
                 onClick={() => setSelectedProjectId((current) => current === band.taskId ? null : band.taskId ?? null)}
                 onMouseEnter={() => setHoveredProjectId(band.taskId ?? null)}
                 onMouseLeave={() => setHoveredProjectId((current) => current === band.taskId ? null : current)}
                 onDoubleClick={() => band.taskId && onOpenTask(band.taskId)}
                 aria-pressed={selectedProjectId === band.taskId}
-                aria-label={`${band.title}时间条带${band.lifeMapKind === 'goal' ? ' · 目标进度线' : band.lifeMapKind === 'system' ? ' · 长期系统节奏线' : ''}`}
+                aria-label={`${displayTitle}时间条带${band.lifeMapKind === 'goal' ? ' · 目标进度线' : band.lifeMapKind === 'plan' ? ' · 主计划轨道' : band.lifeMapKind === 'phase' ? ' · 计划阶段' : band.lifeMapKind === 'system' ? ' · 长期系统节奏线' : ''}`}
                 data-project-id={band.taskId}
                 data-band-level={band.level}
                 data-band-side={band.side}
                 data-project-rank={band.rank}
-                  data-layout-source={band.placementIsManual ? 'manual' : 'auto'}
+                data-layout-source={band.placementIsManual ? 'manual' : 'auto'}
+                data-phase-density={phaseDensity}
               >
-                <span style={{ width: labelWidth, transform: `translateX(${labelOffset}px)` }}><strong>{band.title}</strong><em>{band.meta ?? `${Math.round(band.progress * 100)}%`}</em></span>
+                <span style={{ width: labelWidth, transform: `translateX(${labelOffset}px)` }}><strong>{displayTitle}</strong><em>{band.meta ?? `${Math.round(band.progress * 100)}%`}</em></span>
                 <i className="life-line__project-progress" style={{ width: `${Math.round(band.progress * 100)}%` }} aria-hidden="true" />
-                {band.lifeMapKind === 'goal' && <i className="life-line__goal-endpoint" aria-hidden="true" />}
+                {band.lifeMapKind === 'plan' && <i className="life-line__plan-endpoint" aria-hidden="true" />}
               </button>
               );
             })}
 
+            {zoom !== 'year' && visibleProjectBands
+              .filter((band) => band.lifeMapKind === 'plan'
+                && band.width >= 72
+                && (!projectBands.some((candidate) => candidate.parentTaskId === band.taskId) || band.left < viewport.scrollLeft)
+                && band.left + band.width >= viewport.scrollLeft
+                && band.left <= viewport.scrollLeft + viewport.width)
+              .map((band) => {
+                const width = Math.min(124, Math.max(72, band.width - 8));
+                const left = Math.max(band.left + 4, Math.min(band.left + band.width - width - 4, viewport.scrollLeft + 10));
+                const top = band.side === 'above' ? axisY - PROJECT_ABOVE_OFFSET - band.level * projectLaneGap + 2 : axisY + PROJECT_BELOW_OFFSET + band.level * projectLaneGap + 2;
+                return <button
+                  type="button"
+                  className={`life-line__plan-row-label ${selectedProjectId === band.taskId ? 'is-selected' : ''}`}
+                  key={`plan-label:${band.id}`}
+                  style={{ left, top, width, '--band-color': band.color, '--band-text-color': getTaskTextColor(band.color) } as React.CSSProperties}
+                  onClick={() => setSelectedProjectId((current) => current === band.taskId ? null : band.taskId ?? null)}
+                  onDoubleClick={() => band.taskId && onOpenTask(band.taskId)}
+                  title={`${band.groupName} · ${band.title}`}
+                  aria-label={`主计划行：${band.title}`}
+                ><i /><span>{band.title}</span></button>;
+              })}
+
             {selectedProjectBand && <aside className="life-line__project-focus-card">
               <header>
                 <i style={{ '--project-color': selectedProjectBand.color } as React.CSSProperties} />
-                <span><small>{selectedProjectBand.groupName} · {selectedProjectBand.lifeMapKind === 'system' ? '长期保持' : `${selectedProjectBand.start.format('M月D日')}—${selectedProjectBand.end.format('M月D日')}`}</small><strong>{selectedProjectBand.title}</strong></span>
+                <span><small>{selectedProjectBand.groupName} · {selectedProjectBand.lifeMapKind === 'system' ? '长期保持' : selectedProjectBand.lifeMapKind === 'plan' ? '主计划' : selectedProjectBand.lifeMapKind === 'phase' ? '计划阶段' : `${selectedProjectBand.start.format('M月D日')}—${selectedProjectBand.end.format('M月D日')}`}</small><strong>{selectedProjectBand.title}</strong></span>
                 <em>{selectedProjectBand.meta ?? `${Math.round(selectedProjectBand.progress * 100)}%`}</em>
                 <button type="button" className="is-close" onClick={() => setSelectedProjectId(null)} aria-label="退出规划聚焦"><X size={13} /></button>
               </header>
               <div className="life-line__project-focus-actions">
-                <div className="life-line__project-side-switch" role="group" aria-label="规划线位置">
+                {selectedProjectBand.lifeMapKind !== 'phase' && <div className="life-line__project-side-switch" role="group" aria-label="规划线位置">
                   <button type="button" className={selectedProjectBand.side === 'above' ? 'is-active' : ''} aria-label="放到时间轴上方" aria-pressed={selectedProjectBand.side === 'above'} onClick={() => selectedProjectBand.taskId && setProjectSide(selectedProjectBand.taskId, 'above')}>上方</button>
                   <button type="button" className={selectedProjectBand.side === 'below' ? 'is-active' : ''} aria-label="放到时间轴下方" aria-pressed={selectedProjectBand.side === 'below'} onClick={() => selectedProjectBand.taskId && setProjectSide(selectedProjectBand.taskId, 'below')}>下方</button>
-                </div>
+                </div>}
+                {selectedProjectBand.lifeMapKind === 'plan' && onManageProjectMaintenance && <button type="button" onClick={() => selectedProjectBand.taskId && onManageProjectMaintenance(selectedProjectBand.taskId)}>维护</button>}
                 <button type="button" className="is-open" onClick={() => selectedProjectBand.taskId && onOpenTask(selectedProjectBand.taskId)}>编辑</button>
               </div>
             </aside>}
 
-            {visibleAnnotations.map((annotation) => {
+            {visibleAnnotations.filter((annotation) => intersectsRenderWindow(annotation.left, annotation.width)).map((annotation) => {
               const isAbove = annotation.placement === 'above';
               const isExpanded = expandedAnnotationId === annotation.noteId;
-              const annotationMetrics = getAnnotationCardMetrics(annotation.title, isExpanded);
+              const effectiveExpanded = isExpanded || annotation.showDetails;
+              const annotationMetrics = getAnnotationCardMetrics(annotation.title, effectiveExpanded);
               const annotationTitle = annotationMetrics.heading;
               const visibleAnnotationItems = annotationMetrics.visibleItems;
               const collapsedItemCount = annotationMetrics.hiddenCount;
@@ -1747,7 +2024,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                 ? canExpand ? `重点·${collapsedItemCount}` : '重点'
                 : annotationTitle;
               const bracketY = isAbove ? axisY - aboveAnnotationBracketDistance - annotation.markLevel * 12 : axisY + belowAnnotationBracketDistance + annotation.markLevel * 12;
-              const railGap = (zoom === 'week' && !isExpanded) || annotation.compactSummary ? 8 : isAbove ? 22 : 24;
+              const railGap = (zoom === 'week' && !effectiveExpanded) || annotation.compactSummary ? 8 : isAbove ? 22 : 24;
               const textY = isAbove ? bracketY - railGap - annotationCardHeight - annotation.laneOffset : bracketY + railGap + annotation.laneOffset;
               const cardConnectY = isAbove ? textY + annotationCardHeight : textY;
               const leaderLeft = Math.min(annotation.anchorX, annotation.cardX);
@@ -1791,10 +2068,10 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                     <button type="button" className="life-line__range-handle is-end" style={{ left: annotation.left + annotation.width, top: bracketY, '--annotation-color': annotation.color } as React.CSSProperties} onPointerDown={(event) => startDirectDrag('range-end', annotation.noteId!, event)} onPointerMove={moveDirectDrag} onPointerUp={finishDirectDrag} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); nudgeRangeHandle(annotation.noteId!, 'end', event.key === 'ArrowRight' ? 1 : -1); } }} aria-label={`${annotationAriaTitle}结束日期拖动手柄`} />
                   </>}
                   {zoom !== 'year' && <div
-                    className={`life-line__annotation-callout is-${annotation.placement} is-${annotation.annotationKind ?? 'focus'} ${zoom === 'week' ? 'is-rail-unit' : ''} ${zoom === 'week' && !isExpanded ? 'is-inline-rail' : ''} ${annotation.compactSummary ? 'is-scale-summary' : ''} ${isEditing ? 'is-editing' : ''} ${isExpanded ? 'is-expanded' : ''}`}
+                    className={`life-line__annotation-callout is-${annotation.placement} is-${annotation.annotationKind ?? 'focus'} ${zoom === 'week' ? 'is-rail-unit' : ''} ${zoom === 'week' && !effectiveExpanded ? 'is-inline-rail' : ''} ${annotation.compactSummary ? 'is-scale-summary' : ''} ${isEditing ? 'is-editing' : ''} ${effectiveExpanded ? 'is-expanded' : ''}`}
                     data-note-id={annotation.noteId}
                     data-layout-lane={annotation.level}
-                    data-layout-policy={zoom === 'week' && !isExpanded ? 'weekly-rail' : 'annotation-zone'}
+                    data-layout-policy={zoom === 'week' && !effectiveExpanded ? 'weekly-rail' : 'annotation-zone'}
                     style={{ left: annotation.cardX, top: textY, width: annotation.cardWidth, height: annotationCardHeight, '--annotation-color': annotation.color } as React.CSSProperties}
                     onClick={activateAnnotation}
                     onKeyDown={(event) => {
@@ -1813,7 +2090,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                         {visibleAnnotationItems.map((item, index) => <em key={`${annotation.id}:item:${index}`}><i />{item}</em>)}
                       </span>}
                       {!annotation.compactSummary && <small>{annotation.start.format('M月D日')}—{annotation.end.format('M月D日')}</small>}
-                      {canExpand && !annotation.compactSummary && <button
+                      {canExpand && !annotation.compactSummary && !annotation.showDetails && <button
                         type="button"
                         className="life-line__annotation-more"
                         aria-label={isExpanded ? '收起' : `展开 ${collapsedItemCount} 项`}
@@ -1836,19 +2113,28 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             {anchorEntries.map(({ key, node, count, titles }) => (
               <button
                 type="button"
-                className={`life-line__anchor is-${node.kind} ${node.kind === 'milestone' ? `is-importance-${node.importance ?? 'important'}` : ''} ${count > 1 ? 'is-cluster' : ''} ${node.isReview ? 'is-review' : ''} ${node.completed ? 'is-complete' : ''}`}
+                className={`life-line__anchor is-${node.kind} ${node.kind === 'milestone' ? `is-importance-${node.importance ?? 'important'}` : ''} ${count > 1 ? 'is-cluster' : ''} ${node.isCore ? 'is-core' : ''} ${node.maintenanceActive ? 'is-maintenance' : ''} ${node.isReview ? 'is-review' : ''} ${node.completed ? 'is-complete' : ''}`}
                 key={`anchor:${key}`}
                 style={{ left: dateToX(node.date), top: axisY, '--node-color': node.color } as React.CSSProperties}
                 onClick={() => openNode(node)}
-                title={`${node.date.format('YYYY-MM-DD')} · ${titles.join('、')}`}
-                aria-label={`${titles.join('、')}，${node.date.format('YYYY年M月D日')}${count > 1 ? `，共${count}个关键日期` : ''}`}
+                title={node.kind === 'goal'
+                  ? `目标：${node.title} · ${node.date.format('YYYY-MM-DD')} · ${Math.round((node.progress ?? 0) * 100)}%`
+                  : `${node.date.format('YYYY-MM-DD')} · ${titles.join('、')}`}
+                aria-label={node.kind === 'goal'
+                  ? `目标：${node.title}，目标日期${node.date.format('YYYY年M月D日')}，完成${Math.round((node.progress ?? 0) * 100)}%`
+                  : `${titles.join('、')}，${node.date.format('YYYY年M月D日')}${count > 1 ? `，共${count}个关键日期` : ''}`}
                 data-anchor-count={count}
                 data-anchor-date={node.date.format('YYYY-MM-DD')}
-              />
+              >
+                {node.kind === 'goal' && <span className="life-line__goal-axis-tooltip" aria-hidden="true">
+                  <strong>{node.title}</strong>
+                  <small>{node.date.format('M月D日')} · {Math.round((node.progress ?? 0) * 100)}%</small>
+                </span>}
+              </button>
             ))}
 
-            {taskMarkerClusters.length > 0 && <div className="life-line__task-rhythm-rail" style={{ top: axisY + 37 }} aria-label="每日任务节奏带" />}
-            {taskMarkerClusters.map((cluster) => (
+            {taskMarkerClusters.some((cluster) => intersectsRenderWindow(dateToX(cluster.date))) && <div className="life-line__task-rhythm-rail" style={{ top: axisY + 37 }} aria-label="每日任务节奏带" />}
+            {taskMarkerClusters.filter((cluster) => intersectsRenderWindow(dateToX(cluster.date))).map((cluster) => (
               <button
                 type="button"
                 className={`life-line__task-marker ${selectedTaskDate === cluster.key ? 'is-selected' : ''} ${cluster.nodes.some((node) => node.kind === 'deadline') ? 'has-deadline' : ''} ${activeProjectId && !cluster.nodes.some((node) => node.taskId === activeProjectId) ? 'is-muted' : ''} ${activeProjectId && cluster.nodes.some((node) => node.taskId === activeProjectId) ? 'is-related' : ''}`}
@@ -1877,7 +2163,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
               </button>
             ))}
 
-            {milestoneLeaderGroups.map((group) => {
+            {milestoneLeaderGroups.filter((group) => intersectsRenderWindow(group.anchorX)).map((group) => {
               const connections = group.nodes.map((node) => ({
                 node,
                 y: node.side === 'top' ? node.y + getNodeCardHeight(node, zoom) : node.y,
@@ -1905,7 +2191,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
               </div>;
             })}
 
-            {positionedNodes.filter((node) => node.kind === 'milestone' ? layers.milestones : node.kind === 'note' ? layers.notes : true).map((node) => {
+            {positionedNodes.filter((node) => intersectsRenderWindow(node.anchorX) && (node.kind === 'goal' ? layers.projects : node.kind === 'milestone' ? layers.milestones : node.kind === 'note' ? layers.notes : true)).map((node) => {
               const milestoneImportance = node.importance ?? 'important';
               const isDirectlyDragging = directDrag
                 && ((node.noteId && directDrag.kind === 'note-card' && directDrag.id === node.noteId)
@@ -1931,7 +2217,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                   </div>}
                   <button
                     type="button"
-                    className={`life-line__node is-${node.kind} is-${node.side} ${(zoom === 'week' || zoom === 'day' || (node.kind === 'milestone' && milestoneImportance === 'core')) ? 'is-detailed' : 'is-summary'} ${node.kind === 'milestone' ? `is-importance-${milestoneImportance}` : ''} ${node.isReview ? 'is-review' : ''} ${node.completed ? 'is-complete' : ''}`}
+                    className={`life-line__node is-${node.kind} is-${node.side} ${(zoom === 'week' || zoom === 'day' || node.kind === 'goal' || (node.kind === 'milestone' && milestoneImportance === 'core')) ? 'is-detailed' : 'is-summary'} ${node.kind === 'milestone' ? `is-importance-${milestoneImportance}` : ''} ${node.isCore ? 'is-core' : ''} ${node.maintenanceActive ? 'is-maintenance' : ''} ${node.isReview ? 'is-review' : ''} ${node.completed ? 'is-complete' : ''}`}
                     style={{
                       left: node.x,
                       top: node.y,
@@ -1949,9 +2235,15 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                     onPointerUp={finishDirectDrag}
                     onClick={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } openNode(node); }}
                     title={`${node.date.format('YYYY-MM-DD')} · ${node.title}`}
+                    aria-label={node.kind === 'goal' ? `目标：${node.title}，目标日期${node.date.format('YYYY年M月D日')}，完成${Math.round((node.progress ?? 0) * 100)}%` : undefined}
                   >
-                    <strong><i />{node.title}</strong>
-                    {(zoom === 'week' || zoom === 'day' || (node.kind === 'milestone' && milestoneImportance === 'core')) && <small>{node.subtitle}</small>}
+                    {node.kind === 'goal' ? <>
+                      <span className="life-line__goal-card-kicker"><Target size={11} />{node.maintenanceActive ? '维护中' : node.isCore ? '核心' : '目标'} · {node.date.format('M月D日')}<b>{Math.round((node.progress ?? 0) * 100)}%</b></span>
+                      <strong><i />{node.title}</strong>
+                    </> : <>
+                      <strong><i />{node.title}</strong>
+                      {(zoom === 'week' || zoom === 'day' || (node.kind === 'milestone' && milestoneImportance === 'core')) && <small>{node.subtitle}</small>}
+                    </>}
                   </button>
                 </React.Fragment>
               );

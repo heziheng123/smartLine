@@ -1,5 +1,6 @@
 import dayjs, { type Dayjs } from 'dayjs';
 import type { LifeGoal, LifeSystem, LifeSystemCheckIn } from './types';
+import { maintenanceDayCount } from './maintenance.ts';
 
 const clampPercent = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
 
@@ -34,23 +35,54 @@ export function systemTargetForRange(system: LifeSystem, rangeStart: string | Da
   const end = dayjs(rangeEnd).endOf('day');
   const range = activeRange(system, start, end);
   if (!range) return 0;
-  if (system.frequency === 'daily') return (range.end.startOf('day').diff(range.start.startOf('day'), 'day') + 1) * system.targetCount;
+  const periods = system.maintenancePeriods;
+  const totalActiveDays = (range.end.startOf('day').diff(range.start.startOf('day'), 'day') + 1)
+    - maintenanceDayCount(periods, range.start, range.end);
+  if (system.frequency === 'daily') return Math.max(0, totalActiveDays) * system.targetCount;
   if (system.frequency === 'monthly') {
+    if (!periods?.length) {
+      let cursor = range.start.startOf('month');
+      let periodCount = 0;
+      while (!cursor.isAfter(range.end, 'day')) {
+        periodCount += 1;
+        cursor = cursor.add(1, 'month');
+      }
+      return periodCount * system.targetCount;
+    }
     let cursor = range.start.startOf('month');
-    let periods = 0;
+    let target = 0;
     while (!cursor.isAfter(range.end, 'day')) {
-      periods += 1;
+      const periodStart = cursor.isBefore(range.start, 'day') ? range.start : cursor;
+      const monthEnd = cursor.endOf('month');
+      const periodEnd = monthEnd.isAfter(range.end, 'day') ? range.end : monthEnd;
+      const days = periodEnd.startOf('day').diff(periodStart.startOf('day'), 'day') + 1;
+      const activeDays = days - maintenanceDayCount(periods, periodStart, periodEnd);
+      if (activeDays > 0) target += Math.ceil(system.targetCount * activeDays / days);
       cursor = cursor.add(1, 'month');
     }
-    return periods * system.targetCount;
+    return target;
+  }
+  if (!periods?.length) {
+    let cursor = systemPeriodRange('weekly', range.start).start;
+    let periodCount = 0;
+    while (!cursor.isAfter(range.end, 'day')) {
+      periodCount += 1;
+      cursor = cursor.add(7, 'day');
+    }
+    return periodCount * system.targetCount;
   }
   let cursor = systemPeriodRange('weekly', range.start).start;
-  let periods = 0;
+  let target = 0;
   while (!cursor.isAfter(range.end, 'day')) {
-    periods += 1;
+    const periodStart = cursor.isBefore(range.start, 'day') ? range.start : cursor;
+    const weekEnd = cursor.add(6, 'day').endOf('day');
+    const periodEnd = weekEnd.isAfter(range.end, 'day') ? range.end : weekEnd;
+    const days = periodEnd.startOf('day').diff(periodStart.startOf('day'), 'day') + 1;
+    const activeDays = days - maintenanceDayCount(periods, periodStart, periodEnd);
+    if (activeDays > 0) target += Math.ceil(system.targetCount * activeDays / days);
     cursor = cursor.add(7, 'day');
   }
-  return periods * system.targetCount;
+  return target;
 }
 
 export function systemCompletedForRange(checkIns: LifeSystemCheckIn[], systemId: string, rangeStart: string | Dayjs, rangeEnd: string | Dayjs): number {
@@ -65,7 +97,7 @@ export function currentSystemStats(system: LifeSystem, checkIns: LifeSystemCheck
   const period = systemPeriodRange(system.frequency, reference);
   return {
     completed: systemCompletedForRange(checkIns, system.id, period.start, period.end),
-    target: system.targetCount,
+    target: systemTargetForRange(system, period.start, period.end),
     label: period.label,
     start: period.start.format('YYYY-MM-DD'),
     end: period.end.format('YYYY-MM-DD'),

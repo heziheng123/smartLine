@@ -12,6 +12,7 @@ import type {
   LifeTheme,
   LifeReview,
   LifeMapPlacement,
+  LifeMaintenancePeriod,
 } from './types';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -101,8 +102,24 @@ function hasValidLayout(value: Record<string, unknown>): boolean {
       || (typeof value.layoutLane === 'number' && Number.isInteger(value.layoutLane) && value.layoutLane >= 0 && value.layoutLane <= 8));
 }
 
+function validMaintenancePeriod(value: unknown): value is LifeMaintenancePeriod {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && value.id.trim().length > 0
+    && isLifeMapDate(value.start)
+    && (value.end === undefined || isLifeMapDate(value.end))
+    && (value.end === undefined || value.start <= value.end)
+    && (value.reason === undefined || typeof value.reason === 'string');
+}
+
+function hasValidMaintenance(value: Record<string, unknown>): boolean {
+  return value.maintenancePeriods === undefined
+    || (Array.isArray(value.maintenancePeriods) && value.maintenancePeriods.every(validMaintenancePeriod));
+}
+
 function validArea(value: unknown): value is LifeArea {
   return hasBase(value)
+    && hasValidMaintenance(value)
     && typeof value.color === 'string'
     && typeof value.order === 'number'
     && Number.isFinite(value.order);
@@ -124,6 +141,7 @@ function validAreaRange(value: unknown): value is LifeTheme | LifeFocus {
 function validGoal(value: unknown): value is LifeGoal {
   return hasBase(value)
     && hasValidLayout(value)
+    && hasValidMaintenance(value)
     && typeof value.areaId === 'string'
     && isLifeMapDate(value.start)
     && isLifeMapDate(value.targetDate)
@@ -131,6 +149,10 @@ function validGoal(value: unknown): value is LifeGoal {
     && ['active', 'completed', 'paused', 'archived'].includes(String(value.status))
     && (value.progress === undefined || (typeof value.progress === 'number' && value.progress >= 0 && value.progress <= 100))
     && (value.progressMode === undefined || value.progressMode === 'manual' || value.progressMode === 'auto')
+    && (value.kind === undefined || value.kind === 'goal' || value.kind === 'plan' || value.kind === 'phase')
+    && (value.parentGoalId === undefined || typeof value.parentGoalId === 'string')
+    && (value.summary === undefined || typeof value.summary === 'string')
+    && (value.kind !== 'phase' || (typeof value.parentGoalId === 'string' && value.parentGoalId.trim().length > 0))
     && (value.initialValue === undefined || (typeof value.initialValue === 'number' && Number.isFinite(value.initialValue)))
     && (value.currentValue === undefined || (typeof value.currentValue === 'number' && Number.isFinite(value.currentValue)))
     && (value.targetValue === undefined || (typeof value.targetValue === 'number' && Number.isFinite(value.targetValue)));
@@ -139,6 +161,7 @@ function validGoal(value: unknown): value is LifeGoal {
 function validSystem(value: unknown): value is LifeSystem {
   return hasBase(value)
     && hasValidLayout(value)
+    && hasValidMaintenance(value)
     && typeof value.areaId === 'string'
     && isLifeMapDate(value.start)
     && (value.end === undefined || isLifeMapDate(value.end))
@@ -299,7 +322,9 @@ export function normalizeLifeMapData(value: unknown): LifeMapData {
   const areaIds = new Set(areas.filter((area) => !area.deletedAt).map((area) => area.id));
   const keepArea = <T extends { areaId: string }>(items: T[]) => items.filter((item) => areaIds.has(item.areaId));
 
-  const goals = keepArea(dedupe(source.lifeMapGoals, validGoal));
+  const candidateGoals = keepArea(dedupe(source.lifeMapGoals, validGoal));
+  const planIds = new Set(candidateGoals.filter((item) => item.kind === 'plan' && !item.deletedAt).map((item) => item.id));
+  const goals = candidateGoals.filter((item) => item.kind !== 'phase' || planIds.has(item.parentGoalId ?? ''));
   const systems = keepArea(dedupe(source.lifeMapSystems, validSystem));
   const systemIds = new Set(systems.map((item) => item.id));
   const events = keepArea(dedupe(source.lifeMapEvents, validEvent));

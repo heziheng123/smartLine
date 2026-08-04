@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import dayjs from 'dayjs';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from '@/store/client';
@@ -39,6 +40,7 @@ const lifeMapStorage = createScopedStorage('life_map_data');
 
 interface SyncSettings { roomCode: string; enabled: boolean }
 export type LifeMapSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export interface LifeMapShiftSnapshot { id: string; start: string; targetDate: string }
 
 type NewArea = Pick<LifeArea, 'name' | 'color'> & Partial<Pick<LifeArea, 'icon' | 'order' | 'isHidden'>>;
 type NewStage = Pick<LifeMapStage, 'name' | 'start' | 'end'> & Partial<Pick<LifeMapStage, 'id' | 'color'>>;
@@ -72,6 +74,8 @@ interface LifeMapStore extends LifeMapData {
   addGoal: (value: NewGoal) => LifeGoal;
   updateGoal: (id: string, updates: Partial<Omit<LifeGoal, 'id' | 'createdAt'>>) => void;
   deleteGoal: (id: string) => void;
+  shiftPlanningItems: (ids: string[], days: number) => LifeMapShiftSnapshot[];
+  restorePlanningItems: (snapshot: LifeMapShiftSnapshot[]) => void;
   addSystem: (value: NewSystem) => LifeSystem;
   updateSystem: (id: string, updates: Partial<Omit<LifeSystem, 'id' | 'createdAt'>>) => void;
   deleteSystem: (id: string) => void;
@@ -206,7 +210,59 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
           return item;
         },
         updateGoal: (id, updates) => updateCollection('lifeMapGoals', id, updates),
-        deleteGoal: (id) => deleteFromCollection('lifeMapGoals', id),
+        deleteGoal: (id) => {
+          deleteFromCollection('lifeMapGoals', id);
+          get().lifeMapGoals
+            .filter((item) => !item.deletedAt && item.kind === 'phase' && item.parentGoalId === id)
+            .forEach((item) => deleteFromCollection('lifeMapGoals', item.id));
+        },
+        shiftPlanningItems: (ids, days) => {
+          const amount = Math.trunc(days);
+          if (!amount || ids.length === 0) return [];
+          const activeGoals = get().lifeMapGoals.filter((item) => !item.deletedAt);
+          const selected = new Set(ids);
+          activeGoals
+            .filter((item) => item.kind === 'phase' && item.parentGoalId && selected.has(item.parentGoalId))
+            .forEach((item) => selected.add(item.id));
+          const updates = new Map<string, { start: string; targetDate: string }>();
+          activeGoals.filter((item) => selected.has(item.id) && (item.kind === 'plan' || item.kind === 'phase')).forEach((item) => {
+            updates.set(item.id, {
+              start: dayjs(item.start).add(amount, 'day').format('YYYY-MM-DD'),
+              targetDate: dayjs(item.targetDate).add(amount, 'day').format('YYYY-MM-DD'),
+            });
+          });
+          activeGoals.filter((item) => item.kind === 'phase' && item.parentGoalId && updates.has(item.id) && !updates.has(item.parentGoalId)).forEach((phase) => {
+            const parent = activeGoals.find((item) => item.id === phase.parentGoalId && item.kind === 'plan');
+            const shifted = updates.get(phase.id);
+            if (!parent || !shifted) return;
+            const start = shifted.start < parent.start ? shifted.start : parent.start;
+            const targetDate = shifted.targetDate > parent.targetDate ? shifted.targetDate : parent.targetDate;
+            if (start !== parent.start || targetDate !== parent.targetDate) updates.set(parent.id, { start, targetDate });
+          });
+          const snapshot = activeGoals
+            .filter((item) => updates.has(item.id))
+            .map((item) => ({ id: item.id, start: item.start, targetDate: item.targetDate }));
+          if (snapshot.length === 0) return [];
+          const now = new Date().toISOString();
+          set((state) => ({
+            lifeMapGoals: state.lifeMapGoals.map((item) => {
+              const update = updates.get(item.id);
+              return update ? { ...item, ...update, updatedAt: now, revision: Math.max(1, item.revision + 1) } : item;
+            }),
+          }));
+          return snapshot;
+        },
+        restorePlanningItems: (snapshot) => {
+          const previous = new Map(snapshot.map((item) => [item.id, item]));
+          if (previous.size === 0) return;
+          const now = new Date().toISOString();
+          set((state) => ({
+            lifeMapGoals: state.lifeMapGoals.map((item) => {
+              const restore = previous.get(item.id);
+              return restore ? { ...item, start: restore.start, targetDate: restore.targetDate, updatedAt: now, revision: Math.max(1, item.revision + 1) } : item;
+            }),
+          }));
+        },
         addSystem: (value) => {
           const item = stamp({ id: genId('system'), status: 'active' as const, ...value });
           set((state) => ({ lifeMapSystems: [...state.lifeMapSystems, item] }));

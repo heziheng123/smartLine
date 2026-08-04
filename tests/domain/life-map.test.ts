@@ -10,6 +10,7 @@ import {
 } from '../../src/lifeMap/data.ts';
 import { mergeWorkspaceFieldChanges } from '../../src/services/workspaceSyncCore.ts';
 import { calculateGoalProgress, currentSystemStats, systemTargetForRange } from '../../src/lifeMap/metrics.ts';
+import { activeMaintenancePeriod, isDateInMaintenance, maintenanceDayCount } from '../../src/lifeMap/maintenance.ts';
 
 const meta = { createdAt: '2026-07-30T00:00:00.000Z', updatedAt: '2026-07-30T00:00:00.000Z', revision: 1 };
 
@@ -31,6 +32,18 @@ test('规范化会补齐默认领域、去重并过滤悬空领域引用', () =>
   assert.equal(data.lifeMapAreas.length, 6);
   assert.equal(data.lifeMapGoals.length, 1);
   assert.equal(data.lifeMapGoals[0]?.name, '恢复稳定作息');
+});
+
+test('主计划与月度阶段沿用目标集合并过滤悬空阶段', () => {
+  const data = normalizeLifeMapData({
+    lifeMapGoals: [
+      { id: 'plan-politics', areaId: 'learning', name: '考研政治', start: '2026-08-01', targetDate: '2026-10-31', status: 'active', kind: 'plan', ...meta },
+      { id: 'phase-marxism', areaId: 'learning', name: '完成马原学习', start: '2026-08-01', targetDate: '2026-08-31', status: 'active', kind: 'phase', parentGoalId: 'plan-politics', ...meta },
+      { id: 'phase-orphan', areaId: 'learning', name: '悬空阶段', start: '2026-09-01', targetDate: '2026-09-30', status: 'active', kind: 'phase', parentGoalId: 'missing', ...meta },
+    ],
+  });
+  assert.deepEqual(data.lifeMapGoals.map((item) => item.id), ['plan-politics', 'phase-marxism']);
+  assert.equal(data.lifeMapGoals[1]?.parentGoalId, 'plan-politics');
 });
 
 test('删除墓碑会保留在同步数据中，但不会出现在活动内容中', () => {
@@ -135,4 +148,57 @@ test('长期系统严格按每天、每周和每月各自周期统计，不再�
   assert.equal(stats.label, '今天');
   assert.equal(stats.completed, 1);
   assert.equal(stats.target, 1);
+});
+
+test('维护期会随人生领域和长期系统数据规范化保留，供多端同步使用', () => {
+  const data = normalizeLifeMapData({
+    lifeMapAreas: [{
+      id: 'health',
+      name: '身体健康',
+      color: '#22C55E',
+      order: 0,
+      maintenancePeriods: [{ id: 'area-pause', start: '2026-08-02', reason: '身体恢复' }],
+      ...meta,
+    }],
+    lifeMapSystems: [{
+      id: 'sleep',
+      areaId: 'health',
+      name: '按时睡觉',
+      start: '2026-07-01',
+      status: 'active',
+      frequency: 'daily',
+      targetCount: 1,
+      maintenancePeriods: [{ id: 'system-pause', start: '2026-07-10', end: '2026-07-13' }],
+      ...meta,
+    }],
+  });
+  assert.deepEqual(data.lifeMapAreas.find((area) => area.id === 'health')?.maintenancePeriods, [
+    { id: 'area-pause', start: '2026-08-02', reason: '身体恢复' },
+  ]);
+  assert.deepEqual(data.lifeMapSystems[0]?.maintenancePeriods, [
+    { id: 'system-pause', start: '2026-07-10', end: '2026-07-13' },
+  ]);
+});
+
+test('维护结束日期是恢复日，维护期间不计入长期系统目标', () => {
+  const periods = [{ id: 'pause', start: '2026-07-10', end: '2026-07-13' }];
+  assert.equal(isDateInMaintenance('2026-07-09', periods), false);
+  assert.equal(isDateInMaintenance('2026-07-10', periods), true);
+  assert.equal(isDateInMaintenance('2026-07-12', periods), true);
+  assert.equal(isDateInMaintenance('2026-07-13', periods), false);
+  assert.equal(maintenanceDayCount(periods, '2026-07-01', '2026-07-31'), 3);
+  assert.equal(activeMaintenancePeriod(periods, dayjs('2026-07-11'))?.id, 'pause');
+
+  const daily = {
+    id: 'sleep', areaId: 'health', name: '按时睡觉', start: '2026-07-01', status: 'active' as const,
+    frequency: 'daily' as const, targetCount: 1, maintenancePeriods: periods, ...meta,
+  };
+  const weekly = {
+    ...daily,
+    frequency: 'weekly' as const,
+    targetCount: 3,
+    maintenancePeriods: [{ id: 'full-week', start: '2026-07-06', end: '2026-07-13' }],
+  };
+  assert.equal(systemTargetForRange(daily, '2026-07-01', '2026-07-31'), 28);
+  assert.equal(systemTargetForRange(weekly, '2026-07-06', '2026-07-12'), 0);
 });
