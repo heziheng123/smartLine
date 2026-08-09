@@ -253,27 +253,36 @@ test('a remote legacy project without blocks cannot break linked-task cancellati
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
-  await page.evaluate(async () => {
-    const moduleUrl = performance.getEntriesByType('resource')
-      .map((entry) => entry.name)
-      .find((name) => name.includes('/src/store/index.ts?t='))
-      ?? '/src/store/index.ts';
-    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
-    const state = useTimelineStore.getState();
-    useTimelineStore.setState({
-      tasks: [
-        ...state.tasks,
-        {
-          id: 'remote-legacy-without-blocks',
-          name: 'Remote legacy project',
-          start: '2026-07-01',
-          end: '2026-07-31',
-          completed: false,
-          color: '#e2e8f0',
-        } as Task,
-      ],
-    });
-  });
+  await expect.poll(async () => {
+    try {
+      await page.evaluate(async () => {
+        const moduleUrl = performance.getEntriesByType('resource')
+          .map((entry) => entry.name)
+          .find((name) => name.includes('/src/store/index.ts?t='))
+          ?? '/src/store/index.ts';
+        const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+        const state = useTimelineStore.getState();
+        if (state.tasks.some((task) => task.id === 'remote-legacy-without-blocks')) return;
+        useTimelineStore.setState({
+          tasks: [
+            ...state.tasks,
+            {
+              id: 'remote-legacy-without-blocks',
+              name: 'Remote legacy project',
+              start: '2026-07-01',
+              end: '2026-07-31',
+              completed: false,
+              color: '#e2e8f0',
+            } as Task,
+          ],
+        });
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Execution context was destroyed')) return false;
+      throw error;
+    }
+  }).toBe(true);
 
   const card = await openProjectDocument(page);
   await card.locator('.stb-check').click();
@@ -295,31 +304,39 @@ test('a remote legacy project without blocks cannot break linked-task cancellati
 });
 
 test('a divergent Liveblocks batch is repaired before a stale group copy can drive the UI', async ({ page }) => {
-  await page.evaluate(async () => {
-    const moduleUrl = performance.getEntriesByType('resource')
-      .map((entry) => entry.name)
-      .find((name) => name.includes('/src/store/index.ts?t='))
-      ?? '/src/store/index.ts';
-    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
-    const setCompleted = (task: Task, value: boolean) => ({
-      ...task,
-      blocks: task.blocks.map((block) => block.id === 'grouped-completion-block'
-        ? { ...block, header: { ...block.header, isCompleted: value } }
-        : block),
-    });
-    const state = useTimelineStore.getState();
-    useTimelineStore.setState({
-      tasks: state.tasks.map((task) => task.id === 'grouped-completion-project'
-        ? setCompleted(task, false)
-        : task),
-      groups: state.groups.map((group) => ({
-        ...group,
-        children: group.children.map((child) => child.id === 'grouped-completion-project'
-          ? setCompleted(child, true)
-          : child),
-      })),
-    });
-  });
+  await expect.poll(async () => {
+    try {
+      await page.evaluate(async () => {
+        const moduleUrl = performance.getEntriesByType('resource')
+          .map((entry) => entry.name)
+          .find((name) => name.includes('/src/store/index.ts?t='))
+          ?? '/src/store/index.ts';
+        const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+        const setCompleted = (task: Task, value: boolean) => ({
+          ...task,
+          blocks: task.blocks.map((block) => block.id === 'grouped-completion-block'
+            ? { ...block, header: { ...block.header, isCompleted: value } }
+            : block),
+        });
+        const state = useTimelineStore.getState();
+        useTimelineStore.setState({
+          tasks: state.tasks.map((task) => task.id === 'grouped-completion-project'
+            ? setCompleted(task, false)
+            : task),
+          groups: state.groups.map((group) => ({
+            ...group,
+            children: group.children.map((child) => child.id === 'grouped-completion-project'
+              ? setCompleted(child, true)
+              : child),
+          })),
+        });
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Execution context was destroyed')) return false;
+      throw error;
+    }
+  }).toBe(true);
 
   await expect.poll(() => readCompletionCopies(page)).toEqual({ task: false, group: false });
 

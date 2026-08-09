@@ -84,7 +84,7 @@ export interface Task {
   blocksUpdatedAt?: string;   // blocks 上次保存时间（ISO 字符串）
   /** 人生地图的独立视觉语义；其他视图不会使用。 */
   lifeMapKind?: 'goal' | 'plan' | 'phase' | 'system' | 'review';
-  /** 计划阶段所属的主计划任务 ID，仅供人生地图布局使用。 */
+  /** 项目子阶段所属的父项目 ID，仅供人生地图布局使用。 */
   lifeMapParentId?: string;
   lifeMapMeta?: string;
   lifeMapProgress?: number;
@@ -127,9 +127,12 @@ export interface Milestone {
   placement?: 'above' | 'below'; // 人生地图批注文字位置
   importance?: 'normal' | 'important' | 'core'; // 人生地图关键日期等级
   layoutLane?: number;     // 人生地图人工轨道偏好
+  areaId?: string;         // 人生地图可选领域；缺失时为全局关键日期
+  relatedPlanId?: string;  // 人生地图可选关联项目
+  customColor?: string;    // 人生地图实际保存的自定义色；color 可为关联关系解析色
 }
 
-/** 人生地图中独立录入的人生阶段，不属于项目或项目分组 */
+/** 人生地图中独立录入的人生时期，不属于项目或项目分组 */
 export interface LifeStage {
   id: string;
   name: string;

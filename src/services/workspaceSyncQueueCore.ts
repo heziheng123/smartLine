@@ -3,7 +3,7 @@ import { hashWorkspaceValue } from './workspaceSyncCore';
 
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones' | 'lifeStages'
-  | 'lifeMapAreas' | 'lifeMapStages' | 'lifeMapThemes' | 'lifeMapGoals'
+  | 'lifeMapAreas' | 'lifeMapPlanGroups' | 'lifeMapStages' | 'lifeMapThemes' | 'lifeMapGoals'
   | 'lifeMapSystems' | 'lifeMapSystemCheckIns' | 'lifeMapEvents' | 'lifeMapFocuses' | 'lifeMapNotes' | 'lifeMapRelations' | 'lifeMapReviews'
   | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
   | 'schedules' | 'retrospectives' | 'nodes';

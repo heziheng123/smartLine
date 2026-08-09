@@ -14,8 +14,13 @@ const PURIFY_CONFIG = {
     'a', 'span', 'div', 'blockquote', 'code', 'pre',
     'img',
   ],
-  ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'class', 'style'],
-  ALLOWED_URI_REGEXP: /^(?:https?:|data:image\/|mailto:)/i,
+  ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'title'],
+  FORBID_TAGS: ['style', 'svg', 'math', 'form', 'iframe', 'object', 'embed'],
+  FORBID_ATTR: ['style', 'class', 'id', 'srcset', 'formaction'],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+  SANITIZE_NAMED_PROPS: true,
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|\/(?!\/)|#)/i,
 };
 
 /**
@@ -25,5 +30,32 @@ const PURIFY_CONFIG = {
  */
 export function sanitizeHtml(dirty: string | undefined | null): string {
   if (!dirty) return '';
-  return DOMPurify.sanitize(dirty, PURIFY_CONFIG) as string;
+  const clean = DOMPurify.sanitize(dirty, PURIFY_CONFIG) as string;
+  if (typeof document === 'undefined') return clean;
+
+  const template = document.createElement('template');
+  template.innerHTML = clean;
+  template.content.querySelectorAll('a').forEach((link) => {
+    if (link.getAttribute('target') === '_blank') {
+      link.setAttribute('rel', 'noopener noreferrer');
+    } else {
+      link.removeAttribute('target');
+      link.removeAttribute('rel');
+    }
+  });
+  template.content.querySelectorAll('img').forEach((image) => {
+    const source = image.getAttribute('src');
+    if (!source) {
+      image.remove();
+      return;
+    }
+    try {
+      const url = new URL(source, window.location.href);
+      const sameOrigin = url.origin === window.location.origin;
+      if (!sameOrigin && url.protocol !== 'https:') image.remove();
+    } catch {
+      image.remove();
+    }
+  });
+  return template.innerHTML;
 }

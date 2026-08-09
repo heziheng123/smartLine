@@ -6,6 +6,7 @@ import {
   shouldAutoSyncEbb,
 } from '@/utils/blocks';
 import { todayStr } from '@/utils/dateSafe';
+import { isValidCalendarDate } from '@/utils/dateSafe';
 
 export const headerValueEquals = (left: unknown, right: unknown): boolean =>
   typeof left === 'object' || typeof right === 'object'
@@ -14,10 +15,14 @@ export const headerValueEquals = (left: unknown, right: unknown): boolean =>
 
 export function normalizeTimelineTask(task: Task): Task {
   const fallbackDate = todayStr();
-  const start = typeof task.start === 'string' && task.start
+  const validStart = typeof task.start === 'string' && isValidCalendarDate(task.start)
     ? task.start
-    : (typeof task.end === 'string' && task.end ? task.end : fallbackDate);
-  const end = typeof task.end === 'string' && task.end ? task.end : start;
+    : undefined;
+  const validEnd = typeof task.end === 'string' && isValidCalendarDate(task.end)
+    ? task.end
+    : undefined;
+  const start = validStart ?? validEnd ?? fallbackDate;
+  const end = validEnd && validEnd >= start ? validEnd : start;
   const normalizedTask = { ...task, start, end } as Task & { markdown?: string };
   if (normalizedTask.markdown && (!normalizedTask.blocks || normalizedTask.blocks.length === 0)) {
     const blocks = migrateMarkdownToBlocks(normalizedTask);
@@ -148,6 +153,11 @@ function isValidNote(note: unknown): note is Note {
   return typeof record.id === 'string'
     && typeof record.name === 'string'
     && typeof record.date === 'string'
+    && isValidCalendarDate(record.date)
+    && (record.endDate === undefined
+      || (typeof record.endDate === 'string'
+        && isValidCalendarDate(record.endDate)
+        && record.endDate >= record.date))
     && (record.type === 'pin' || record.type === 'range');
 }
 
@@ -156,7 +166,8 @@ function isValidMilestone(milestone: unknown): milestone is Milestone {
   const record = milestone as Record<string, unknown>;
   return typeof record.id === 'string'
     && typeof record.name === 'string'
-    && typeof record.date === 'string';
+    && typeof record.date === 'string'
+    && isValidCalendarDate(record.date);
 }
 
 function isValidLifeStage(stage: unknown): stage is LifeStage {
@@ -165,7 +176,10 @@ function isValidLifeStage(stage: unknown): stage is LifeStage {
   return typeof record.id === 'string'
     && typeof record.name === 'string'
     && typeof record.start === 'string'
-    && typeof record.end === 'string';
+    && isValidCalendarDate(record.start)
+    && typeof record.end === 'string'
+    && isValidCalendarDate(record.end)
+    && record.end >= record.start;
 }
 
 function isValidGroup(group: unknown): group is TaskGroup {
@@ -186,20 +200,34 @@ export function normalizeTimelineData(value: unknown): TimelineData & { lifeStag
       .filter(isValidGroup)
       .map((group) => {
         const fallbackDate = todayStr();
-        const start = typeof group.start === 'string' && group.start
+        const children = Array.isArray(group.children)
+          ? group.children.filter(isValidTask).map((child) => ({
+            ...normalizeTimelineTask(child),
+            groupId: group.id,
+          }))
+          : [];
+        const validStart = typeof group.start === 'string' && isValidCalendarDate(group.start)
           ? group.start
-          : (typeof group.end === 'string' && group.end ? group.end : fallbackDate);
-        const end = typeof group.end === 'string' && group.end ? group.end : start;
+          : undefined;
+        const validEnd = typeof group.end === 'string' && isValidCalendarDate(group.end)
+          ? group.end
+          : undefined;
+        const childStarts = children.map((child) => child.start).filter(isValidCalendarDate);
+        const childEnds = children.map((child) => child.end).filter(isValidCalendarDate);
+        const derivedStart = group.autoDate && childStarts.length > 0
+          ? [...childStarts].sort()[0]
+          : undefined;
+        const derivedEnd = group.autoDate && childEnds.length > 0
+          ? [...childEnds].sort().at(-1)
+          : undefined;
+        const start = derivedStart ?? validStart ?? validEnd ?? fallbackDate;
+        const candidateEnd = derivedEnd ?? validEnd;
+        const end = candidateEnd && candidateEnd >= start ? candidateEnd : start;
         return {
           ...group,
           start,
           end,
-          children: Array.isArray(group.children)
-            ? group.children.filter(isValidTask).map((child) => ({
-              ...normalizeTimelineTask(child),
-              groupId: group.id,
-            }))
-            : [],
+          children,
         };
       })
     : [];

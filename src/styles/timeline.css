@@ -166,6 +166,12 @@ html, body, #root {
   width: 190px;
 }
 
+.tl-create-menu--portal {
+  position: fixed;
+  z-index: 12000;
+  pointer-events: auto;
+}
+
 .tl-create-menu button {
   width: 100%;
   height: 36px;

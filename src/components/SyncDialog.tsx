@@ -42,7 +42,7 @@ type DisplayStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
 
 const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
 const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
-  lifeMapAreas: '人生领域', lifeMapStages: '人生阶段', lifeMapThemes: '领域主题', lifeMapGoals: '人生目标',
+  lifeMapAreas: '人生领域', lifeMapPlanGroups: '项目展示大类', lifeMapStages: '人生时期', lifeMapThemes: '时期重点（历史主题）', lifeMapGoals: '目标与项目',
   lifeMapSystems: '长期系统', lifeMapSystemCheckIns: '系统完成记录', lifeMapEvents: '关键日期', lifeMapFocuses: '阶段重点',
   lifeMapNotes: '人生便签', lifeMapRelations: '项目关联', lifeMapReviews: '周期复盘', tasks: '项目任务', groups: '项目分组',
   schedules: '每日安排', retrospectives: '每日复盘', reviewTasks: '复习任务', nodes: '知识节点',
@@ -304,7 +304,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
           : '';
         const confirmed = await requestConfirmation(
-          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生阶段 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
+          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
         );
         if (!confirmed) return;
         await restoreWorkspaceBackup(result.backup);

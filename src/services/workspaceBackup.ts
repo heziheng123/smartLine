@@ -19,8 +19,9 @@ import { isContinuousTask } from '@/domain/taskRules';
 import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, activeLifeMapItems, normalizeLifeMapData, validateLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
+import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
 
-export const WORKSPACE_SCHEMA_VERSION = 4;
+export { WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
 const snapshotStorage = createScopedStorage('workspace_snapshots');
 const snapshotChunkStorage = createScopedStorage('workspace_snapshot_chunks');
 
@@ -180,7 +181,7 @@ export function validateWorkspaceBackup(value: unknown): {
   if (!isRecord(value) || value.kind !== 'smart-line-workspace') {
     return { errors: ['这不是 Smart Line 完整工作区备份文件。'] };
   }
-  if (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3 && value.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
+  if (typeof value.schemaVersion !== 'number' || !SUPPORTED_WORKSPACE_SCHEMA_VERSIONS.has(value.schemaVersion)) {
     errors.push(`不支持的备份版本：${String(value.schemaVersion)}。`);
   }
   const timeline = value.timeline;
@@ -244,7 +245,7 @@ export function validateWorkspaceBackup(value: unknown): {
   if (!backup.timeline.lifeStages.every((stage) => isRecord(stage)
     && typeof stage.id === 'string' && typeof stage.name === 'string'
     && isDate(stage.start) && isDate(stage.end))) {
-    errors.push('人生阶段包含缺失字段或无效日期。');
+    errors.push('人生时期包含缺失字段或无效日期。');
   }
   if (!Object.values(backup.lifeMap).every(Array.isArray)) {
     errors.push('人生地图独立数据格式无效。');
@@ -323,7 +324,7 @@ export function validateWorkspaceBackup(value: unknown): {
     ['项目分组', backup.timeline.groups],
     ['便签', backup.timeline.notes],
     ['里程碑', backup.timeline.milestones],
-    ['人生阶段', backup.timeline.lifeStages],
+    ['人生时期', backup.timeline.lifeStages],
     ['EBB 轮次', backup.ebb.reviewTasks],
     ['EBB 收件箱', backup.ebb.inboxItems],
     ['EBB 大纲', backup.ebb.outlineNodes],
@@ -331,6 +332,7 @@ export function validateWorkspaceBackup(value: unknown): {
   ];
   collections.push(
     ['人生地图领域', backup.lifeMap.lifeMapAreas],
+    ['人生地图项目大类', backup.lifeMap.lifeMapPlanGroups],
     ['人生地图阶段', backup.lifeMap.lifeMapStages],
     ['人生地图主题', backup.lifeMap.lifeMapThemes],
     ['人生地图目标', backup.lifeMap.lifeMapGoals],
@@ -387,7 +389,7 @@ export function validateWorkspaceBackup(value: unknown): {
     if (note.endDate && note.date > note.endDate) issues.push(`便签“${note.name}”的开始日期晚于结束日期`);
   }
   for (const stage of backup.timeline.lifeStages) {
-    if (stage.start > stage.end) issues.push(`人生阶段“${stage.name}”的开始日期晚于结束日期`);
+    if (stage.start > stage.end) issues.push(`人生时期“${stage.name}”的开始日期晚于结束日期`);
   }
   for (const task of timelineTaskMap.values()) {
     if (task.start > task.end) issues.push(`项目“${task.name}”的开始日期晚于结束日期`);

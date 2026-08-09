@@ -3,7 +3,7 @@
 // ============================================================
 
 import type { ComplexityLevel, ComplexityConfig, ComplexityConfigs } from './types';
-import { DEFAULT_COMPLEXITY_CONFIGS } from './constants';
+import { DEFAULT_COMPLEXITY_CONFIGS } from './constants.ts';
 
 /**
  * 获取指定复杂度的配置（支持用户自定义覆盖）

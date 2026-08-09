@@ -39,6 +39,15 @@ for (const requiredHeader of [
 }
 const entryHtml = await readFile(join(root, 'index.html'), 'utf8').catch(() => '');
 if (/\son[a-z]+\s*=/i.test(entryHtml)) findings.push('index.html: inline event handler bypasses the CSP policy');
+const sanitizer = await readFile(join(root, 'src', 'utils', 'sanitize.ts'), 'utf8').catch(() => '');
+const allowedAttrs = sanitizer.match(/ALLOWED_ATTR:\s*\[([^\]]*)\]/s)?.[1] ?? '';
+if (/['"](?:style|class|id)['"]/.test(allowedAttrs)) {
+  findings.push('src/utils/sanitize.ts: layout-capable attributes are allowed in remote rich text');
+}
+const allowedUriRule = sanitizer.match(/ALLOWED_URI_REGEXP:\s*(\/.*\/[a-z]*)/i)?.[1] ?? '';
+if (/data:image/i.test(allowedUriRule)) {
+  findings.push('src/utils/sanitize.ts: data images are allowed in remote rich text');
+}
 if (findings.length) {
   console.error(`发现可能提交的敏感信息：\n${findings.join('\n')}`);
   process.exitCode = 1;

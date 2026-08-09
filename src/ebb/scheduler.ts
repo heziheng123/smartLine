@@ -5,9 +5,9 @@
 
 import dayjs from 'dayjs';
 import type { ReviewTask, ComplexityLevel, TagStat, TopicStat, EbbSettings } from './types';
-import { getPointWeight, getIntervalsForComplexity, parseIntervals } from './complexity';
-import { todayStr, addDays, isBeforeDay, isAfterDay, diffDays, formatDate } from '@/utils/dateSafe';
-import { getReviewRoundDuration } from './duration';
+import { getPointWeight, getIntervalsForComplexity, parseIntervals } from './complexity.ts';
+import { todayStr, addDays, isBeforeDay, isAfterDay, diffDays, formatDate, isValidCalendarDate } from '../utils/dateSafe.ts';
+import { getReviewRoundDuration } from './duration.ts';
 
 // ── 工具函数 ────────────────────────────────────────────────
 
@@ -255,7 +255,7 @@ export function generateTasks(
 
     // smartSpread：若启用设置，检查日负载
     if (settings) {
-      const spread = smartSpreadDate(dueDate, existingTasks, input.topicName, settings, topicDates);
+      const spread = smartSpreadDate(dueDate, [...existingTasks, ...tasks], input.topicName, settings, topicDates);
       if (spread !== dueDate) conflicts++;
       dueDate = spread;
     }
@@ -294,7 +294,7 @@ export function validateInput(input: GenerateTasksInput): string[] {
   if (input.topicName && input.topicName.length > 100) {
     errors.push('主题名称不能超过 100 字');
   }
-  if (!input.startDate || !dayjs(input.startDate).isValid()) {
+  if (!input.startDate || !isValidCalendarDate(input.startDate)) {
     errors.push('起始日期无效');
   }
   if (!input.intervals || input.intervals.length === 0) {

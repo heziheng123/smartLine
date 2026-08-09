@@ -1,116 +1,167 @@
-# Liveblocks + Vercel 部署指南
+# SmartLine 部署指南
 
-## ✅ 已完成的改造
+本指南面向 Cloudflare Pages 正式部署。纯本地使用只需 `npm ci && npm run dev`，不需要 GitHub、Liveblocks 或 R2。
 
-我已经完成了以下工作：
+## 1. 部署架构
 
-1. ✅ 安装了 Liveblocks 依赖包
-2. ✅ 改造了 Zustand Store，集成 Liveblocks 中间件
-3. ✅ 改造了 SyncDialog 组件，使用 Liveblocks API
-4. ✅ 删除了旧的 sync-server 和 WebSocket 服务代码
-5. ✅ 创建了 `.env.example` 文件并更新了 `.gitignore`
+正式推荐链路：
 
-## 📝 需要你完成的步骤
+```text
+浏览器 → Cloudflare Pages 静态站点
+       → /api/auth/* GitHub OAuth
+       → /api/liveblocks-auth 房间令牌
+       → Liveblocks 统一工作区
+       → /api/archives/*（可选 R2）
+```
 
-### 步骤 1：注册 Liveblocks 并获取 API Key
+不要把 `LIVEBLOCKS_SECRET_KEY`、GitHub Client Secret 或 session secret 暴露为 `VITE_` 变量。只有 Public Key 可以进入浏览器构建。
 
-1. 访问 https://liveblocks.io/
-2. 点击 **"Sign up"** 使用 GitHub 账号免费登录
-3. 登录后，点击 **"Create Project"**（创建项目）
-4. 项目名称填写：`smart-timeline`（或任意名称）
-5. 进入项目仪表盘，找到 **"API Keys"** 区域
-6. 复制你的 **Public Key**（以 `pk_test_` 或 `pk_live_` 开头）
+## 2. 前置资源
 
-### 步骤 2：配置环境变量
+### 2.1 GitHub OAuth App
 
-1. 在项目根目录 `d:\project\line` 下，创建 `.env` 文件（复制 `.env.example`）
-2. 将你刚才复制的 Public Key 填入：
+在 GitHub Developer Settings 创建 OAuth App：
+
+- Homepage URL：正式站点 origin，例如 `https://smartline.example.com`
+- Authorization callback URL：`https://smartline.example.com/api/auth/github/callback`
+
+记录 Client ID 和 Client Secret。Preview 域名如需登录，应使用独立 OAuth App 或明确加入对应 callback；不要频繁修改 Production callback。
+
+### 2.2 Liveblocks 项目
+
+创建 Liveblocks 项目并获取：
+
+- Secret Key：Pages Function 签发令牌使用；
+- Public Key：只在旧房间兼容迁移阶段需要。
+
+正式稳定后应使用 `/api/liveblocks-auth`，而不是让浏览器长期持有 Public Key。
+
+### 2.3 R2（可选）
+
+创建 Production 和 Preview 两个不同 bucket，并在 Pages 项目中以 `SMARTLINE_R2` 绑定。R2 仅保存月度历史归档；不配置时相关 API 返回 503，其他功能正常。
+
+## 3. Cloudflare Pages 配置
+
+连接 Git 仓库并设置：
+
+- Framework preset：Vite 或 None
+- Build command：`npm run build`
+- Build output directory：`dist`
+- Node.js：22
+
+Pages 会自动识别仓库根目录的 `functions/`。`public/_headers` 会进入构建产物并由 Pages 应用。
+
+### 3.1 构建变量
+
+正式认证模式：
 
 ```env
-VITE_LIVEBLOCKS_PUBLIC_KEY=pk_test_你的真实密钥...
+VITE_LIVEBLOCKS_AUTH_ENDPOINT=/api/liveblocks-auth
+VITE_DISABLE_PUBLIC_KEY_FALLBACK=true
 ```
 
-**⚠️ 重要：`.env` 文件不会被提交到 Git（已配置在 `.gitignore`）**
+迁移观察期：
 
-### 步骤 3：本地测试
-
-在项目根目录运行：
-
-```bash
-npm run dev
+```env
+VITE_LIVEBLOCKS_PUBLIC_KEY=pk_live_or_test_value
+VITE_LIVEBLOCKS_AUTH_ENDPOINT=/api/liveblocks-auth
+VITE_DISABLE_PUBLIC_KEY_FALLBACK=false
 ```
 
-然后在浏览器中打开 `http://localhost:5173`，点击工具栏的"云端同步"按钮，输入一个房间代码（如 `my-timeline-2026`），点击连接。
+只有完成统一工作区迁移并稳定验证后，才把 fallback 设为 `true` 并删除 Public Key。
 
-如果看到"已连接"状态，说明 Liveblocks 已经成功集成！
+### 3.2 服务端 secrets/vars
 
-### 步骤 4：推送到 GitHub
+在 Production 环境设置：
 
-将代码推送到你的 GitHub 仓库：
-
-```bash
-git add .
-git commit -m "集成 Liveblocks 实时同步服务"
-git push
+```env
+LIVEBLOCKS_SECRET_KEY=sk_live_xxx
+GITHUB_CLIENT_ID=xxx
+GITHUB_CLIENT_SECRET=xxx
+ALLOWED_GITHUB_LOGIN=your_github_login
+SMARTLINE_SESSION_SECRET=至少32字符的随机值
+AUTH_ALLOW_DEV_BYPASS=false
 ```
 
-### 步骤 5：部署到 Vercel
+`SMARTLINE_SESSION_SECRET` 建议使用密码管理器生成 32 字节以上随机值。修改它会使现有登录会话全部失效。
 
-1. 访问 https://vercel.com/ 并使用 GitHub 登录
-2. 点击 **"Add New" → "Project"**
-3. 选择你的 GitHub 仓库 `smart-timeline`
-4. **关键步骤：配置环境变量**
-   - 在部署页面的 **"Environment Variables"** 区域，添加：
-   - Name: `VITE_LIVEBLOCKS_PUBLIC_KEY`
-   - Value: `pk_test_你的真实密钥...`（填写步骤 1 复制的密钥）
-5. 点击 **"Deploy"** 按钮
-6. 等待约 1 分钟，Vercel 会生成一个域名，如 `https://smart-timeline.vercel.app`
+Preview 环境使用独立 secrets 和 R2 bucket；不得复用 Production Secret Key、OAuth secret 或 bucket。
 
-### 步骤 6：测试实时同步
+## 4. 首次上线检查
 
-🎉 **完成！**
+1. 运行 `npm ci`、lint、build、领域测试、系统测试和 E2E。
+2. 运行 `npm audit`，处理运行时和构建链漏洞。
+3. 部署后访问 `/api/auth/session`，未登录应返回 401/no-store 响应。
+4. 完成 GitHub 登录，确认非白名单账号不能进入。
+5. 打开同步对话框，连接统一工作区并确认房间形如 `workspace-{identity}-{code}`。
+6. 在两个标签页修改不同数据域，确认字段都保留。
+7. 断网修改后恢复网络，确认离线队列清空且无冲突副本。
+8. 检查响应头 CSP、frame deny、nosniff 和 Service Worker no-cache。
+9. 如启用 R2，测试首次 PUT、带 ETag 更新和错误 ETag 的 409。
+10. 导出完整 JSON，并实际验证一次本地快照恢复流程。
 
-现在打开两台设备（电脑和手机，或两个浏览器标签页），访问同一个域名，输入相同的房间代码，就能体验毫秒级实时同步了！
+## 5. 旧房间迁移
 
-## 🔧 技术细节
+历史部署可能使用五个房间：Timeline 主房间、`ebb-`、`daily-`、`graph-`、`life-map-`。迁移步骤详见 [数据架构迁移指南](docs/data-architecture-migration.md)。关键原则：
 
-### Liveblocks 的优势
+- 迁移前导出两份完整备份；
+- 迁移是复制，不删除旧房间；
+- 摘要和 SHA-256 都一致后才切换；
+- 至少观察 30 天再停用 Public Key fallback；
+- 任一端有不同非空数据时，不允许自动覆盖。
 
-- **自动冲突解决（CRDT）**：多人同时修改同一任务，不会出现数据覆盖冲突
-- **断线自动重连**：网络不稳定时，Liveblocks 会自动处理
-- **免费额度**：每月 100 个并发连接，2GB 流量，个人项目完全够用
-- **零服务器维护**：无需维护 WebSocket 服务器，Liveblocks 托管一切
+## 6. R2 归档行为
 
-### 数据存储机制
+API 路径为 `/api/archives/{YYYY-MM}`，支持 GET、HEAD、PUT：
 
-- **本地缓存**：数据同时存储在 LocalStorage（键名：`smart-timeline-data`）
-- **云端同步**：通过 Liveblocks 自动同步到云端（tasks, groups, notes, milestones）
-- **离线支持**：短暂断线时，本地数据仍然可用，联网后自动同步
+- 必须有有效 GitHub session；
+- 月份严格匹配 `YYYY-MM`；
+- payload 必须为 JSON，`version` 为 1 且 `period` 与路径一致；
+- 最大 10 MiB；
+- 对象按 GitHub 用户 ID 隔离；
+- 已存在对象的更新必须携带当前 ETag，否则返回 409。
 
-## ❓ 常见问题
+R2 不是 Liveblocks 的替代品，也不是实时备份；它用于长期历史归档。
 
-**Q: 如果忘记配置 API Key，会怎样？**
-A: 应用会正常运行在本地模式（无云端同步），所有数据保存在 LocalStorage。
+## 7. 回滚
 
-**Q: 房间代码有什么要求？**
-A: 房间代码只能是字母、数字、下划线、减号，长度不超过 64 字符。
+静态版本回滚前先确认旧版本支持当前 `schemaVersion`。如果云端由更高版本写入，旧客户端会拒绝连接，这是保护行为，不应绕过。
 
-**Q: 如何查看 Liveblocks 连接状态？**
-A: SyncDialog 会显示"已连接"、"连接中..."、"未连接"三种状态。
+推荐顺序：
 
-**Q: 如何导出数据？**
-A: 点击工具栏的"导出"按钮，可以下载 JSON 文件，包含所有任务和便签数据。
+1. 暂停多设备编辑；
+2. 从当前版本导出完整备份；
+3. 保留当前 Pages deployment；
+4. 验证待回滚版本支持 schema 6；schema 5 及更早客户端不能写入已升级的生产工作区；
+5. 回滚静态部署但不删除 Liveblocks/R2；
+6. 登录、hydrate、离线队列和导出全部验证后恢复使用。
 
-## 🎯 下一步建议
+## 8. 监控与维护
 
-完成部署后，你可以尝试：
+- 每次依赖更新运行完整测试和 `npm audit`；
+- 定期检查 Pages Functions 4xx/5xx、Liveblocks 连接失败和 R2 409；
+- 关注 IndexedDB 容量、快照数量和离线冲突副本；
+- 保留至少一份不在浏览器中的完整 JSON；
+- OAuth、Liveblocks 和 session secret 轮换要分阶段进行，避免同时失去登录和同步能力。
 
-1. 添加"多人在线状态"显示（Liveblocks 提供 Presence API）
-2. 实现多人实时鼠标指针（Liveblocks 提供 Cursor API）
-3. 添加撤销/重做功能（Liveblocks 提供 Undo/Redo API）
+## 9. 常见问题
 
-所有这些高级功能只需要几行代码就能实现！
+### 登录后立即返回登录页
 
----
+检查 callback URL、HTTPS、cookie、session secret 长度和白名单用户名。Cloudflare Preview 域名必须在对应 OAuth App 中配置 callback。
 
-**开始享受实时协作吧！** 🚀
+### `/api/liveblocks-auth` 返回 503
+
+`LIVEBLOCKS_SECRET_KEY` 缺失或不以 `sk_` 开头。变量必须配置在 Pages Functions 环境，不是前端构建变量。
+
+### 统一工作区提示本地和云端冲突
+
+这是失败关闭保护。分别导出本地和云端/旧房间备份，比较摘要后明确选择迁移方向；不要清 localStorage 或 IndexedDB 规避提示。
+
+### R2 返回 409
+
+归档已被其他设备修改。重新 GET/HEAD 获取最新 ETag，合并或确认内容后再 PUT。
+
+### PWA 更新后仍显示旧界面
+
+确认 `service-worker.js` 响应为 `no-cache, no-store`，刷新并等待新 worker 激活；不要给 service worker 文件设置 immutable 缓存。

@@ -285,11 +285,11 @@ test('docked backlog leaves Saturday reachable and supports dropping on the date
   await expect(saturdayHeader).toBeVisible();
 
   if ((page.viewportSize()?.width ?? 0) > 900) {
-    const [panelBox, saturdayBox] = await Promise.all([panel.boundingBox(), saturdayHeader.boundingBox()]);
-    expect(panelBox).not.toBeNull();
-    expect(saturdayBox).not.toBeNull();
-    expect(panelBox!.width).toBeLessThanOrEqual(341);
-    expect(saturdayBox!.x + saturdayBox!.width).toBeLessThanOrEqual(panelBox!.x + 1);
+    await expect.poll(async () => {
+      const [panelBox, saturdayBox] = await Promise.all([panel.boundingBox(), saturdayHeader.boundingBox()]);
+      if (!panelBox || !saturdayBox) return false;
+      return panelBox.width <= 341 && saturdayBox.x + saturdayBox.width <= panelBox.x + 1;
+    }).toBe(true);
   }
 
   const dataTransfer = await page.evaluateHandle((payload) => {

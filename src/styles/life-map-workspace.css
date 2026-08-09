@@ -15,6 +15,9 @@
 .life-map-scope__menu button > span:not(.life-map-scope__dot) { min-width: 0; display: grid; gap: 2px; }
 .life-map-scope__menu b { color: #30394a; font-size: 10px; }
 .life-map-scope__menu small { overflow: hidden; color: #9299a6; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.life-map-scope__group { display: grid; gap: 2px; margin-top: 5px; padding-top: 5px; border-top: 1px solid #edf0f4; }
+.life-map-scope__group-title { padding: 3px 9px 1px; color: #697386; font-size: 9px; letter-spacing: .08em; }
+.life-map-scope__group-empty { padding: 5px 9px 7px; font-size: 9px; }
 .life-map-scope__menu .life-map-scope__manage { margin-top: 5px; border-top: 1px solid #edf0f4; border-radius: 0 0 8px 8px; }
 .life-map-scope__menu .life-map-scope__maintenance { margin: 5px 0; color: #6b5fc7; background: #f7f6ff; }
 .life-map-editor { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 20px; background: rgba(23,30,52,.32); backdrop-filter: blur(7px) saturate(.9); }
@@ -144,4 +147,75 @@
   color: #64748b;
   font-size: 14px;
   background: #fff;
+}
+.life-map-editor__phases { display: grid; gap: 7px; padding: 10px; border: 1px solid #e5e7ed; border-radius: 10px; background: #fafbfc; }
+.life-map-editor__phases > header { display: flex; align-items: center; gap: 10px; }
+.life-map-editor__phases > header > span { min-width: 0; flex: 1; }
+.life-map-editor__phases b,
+.life-map-editor__phases small { display: block; }
+.life-map-editor__phases small { margin-top: 2px; color: #8b93a1; font-size: 10px; }
+.life-map-editor__phases > header > button { padding: 7px 10px; border: 1px solid #d9dcf7; border-radius: 8px; color: #5b5bd6; background: #f3f3ff; cursor: pointer; }
+.life-map-editor__phases > button { display: flex; align-items: center; gap: 10px; padding: 8px; border: 0; border-radius: 7px; text-align: left; background: #fff; cursor: pointer; }
+.life-map-editor__phases > button > span { min-width: 0; flex: 1; }
+.life-map-editor__phases > button > em { color: #656bd8; font-style: normal; font-weight: 700; }
+.life-map-editor__phases > p { margin: 0; color: #8b93a1; font-size: 11px; }
+.life-map-editor__classification { display: grid !important; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 5px 9px; padding: 8px 10px; border: 1px solid #e3e5f4; border-radius: 9px; color: #687184; background: #f7f7ff; }
+.life-map-editor__classification select { min-width: 0; border: 0 !important; color: #5258bd; font-weight: 700; background: transparent !important; }
+.life-map-editor__classification small { grid-column: 1 / -1; color: #9299a6; font-size: 9px; }
+.life-map-editor__more-toggle { min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px dashed #dfe2ea; border-radius: 9px; color: #697386; text-align: left; background: #fafbfc; cursor: pointer; }
+.life-map-editor__more-toggle > span { min-width: 0; flex: 1; }
+.life-map-editor__more-toggle b,
+.life-map-editor__more-toggle small { display: block; }
+.life-map-editor__more-toggle small { margin-top: 2px; color: #969daa; font-size: 9px; }
+.life-map-editor__more-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.life-map-planning-drawer__backdrop { position: fixed; z-index: 400; inset: 0; display: flex; justify-content: flex-end; background: rgba(15,23,42,.18); }
+.life-map-planning-drawer { width: min(420px, calc(100vw - 32px)); height: 100%; display: flex; flex-direction: column; color: #344054; background: #fff; box-shadow: -18px 0 48px rgba(15,23,42,.16); }
+.life-map-planning-drawer > header { min-height: 68px; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #e7e9ee; }
+.life-map-planning-drawer > header > div { min-width: 0; flex: 1; }
+.life-map-planning-drawer > header small { color: #8b93a1; font-size: 10px; }
+.life-map-planning-drawer > header h2 { margin: 2px 0 0; font-size: 18px; }
+.life-map-planning-drawer > header button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; background: #f4f5f8; cursor: pointer; }
+.life-map-planning-drawer__content { display: grid; gap: 10px; padding: 12px; overflow-y: auto; }
+.life-map-planning-drawer__content > section { display: grid; gap: 7px; padding: 12px; border: 1px solid #e7e9ee; border-radius: 11px; background: #fcfcfd; }
+.life-map-planning-drawer__content h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; }
+.life-map-planning-drawer__list { display: grid; gap: 4px; }
+.life-map-planning-drawer__list > button { padding: 7px 8px; border: 0; border-radius: 7px; text-align: left; background: #fff; cursor: pointer; }
+.life-map-planning-drawer__list b,
+.life-map-planning-drawer__list small { display: block; }
+.life-map-planning-drawer__list small { margin-top: 2px; color: #8b93a1; font-size: 9px; }
+.life-map-planning-drawer__list p { margin: 2px 0; color: #98a0ad; font-size: 10px; }
+.life-map-planning-drawer .is-action,
+.life-map-planning-drawer__actions > button,
+.life-map-planning-drawer__areas > button { min-height: 32px; padding: 6px 9px; border: 1px solid #dfe2e8; border-radius: 8px; color: #596273; background: #fff; cursor: pointer; }
+.life-map-planning-drawer__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.life-map-planning-drawer__actions > button { display: inline-flex; align-items: center; gap: 5px; }
+.life-map-planning-drawer__areas { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 8px; font-size: 10px; }
+.life-map-planning-drawer__areas span { overflow: hidden; color: #7f8795; text-overflow: ellipsis; white-space: nowrap; }
+.life-map-planning-drawer__groups { display: grid; gap: 4px; }
+.life-map-planning-drawer__groups > div { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 7px; background: #fff; }
+.life-map-planning-drawer__groups i { width: 4px; align-self: stretch; border-radius: 3px; }
+.life-map-planning-drawer__groups span { flex: 1; font-size: 10px; font-weight: 700; }
+.life-map-planning-drawer__groups button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border: 0; border-radius: 6px; color: #687184; background: #f1f3f6; cursor: pointer; }
+.life-map-structure-settings { display: grid; gap: 8px; margin-top: 4px; }
+.life-map-structure-settings > section { overflow: hidden; border: 1px solid color-mix(in srgb, var(--structure-group-color) 18%, #e7e9ee); border-left: 4px solid var(--structure-group-color); border-radius: 9px; background: color-mix(in srgb, var(--structure-group-color) 4%, #fff); }
+.life-map-structure-settings > section > header { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 5px 8px; border-bottom: 1px solid color-mix(in srgb, var(--structure-group-color) 12%, transparent); }
+.life-map-structure-settings > section > header > span { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.life-map-structure-settings > section > header i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--structure-group-color); }
+.life-map-structure-settings > section > header b { font-size: 11px; }
+.life-map-structure-settings > section > header small { color: #8b93a1; font-size: 8px; }
+.life-map-structure-settings > section > header button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border: 0; border-radius: 6px; color: #687184; background: rgba(255,255,255,.82); cursor: pointer; }
+.life-map-structure-settings__areas { display: grid; }
+.life-map-structure-settings__areas > div { min-height: 42px; display: grid; grid-template-columns: 8px minmax(0,1fr) repeat(5,28px); align-items: center; gap: 4px; padding: 4px 7px; border-bottom: 1px solid rgba(226,229,235,.66); }
+.life-map-structure-settings__areas > div.is-hidden { opacity: .58; }
+.life-map-structure-settings__areas > div > i { width: 7px; height: 7px; border-radius: 50%; }
+.life-map-structure-settings__areas > div > span { min-width: 0; display: grid; gap: 1px; }
+.life-map-structure-settings__areas b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.life-map-structure-settings__areas small { color: #9299a6; font-size: 8px; }
+.life-map-structure-settings__areas button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 1px solid #e1e5ec; border-radius: 6px; color: #647084; background: #fff; cursor: pointer; }
+.life-map-structure-settings__areas button:disabled { opacity: .3; cursor: default; }
+.life-map-structure-settings__areas p { margin: 0; padding: 11px; color: #9299a6; font-size: 9px; }
+.life-map-structure-settings__add { min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; border: 0; color: color-mix(in srgb, var(--structure-group-color), #344054 35%); background: rgba(255,255,255,.64); cursor: pointer; }
+@media (max-width: 520px) {
+  .life-map-planning-drawer__backdrop { align-items: flex-end; }
+  .life-map-planning-drawer { width: 100%; height: 100%; border-radius: 0; box-shadow: 0 -18px 48px rgba(15,23,42,.18); }
 }

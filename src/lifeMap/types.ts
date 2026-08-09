@@ -1,6 +1,7 @@
 export type LifeMapPlacement = 'above' | 'below';
 export type LifeMapStatus = 'active' | 'completed' | 'paused' | 'archived';
 export type LifeMapLayoutLane = number;
+export type LifeMapPlanGroupId = 'learning' | 'work' | 'life';
 
 export interface LifeMapSyncMeta {
   createdAt: string;
@@ -23,7 +24,14 @@ export interface LifeArea extends LifeMapSyncMeta {
   icon?: string;
   order: number;
   isHidden?: boolean;
+  planGroupId: LifeMapPlanGroupId;
   maintenancePeriods?: LifeMaintenancePeriod[];
+}
+
+export interface LifeMapPlanGroupPreference extends LifeMapSyncMeta {
+  id: LifeMapPlanGroupId;
+  placement: LifeMapPlacement;
+  order: number;
 }
 
 export interface LifeMapStage extends LifeMapSyncMeta {
@@ -62,10 +70,12 @@ export interface LifeGoal extends LifeMapSyncMeta {
   targetValue?: number;
   unit?: string;
   isCore?: boolean;
-  /** 旧数据未设置时按普通目标处理。主计划与计划阶段共用目标集合，以沿用同一套同步与备份链路。 */
+  /** 旧数据未设置时按普通目标处理。项目与项目子阶段共用目标集合，以沿用同一套同步与备份链路。 */
   kind?: 'goal' | 'plan' | 'phase';
-  /** 仅计划阶段使用，指向 kind=plan 的 LifeGoal。 */
+  /** 仅项目子阶段使用，指向 kind=plan 的 LifeGoal。 */
   parentGoalId?: string;
+  /** 历史兼容字段；新项目 UI 不再写入，规范化和备份仍保留。 */
+  outcomeGoalId?: string;
   /** 面向时间线展示的简短说明或阶段结果。 */
   summary?: string;
   maintenancePeriods?: LifeMaintenancePeriod[];
@@ -115,7 +125,10 @@ export interface LifeReview extends LifeMapSyncMeta {
 
 export interface LifeEvent extends LifeMapSyncMeta {
   id: string;
-  areaId: string;
+  /** 缺失表示全局关键日期。 */
+  areaId?: string;
+  /** 可选关联一个人生地图主项目。 */
+  relatedPlanId?: string;
   name: string;
   date: string;
   color?: string;
@@ -156,6 +169,7 @@ export interface LifeRelation extends LifeMapSyncMeta {
 
 export interface LifeMapData {
   lifeMapAreas: LifeArea[];
+  lifeMapPlanGroups: LifeMapPlanGroupPreference[];
   lifeMapStages: LifeMapStage[];
   lifeMapThemes: LifeTheme[];
   lifeMapGoals: LifeGoal[];
@@ -168,5 +182,5 @@ export interface LifeMapData {
   lifeMapReviews: LifeReview[];
 }
 
-export type LifeMapEntity = LifeMapStage | LifeTheme | LifeGoal | LifeSystem | LifeSystemCheckIn | LifeEvent | LifeFocus | LifeMapNote | LifeRelation | LifeReview;
+export type LifeMapEntity = LifeMapPlanGroupPreference | LifeMapStage | LifeTheme | LifeGoal | LifeSystem | LifeSystemCheckIn | LifeEvent | LifeFocus | LifeMapNote | LifeRelation | LifeReview;
 export type LifeMapEntityCollection = Exclude<keyof LifeMapData, 'lifeMapAreas'>;

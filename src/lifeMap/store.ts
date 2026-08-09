@@ -8,6 +8,7 @@ import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal
 import type { LifeStage, Milestone, Note } from '@/types';
 import {
   LIFE_MAP_FIELDS,
+  canDeleteLifeArea,
   createEmptyLifeMapData,
   hasIndependentLifeMapContent,
   migrateLegacyLifeMapLayouts,
@@ -20,6 +21,7 @@ import type {
   LifeGoal,
   LifeMapData,
   LifeMapNote,
+  LifeMapPlanGroupId,
   LifeMapStage,
   LifeRelation,
   LifeReview,
@@ -42,12 +44,12 @@ interface SyncSettings { roomCode: string; enabled: boolean }
 export type LifeMapSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 export interface LifeMapShiftSnapshot { id: string; start: string; targetDate: string }
 
-type NewArea = Pick<LifeArea, 'name' | 'color'> & Partial<Pick<LifeArea, 'icon' | 'order' | 'isHidden'>>;
+type NewArea = Pick<LifeArea, 'name' | 'color' | 'planGroupId'> & Partial<Pick<LifeArea, 'icon' | 'order' | 'isHidden'>>;
 type NewStage = Pick<LifeMapStage, 'name' | 'start' | 'end'> & Partial<Pick<LifeMapStage, 'id' | 'color'>>;
 type NewTheme = Pick<LifeTheme, 'areaId' | 'name' | 'start' | 'end'> & Partial<Pick<LifeTheme, 'color' | 'placement'>>;
 type NewGoal = Pick<LifeGoal, 'areaId' | 'name' | 'start' | 'targetDate'> & Partial<Omit<LifeGoal, 'id' | 'areaId' | 'name' | 'start' | 'targetDate' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
 type NewSystem = Pick<LifeSystem, 'areaId' | 'name' | 'start' | 'frequency' | 'targetCount'> & Partial<Omit<LifeSystem, 'id' | 'areaId' | 'name' | 'start' | 'frequency' | 'targetCount' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
-type NewEvent = Pick<LifeEvent, 'areaId' | 'name' | 'date'> & Partial<Omit<LifeEvent, 'areaId' | 'name' | 'date' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
+type NewEvent = Pick<LifeEvent, 'name' | 'date'> & Partial<Omit<LifeEvent, 'name' | 'date' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
 type NewFocus = Pick<LifeFocus, 'areaId' | 'name' | 'start' | 'end'> & Partial<Pick<LifeFocus, 'id' | 'color' | 'placement'>>;
 type NewNote = Pick<LifeMapNote, 'areaId' | 'name' | 'date' | 'type'> & Partial<Pick<LifeMapNote, 'id' | 'endDate' | 'color' | 'placement'>>;
 type NewRelation = Pick<LifeRelation, 'lifeItemType' | 'lifeItemId' | 'projectId'>;
@@ -64,7 +66,8 @@ interface LifeMapStore extends LifeMapData {
   setSyncStatus: (status: LifeMapSyncStatus) => void;
   addArea: (value: NewArea) => LifeArea;
   updateArea: (id: string, updates: Partial<Omit<LifeArea, 'id' | 'createdAt'>>) => void;
-  deleteArea: (id: string) => void;
+  deleteArea: (id: string) => boolean;
+  updatePlanGroupPlacement: (id: LifeMapPlanGroupId, placement: 'above' | 'below') => void;
   addStage: (value: NewStage) => LifeMapStage;
   updateStage: (id: string, updates: Partial<Omit<LifeMapStage, 'id' | 'createdAt'>>) => void;
   deleteStage: (id: string) => void;
@@ -189,7 +192,12 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
           return area;
         },
         updateArea: (id, updates) => updateCollection('lifeMapAreas', id, updates),
-        deleteArea: (id) => deleteFromCollection('lifeMapAreas', id),
+        deleteArea: (id) => {
+          if (!canDeleteLifeArea(get(), id)) return false;
+          deleteFromCollection('lifeMapAreas', id);
+          return true;
+        },
+        updatePlanGroupPlacement: (id, placement) => updateCollection('lifeMapPlanGroups', id, { placement }),
         addStage: (value) => {
           const item = stamp({ ...value, id: value.id ?? genId('stage') });
           set((state) => ({ lifeMapStages: [...state.lifeMapStages, item] }));

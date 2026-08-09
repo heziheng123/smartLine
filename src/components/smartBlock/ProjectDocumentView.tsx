@@ -28,6 +28,7 @@ import {
   Inbox,
   SearchX,
   FileText,
+  CalendarRange,
 } from 'lucide-react';
 import {
   todayStr,
@@ -72,8 +73,10 @@ import BatchImportDialog from '@/components/BatchImportDialog';
 import BatchEditDialog from '@/components/BatchEditDialog';
 import { openProjectTaskCreate } from './projectTaskCreate';
 import ProjectDocumentControls from './ProjectDocumentControls';
+import ProjectShiftDialog from './ProjectShiftDialog';
 import { mergeBatchEditRows, type ParsedRow } from '@/utils/excelImport';
 import { deleteProjectTask, updateProjectTask } from '@/services/projectTaskCommands';
+import { useOperationHistory } from '@/services/operationHistory';
 import { requestCompletedBindingStrategy } from '@/graph/bindingDecision';
 import type { CompletedTaskBindingStrategy } from '@/domain/projectTaskEffects';
 
@@ -115,6 +118,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [slashMenu, setSlashMenu] = useState<{ position: { top: number; left: number }; blockId: string } | null>(null);
   const [showBatchImport, setShowBatchImport] = useState(false);
   const [showBatchEdit, setShowBatchEdit] = useState(false);
+  const [showProjectShift, setShowProjectShift] = useState(false);
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [showExpandMenu, setShowExpandMenu] = useState(false);
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(new Set());
@@ -126,6 +130,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [highlightedBlockId, setHighlightedBlockId] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [shiftFeedback, setShiftFeedback] = useState<{ text: string; operationId: string } | null>(null);
 
   useEffect(() => {
     if (!focusBlockId) return;
@@ -761,6 +766,13 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                 >
                   <ListTree size={14} /> 批量编辑
                 </button>
+                <button
+                  type="button"
+                  className="pdv-expand-option pdv-expand-option--icon"
+                  onClick={() => { setShowProjectShift(true); setShowExpandMenu(false); }}
+                >
+                  <CalendarRange size={14} /> 项目整体顺延
+                </button>
               </div>
             )}
           </div>
@@ -783,6 +795,21 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         <div className="pdv-operation-error" role="alert">
           <span>{operationError}</span>
           <button type="button" onClick={() => setOperationError(null)} aria-label="关闭错误提示">×</button>
+        </div>
+      )}
+      {shiftFeedback && (
+        <div className="pdv-shift-feedback" role="status" aria-live="polite">
+          <span>{shiftFeedback.text}</span>
+          <button type="button" onClick={async () => {
+            const undone = await useOperationHistory.getState().undo(shiftFeedback.operationId);
+            if (undone) {
+              setShiftFeedback(null);
+              return;
+            }
+            const entry = useOperationHistory.getState().entries.find((item) => item.id === shiftFeedback.operationId);
+            setOperationError(entry?.error ?? '无法撤销：项目或每日安排已经发生后续变化');
+          }}>撤销</button>
+          <button type="button" onClick={() => setShiftFeedback(null)} aria-label="关闭顺延提示">×</button>
         </div>
       )}
 
@@ -958,6 +985,14 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           onConfirm={handleBatchEditConfirm}
         />,
         document.body,
+      )}
+      {showProjectShift && (
+        <ProjectShiftDialog
+          taskId={currentTask.id}
+          taskName={currentTask.name}
+          onClose={() => setShowProjectShift(false)}
+          onApplied={setShiftFeedback}
+        />
       )}
     </aside>
   );

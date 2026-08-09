@@ -1138,7 +1138,7 @@ try {
     assert.ok(result.summary.issues.some((issue) => /轮次/.test(issue)));
   });
 
-  check('人生阶段进入完整工作区备份并接受严格日期校验', () => {
+  check('人生时期进入完整工作区备份并接受严格日期校验', () => {
     resetStores({
       lifeStages: [{
         id: 'stage-exam',
@@ -1158,7 +1158,7 @@ try {
     const impossible = structuredClone(backup);
     impossible.timeline.lifeStages[0].start = '2026-02-31';
     const invalid = backupModule.validateWorkspaceBackup(impossible);
-    assert.ok(invalid.errors.some((error) => /人生阶段/.test(error)));
+    assert.ok(invalid.errors.some((error) => /人生时期/.test(error)));
   });
 
   check('单词任务作为项目任务块保存，累计数量由初始值和每日记录共同派生', () => {
@@ -2022,18 +2022,33 @@ try {
       targetDate: '2026-09-30',
     });
     const backup = backupModule.createWorkspaceBackup();
-    assert.equal(backup.schemaVersion, 4);
+    assert.equal(backup.schemaVersion, 6);
     assert.equal(backup.lifeMap.lifeMapGoals.length, 1);
+    assert.equal(backup.lifeMap.lifeMapPlanGroups.length, 3);
     const valid = backupModule.validateWorkspaceBackup(backup);
     assert.equal(valid.errors.length, 0);
     assert.equal(valid.summary.lifeMapItems, 1);
+
+    const schemaFourBackup = structuredClone(backup);
+    schemaFourBackup.schemaVersion = 4;
+    delete schemaFourBackup.lifeMap.lifeMapPlanGroups;
+    schemaFourBackup.lifeMap.lifeMapAreas.forEach((area) => { delete area.planGroupId; });
+    const schemaSixUpgrade = backupModule.validateWorkspaceBackup(schemaFourBackup);
+    assert.equal(schemaSixUpgrade.errors.length, 0);
+    assert.equal(schemaSixUpgrade.backup.schemaVersion, 6);
+    assert.deepEqual(schemaSixUpgrade.backup.lifeMap.lifeMapPlanGroups.map(({ id, placement }) => ({ id, placement })), [
+      { id: 'learning', placement: 'above' },
+      { id: 'work', placement: 'below' },
+      { id: 'life', placement: 'below' },
+    ]);
+    assert.equal(schemaSixUpgrade.backup.lifeMap.lifeMapAreas.find((area) => area.id === 'learning').planGroupId, 'learning');
 
     const oldBackup = structuredClone(backup);
     oldBackup.schemaVersion = 2;
     delete oldBackup.lifeMap;
     const upgraded = backupModule.validateWorkspaceBackup(oldBackup);
     assert.equal(upgraded.errors.length, 0);
-    assert.equal(upgraded.backup.schemaVersion, 4);
+    assert.equal(upgraded.backup.schemaVersion, 6);
     assert.equal(upgraded.summary.lifeMapItems, 0);
   });
 

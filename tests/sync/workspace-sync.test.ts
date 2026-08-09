@@ -14,11 +14,12 @@ import {
   withTimeout,
 } from '../../src/services/workspaceSyncCore.ts';
 import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
+import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from '../../src/services/workspaceSchema.ts';
 
 function backup(): WorkspaceBackup {
   return {
     kind: 'smart-line-workspace',
-    schemaVersion: 4,
+    schemaVersion: 6,
     revision: 1,
     exportedAt: '2026-07-21T00:00:00.000Z',
     deviceId: 'device-a',
@@ -58,10 +59,12 @@ test('first unified connection never overlays two different non-empty workspaces
 });
 
 test('future cloud schemas are rejected before the room can hydrate local stores', () => {
-  assert.doesNotThrow(() => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 4 } }, 4));
+  assert.equal(WORKSPACE_SCHEMA_VERSION, 6);
+  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6]);
+  assert.doesNotThrow(() => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 6 } }, 6));
   assert.throws(
-    () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 5 } }, 4),
-    /5/,
+    () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 6 } }, 5),
+    /6/,
   );
 });
 
@@ -154,6 +157,26 @@ test('offline collections merge disjoint entity edits and report only same-prope
     { tasks: [{ id: 'one', title: 'remote' }] },
   );
   assert.deepEqual(conflicting.conflicts, ['tasks[one].title']);
+});
+
+test('schema 6 project and key-date relationships participate in entity-level merges', () => {
+  const baseGoal = { id: 'plan-1', name: '项目', progress: 0 };
+  const mergedGoals = mergeWorkspaceFieldChanges(
+    { lifeMapGoals: [{ ...baseGoal, outcomeGoalId: 'goal-1' }] },
+    { lifeMapGoals: [baseGoal] },
+    { lifeMapGoals: [{ ...baseGoal, progress: 40 }] },
+  );
+  assert.deepEqual(mergedGoals.conflicts, []);
+  assert.deepEqual(mergedGoals.fields.lifeMapGoals, [{ ...baseGoal, progress: 40, outcomeGoalId: 'goal-1' }]);
+
+  const baseEvent = { id: 'event-1', name: '报名截止', date: '2026-09-01' };
+  const mergedEvents = mergeWorkspaceFieldChanges(
+    { lifeMapEvents: [{ ...baseEvent, relatedPlanId: 'plan-1' }] },
+    { lifeMapEvents: [baseEvent] },
+    { lifeMapEvents: [{ ...baseEvent, importance: 'core' }] },
+  );
+  assert.deepEqual(mergedEvents.conflicts, []);
+  assert.deepEqual(mergedEvents.fields.lifeMapEvents, [{ ...baseEvent, importance: 'core', relatedPlanId: 'plan-1' }]);
 });
 
 test('room inspection timeout reports a visible failure instead of waiting forever', async () => {

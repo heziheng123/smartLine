@@ -185,6 +185,135 @@
   gap: 8px;
 }
 
+.pdv-shift-feedback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-bottom: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 13px;
+}
+.pdv-shift-feedback > span { flex: 1; }
+.pdv-shift-feedback button {
+  border: none;
+  background: transparent;
+  color: #15803d;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.psd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .46);
+  backdrop-filter: blur(3px);
+}
+.psd-dialog {
+  width: min(620px, 100%);
+  max-height: min(760px, 92vh);
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .22);
+}
+.psd-header,
+.psd-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+}
+.psd-header { border-bottom: 1px solid #eef2f7; }
+.psd-header span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6366f1;
+  font-size: 12px;
+  font-weight: 700;
+}
+.psd-header h2 { margin: 4px 0 0; color: #111827; font-size: 19px; }
+.psd-header > button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+.psd-header > button:hover { background: #f1f5f9; }
+.psd-body { display: grid; gap: 14px; padding: 20px; }
+.psd-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.psd-presets > button,
+.psd-presets label {
+  border: 1px solid #dbe3ee;
+  border-radius: 9px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
+}
+.psd-presets > button { padding: 8px 14px; cursor: pointer; }
+.psd-presets > button.is-active { border-color: #818cf8; background: #eef2ff; color: #4338ca; font-weight: 700; }
+.psd-presets label { display: flex; align-items: center; gap: 6px; padding: 5px 9px; }
+.psd-presets input { width: 58px; border: none; outline: none; color: #111827; font: inherit; text-align: center; }
+.psd-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.psd-summary > div { display: grid; gap: 2px; padding: 14px; border-radius: 11px; background: #f8fafc; }
+.psd-summary strong { color: #111827; font-size: 22px; }
+.psd-summary span { color: #64748b; font-size: 12px; }
+.psd-summary .is-warning { background: #fff7ed; }
+.psd-summary .is-warning strong { color: #c2410c; }
+.psd-range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; font-size: 12px; }
+.psd-range span { color: #64748b; }
+.psd-range b { color: #334155; }
+.psd-range em { color: #818cf8; font-style: normal; }
+.psd-note,
+.psd-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.psd-note svg,
+.psd-warning svg { flex: 0 0 auto; margin-top: 2px; }
+.psd-warning { background: #fffbeb; color: #92400e; }
+.psd-risk-list { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid #fed7aa; border-radius: 10px; background: #fff7ed; }
+.psd-risk-list > strong { display: flex; align-items: center; gap: 6px; color: #c2410c; font-size: 13px; }
+.psd-risk-list > div { display: flex; justify-content: space-between; gap: 12px; color: #7c2d12; font-size: 12px; }
+.psd-risk-list em { white-space: nowrap; font-style: normal; }
+.psd-risk-list small { color: #9a3412; }
+.psd-error { padding: 10px 12px; border-radius: 9px; background: #fef2f2; color: #b91c1c; font-size: 13px; }
+.psd-footer { border-top: 1px solid #eef2f7; }
+.psd-footer > span { color: #64748b; font-size: 12px; }
+.psd-footer > div { display: flex; gap: 8px; }
+.psd-footer button { padding: 8px 14px; border: 1px solid #dbe3ee; border-radius: 8px; background: #fff; color: #334155; cursor: pointer; }
+.psd-footer button.is-primary { border-color: #4f46e5; background: #4f46e5; color: #fff; }
+.psd-footer button:disabled { cursor: not-allowed; opacity: .5; }
+
+@media (max-width: 640px) {
+  .psd-overlay { align-items: flex-end; padding: 10px; }
+  .psd-dialog { max-height: 92vh; border-radius: 16px 16px 0 0; }
+  .psd-summary { grid-template-columns: 1fr; }
+  .psd-footer { align-items: stretch; flex-direction: column; }
+  .psd-footer > div { display: grid; grid-template-columns: 1fr 1fr; }
+}
+
 /* 主操作按钮（添加任务块） */
 .pdv-btn--primary {
   background: #3b82f6;

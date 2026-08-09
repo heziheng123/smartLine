@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, FolderPlus, BookmarkPlus, Flag, Cloud, CloudOff, CalendarDays, BrainCircuit, CalendarClock, LayoutGrid, Network, Archive, Map } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -43,10 +44,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
+  const createMenuPopupRef = useRef<HTMLDivElement>(null);
+  const createButtonRef = useRef<HTMLButtonElement>(null);
+  const [createMenuPosition, setCreateMenuPosition] = useState({ left: 0, bottom: 0 });
   useEffect(() => {
     if (!isCreateMenuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!createMenuRef.current?.contains(event.target as Node)) setIsCreateMenuOpen(false);
+      const target = event.target as Node;
+      if (!createMenuRef.current?.contains(target) && !createMenuPopupRef.current?.contains(target)) {
+        setIsCreateMenuOpen(false);
+      }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setIsCreateMenuOpen(false);
@@ -56,6 +63,26 @@ const Toolbar: React.FC<ToolbarProps> = ({
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isCreateMenuOpen]);
+
+  useEffect(() => {
+    if (!isCreateMenuOpen) return;
+    const updatePosition = () => {
+      const rect = createButtonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const halfMenuWidth = 95;
+      setCreateMenuPosition({
+        left: Math.min(window.innerWidth - halfMenuWidth - 8, Math.max(halfMenuWidth + 8, rect.left + rect.width / 2)),
+        bottom: window.innerHeight - rect.top + 12,
+      });
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
     };
   }, [isCreateMenuOpen]);
 
@@ -174,6 +201,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
           >
             <div className="tl-dock-popover-wrap" ref={createMenuRef}>
               <button
+                ref={createButtonRef}
                 className={`tl-dock-btn tl-dock-btn--primary ${isCreateMenuOpen ? 'tl-dock-btn--menu-open' : ''}`}
                 onClick={() => setIsCreateMenuOpen((open) => !open)}
                 type="button"
@@ -183,8 +211,13 @@ const Toolbar: React.FC<ToolbarProps> = ({
               >
                 <Plus size={18} />
               </button>
-              {isCreateMenuOpen && (
-                <div className="tl-dock-popover tl-create-menu" role="menu">
+              {isCreateMenuOpen && createPortal(
+                <div
+                  ref={createMenuPopupRef}
+                  className="tl-dock-popover tl-create-menu tl-create-menu--portal"
+                  role="menu"
+                  style={{ left: createMenuPosition.left, bottom: createMenuPosition.bottom }}
+                >
                   <button type="button" role="menuitem" onClick={() => runCreateAction(onAddTask)}>
                     <Plus size={16} />
                     <span>新建任务</span>
@@ -201,7 +234,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
                     <Flag size={16} />
                     <span>新建里程碑</span>
                   </button>
-                </div>
+                </div>,
+                document.body,
               )}
             </div>
 

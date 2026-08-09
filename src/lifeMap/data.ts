@@ -13,6 +13,8 @@ import type {
   LifeReview,
   LifeMapPlacement,
   LifeMaintenancePeriod,
+  LifeMapPlanGroupId,
+  LifeMapPlanGroupPreference,
 } from './types';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -20,6 +22,7 @@ const DEFAULT_AREA_TIMESTAMP = '2026-01-01T00:00:00.000Z';
 
 export const LIFE_MAP_FIELDS = [
   'lifeMapAreas',
+  'lifeMapPlanGroups',
   'lifeMapStages',
   'lifeMapThemes',
   'lifeMapGoals',
@@ -33,13 +36,37 @@ export const LIFE_MAP_FIELDS = [
 ] as const;
 
 const DEFAULT_AREA_DEFINITIONS = [
-  ['health', '身体健康', '#10B981', '心'],
-  ['learning', '学习成长', '#6366F1', '学'],
-  ['career', '职业发展', '#3B82F6', '业'],
-  ['finance', '财务生活', '#F59E0B', '财'],
-  ['relationships', '家庭关系', '#EC4899', '家'],
-  ['personal', '兴趣与精神', '#8B5CF6', '趣'],
+  ['health', '身体健康', '#10B981', '心', 'life'],
+  ['learning', '学习成长', '#6366F1', '学', 'learning'],
+  ['career', '职业发展', '#3B82F6', '业', 'work'],
+  ['finance', '财务生活', '#F59E0B', '财', 'life'],
+  ['relationships', '家庭关系', '#EC4899', '家', 'life'],
+  ['personal', '兴趣与精神', '#8B5CF6', '趣', 'life'],
 ] as const;
+
+export const LIFE_MAP_PLAN_GROUP_META: Record<LifeMapPlanGroupId, { name: string; color: string }> = {
+  learning: { name: '学习', color: '#6366F1' },
+  work: { name: '工作', color: '#D8A72E' },
+  life: { name: '生活', color: '#10B981' },
+};
+
+export function isLifeMapPlanGroupId(value: unknown): value is LifeMapPlanGroupId {
+  return value === 'learning' || value === 'work' || value === 'life';
+}
+
+export function defaultPlanGroupForAreaId(areaId: string): LifeMapPlanGroupId {
+  if (areaId === 'learning') return 'learning';
+  if (areaId === 'career') return 'work';
+  return 'life';
+}
+
+export function createDefaultLifeMapPlanGroups(now = DEFAULT_AREA_TIMESTAMP): LifeMapPlanGroupPreference[] {
+  return [
+    { id: 'learning', placement: 'above', order: 0, createdAt: now, updatedAt: now, revision: 1 },
+    { id: 'work', placement: 'below', order: 1, createdAt: now, updatedAt: now, revision: 1 },
+    { id: 'life', placement: 'below', order: 2, createdAt: now, updatedAt: now, revision: 1 },
+  ];
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -51,12 +78,13 @@ export function isLifeMapDate(value: unknown): value is string {
 }
 
 export function createDefaultLifeAreas(now = DEFAULT_AREA_TIMESTAMP): LifeArea[] {
-  return DEFAULT_AREA_DEFINITIONS.map(([id, name, color, icon], order) => ({
+  return DEFAULT_AREA_DEFINITIONS.map(([id, name, color, icon, planGroupId], order) => ({
     id,
     name,
     color,
     icon,
     order,
+    planGroupId,
     createdAt: now,
     updatedAt: now,
     revision: 1,
@@ -66,6 +94,7 @@ export function createDefaultLifeAreas(now = DEFAULT_AREA_TIMESTAMP): LifeArea[]
 export function createEmptyLifeMapData(): LifeMapData {
   return {
     lifeMapAreas: createDefaultLifeAreas(),
+    lifeMapPlanGroups: createDefaultLifeMapPlanGroups(),
     lifeMapStages: [],
     lifeMapThemes: [],
     lifeMapGoals: [],
@@ -125,6 +154,15 @@ function validArea(value: unknown): value is LifeArea {
     && Number.isFinite(value.order);
 }
 
+function validPlanGroup(value: unknown): value is LifeMapPlanGroupPreference {
+  return isRecord(value)
+    && isLifeMapPlanGroupId(value.id)
+    && (value.placement === 'above' || value.placement === 'below')
+    && typeof value.order === 'number'
+    && Number.isFinite(value.order)
+    && hasMeta(value);
+}
+
 function validStage(value: unknown): value is LifeMapStage {
   return hasBase(value) && isLifeMapDate(value.start) && isLifeMapDate(value.end) && value.start <= value.end;
 }
@@ -151,6 +189,7 @@ function validGoal(value: unknown): value is LifeGoal {
     && (value.progressMode === undefined || value.progressMode === 'manual' || value.progressMode === 'auto')
     && (value.kind === undefined || value.kind === 'goal' || value.kind === 'plan' || value.kind === 'phase')
     && (value.parentGoalId === undefined || typeof value.parentGoalId === 'string')
+    && (value.outcomeGoalId === undefined || typeof value.outcomeGoalId === 'string')
     && (value.summary === undefined || typeof value.summary === 'string')
     && (value.kind !== 'phase' || (typeof value.parentGoalId === 'string' && value.parentGoalId.trim().length > 0))
     && (value.initialValue === undefined || (typeof value.initialValue === 'number' && Number.isFinite(value.initialValue)))
@@ -203,7 +242,11 @@ function validReview(value: unknown): value is LifeReview {
 }
 
 function validEvent(value: unknown): value is LifeEvent {
-  return hasBase(value) && hasValidLayout(value) && typeof value.areaId === 'string' && isLifeMapDate(value.date);
+  return hasBase(value)
+    && hasValidLayout(value)
+    && (value.areaId === undefined || typeof value.areaId === 'string')
+    && (value.relatedPlanId === undefined || typeof value.relatedPlanId === 'string')
+    && isLifeMapDate(value.date);
 }
 
 function validNote(value: unknown): value is LifeMapNote {
@@ -318,16 +361,42 @@ export function normalizeLifeMapData(value: unknown): LifeMapData {
   const defaultAreas = createDefaultLifeAreas();
   const storedIds = new Set(storedAreas.map((area) => area.id));
   const areas = [...storedAreas, ...defaultAreas.filter((area) => !storedIds.has(area.id))]
+    .map((area) => ({
+      ...area,
+      planGroupId: isLifeMapPlanGroupId(area.planGroupId)
+        ? area.planGroupId
+        : defaultPlanGroupForAreaId(area.id),
+    }))
     .sort((left, right) => left.order - right.order);
+  const storedPlanGroups = dedupe(source.lifeMapPlanGroups, validPlanGroup);
+  const planGroups = createDefaultLifeMapPlanGroups().map((fallback) => {
+    const stored = storedPlanGroups.find((group) => group.id === fallback.id && !group.deletedAt);
+    return stored ? { ...stored, order: fallback.order } : fallback;
+  });
   const areaIds = new Set(areas.filter((area) => !area.deletedAt).map((area) => area.id));
-  const keepArea = <T extends { areaId: string }>(items: T[]) => items.filter((item) => areaIds.has(item.areaId));
+  const keepArea = <T extends { areaId: string; deletedAt?: string }>(items: T[]) => items
+    .filter((item) => Boolean(item.deletedAt) || areaIds.has(item.areaId));
 
-  const candidateGoals = keepArea(dedupe(source.lifeMapGoals, validGoal));
+  const candidateGoals = dedupe(source.lifeMapGoals, validGoal).filter((item) => (
+    Boolean(item.deletedAt)
+    || item.kind === undefined
+    || item.kind === 'goal'
+    || areaIds.has(item.areaId)
+  ));
   const planIds = new Set(candidateGoals.filter((item) => item.kind === 'plan' && !item.deletedAt).map((item) => item.id));
-  const goals = candidateGoals.filter((item) => item.kind !== 'phase' || planIds.has(item.parentGoalId ?? ''));
+  const goals = candidateGoals
+    .filter((item) => item.kind !== 'phase' || Boolean(item.deletedAt) || planIds.has(item.parentGoalId ?? ''));
   const systems = keepArea(dedupe(source.lifeMapSystems, validSystem));
   const systemIds = new Set(systems.map((item) => item.id));
-  const events = keepArea(dedupe(source.lifeMapEvents, validEvent));
+  const events = dedupe(source.lifeMapEvents, validEvent).map((item) => {
+    const areaId = item.areaId && areaIds.has(item.areaId) ? item.areaId : undefined;
+    const relatedPlanId = item.relatedPlanId && planIds.has(item.relatedPlanId) ? item.relatedPlanId : undefined;
+    return {
+      ...item,
+      areaId,
+      relatedPlanId,
+    };
+  });
   const validLifeIds = new Set([
     ...goals.map((item) => `goal:${item.id}`),
     ...systems.map((item) => `system:${item.id}`),
@@ -336,6 +405,7 @@ export function normalizeLifeMapData(value: unknown): LifeMapData {
 
   return {
     lifeMapAreas: areas,
+    lifeMapPlanGroups: planGroups,
     lifeMapStages: dedupe(source.lifeMapStages, validStage),
     lifeMapThemes: keepArea(dedupe(source.lifeMapThemes, validAreaRange)),
     lifeMapGoals: goals,
@@ -350,10 +420,26 @@ export function normalizeLifeMapData(value: unknown): LifeMapData {
   };
 }
 
+export function canDeleteLifeArea(data: LifeMapData, areaId: string): boolean {
+  const isActiveAreaReference = (item: { areaId: string; deletedAt?: string }) => (
+    !item.deletedAt && item.areaId === areaId
+  );
+  const hasPlanningReference = data.lifeMapGoals.some((item) => (
+    (item.kind === 'plan' || item.kind === 'phase') && isActiveAreaReference(item)
+  ));
+  return !hasPlanningReference
+    && !data.lifeMapSystems.some(isActiveAreaReference)
+    && !data.lifeMapThemes.some(isActiveAreaReference)
+    && !data.lifeMapFocuses.some(isActiveAreaReference)
+    && !data.lifeMapNotes.some(isActiveAreaReference)
+    && !data.lifeMapEvents.some((item) => !item.deletedAt && item.areaId === areaId);
+}
+
 export function validateLifeMapData(value: unknown): string[] {
   if (!isRecord(value)) return ['人生地图数据缺失。'];
   const checks: Array<[keyof LifeMapData, (item: unknown) => boolean]> = [
     ['lifeMapAreas', validArea],
+    ['lifeMapPlanGroups', validPlanGroup],
     ['lifeMapStages', validStage],
     ['lifeMapThemes', validAreaRange],
     ['lifeMapGoals', validGoal],
@@ -376,7 +462,7 @@ export function validateLifeMapData(value: unknown): string[] {
 }
 
 export function hasIndependentLifeMapContent(data: LifeMapData): boolean {
-  return LIFE_MAP_FIELDS.some((field) => field !== 'lifeMapAreas' && data[field].some((item) => !item.deletedAt));
+  return LIFE_MAP_FIELDS.some((field) => field !== 'lifeMapAreas' && field !== 'lifeMapPlanGroups' && data[field].some((item) => !item.deletedAt));
 }
 
 export function activeLifeMapItems<T extends { deletedAt?: string }>(items: T[]): T[] {

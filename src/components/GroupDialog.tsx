@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { WandSparkles } from 'lucide-react';
 import type { Task, TaskGroup } from '@/types';
 import { GROUP_COLOR_PRESET, TIMELINE_THEMES, suggestGroupColor } from '@/utils/timeline-utils';
+import { isValidCalendarDate } from '@/utils/dateSafe';
 
 interface GroupDialogProps {
   group?: TaskGroup;
@@ -38,6 +39,15 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
     group?.color ?? suggestGroupColor(groups.map((item) => item.color), group?.id ?? name),
   );
   const [autoDate, setAutoDate] = useState(group?.autoDate ?? true);
+  const manualDateError = !autoDate
+    ? !start || !end
+      ? '手动日期模式必须填写开始日期和结束日期'
+      : !isValidCalendarDate(start) || !isValidCalendarDate(end)
+        ? '请输入有效的日历日期'
+        : end < start
+          ? '结束日期不能早于开始日期'
+          : null
+    : null;
 
   // 已选中的子任务 ID 集合
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => {
@@ -59,7 +69,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
 
   const handleSave = () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || manualDateError) return;
 
     let finalColor: string | undefined;
     const colorTrimmed = color.trim();
@@ -142,6 +152,10 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
             />
             <span>自动从子任务计算日期范围</span>
           </label>
+
+          {manualDateError && (
+            <div className="tl-dialog-error" role="alert">{manualDateError}</div>
+          )}
 
           <label className="tl-dialog-field">
             <span className="tl-dialog-label">分组颜色</span>
@@ -240,7 +254,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
             <button
               className="tl-dialog-btn tl-dialog-btn--primary"
               onClick={handleSave}
-              disabled={!name.trim()}
+              disabled={!name.trim() || Boolean(manualDateError)}
               type="button"
             >
               {isEdit ? '保存' : '创建'}

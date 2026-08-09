@@ -14,6 +14,7 @@ import dayjs from 'dayjs';
  * 解决方案：先用 new Date(y, m-1, d) 构造本地午夜的 Date 对象，再传给 dayjs。
  */
 export function makeLocalDayjs(dateStr: string): dayjs.Dayjs {
+  if (!isValidCalendarDate(dateStr)) return dayjs(Number.NaN);
   const [y, m, d] = dateStr.split('-').map(Number);
   return dayjs(new Date(y, m - 1, d));
 }

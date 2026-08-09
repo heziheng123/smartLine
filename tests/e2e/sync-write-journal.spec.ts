@@ -75,19 +75,27 @@ async function readPersistedTimelineData(page: Page) {
 }
 
 async function simulateConnectedStorageLoading(page: Page) {
-  await page.evaluate(async () => {
-    const storeModuleUrl = '/src/store/index.ts';
-    const { useTimelineStore } = await import(storeModuleUrl);
-    const current = useTimelineStore.getState();
-    useTimelineStore.setState({
-      liveblocks: {
-        ...current.liveblocks,
-        room: { getStatus: () => 'connected' },
-        status: 'connected',
-        isStorageLoading: true,
-      },
-    });
-  });
+  await expect.poll(async () => {
+    try {
+      await page.evaluate(async () => {
+        const storeModuleUrl = '/src/store/index.ts';
+        const { useTimelineStore } = await import(storeModuleUrl);
+        const current = useTimelineStore.getState();
+        useTimelineStore.setState({
+          liveblocks: {
+            ...current.liveblocks,
+            room: { getStatus: () => 'connected' },
+            status: 'connected',
+            isStorageLoading: true,
+          },
+        });
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Execution context was destroyed')) return false;
+      throw error;
+    }
+  }).toBe(true);
 }
 
 async function simulateConnectedStorageReady(page: Page) {
@@ -172,16 +180,16 @@ test('独立人生地图编辑会写入统一工作区离线队列', async ({ pa
   await page.getByTitle('人生地图').click();
   const lifeMap = page.getByRole('main', { name: '人生地图' });
   await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
-  await lifeMap.getByRole('button', { name: '新建目标' }).click();
+    await lifeMap.getByRole('menuitem', { name: '新建项目' }).click();
   const editor = page.locator('.life-map-editor form');
-  await editor.getByLabel('名称').fill('多端同步健康目标');
+  await editor.getByLabel('名称').fill('多端同步健康项目');
   await editor.getByLabel('人生领域').selectOption('health');
   await editor.getByRole('button', { name: '保存', exact: true }).click();
 
   await expect.poll(async () => {
     const pending = await readPendingWorkspaceSync(page);
     const fields = pending?.fields as { lifeMapGoals?: Array<{ name?: string }> } | undefined;
-    return fields?.lifeMapGoals?.some((item) => item.name === '多端同步健康目标') ?? false;
+    return fields?.lifeMapGoals?.some((item) => item.name === '多端同步健康项目') ?? false;
   }).toBe(true);
 });
 

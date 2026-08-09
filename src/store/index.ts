@@ -7,6 +7,7 @@ import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from './client';
 import type { TimelineData, Task, TaskGroup, Note, Milestone, LifeStage, Block, SmartTaskHeader } from '@/types';
+import type { OverdueFreezeTarget } from '@/domain/icebox';
 import {
   updateBlockHeader,
   deleteBlock,
@@ -177,6 +178,9 @@ interface TimelineStore extends TimelineData {
     headerPatch: Partial<SmartTaskHeader>,
     options?: ProjectTaskHeaderUpdateOptions,
   ) => ProjectTaskHeaderUpdateResult;
+
+  /** Return multiple overdue standard tasks to the backlog as one transaction. */
+  freezeOverdueBlocks: (targets: OverdueFreezeTarget[], frozenAt: string) => number;
 
   /** 更新指定 SmartTaskBlock 的 body（局部 patch，避免整体覆盖 blocks） */
   updateBlockBody: (taskId: string, blockId: string, body: string) => void;
@@ -694,6 +698,116 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             }
           }
           return { ...commitReport, changed: true };
+        },
+
+        freezeOverdueBlocks: (targets, frozenAt) => {
+          if (targets.length === 0) return 0;
+          const targetByTask = new Map<string, Map<string, OverdueFreezeTarget>>();
+          for (const target of targets) {
+            const blockTargets = targetByTask.get(target.taskId) ?? new Map<string, OverdueFreezeTarget>();
+            blockTargets.set(target.blockId, target);
+            targetByTask.set(target.taskId, blockTargets);
+          }
+
+          const previous = new Map<string, { taskId: string; blockId: string; date: string; frozenAt?: string }>();
+          for (const task of getUniqueTasks(get().tasks, get().groups)) {
+            const blockTargets = targetByTask.get(task.id);
+            if (!blockTargets) continue;
+            for (const block of Array.isArray(task.blocks) ? task.blocks : []) {
+              if (block.type !== 'smart-task') continue;
+              const target = blockTargets.get(block.id);
+              if (!target
+                || block.header.isArchived
+                || block.header.isCompleted
+                || block.header.taskKind === 'quantity'
+                || block.header.taskKind === 'vocabulary'
+                || block.header.date !== target.expectedDate) continue;
+              previous.set(`${task.id}\u0000${block.id}`, {
+                taskId: task.id,
+                blockId: block.id,
+                date: target.expectedDate,
+                frozenAt: block.header.frozenAt,
+              });
+            }
+          }
+          if (previous.size === 0) return 0;
+
+          const sourceIds = [...previous.values()].map(({ taskId, blockId }) =>
+            getProjectBlockSourceId(taskId, blockId));
+          const dailySnapshots = captureDailySourceSnapshots(
+            useDailyScheduleStore.getState().schedules,
+            sourceIds,
+          );
+          const now = new Date().toISOString();
+          const updatedTaskIds = new Set([...previous.values()].map(({ taskId }) => taskId));
+          const patchTask = (task: Task, restore = false): Task => {
+            if (!updatedTaskIds.has(task.id)) return task;
+            const blocks = (Array.isArray(task.blocks) ? task.blocks : []).map((block) => {
+              if (block.type !== 'smart-task') return block;
+              const prior = previous.get(`${task.id}\u0000${block.id}`);
+              if (!prior) return block;
+              return {
+                ...block,
+                header: restore
+                  ? { ...block.header, date: prior.date, frozenAt: prior.frozenAt }
+                  : { ...block.header, date: undefined, frozenAt },
+              };
+            });
+            return { ...task, blocks, blocksUpdatedAt: now };
+          };
+
+          set((state) => {
+            const newData = {
+              ...state,
+              tasks: state.tasks.map((task) => patchTask(task)),
+              groups: state.groups.map((group) => ({
+                ...group,
+                children: group.children.map((task) => patchTask(task)),
+              })),
+            };
+            saveData(newData);
+            return newData;
+          });
+          useDailyScheduleStore.getState().removeBySourceIds(sourceIds);
+
+          recordOperation({
+            label: `自动冷冻 ${previous.size} 个逾期任务`,
+            detail: '已作为一次操作移回待规划，并清理对应的每日安排',
+            modules: ['项目文档', '周矩阵', '每日安排'],
+          }, () => {
+            const latestState = get();
+            const latestCopies = [
+              ...latestState.tasks,
+              ...latestState.groups.flatMap((group) => group.children),
+            ];
+            for (const prior of previous.values()) {
+              const copies = latestCopies.filter((candidate) => candidate.id === prior.taskId);
+              if (copies.length === 0) return '部分任务在自动冷冻后已被修改';
+              for (const task of copies) {
+                const block = (Array.isArray(task.blocks) ? task.blocks : [])
+                  .find((candidate) => candidate.id === prior.blockId);
+                if (block?.type !== 'smart-task'
+                  || block.header.date !== undefined
+                  || block.header.frozenAt !== frozenAt) {
+                  return '部分任务在自动冷冻后已被修改';
+                }
+              }
+            }
+            set((state) => {
+              const restoredData = {
+                ...state,
+                tasks: state.tasks.map((task) => patchTask(task, true)),
+                groups: state.groups.map((group) => ({
+                  ...group,
+                  children: group.children.map((task) => patchTask(task, true)),
+                })),
+              };
+              saveData(restoredData);
+              return restoredData;
+            });
+            useDailyScheduleStore.getState().restoreSourceSnapshots(dailySnapshots);
+          });
+          return previous.size;
         },
 
         updateBlockBody: (taskId, blockId, body) => {
