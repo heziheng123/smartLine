@@ -34,6 +34,7 @@ import {
 import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
+import { assertLegacyProjectPlanningSyncSafe } from '@/services/workspaceSyncCore';
 import { useShallow } from 'zustand/react/shallow';
 
 interface SyncDialogProps { onClose: () => void }
@@ -189,6 +190,14 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       return;
     }
     if (key === 'timeline') {
+      try {
+        assertLegacyProjectPlanningSyncSafe(useTimelineStore.getState().tasks);
+      } catch (error) {
+        setRestoreMessage(error instanceof Error ? error.message : '旧模块房间无法安全同步项目分类。');
+        return;
+      }
+    }
+    if (key === 'timeline') {
       timeline.enableSync(code);
       timeline.liveblocks?.enterRoom?.(code);
     } else if (key === 'ebb') {
@@ -251,6 +260,13 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       } catch (error) {
         setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接前检查失败。');
       }
+      return;
+    }
+
+    try {
+      assertLegacyProjectPlanningSyncSafe(useTimelineStore.getState().tasks);
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '旧模块房间无法安全同步项目分类。');
       return;
     }
 
@@ -411,9 +427,13 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   const handleLegacyFallback = useCallback(async () => {
     if (!activeCode || !await requestConfirmation('确定暂时返回旧模块房间吗？统一工作区数据不会删除。')) return;
-    resetToLegacyArchitecture(activeCode);
-    setArchitecture(readWorkspaceSyncSettings());
-    setRestoreMessage('已切回旧模块房间恢复通道。');
+    try {
+      resetToLegacyArchitecture(activeCode);
+      setArchitecture(readWorkspaceSyncSettings());
+      setRestoreMessage('已切回旧模块房间恢复通道。');
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '无法返回旧模块房间。');
+    }
   }, [activeCode]);
 
   const handleArchivePeriod = useCallback(async () => {

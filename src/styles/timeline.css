@@ -375,11 +375,11 @@ html, body, #root {
 }
 
 .tl-filter-status {
-  position: absolute;
-  top: 22px;
-  right: 24px;
+  position: static;
+  align-self: flex-end;
+  margin: 6px 0;
   z-index: 20;
-  max-width: calc(100% - 92px);
+  max-width: 100%;
   height: 26px;
   display: flex;
   align-items: center;
@@ -4627,4 +4627,127 @@ html, body, #root {
   color: inherit;
   background: #fef3c7;
   cursor: pointer;
+}
+.tl-global-project-drawer {
+  position: fixed;
+  top: 64px;
+  right: 0;
+  bottom: 0;
+  width: min(450px, 94vw);
+  z-index: 1200;
+  overflow: hidden;
+  border-left: 1px solid #e5e7eb;
+  background: #fff;
+  box-shadow: -18px 0 40px rgba(15, 23, 42, 0.16);
+}
+
+.tl-global-project-drawer .pdv-container {
+  width: 100%;
+  height: 100%;
+}
+
+.tl-planning-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #e8edf3;
+  background: rgba(248, 250, 252, 0.96);
+  overflow-x: auto;
+}
+
+.tl-planning-scope button,
+.tl-planning-scope select {
+  min-height: 30px;
+  border: 1px solid #d8e0ea;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tl-planning-scope button {
+  padding: 0 12px;
+}
+
+.tl-planning-scope button.is-active {
+  border-color: #6366f1;
+  background: #eef2ff;
+  color: #4338ca;
+  font-weight: 700;
+}
+
+.tl-planning-scope select {
+  margin-left: auto;
+  padding: 0 28px 0 10px;
+}
+
+.tl-planning-scope button.is-bulk {
+  border-style: dashed;
+  color: #4f46e5;
+}
+
+.tl-bulk-planning-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 48px));
+  overflow: auto;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.24);
+}
+
+.tl-bulk-planning-dialog > p,
+.tl-bulk-planning-dialog > label,
+.tl-bulk-planning-projects {
+  margin: 16px 20px;
+}
+
+.tl-bulk-planning-dialog > p {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tl-bulk-planning-projects {
+  display: grid;
+  gap: 7px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.tl-bulk-planning-projects span {
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+}
+
+.tl-bulk-planning-dialog > label {
+  display: grid;
+  gap: 7px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tl-bulk-planning-dialog > label select {
+  min-height: 38px;
+  border: 1px solid #d8e0ea;
+  border-radius: 9px;
+  padding: 0 10px;
+  background: #fff;
+}
+
+@media (max-width: 720px) {
+  .tl-global-project-drawer {
+    top: 56px;
+    bottom: 88px;
+    width: 100vw;
+  }
+
+  .tl-planning-scope select {
+    margin-left: 0;
+  }
 }

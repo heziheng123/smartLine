@@ -7,6 +7,11 @@ import type {
   LifeMapPlacement,
   LifeSystem,
 } from './types';
+import type {
+  ProjectPlanningArea,
+  ProjectPlanningGroup,
+  ProjectPlanningGroupId,
+} from './projectPlanning.ts';
 
 export const PLAN_SWIMLANE_LABEL_WIDTH = 128;
 export const PLAN_SWIMLANE_AXIS_GAP = 18;
@@ -15,7 +20,8 @@ export const PLAN_SWIMLANE_GROUP_PADDING = 8;
 export const PLAN_SWIMLANE_ROW_PADDING = 6;
 export const PLAN_SWIMLANE_TRACK_HEIGHT = 30;
 
-export type LifeMapPlanGroupFilter = 'all' | LifeMapPlanGroupId;
+export type LifeMapPlanGroupFilter = 'all' | ProjectPlanningGroupId;
+type PlanningGoal = LifeGoal & { projectTaskId?: string };
 
 export interface PlanTrackAssignment {
   trackById: Map<string, number>;
@@ -30,7 +36,7 @@ export interface LifeMapPlanSwimlaneBar {
   parentGoalId?: string;
   rowId: string;
   areaId: string;
-  groupId: LifeMapPlanGroupId;
+  groupId: ProjectPlanningGroupId;
   placement: LifeMapPlacement;
   trackIndex: number;
   top: number;
@@ -40,7 +46,7 @@ export interface LifeMapPlanSwimlaneBar {
 
 export interface LifeMapPlanSwimlaneRow {
   id: string;
-  groupId: LifeMapPlanGroupId;
+  groupId: ProjectPlanningGroupId;
   areaId: string;
   name: string;
   color: string;
@@ -52,7 +58,7 @@ export interface LifeMapPlanSwimlaneRow {
 
 export interface LifeMapPlanSwimlaneSection {
   id: string;
-  groupId: LifeMapPlanGroupId;
+  groupId: ProjectPlanningGroupId;
   name: string;
   color: string;
   placement: LifeMapPlacement;
@@ -71,11 +77,11 @@ export interface LifeMapPlanSwimlaneLayout {
 }
 
 interface LayoutInput {
-  plans: LifeGoal[];
-  phases: LifeGoal[];
+  plans: PlanningGoal[];
+  phases: PlanningGoal[];
   systems?: LifeSystem[];
-  areas: LifeArea[];
-  groups: LifeMapPlanGroupPreference[];
+  areas: Array<LifeArea | ProjectPlanningArea>;
+  groups: Array<LifeMapPlanGroupPreference | ProjectPlanningGroup>;
   filter: LifeMapPlanGroupFilter;
   dateToX: (date: string) => number;
   layoutEnd?: string;
@@ -104,7 +110,7 @@ export function assignInclusiveIntervalTracks(plans: Pick<LifeGoal, 'id' | 'star
 }
 
 export function createLifeMapPlanSwimlaneLayout(input: LayoutInput): LifeMapPlanSwimlaneLayout {
-  const plansByArea = new Map<string, LifeGoal[]>();
+  const plansByArea = new Map<string, PlanningGoal[]>();
   input.plans.filter((plan) => plan.kind === 'plan').forEach((plan) => {
     const items = plansByArea.get(plan.areaId) ?? [];
     items.push(plan);
@@ -117,7 +123,7 @@ export function createLifeMapPlanSwimlaneLayout(input: LayoutInput): LifeMapPlan
     systemsByArea.set(system.areaId, items);
   });
   const planById = new Map(input.plans.filter((plan) => plan.kind === 'plan').map((plan) => [plan.id, plan]));
-  const phasesByParent = new Map<string, LifeGoal[]>();
+  const phasesByParent = new Map<string, PlanningGoal[]>();
   input.phases.filter((phase) => phase.kind === 'phase' && phase.parentGoalId && planById.has(phase.parentGoalId)).forEach((phase) => {
     const items = phasesByParent.get(phase.parentGoalId!) ?? [];
     items.push(phase);
@@ -164,12 +170,12 @@ export function createLifeMapPlanSwimlaneLayout(input: LayoutInput): LifeMapPlan
       const planBars = areaPlans.flatMap((plan): LifeMapPlanSwimlaneBar[] => {
         const trackIndex = systemAssignment.trackCount + (planAssignment.trackById.get(plan.id) ?? 0);
         const barTop = rowTop + PLAN_SWIMLANE_ROW_PADDING + trackIndex * PLAN_SWIMLANE_TRACK_HEIGHT;
-        const makeBar = (goal: LifeGoal, kind: 'plan' | 'phase'): LifeMapPlanSwimlaneBar => {
+        const makeBar = (goal: PlanningGoal, kind: 'plan' | 'phase'): LifeMapPlanSwimlaneBar => {
           const left = input.dateToX(goal.start);
           return {
             id: `plan-swimlane:${goal.id}`,
             goalId: goal.id,
-            taskId: `goal:${goal.id}`,
+            taskId: goal.projectTaskId ?? `goal:${goal.id}`,
             kind,
             parentGoalId: kind === 'phase' ? plan.id : undefined,
             rowId,
@@ -192,11 +198,14 @@ export function createLifeMapPlanSwimlaneLayout(input: LayoutInput): LifeMapPlan
       rowTop += height;
       return row;
     });
+    const groupMeta = group.id === 'unclassified'
+      ? { name: '未分类', color: '#94A3B8' }
+      : LIFE_MAP_PLAN_GROUP_META[group.id as LifeMapPlanGroupId];
     return [{
       id: `plan-group:${group.id}`,
       groupId: group.id,
-      name: LIFE_MAP_PLAN_GROUP_META[group.id].name,
-      color: LIFE_MAP_PLAN_GROUP_META[group.id].color,
+      name: groupMeta.name,
+      color: groupMeta.color,
       placement: group.placement,
       order: group.order,
       offset: 0,

@@ -4,10 +4,14 @@
 
 import React, { useState } from 'react';
 import type { Task } from '@/types';
+import type { LifeArea } from '@/lifeMap/types';
+import { LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
 import { TASK_BG_PRESET } from '@/utils/timeline-utils';
 
 interface TaskDialogProps {
   task?: Task;
+  planningAreas?: LifeArea[];
+  planningAreaReadOnly?: boolean;
   onSave: (task: Task) => void;
   onDelete?: (taskId: string) => void;
   onCancel: () => void;
@@ -18,6 +22,8 @@ const PRESET_COLORS = TASK_BG_PRESET;
 
 const TaskDialog: React.FC<TaskDialogProps> = ({
   task,
+  planningAreas = [],
+  planningAreaReadOnly = false,
   onSave,
   onDelete,
   onCancel,
@@ -31,6 +37,7 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
   const [isMain, setIsMain] = useState(task?.isMain ?? false);
   const [completed, setCompleted] = useState(task?.completed ?? false);
   const [notePath, setNotePath] = useState(task?.notePath ?? '');
+  const [planningAreaId, setPlanningAreaId] = useState(task?.planningAreaId ?? '');
 
   const handleSave = () => {
     const trimmed = name.trim();
@@ -50,6 +57,7 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
     }
 
     onSave({
+      ...(task ?? {}),
       id: task?.id ?? crypto.randomUUID(),
       name: trimmed,
       start,
@@ -59,6 +67,7 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
       completed,
       notePath: notePath.trim() || undefined,
       groupId: task?.groupId,
+      planningAreaId: planningAreaId || undefined,
       blocks: task?.blocks ?? [],
     });
   };
@@ -168,6 +177,24 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
               onChange={(e) => setNotePath(e.target.value)}
               placeholder="URL 或备注内容"
             />
+          </label>
+
+          <label className="tl-dialog-field">
+            <span className="tl-dialog-label">人生领域</span>
+            <select
+              className="tl-dialog-input"
+              aria-label="人生领域"
+              disabled={planningAreaReadOnly}
+              title={planningAreaReadOnly ? '请先迁移到统一工作区，以避免旧版本设备覆盖项目分类' : undefined}
+              value={planningAreaId}
+              onChange={(event) => setPlanningAreaId(event.target.value)}
+            >
+              <option value="">未分类</option>
+              {planningAreas.filter((area) => !area.deletedAt && !area.isHidden).map((area) => (
+                <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>
+              ))}
+            </select>
+            {planningAreaReadOnly && <small className="tl-dialog-hint">旧房间同步期间保留现有分类，但需迁移到统一工作区后才能修改。</small>}
           </label>
         </div>
 

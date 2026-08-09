@@ -605,5 +605,5 @@ test('knowledge node detail summarizes linked tasks, reviews and mastery state',
   await expect(summary).toContainText('已完成 0/1');
   await expect(summary).toContainText('0/0');
   await expect(page.getByText(/^关联项目任务 1$/)).toBeVisible();
-  await expect(page.getByText('E2E完成撤销任务')).toBeVisible();
+  await expect(page.locator('#view-knowledge-graph').getByText('E2E完成撤销任务', { exact: true })).toBeVisible();
 });

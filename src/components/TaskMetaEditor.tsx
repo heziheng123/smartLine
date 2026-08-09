@@ -6,10 +6,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { requestConfirmation } from '@/services/confirmation';
 import type { Task } from '@/types';
+import type { LifeArea } from '@/lifeMap/types';
+import { LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
 import { TASK_BG_PRESET } from '@/utils/timeline-utils';
 
 interface TaskMetaEditorProps {
   task: Task;
+  planningAreas?: LifeArea[];
+  planningAreaReadOnly?: boolean;
   /** 即时保存回调：字段变化时触发 */
   onUpdate: (patch: Partial<Task>) => void;
   /** 删除任务 */
@@ -36,6 +40,8 @@ function normalizeColor(input: string): string | undefined {
 
 const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
   task,
+  planningAreas = [],
+  planningAreaReadOnly = false,
   onUpdate,
   onDelete,
 }) => {
@@ -47,6 +53,7 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
   const [isMain, setIsMain] = useState(!!task.isMain);
   const [completed, setCompleted] = useState(!!task.completed);
   const [notePath, setNotePath] = useState(task.notePath ?? '');
+  const [planningAreaId, setPlanningAreaId] = useState(task.planningAreaId ?? '');
   // 记录上次任务 id，仅在任务切换时重置本地状态（避免远端更新打断本地输入）
   const lastTaskIdRef = useRef<string | null>(null);
   // 记录上次同步自远端的失焦保存字段值，用于判断本地是否处于"未编辑"状态
@@ -65,6 +72,7 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
       setIsMain(!!task.isMain);
       setCompleted(!!task.completed);
       setNotePath(task.notePath ?? '');
+      setPlanningAreaId(task.planningAreaId ?? '');
       lastRemoteRef.current = { name: task.name, notePath: task.notePath ?? '' };
       return;
     }
@@ -83,9 +91,10 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
     if ((task.color ?? '') !== color) setColor(task.color ?? '');
     if (!!task.isMain !== isMain) setIsMain(!!task.isMain);
     if (!!task.completed !== completed) setCompleted(!!task.completed);
+    if ((task.planningAreaId ?? '') !== planningAreaId) setPlanningAreaId(task.planningAreaId ?? '');
     lastRemoteRef.current = { name: task.name, notePath: task.notePath ?? '' };
     // 依赖列表列全 task 相关字段，但通过 ref 保证仅 task.id 变化时执行重置
-  }, [task.id, task.name, task.start, task.end, task.color, task.isMain, task.completed, task.notePath, name, notePath, start, end, color, isMain, completed]);
+  }, [task.id, task.name, task.start, task.end, task.color, task.isMain, task.completed, task.notePath, task.planningAreaId, name, notePath, start, end, color, isMain, completed, planningAreaId]);
 
   // ── 即时保存：字段失焦或变化时写入 store ───────────────────
   // 名称：失焦时保存（避免输入过程频繁触发）
@@ -144,6 +153,7 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
   };
 
   const dateInvalid = start && end && end < start;
+  const activePlanningAreas = planningAreas.filter((area) => !area.deletedAt && !area.isHidden);
 
   return (
     <div className="tl-meta-editor">
@@ -185,6 +195,28 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
       {dateInvalid && (
         <div className="tl-meta-error">结束日期需晚于或等于开始日期</div>
       )}
+
+      <label className="tl-meta-field">
+        <span className="tl-meta-label">人生领域</span>
+        <select
+          className="tl-meta-input"
+          aria-label="人生领域"
+          disabled={planningAreaReadOnly}
+          title={planningAreaReadOnly ? '请先在同步设置中迁移到统一工作区，以避免旧版本设备覆盖项目分类' : undefined}
+          value={planningAreaId}
+          onChange={(event) => {
+            const next = event.target.value;
+            setPlanningAreaId(next);
+            onUpdate({ planningAreaId: next || undefined });
+          }}
+        >
+          <option value="">未分类</option>
+          {activePlanningAreas.map((area) => (
+            <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>
+          ))}
+        </select>
+        {planningAreaReadOnly && <small className="tl-meta-hint">旧房间同步期间暂不允许修改；迁移到统一工作区后即可安全多端同步。</small>}
+      </label>
 
       {/* 颜色 */}
       <label className="tl-meta-field">

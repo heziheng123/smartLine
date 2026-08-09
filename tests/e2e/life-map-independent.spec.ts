@@ -80,7 +80,7 @@ test('添加菜单提供时期重点时间概述入口且视图设置不再重�
   await expect(lifeMap.locator('.life-line__view-menu').getByRole('button', { name: '添加时期重点' })).toHaveCount(0);
 });
 
-test('所有一级分类为空时项目创建会引导先添加二级分类', async ({ page }) => {
+test('所有二级分类为空时仍可创建统一的未分类项目', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   await page.evaluate(async () => {
     const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
@@ -94,15 +94,24 @@ test('所有一级分类为空时项目创建会引导先添加二级分类', as
   await expect(lifeMap.getByRole('menuitem', { name: '添加文字便签' })).toBeDisabled();
   await expect(lifeMap.getByRole('menuitem', { name: '先创建二级分类' })).toBeVisible();
   await lifeMap.getByRole('menuitem', { name: '新建项目' }).click();
-  const editor = page.locator('.life-map-editor form');
-  await expect(editor.getByRole('button', { name: '先创建二级分类' })).toBeVisible();
-  await expect(editor.getByRole('alert')).toContainText('请先创建二级分类');
-  await editor.getByLabel('名称').fill('不应保存的项目');
-  await expect(editor.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+  const editor = page.locator('.tl-dialog');
+  await expect(editor.getByRole('heading', { name: '新建任务' })).toBeVisible();
+  await expect(editor.getByLabel('人生领域')).toHaveValue('');
+  await expect(editor.getByLabel('人生领域').locator('option')).toHaveCount(1);
+  await editor.getByLabel('任务名称').fill('未分类项目');
+  await editor.getByLabel('开始日期').fill('2026-08-09');
+  await editor.getByLabel('结束日期').fill('2026-08-09');
+  await editor.getByRole('button', { name: '创建', exact: true }).click();
   await expect.poll(() => page.evaluate(async () => {
-    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
-    return useLifeMapStore.getState().lifeMapGoals.filter((item) => item.kind === 'plan' && !item.deletedAt).length;
-  })).toBe(0);
+    const [{ useTimelineStore }, { useLifeMapStore }] = await Promise.all([
+      import('/src/store/index.ts'),
+      import('/src/lifeMap/store.ts'),
+    ]);
+    return {
+      timelineProject: useTimelineStore.getState().tasks.find((item) => item.name === '未分类项目')?.planningAreaId ?? null,
+      duplicatedLifeMapProject: useLifeMapStore.getState().lifeMapGoals.some((item) => item.name === '未分类项目'),
+    };
+  })).toEqual({ timelineProject: null, duplicatedLifeMapProject: false });
 });
 
 test('长期系统进入所属领域并固定排在项目轨道上方', async ({ page }) => {
@@ -124,25 +133,21 @@ test('长期系统进入所属领域并固定排在项目轨道上方', async ({
   await expect(systems.nth(0)).toHaveAttribute('data-plan-group', 'learning');
 });
 
-test('项目编辑器首屏只显示必填项且不再关联结果目标', async ({ page }) => {
+test('人生地图新建项目直接使用统一项目编辑器并可选择领域', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   const lifeMap = page.getByRole('main', { name: '人生地图' });
   await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
   await lifeMap.getByRole('menuitem', { name: '新建项目' }).click();
-  const editor = page.locator('.life-map-editor form');
-  await expect(editor.getByRole('heading', { name: '新建项目' })).toBeVisible();
-  await expect(editor.getByLabel('名称')).toBeVisible();
+  const editor = page.locator('.tl-dialog');
+  await expect(editor.getByRole('heading', { name: '新建任务' })).toBeVisible();
+  await expect(editor.getByLabel('任务名称')).toBeVisible();
   await expect(editor.getByLabel('开始日期')).toBeVisible();
   await expect(editor.getByLabel('结束日期')).toBeVisible();
   await expect(editor.getByLabel('人生领域')).toBeVisible();
   await expect(editor.getByLabel('状态')).toHaveCount(0);
   await expect(editor.getByLabel('项目说明')).toHaveCount(0);
-
-  await editor.getByRole('button', { name: '更多设置' }).click();
-  await expect(editor.getByLabel('状态')).toBeVisible();
-  await expect(editor.getByLabel('项目说明')).toBeVisible();
-  await expect(editor.getByLabel('关联结果目标')).toHaveCount(0);
-  await expect(editor.getByLabel('选择识别色')).toBeVisible();
+  await editor.getByLabel('人生领域').selectOption('learning');
+  await expect(editor.getByLabel('人生领域')).toHaveValue('learning');
 });
 
 test('关键日期默认全局且可选关联项目，切换领域后仍保留', async ({ page }) => {
@@ -176,86 +181,49 @@ test('关键日期默认全局且可选关联项目，切换领域后仍保留',
   await expect(eventAnchor).toBeVisible();
 });
 
-test('跨月项目与子阶段共用一条轨道并在缩放和重载后保持', async ({ page }) => {
+test('跨月统一项目会按领域投影并在缩放后保持同一数据', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   const lifeMap = page.getByRole('main', { name: '人生地图' });
 
   await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
   await lifeMap.getByRole('menuitem', { name: '新建项目' }).click();
-  let editor = page.locator('.life-map-editor form');
-  await editor.getByLabel('名称').fill('考研政治');
+  const editor = page.locator('.tl-dialog');
+  await editor.getByLabel('任务名称').fill('考研政治');
   await editor.getByLabel('人生领域').selectOption('learning');
   await editor.getByLabel('开始日期').fill('2026-08-01');
   await editor.getByLabel('结束日期').fill('2026-10-31');
-  await editor.getByRole('button', { name: '更多设置' }).click();
-  await editor.getByLabel('项目说明').fill('完成一轮学习并进入整卷训练');
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
-
-  for (const phase of [
-    { name: '完成马原学习', start: '2026-08-01', end: '2026-08-31' },
-    { name: '完成试卷训练', start: '2026-09-01', end: '2026-09-30' },
-  ]) {
-    await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
-    await lifeMap.getByRole('menuitem', { name: '给现有项目添加子阶段' }).click();
-    editor = page.locator('.life-map-editor form');
-    await editor.getByLabel('名称').fill(phase.name);
-    await expect(editor.getByLabel('所属项目')).not.toHaveValue('');
-    await editor.getByLabel('开始日期').fill(phase.start);
-    await editor.getByLabel('子阶段结束').fill(phase.end);
-    await editor.getByRole('button', { name: '保存', exact: true }).click();
-  }
-
-  await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
-  await lifeMap.getByRole('menuitem', { name: '给现有项目添加子阶段' }).click();
-  editor = page.locator('.life-map-editor form');
-  await editor.getByLabel('名称').fill('日期重叠的阶段');
-  await editor.getByLabel('开始日期').fill('2026-08-20');
-  await editor.getByLabel('子阶段结束').fill('2026-09-10');
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(editor.getByRole('alert')).toContainText('与子阶段“完成马原学习”重叠');
-  await editor.getByRole('button', { name: '取消' }).click();
+  await editor.getByRole('button', { name: '创建', exact: true }).click();
 
   const plan = page.locator('.life-line__project-band.is-life-plan').filter({ hasText: '考研政治' });
-  const phases = page.locator('.life-line__project-band.is-life-phase');
-  const gap = page.getByRole('note', { name: '考研政治未规划区间：2026-10-01至2026-10-31' });
   await expect(plan).toBeVisible();
-  await expect(phases).toHaveCount(2);
-  await expect(gap).toBeVisible();
-  await expect(gap).toContainText('未规划');
-  await expect(page.locator('.life-line__plan-row-label')).toHaveCount(0);
-  await expect(phases.nth(0)).toHaveAttribute('data-phase-density', 'medium');
-  await expect(phases.nth(0)).toContainText('8月 完成马原学习');
-  await expect(phases.nth(1)).toContainText('9月 完成试卷训练');
-  await expect(phases.nth(0)).toHaveAttribute('title', /考研政治 · 完成马原学习/);
-  const lanes = await Promise.all([plan, phases.nth(0), phases.nth(1)].map(async (item) => `${await item.getAttribute('data-band-side')}:${await item.getAttribute('data-band-level')}`));
-  expect(new Set(lanes).size).toBe(1);
+  await expect(plan).toHaveAttribute('data-plan-group', 'learning');
+  await plan.click();
+  await expect(page.locator('.pdv-container').getByLabel('人生领域')).toHaveValue('learning');
+  await page.getByRole('button', { name: '关闭项目文档' }).click();
 
   await page.getByRole('combobox', { name: '时间尺度' }).click();
   await page.getByRole('option', { name: /^年视图/ }).click();
   await expect(plan).toBeVisible();
-  await expect(phases.nth(0)).toBeHidden();
-  await expect(phases.nth(1)).toBeHidden();
 
-  await page.waitForTimeout(550);
-  await page.reload();
-  await page.getByTitle('人生地图').click();
-  await expect(page.locator('.life-line__project-band.is-life-plan')).toHaveCount(1);
-  await page.getByRole('combobox', { name: '时间尺度' }).click();
-  await page.getByRole('option', { name: /^月视图/ }).click();
-  await expect(page.locator('.life-line__project-band.is-life-phase')).toHaveCount(2);
+  await expect(page.locator('.life-line__project-band.is-life-plan').filter({ hasText: '考研政治' })).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    return useTimelineStore.getState().tasks.find((item) => item.name === '考研政治')?.planningAreaId;
+  })).toBe('learning');
 });
 
-test('项目和长期系统使用独立数据并在重载后保留', async ({ page }) => {
+test('项目使用统一数据而长期系统保留人生地图专用数据', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   const lifeMap = page.getByRole('main', { name: '人生地图' });
 
   await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
   await lifeMap.getByRole('menuitem', { name: '新建项目' }).click();
-  const planEditor = page.locator('.life-map-editor form');
-  await planEditor.getByLabel('名称').fill('恢复体能项目');
+  const planEditor = page.locator('.tl-dialog');
+  await planEditor.getByLabel('任务名称').fill('恢复体能项目');
   await planEditor.getByLabel('人生领域').selectOption('health');
+  await planEditor.getByLabel('开始日期').fill('2026-08-01');
   await planEditor.getByLabel('结束日期').fill('2026-09-30');
-  await planEditor.getByRole('button', { name: '保存', exact: true }).click();
+  await planEditor.getByRole('button', { name: '创建', exact: true }).click();
   await expect(page.locator('.life-line__project-band.is-life-plan').filter({ hasText: '恢复体能项目' })).toBeVisible();
 
   await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
@@ -269,21 +237,23 @@ test('项目和长期系统使用独立数据并在重载后保留', async ({ pa
   await systemEditor.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.locator('.life-line__project-band.is-life-system')).toBeVisible();
 
-  // 人生地图仍使用独立存储，不得写入普通时间线任务。
+  // 项目是 Timeline 的唯一真相源；长期系统仍属于人生地图专用数据。
   const state = await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const [{ useTimelineStore }, { useLifeMapStore }] = await Promise.all([
+      import('/src/store/index.ts'),
+      import('/src/lifeMap/store.ts'),
+    ]);
     return {
-      projectNames: useTimelineStore.getState().tasks.map((item) => item.name),
+      timelineProjects: useTimelineStore.getState().tasks.map((item) => ({ name: item.name, planningAreaId: item.planningAreaId })),
+      lifeMapProjects: useLifeMapStore.getState().lifeMapGoals.map((item) => item.name),
+      lifeMapSystems: useLifeMapStore.getState().lifeMapSystems.map((item) => item.name),
     };
   });
-  expect(state.projectNames).not.toContain('恢复体能项目');
-  expect(state.projectNames).not.toContain('每周跑步');
+  expect(state.timelineProjects).toContainEqual({ name: '恢复体能项目', planningAreaId: 'health' });
+  expect(state.timelineProjects.map((item) => item.name)).not.toContain('每周跑步');
+  expect(state.lifeMapProjects).not.toContain('恢复体能项目');
+  expect(state.lifeMapSystems).toContain('每周跑步');
 
-  await page.waitForTimeout(550);
-  await page.reload();
-  await page.getByTitle('人生地图').click();
-  await expect(page.locator('.life-line__project-band.is-life-plan').filter({ hasText: '恢复体能项目' })).toBeVisible();
-  await expect(page.locator('.life-line__project-band.is-life-system').filter({ hasText: '每周跑步' })).toBeVisible();
 });
 
 test('长期系统打卡纠错和二级分类周期复盘形成独立闭环', async ({ page }) => {
@@ -347,7 +317,7 @@ test('弹性规划会联动平移项目子阶段、保护固定日期，并支�
   await lifeMap.getByRole('button', { name: /全部人生/ }).click();
   await lifeMap.getByRole('menuitemradio', { name: /学习成长/ }).click();
   await lifeMap.getByRole('button', { name: '规划概览' }).click();
-  await page.getByRole('dialog', { name: '规划概览' }).getByRole('button', { name: '调整项目日期' }).click();
+  await page.getByRole('dialog', { name: '规划概览' }).getByRole('button', { name: '调整旧版项目日期' }).click();
   const shiftDialog = page.getByRole('region', { name: '批量平移计划' });
   await expect(shiftDialog).toBeVisible();
   await expect(shiftDialog.locator('.life-map-shift-dialog__preview')).toContainText('完成马原');

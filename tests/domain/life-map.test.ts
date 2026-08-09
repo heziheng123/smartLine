@@ -112,9 +112,9 @@ test('主计划与月度阶段沿用目标集合并过滤悬空阶段', () => {
   assert.equal(data.lifeMapGoals[1]?.parentGoalId, 'plan-politics');
 });
 
-test('schema 6 保留全局关键日期并只清理无效领域和关系', () => {
-  assert.equal(WORKSPACE_SCHEMA_VERSION, 6);
-  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6]);
+test('schema 7 保留全局关键日期并只清理无效领域和关系', () => {
+  assert.equal(WORKSPACE_SCHEMA_VERSION, 7);
+  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7]);
 
   const data = normalizeLifeMapData({
     lifeMapGoals: [

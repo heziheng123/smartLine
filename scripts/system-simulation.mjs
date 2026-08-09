@@ -2015,6 +2015,9 @@ try {
 
   check('独立人生地图进入完整备份并兼容旧版工作区升级', () => {
     resetStores();
+    const classifiedProject = project('classified-project', []);
+    classifiedProject.planningAreaId = 'health';
+    useTimelineStore.setState({ tasks: [classifiedProject] });
     useLifeMapStore.getState().addGoal({
       areaId: 'health',
       name: '恢复稳定作息',
@@ -2022,9 +2025,10 @@ try {
       targetDate: '2026-09-30',
     });
     const backup = backupModule.createWorkspaceBackup();
-    assert.equal(backup.schemaVersion, 6);
+    assert.equal(backup.schemaVersion, 7);
     assert.equal(backup.lifeMap.lifeMapGoals.length, 1);
     assert.equal(backup.lifeMap.lifeMapPlanGroups.length, 3);
+    assert.equal(backup.timeline.tasks[0].planningAreaId, 'health');
     const valid = backupModule.validateWorkspaceBackup(backup);
     assert.equal(valid.errors.length, 0);
     assert.equal(valid.summary.lifeMapItems, 1);
@@ -2035,7 +2039,7 @@ try {
     schemaFourBackup.lifeMap.lifeMapAreas.forEach((area) => { delete area.planGroupId; });
     const schemaSixUpgrade = backupModule.validateWorkspaceBackup(schemaFourBackup);
     assert.equal(schemaSixUpgrade.errors.length, 0);
-    assert.equal(schemaSixUpgrade.backup.schemaVersion, 6);
+    assert.equal(schemaSixUpgrade.backup.schemaVersion, 7);
     assert.deepEqual(schemaSixUpgrade.backup.lifeMap.lifeMapPlanGroups.map(({ id, placement }) => ({ id, placement })), [
       { id: 'learning', placement: 'above' },
       { id: 'work', placement: 'below' },
@@ -2043,12 +2047,19 @@ try {
     ]);
     assert.equal(schemaSixUpgrade.backup.lifeMap.lifeMapAreas.find((area) => area.id === 'learning').planGroupId, 'learning');
 
+    const schemaSixBackup = structuredClone(backup);
+    schemaSixBackup.schemaVersion = 6;
+    const schemaSevenUpgrade = backupModule.validateWorkspaceBackup(schemaSixBackup);
+    assert.equal(schemaSevenUpgrade.errors.length, 0);
+    assert.equal(schemaSevenUpgrade.backup.schemaVersion, 7);
+    assert.equal(schemaSevenUpgrade.backup.timeline.tasks[0].planningAreaId, 'health');
+
     const oldBackup = structuredClone(backup);
     oldBackup.schemaVersion = 2;
     delete oldBackup.lifeMap;
     const upgraded = backupModule.validateWorkspaceBackup(oldBackup);
     assert.equal(upgraded.errors.length, 0);
-    assert.equal(upgraded.backup.schemaVersion, 6);
+    assert.equal(upgraded.backup.schemaVersion, 7);
     assert.equal(upgraded.summary.lifeMapItems, 0);
   });
 

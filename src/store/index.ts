@@ -163,6 +163,8 @@ interface TimelineStore extends TimelineData {
 
   addTask: (task: Task) => void;
   updateTask: (task: Task) => void;
+  /** Assign several projects to one Life Map area as a single synced transaction. */
+  assignTasksToPlanningArea: (taskIds: string[], planningAreaId: string) => void;
   deleteTask: (taskId: string) => void;
   restoreTask: (task: Task, groupId?: string) => void;
   toggleTaskComplete: (taskId: string) => void;
@@ -307,6 +309,27 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               children: g.children.map((c) => (
                 c.id === normalizedTask.id ? { ...normalizedTask, groupId: g.id } : c
               )),
+            }));
+            const newData = { ...state, tasks, groups };
+            saveData(newData);
+            return newData;
+          });
+        },
+
+        assignTasksToPlanningArea: (taskIds, planningAreaId) => {
+          const targetIds = new Set(taskIds);
+          if (targetIds.size === 0 || !planningAreaId) return;
+          set((state) => {
+            const tasks = state.tasks.map((task) => (
+              targetIds.has(task.id) ? normalizeTimelineTask({ ...task, planningAreaId }) : task
+            ));
+            const tasksById = new Map(tasks.map((task) => [task.id, task]));
+            const groups = state.groups.map((group) => ({
+              ...group,
+              children: group.children.map((child) => {
+                const updated = tasksById.get(child.id);
+                return updated && targetIds.has(child.id) ? { ...updated, groupId: group.id } : child;
+              }),
             }));
             const newData = { ...state, tasks, groups };
             saveData(newData);

@@ -28,6 +28,9 @@ import type {
   Note,
   Milestone,
 } from '@/types';
+import type { LifeArea } from '@/lifeMap/types';
+import { LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
+import { filterProjectsByPlanningScope, type ProjectPlanningGroupId } from '@/lifeMap/projectPlanning';
 import { calculateLayout } from '@/utils/layout';
 import type { TimelineDensity } from '@/utils/timeline-utils';
 import {
@@ -46,6 +49,8 @@ interface TimelinePreferences {
   compactExpandedGroupIds: string[];
   hiddenGroupIds: string[];
   hideCompleted: boolean;
+  planningGroupId: 'all' | ProjectPlanningGroupId;
+  planningAreaId?: string;
 }
 
 const PREFERENCES_KEY = 'smart-timeline-view-preferences-v2';
@@ -56,6 +61,8 @@ const DEFAULT_PREFERENCES: TimelinePreferences = {
   compactExpandedGroupIds: [],
   hiddenGroupIds: [],
   hideCompleted: false,
+  planningGroupId: 'all',
+  planningAreaId: undefined,
 };
 
 function loadPreferences(): TimelinePreferences {
@@ -70,6 +77,13 @@ function loadPreferences(): TimelinePreferences {
     collapsedGroupIds: Array.isArray(stored?.collapsedGroupIds) ? stored.collapsedGroupIds : [],
     compactExpandedGroupIds: Array.isArray(stored?.compactExpandedGroupIds) ? stored.compactExpandedGroupIds : [],
     hiddenGroupIds: Array.isArray(stored?.hiddenGroupIds) ? stored.hiddenGroupIds : [],
+    planningGroupId: stored?.planningGroupId === 'learning'
+      || stored?.planningGroupId === 'work'
+      || stored?.planningGroupId === 'life'
+      || stored?.planningGroupId === 'unclassified'
+      ? stored.planningGroupId
+      : 'all',
+    planningAreaId: typeof stored?.planningAreaId === 'string' ? stored.planningAreaId : undefined,
   };
 }
 
@@ -163,6 +177,9 @@ interface TimelineViewProps {
   notes: Note[];
   milestones: Milestone[];
   displayYear: number;
+  planningAreas?: LifeArea[];
+  planningAreaReadOnly?: boolean;
+  onBulkAssignPlanningArea?: (taskIds: string[], areaId: string) => void;
   onTaskClick?: (task: Task) => void;
   onTaskContextMenu?: (e: React.MouseEvent, taskId: string) => void;
   onNoteDoubleClick?: (note: Note) => void;
@@ -179,6 +196,9 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   notes,
   milestones,
   displayYear,
+  planningAreas = [],
+  planningAreaReadOnly = false,
+  onBulkAssignPlanningArea,
   onTaskClick,
   onTaskContextMenu,
   onNoteDoubleClick,
@@ -192,6 +212,8 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   const [query, setQuery] = useState('');
   const [projectQuery, setProjectQuery] = useState('');
   const [isProjectPanelOpen, setIsProjectPanelOpen] = useState(false);
+  const [isBulkPlanningOpen, setIsBulkPlanningOpen] = useState(false);
+  const [bulkPlanningAreaId, setBulkPlanningAreaId] = useState('');
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   const [dockPortalTarget, setDockPortalTarget] = useState<HTMLElement | null>(null);
   const [draggedGroupId, setDraggedGroupId] = useState<string | null>(null);
@@ -255,13 +277,22 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     }).map((group) => group.id));
   }, [groups, tasks, normalizedQuery]);
 
-  const filteredTasks = useMemo(() => tasks.filter((task) => {
+  const planningScopedTasks = useMemo(() => filterProjectsByPlanningScope(tasks, planningAreas, {
+    groupId: preferences.planningGroupId,
+    areaId: preferences.planningAreaId,
+  }), [planningAreas, preferences.planningAreaId, preferences.planningGroupId, tasks]);
+  const unclassifiedTasks = useMemo(
+    () => filterProjectsByPlanningScope(tasks, planningAreas, { groupId: 'unclassified' }),
+    [planningAreas, tasks],
+  );
+
+  const filteredTasks = useMemo(() => planningScopedTasks.filter((task) => {
     if (preferences.hideCompleted && task.completed) return false;
     if (task.groupId && hiddenGroupIds.has(task.groupId)) return false;
     if (!normalizedQuery) return true;
     if (task.groupId && matchingGroupIds?.has(task.groupId)) return true;
     return task.name.toLocaleLowerCase().includes(normalizedQuery);
-  }), [tasks, preferences.hideCompleted, hiddenGroupIds, normalizedQuery, matchingGroupIds]);
+  }), [planningScopedTasks, preferences.hideCompleted, hiddenGroupIds, normalizedQuery, matchingGroupIds]);
 
   const filteredGroups = useMemo(() => orderedGroups.filter((group) => {
     if (hiddenGroupIds.has(group.id)) return false;
@@ -380,11 +411,12 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   const hasFilteredContent = layout.tasks.length > 0 || notes.length > 0 || milestones.length > 0;
   const activeFilterCount = preferences.hiddenGroupIds.length
     + (preferences.hideCompleted ? 1 : 0)
-    + (normalizedQuery ? 1 : 0);
+    + (normalizedQuery ? 1 : 0)
+    + (preferences.planningGroupId !== 'all' || preferences.planningAreaId ? 1 : 0);
 
   const clearFilters = () => {
     setQuery('');
-    updatePreferences({ hiddenGroupIds: [], hideCompleted: false });
+    updatePreferences({ hiddenGroupIds: [], hideCompleted: false, planningGroupId: 'all', planningAreaId: undefined });
   };
 
   const dockViewControl = dockPortalTarget ? createPortal(
@@ -510,9 +542,92 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     document.body,
   ) : null;
 
+  const bulkPlanningDialog = isBulkPlanningOpen ? createPortal(
+    <div className="tl-project-drawer-overlay" onPointerDown={(event) => {
+      if (event.target === event.currentTarget) setIsBulkPlanningOpen(false);
+    }}>
+      <aside className="tl-bulk-planning-dialog" role="dialog" aria-modal="true" aria-label="批量归类未分类项目">
+        <div className="tl-project-drawer-header">
+          <span>批量归类未分类项目</span>
+          <button type="button" onClick={() => setIsBulkPlanningOpen(false)} title="关闭"><X size={18} /></button>
+        </div>
+        <p>下列 {unclassifiedTasks.length} 个项目还没有人生领域。一次归类后，人生地图和所有项目视图会同步更新。</p>
+        <div className="tl-bulk-planning-projects">
+          {unclassifiedTasks.map((task) => <span key={task.id}>{task.name}</span>)}
+        </div>
+        <label>
+          <span>归入领域</span>
+          <select
+            aria-label="批量归类到领域"
+            value={bulkPlanningAreaId}
+            onChange={(event) => setBulkPlanningAreaId(event.target.value)}
+          >
+            <option value="">请选择领域</option>
+            {planningAreas.filter((area) => !area.deletedAt && !area.isHidden).map((area) => (
+              <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>
+            ))}
+          </select>
+        </label>
+        <div className="tl-project-drawer-footer">
+          <button type="button" onClick={() => setIsBulkPlanningOpen(false)}>取消</button>
+          <button
+            className="tl-project-drawer-done"
+            type="button"
+            disabled={!bulkPlanningAreaId || unclassifiedTasks.length === 0}
+            onClick={() => {
+              onBulkAssignPlanningArea?.(unclassifiedTasks.map((task) => task.id), bulkPlanningAreaId);
+              setIsBulkPlanningOpen(false);
+              setBulkPlanningAreaId('');
+            }}
+          >
+            归类 {unclassifiedTasks.length} 个项目
+          </button>
+        </div>
+      </aside>
+    </div>,
+    document.body,
+  ) : null;
+
   return (
     <div className={`tl-year-stack tl-year-stack--${preferences.density}`}>
       {dockViewControl}
+
+      <div className="tl-planning-scope" role="group" aria-label="项目查看范围">
+        {(['all', 'learning', 'work', 'life', 'unclassified'] as const).map((groupId) => (
+          <button
+            type="button"
+            key={groupId}
+            aria-pressed={preferences.planningGroupId === groupId && !preferences.planningAreaId}
+            className={preferences.planningGroupId === groupId && !preferences.planningAreaId ? 'is-active' : ''}
+            onClick={() => updatePreferences({ planningGroupId: groupId, planningAreaId: undefined })}
+          >
+            {groupId === 'all' ? '全部' : groupId === 'unclassified' ? '未分类' : LIFE_MAP_PLAN_GROUP_META[groupId].name}
+          </button>
+        ))}
+        <select
+          aria-label="二级领域"
+          value={preferences.planningAreaId ?? ''}
+          onChange={(event) => {
+            const areaId = event.target.value || undefined;
+            const area = planningAreas.find((item) => item.id === areaId);
+            updatePreferences({ planningAreaId: areaId, planningGroupId: area?.planGroupId ?? 'all' });
+          }}
+        >
+          <option value="">选择二级领域</option>
+          {planningAreas.filter((area) => !area.deletedAt && !area.isHidden).map((area) => (
+            <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>
+          ))}
+        </select>
+        {unclassifiedTasks.length > 0 && planningAreas.some((area) => !area.deletedAt && !area.isHidden) && (
+          <button
+            type="button"
+            className="is-bulk"
+            disabled={planningAreaReadOnly}
+            title={planningAreaReadOnly ? '请先迁移到统一工作区，以避免旧版本设备覆盖项目分类' : undefined}
+            onClick={() => setIsBulkPlanningOpen(true)}
+          >批量归类</button>
+        )}
+      </div>
 
       {activeFilterCount > 0 && (
         <div className="tl-filter-status">
@@ -554,6 +669,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
       )}
 
       {projectDrawer}
+      {bulkPlanningDialog}
     </div>
   );
 };

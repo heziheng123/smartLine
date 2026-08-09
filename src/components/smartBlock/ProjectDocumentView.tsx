@@ -55,6 +55,8 @@ function weekdayShort(dateStr: string): string {
 }
 import { getValidGraphNodeIds } from '@/utils/blocks';
 import type { Block, Task, SmartTaskBlock, SmartTaskHeader, TextBlock } from '@/types';
+import type { LifeArea } from '@/lifeMap/types';
+import { LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
 import { useTimelineStore } from '@/store';
 import { useGraphStore } from '@/graph/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -82,6 +84,8 @@ import type { CompletedTaskBindingStrategy } from '@/domain/projectTaskEffects';
 
 interface ProjectDocumentViewProps {
   task: Task;
+  planningAreas?: LifeArea[];
+  planningAreaReadOnly?: boolean;
   focusBlockId?: string | null;
   focusRequest?: number;
   onClose: () => void;
@@ -91,6 +95,8 @@ interface ProjectDocumentViewProps {
 
 const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   task,
+  planningAreas = [],
+  planningAreaReadOnly = false,
   focusBlockId,
   focusRequest,
   onClose,
@@ -675,6 +681,19 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           <span className={`pdv-caret ${metaExpanded ? 'pdv-caret--open' : ''}`}>▾</span>
         </h2>
         <div className="pdv-header-actions">
+          <select
+            className="pdv-planning-area-select"
+            aria-label="人生领域"
+            value={currentTask.planningAreaId ?? ''}
+            disabled={planningAreaReadOnly}
+            title={planningAreaReadOnly ? '请先迁移到统一工作区，以避免旧版本设备覆盖项目分类' : '选择人生领域'}
+            onChange={(event) => handleUpdateTask({ planningAreaId: event.target.value || undefined })}
+          >
+            <option value="">未分类</option>
+            {planningAreas.filter((area) => !area.deletedAt && !area.isHidden).map((area) => (
+              <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>
+            ))}
+          </select>
           {smartBlocks.length > 0 && (
             <div
               className="pdv-group-toggle"
@@ -825,6 +844,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           </div>
           <TaskMetaEditor
             task={currentTask}
+            planningAreas={planningAreas}
+            planningAreaReadOnly={planningAreaReadOnly}
             onUpdate={handleUpdateTask}
             onDelete={onDeleteTask}
           />

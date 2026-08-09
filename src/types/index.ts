@@ -80,6 +80,8 @@ export interface Task {
   notePath?: string;      // 关联笔记路径（网页版为链接或备注）
   groupId?: string;       // 所属分组 ID
   /** 智能任务块数组（新数据载体） */
+  /** Semantic Life Map area. Timeline groupId remains an independent visual grouping. */
+  planningAreaId?: string;
   blocks: Block[];
   blocksUpdatedAt?: string;   // blocks 上次保存时间（ISO 字符串）
   /** 人生地图的独立视觉语义；其他视图不会使用。 */
@@ -92,6 +94,8 @@ export interface Task {
   lifeMapPlacement?: 'above' | 'below';
   lifeMapMaintenanceActive?: boolean;
   lifeMapMaintenanceReason?: string;
+  /** View-only discriminator used to route Life Map editing to the canonical Timeline project. */
+  lifeMapSource?: 'timeline-project' | 'life-map';
 }
 
 /** 任务分组 */
