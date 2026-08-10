@@ -32,6 +32,14 @@ const openEbbMoreAction = async (page: Page, name: '批量调整' | '设置') =>
   await page.getByRole('menuitem', { name }).click();
 };
 
+// 统计卡片（.eb-stat-card）仅在「复习库 / 周计划」标签页下渲染，
+// 「今日复习」标签页只显示「今日复习工作台」。需要读取统计卡片时，
+// 进入 EBB 后切换到「复习库」标签页（矩阵视图）。
+const openEbbLibrary = async (page: Page) => {
+  await page.getByTitle('艾宾浩斯复习').click();
+  await page.getByRole('tab', { name: /复习库/ }).click();
+};
+
 const projectTask = {
   id: 'batch-project', name: '批量联动项目', start: today, end: today, color: '#6366f1', completed: false,
   blocks: [{
@@ -83,7 +91,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('batch trim updates rounds, daily references and knowledge color without history-library records', async ({ page }) => {
-  await page.getByTitle('艾宾浩斯复习').click();
+  await openEbbLibrary(page);
   const totalCard = page.locator('.eb-stat-card').filter({ hasText: '总任务' });
   await expect(totalCard.locator('.eb-stat-value')).toHaveText('4');
 
@@ -106,12 +114,12 @@ test('batch trim updates rounds, daily references and knowledge color without hi
   await page.locator('.ds-date-input').fill(dueDates[2]);
   await expect(page.locator('.ds-item').filter({ hasText: '批量颜色联动知识' })).toHaveCount(0);
   await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
-  await page.getByTitle('艾宾浩斯复习').click();
+  await openEbbLibrary(page);
   await expect(page.locator('.eb-stat-card').filter({ hasText: '总任务' }).locator('.eb-stat-value')).toHaveText('2');
 });
 
 test('batch panel previews shift, append and future-template operations', async ({ page }) => {
-  await page.getByTitle('艾宾浩斯复习').click();
+  await openEbbLibrary(page);
   await openEbbMoreAction(page, '批量调整');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   const summary = dialog.getByLabel('批量调整预览统计');
@@ -142,7 +150,7 @@ test('batch panel previews shift, append and future-template operations', async 
 });
 
 test('appended rounds preserve existing daily arrangements without creating a history entry', async ({ page }) => {
-  await page.getByTitle('艾宾浩斯复习').click();
+  await openEbbLibrary(page);
   await openEbbMoreAction(page, '批量调整');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await dialog.getByRole('radio', { name: /追加轮次/ }).click();
@@ -156,7 +164,7 @@ test('appended rounds preserve existing daily arrangements without creating a hi
 });
 
 test('shifted rounds survive refresh and stale daily items stay removed without persistent undo', async ({ page }) => {
-  await page.getByTitle('艾宾浩斯复习').click();
+  await openEbbLibrary(page);
   await openEbbMoreAction(page, '批量调整');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await dialog.getByRole('radio', { name: /整体改期/ }).click();
@@ -180,7 +188,7 @@ test('shifted rounds survive refresh and stale daily items stay removed without 
   }).toBe(0);
 
   await page.reload();
-  await page.getByTitle('艾宾浩斯复习').click();
+  await openEbbLibrary(page);
   await expect(page.locator('.eb-stat-card').filter({ hasText: '总任务' }).locator('.eb-stat-value')).toHaveText('4');
   await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
 
@@ -201,7 +209,7 @@ test('shifted rounds survive refresh and stale daily items stay removed without 
 });
 
 test('future template rejects malformed intervals and preserves completed history when applied', async ({ page }) => {
-  await page.getByTitle('艾宾浩斯复习').click();
+  await openEbbLibrary(page);
   await openEbbMoreAction(page, '批量调整');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await dialog.getByRole('radio', { name: /套用未来模板/ }).click();

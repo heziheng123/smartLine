@@ -184,13 +184,15 @@ test('life map keeps historical result goals hidden while unified projects tasks
   await expect(page.locator('.life-line__node.is-goal')).toHaveCount(0);
   await expect(page.locator('.life-line__project-band.is-life-goal')).toHaveCount(0);
   await expect(page.locator('.life-line__anchor.is-goal')).toHaveCount(0);
-  await expect(page.locator('[data-project-id="graduate-exam"]')).toBeVisible();
+  await expect(page.locator('[data-project-id="goal:graduate-exam"]')).toBeVisible();
   const fixedEvent = page.locator('.life-line__node.is-milestone').filter({ hasText: '六级成绩公布' });
   await expect(fixedEvent).toBeVisible();
   await expect(fixedEvent).toHaveClass(/is-importance-important/);
   await expect(page.locator('.life-line__node.is-action')).toHaveCount(0);
-  await expect(page.getByLabel('每日任务节奏带')).toBeVisible();
-  expect(await page.locator('.life-line__task-marker').count()).toBeGreaterThan(0);
+  // 人生地图不再合并 timeline 的 smart-task blocks，因此「每日任务节奏带」
+  // 与任务标记（.life-line__task-marker）不再渲染。
+  await expect(page.getByLabel('每日任务节奏带')).toHaveCount(0);
+  expect(await page.locator('.life-line__task-marker').count()).toBe(0);
   const systemBand = page.locator('.life-line__project-band.is-life-system');
   await expect(systemBand).toBeVisible();
   await expect(systemBand).toHaveAttribute('data-band-level', '0');
@@ -583,7 +585,8 @@ test('life map directly resizes a range and supports undo', async ({ page }) => 
 test('life map preserves unified project and task projections across zoom levels', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   await expect(page.locator('.life-line__today')).toHaveCSS('width', '2px');
-  expect(await page.locator('.life-line__task-marker').count()).toBeGreaterThan(0);
+  // smart-task blocks 不再投影到人生地图，task-marker 数量恒为 0。
+  expect(await page.locator('.life-line__task-marker').count()).toBe(0);
   await expect(page.locator('.life-line__node.is-goal')).toHaveCount(0);
   await expect(page.locator('.life-line__anchor.is-goal')).toHaveCount(0);
   await expect(page.locator('.life-line__project-band.is-life-system').first()).toBeVisible();
@@ -891,7 +894,7 @@ test('plan swimlanes render full capsules and keep key dates outside every group
 test('project group filter hides only swimlanes and resets with the session', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   const filter = page.getByTestId('life-map-plan-filter');
-  await expect(page.locator('.life-line__plan-group-labels')).toHaveCount(4);
+  await expect(page.locator('.life-line__plan-group-labels')).toHaveCount(3);
   const milestoneCount = await page.locator('.life-line__node.is-milestone').count();
   const stageLayerCount = await page.locator('.life-line__stages').count();
 
@@ -904,8 +907,8 @@ test('project group filter hides only swimlanes and resets with the session', as
 
   await page.reload();
   await page.getByTitle('人生地图').click();
-  await expect(page.getByTestId('life-map-plan-filter').getByRole('button', { name: '全部项目' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('.life-line__plan-group-labels')).toHaveCount(4);
+  await expect(page.getByTestId('life-map-plan-filter').getByRole('button', { name: '全部人生计划' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.life-line__plan-group-labels')).toHaveCount(3);
 });
 
 test('planning structure adds a second-level category directly under its fixed group', async ({ page }) => {
@@ -932,8 +935,8 @@ test('life map supports command jump and creates a dedicated planning review', a
   await page.getByRole('button', { name: '快速跳转' }).click();
   const search = page.getByRole('textbox', { name: '搜索人生地图' });
   await search.fill('Phase B');
-  await page.locator('.life-line__jump-results').getByRole('button', { name: 'Phase B 项目', exact: true }).click();
-  await expect(page.locator('[data-project-id="phase-b"]')).toHaveClass(/is-selected/);
+  await page.locator('.life-line__jump-results').getByRole('button', { name: 'Phase B 项目子阶段', exact: true }).click();
+  await expect(page.locator('[data-project-id="goal:phase-b"]')).toHaveClass(/is-selected/);
 
   await page.getByRole('button', { name: '规划概览' }).click();
   await page.getByRole('dialog', { name: '规划概览' }).getByRole('button', { name: '开始月度复盘' }).click();
