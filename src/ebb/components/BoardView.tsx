@@ -1,6 +1,10 @@
 import React, { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, ListChecks, Search } from 'lucide-react';
+import { useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { getReviewSourceId } from '@/components/dailySchedule/sourceIds';
+import { DEFAULT_TIME_SLOT_CONFIGS, type TimeSlot } from '@/components/dailySchedule/types';
+import { useShallow } from 'zustand/react/shallow';
 import { addDays, formatDate, getDayOfWeek, todayStr } from '@/utils/dateSafe';
 import { useGraphStore } from '@/graph/store';
 import type { EbbSettings, ReviewTask } from '../types';
@@ -52,6 +56,11 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
   const [categoryFilter, setCategoryFilter] = useState('');
   const [pendingOnly, setPendingOnly] = useState(false);
   const graphNodes = useGraphStore((state) => state.nodes);
+  const { schedules, isDailyHydrated, hydrateDailyStore } = useDailyScheduleStore(useShallow((state) => ({
+    schedules: state.schedules,
+    isDailyHydrated: state.isHydrated,
+    hydrateDailyStore: state.hydrateStore,
+  })));
   const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
   const { roundMap, totalRoundsMap } = useMemo(() => computeRounds(tasks), [tasks]);
   const weekStart = useMemo(() => getWeekStart(cursor), [cursor]);
@@ -63,7 +72,14 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
   }, [cursor, rangeMode, weekStart]);
   const today = todayStr();
 
+  const timeSlotLabel = (slot: TimeSlot | 'unscheduled') => slot === 'unscheduled'
+    ? '待安排'
+    : DEFAULT_TIME_SLOT_CONFIGS.find((config) => config.slot === slot)?.label ?? slot;
+
   useEffect(() => setCursor(selectedDate), [selectedDate]);
+  useEffect(() => {
+    if (!isDailyHydrated) hydrateDailyStore();
+  }, [hydrateDailyStore, isDailyHydrated]);
 
   const decorated = useMemo(() => tasks.filter((task) => !task.isArchived).map((task) => {
     const category = resolveReviewCategory(task, rootByNodeId);
@@ -172,6 +188,19 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
                 : items.length <= thresholds[3] ? 4 : 5;
         const isToday = date === today;
         const isSelected = date === selectedDate;
+        const scheduledSlotBySource = new Map(
+          (schedules[date]?.items ?? [])
+            .filter((entry) => entry.source === 'review')
+            .map((entry) => [entry.sourceId, entry.timeSlot]),
+        );
+        const groupedItems = (['morning', 'afternoon', 'evening', 'unscheduled'] as const)
+          .map((slot) => ({
+            slot,
+            items: items
+              .map((item, index) => ({ item, index }))
+              .filter(({ item }) => (scheduledSlotBySource.get(getReviewSourceId(item.task.id)) ?? 'unscheduled') === slot),
+          }))
+          .filter((group) => group.items.length > 0);
         return <Droppable droppableId={`ebb-day-${date}`} key={date}>
           {(provided, snapshot) => <section
             ref={provided.innerRef}
@@ -187,7 +216,10 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
               <i className={`eb-week-day-load is-level-${loadLevel} ${overdueCount > 0 ? 'has-overdue' : ''} ${allDone ? 'is-done' : ''}`} aria-hidden="true" />
             </header>
             <div className="eb-week-day-cards">
-              {items.map((item, index) => {
+              {groupedItems.map((group) => (
+                <div className="eb-week-day-slot-group" key={group.slot}>
+                  <div className="eb-week-day-slot-label">{timeSlotLabel(group.slot)}</div>
+                  {group.items.map(({ item, index }) => {
                 const dateLabel = getDateLabel(item.task.dueDate, item.task.isCompleted);
                 const changed = Boolean(item.task.originalDueDate && item.task.originalDueDate !== item.task.dueDate);
                 return <Draggable draggableId={item.task.id} index={index} key={item.task.id} isDragDisabled={item.task.isCompleted}>
@@ -217,7 +249,9 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
                     </div>
                   </article>}
                 </Draggable>;
-              })}
+                  })}
+                </div>
+              ))}
               {items.length === 0 && <div className="eb-week-day-empty"><CalendarDays size={18} /><span>暂无轮次</span></div>}
               {provided.placeholder}
             </div>

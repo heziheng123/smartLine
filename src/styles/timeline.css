@@ -4751,3 +4751,100 @@ html, body, #root {
     margin-left: 0;
   }
 }
+
+/* Calm Intelligence surface pass: visual values only. */
+.tl-app {
+  color: var(--ui-text);
+  background: var(--ui-surface-subtle);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+}
+
+.tl-year-stack {
+  padding: 20px;
+  background: var(--ui-surface-subtle);
+}
+
+.tl-timeline-controls {
+  padding: 8px 10px;
+  border-color: var(--ui-border);
+  border-radius: var(--ui-card-radius);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 6px 20px rgba(22, 22, 28, 0.05);
+  backdrop-filter: blur(18px) saturate(135%);
+}
+
+.tl-year-card {
+  border-color: var(--ui-border);
+  border-radius: 16px;
+  box-shadow: var(--ui-card-shadow);
+}
+
+.tl-month-row,
+.tl-day-tick {
+  border-color: rgba(29, 29, 31, 0.07);
+}
+
+.tl-month-label,
+.tl-toolbar-year {
+  color: var(--ui-text);
+}
+
+.tl-day-tick {
+  color: var(--ui-text-tertiary);
+}
+
+.tl-toolbar-year-btn,
+.tl-timeline-search,
+.tl-view-search,
+.tl-project-drawer-search {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-control-radius);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.tl-seg,
+.tl-group-range {
+  border-radius: 9px;
+}
+
+.tl-dock {
+  padding: 7px 10px;
+  gap: 5px;
+  border-color: rgba(255, 255, 255, 0.82);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: 0 16px 44px rgba(22, 22, 28, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(28px) saturate(145%);
+}
+
+.tl-dock-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: var(--ui-text-muted);
+}
+
+.tl-dock-btn--primary,
+.tl-dock-btn--active,
+.tl-dock-btn--view-active,
+.tl-dock-btn--menu-open {
+  color: var(--ui-primary) !important;
+}
+
+.tl-dock-btn--active,
+.tl-dock-btn--view-active,
+.tl-dock-btn--menu-open {
+  background: var(--ui-primary-soft) !important;
+}
+
+.tl-dock-popover,
+.tl-project-drawer {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-card-radius);
+  box-shadow: var(--ui-dialog-shadow);
+}
+
+.tl-project-drawer-footer .tl-project-drawer-done {
+  border-color: var(--ui-primary);
+  background: var(--ui-primary);
+}

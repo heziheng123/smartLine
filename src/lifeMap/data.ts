@@ -6,7 +6,6 @@ import type {
   LifeMapData,
   LifeMapNote,
   LifeMapStage,
-  LifeRelation,
   LifeSystem,
   LifeSystemCheckIn,
   LifeTheme,
@@ -31,7 +30,6 @@ export const LIFE_MAP_FIELDS = [
   'lifeMapEvents',
   'lifeMapFocuses',
   'lifeMapNotes',
-  'lifeMapRelations',
   'lifeMapReviews',
 ] as const;
 
@@ -103,7 +101,6 @@ export function createEmptyLifeMapData(): LifeMapData {
     lifeMapEvents: [],
     lifeMapFocuses: [],
     lifeMapNotes: [],
-    lifeMapRelations: [],
     lifeMapReviews: [],
   };
 }
@@ -340,15 +337,6 @@ export function migrateLegacyLifeMapLayouts(
   return { data, changed, matched };
 }
 
-function validRelation(value: unknown): value is LifeRelation {
-  return isRecord(value)
-    && typeof value.id === 'string'
-    && ['goal', 'system', 'event'].includes(String(value.lifeItemType))
-    && typeof value.lifeItemId === 'string'
-    && typeof value.projectId === 'string'
-    && hasMeta(value);
-}
-
 function dedupe<T extends { id: string }>(value: unknown, guard: (item: unknown) => item is T): T[] {
   const byId = new Map<string, T>();
   if (Array.isArray(value)) value.filter(guard).forEach((item) => byId.set(item.id, item));
@@ -397,12 +385,6 @@ export function normalizeLifeMapData(value: unknown): LifeMapData {
       relatedPlanId,
     };
   });
-  const validLifeIds = new Set([
-    ...goals.map((item) => `goal:${item.id}`),
-    ...systems.map((item) => `system:${item.id}`),
-    ...events.map((item) => `event:${item.id}`),
-  ]);
-
   return {
     lifeMapAreas: areas,
     lifeMapPlanGroups: planGroups,
@@ -414,8 +396,6 @@ export function normalizeLifeMapData(value: unknown): LifeMapData {
     lifeMapEvents: events,
     lifeMapFocuses: keepArea(dedupe(source.lifeMapFocuses, validAreaRange)),
     lifeMapNotes: keepArea(dedupe(source.lifeMapNotes, validNote)),
-    lifeMapRelations: dedupe(source.lifeMapRelations, validRelation).filter((relation) =>
-      validLifeIds.has(`${relation.lifeItemType}:${relation.lifeItemId}`)),
     lifeMapReviews: dedupe(source.lifeMapReviews, validReview),
   };
 }
@@ -448,7 +428,6 @@ export function validateLifeMapData(value: unknown): string[] {
     ['lifeMapEvents', validEvent],
     ['lifeMapFocuses', validAreaRange],
     ['lifeMapNotes', validNote],
-    ['lifeMapRelations', validRelation],
     ['lifeMapReviews', validReview],
   ];
   const errors: string[] = [];

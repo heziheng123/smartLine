@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartLine · Calm Intelligence Concepts</title>
+  <style>
+    :root {
+      --canvas: #f5f5f7;
+      --surface: rgba(255,255,255,.92);
+      --surface-solid: #ffffff;
+      --surface-subtle: #f1f1f4;
+      --text: #1d1d1f;
+      --text-2: #6e6e73;
+      --text-3: #9a9aa0;
+      --line: rgba(29,29,31,.10);
+      --line-strong: rgba(29,29,31,.16);
+      --accent: #5e5ce6;
+      --accent-2: #4846c8;
+      --accent-soft: #efefff;
+      --blue-soft: #eaf3ff;
+      --blue: #3478f6;
+      --green-soft: #e9f8ef;
+      --green: #248a4b;
+      --amber-soft: #fff5df;
+      --amber: #a66508;
+      --purple-soft: #f3edff;
+      --purple: #7650c8;
+      --shadow: 0 18px 50px rgba(22,22,28,.08), 0 2px 8px rgba(22,22,28,.05);
+      --shadow-small: 0 8px 26px rgba(22,22,28,.07), 0 1px 3px rgba(22,22,28,.05);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; min-height: 100%; background: #d9d9dd; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--text); }
+    button { font: inherit; }
+    .screen { width: 1440px; height: 1000px; display: none; overflow: hidden; position: relative; background: var(--canvas); }
+    .screen.active { display: flex; }
+    .rail { width: 74px; height: 100%; padding: 20px 12px; border-right: 1px solid var(--line); background: rgba(251,251,253,.86); backdrop-filter: blur(24px); display: flex; flex-direction: column; align-items: center; gap: 12px; z-index: 3; }
+    .brand { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 13px; color: white; background: linear-gradient(145deg,#7270ee,#4d4bd0); font-size: 17px; font-weight: 700; box-shadow: 0 8px 20px rgba(94,92,230,.28); margin-bottom: 24px; }
+    .rail-btn { width: 42px; height: 42px; display: grid; place-items: center; border: 0; border-radius: 13px; color: #79797f; background: transparent; }
+    .rail-btn.active { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(94,92,230,.08); }
+    .rail-btn svg { width: 20px; height: 20px; stroke-width: 1.75; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+    .rail-spacer { flex: 1; }
+    .avatar { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: #e7e7ed; color: #5b5b62; font-size: 12px; font-weight: 650; }
+    .app { flex: 1; height: 100%; display: flex; flex-direction: column; min-width: 0; }
+    .topbar { height: 74px; flex: 0 0 74px; padding: 0 26px; border-bottom: 1px solid var(--line); background: rgba(250,250,252,.76); backdrop-filter: blur(26px) saturate(130%); display: flex; align-items: center; gap: 16px; z-index: 2; }
+    .crumb { color: var(--text-3); font-size: 13px; }
+    .crumb strong { color: var(--text); font-weight: 600; }
+    .top-spacer { flex: 1; }
+    .segmented { display: flex; padding: 3px; background: rgba(118,118,128,.10); border-radius: 10px; gap: 2px; }
+    .segment { padding: 7px 14px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-size: 13px; }
+    .segment.active { color: var(--text); background: white; box-shadow: 0 1px 5px rgba(0,0,0,.11); font-weight: 550; }
+    .icon-button { width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.74); color: var(--text-2); display: grid; place-items: center; }
+    .icon-button svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .primary { height: 36px; padding: 0 15px; border: 0; border-radius: 11px; color: white; background: var(--accent); font-size: 13px; font-weight: 600; box-shadow: 0 7px 18px rgba(94,92,230,.24); }
+    .content { flex: 1; min-height: 0; padding: 24px 26px 26px; }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+    h1 { margin: 7px 0 6px; font-size: 28px; line-height: 1.25; letter-spacing: -.035em; }
+    h2 { margin: 0; font-size: 17px; line-height: 1.4; letter-spacing: -.018em; }
+    h3 { margin: 0; font-size: 14px; font-weight: 620; }
+    p { margin: 0; }
+    .sub { color: var(--text-2); font-size: 13px; line-height: 1.55; }
+    .card { background: var(--surface); border: 1px solid rgba(255,255,255,.78); box-shadow: var(--shadow-small); border-radius: 18px; }
+    .panel-title { display: flex; align-items: center; gap: 10px; }
+    .panel-title .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }
+    .muted-pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 9px; color: var(--text-2); background: rgba(255,255,255,.55); font-size: 11px; }
+    .command { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); height: 48px; padding: 0 10px 0 15px; display: flex; align-items: center; gap: 11px; border: 1px solid rgba(255,255,255,.88); border-radius: 16px; color: var(--text-2); background: rgba(255,255,255,.78); backdrop-filter: blur(28px) saturate(140%); box-shadow: 0 18px 50px rgba(22,22,28,.17); font-size: 12px; z-index: 5; }
+    .command b { color: var(--text); font-weight: 550; }
+    .kbd { padding: 4px 6px; border-radius: 6px; background: rgba(118,118,128,.11); color: var(--text-3); }
+
+    /* Project planning */
+    .project-grid { height: 100%; display: grid; grid-template-columns: minmax(0,1fr) 314px; gap: 18px; }
+    .project-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+    .project-hero { height: 104px; padding: 4px 4px 0; display: flex; align-items: flex-start; }
+    .project-meta { margin-left: auto; display: flex; gap: 28px; padding-top: 12px; }
+    .metric { min-width: 84px; }
+    .metric strong { display: block; font-size: 18px; letter-spacing: -.025em; }
+    .metric span { display: block; margin-top: 4px; color: var(--text-3); font-size: 11px; }
+    .timeline { flex: 1; min-height: 0; overflow: hidden; }
+    .timeline-head { height: 56px; padding-left: 182px; display: grid; grid-template-columns: repeat(6,1fr); border-bottom: 1px solid var(--line); color: var(--text-3); font-size: 11px; }
+    .week { display: flex; align-items: center; justify-content: center; border-left: 1px solid rgba(29,29,31,.06); }
+    .week.now { color: var(--accent); font-weight: 650; }
+    .tl-row { height: 86px; display: grid; grid-template-columns: 182px 1fr; border-bottom: 1px solid rgba(29,29,31,.065); }
+    .tl-label { padding: 18px 16px 12px 20px; }
+    .tl-label strong { display: block; font-size: 13px; }
+    .tl-label span { display: block; margin-top: 6px; color: var(--text-3); font-size: 11px; }
+    .tl-track { position: relative; display: grid; grid-template-columns: repeat(6,1fr); background: repeating-linear-gradient(to right,transparent 0,transparent calc(16.666% - 1px),rgba(29,29,31,.055) calc(16.666% - 1px),rgba(29,29,31,.055) 16.666%); }
+    .taskbar { position: absolute; height: 38px; top: 23px; border-radius: 11px; padding: 0 12px; display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; white-space: nowrap; box-shadow: inset 0 0 0 1px rgba(0,0,0,.035); }
+    .taskbar i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .65; }
+    .taskbar.blue { background: var(--blue-soft); color: #2c68c8; }
+    .taskbar.green { background: var(--green-soft); color: var(--green); }
+    .taskbar.amber { background: var(--amber-soft); color: var(--amber); }
+    .taskbar.purple { background: var(--purple-soft); color: var(--purple); }
+    .today-line { position: absolute; left: 43%; top: 0; bottom: 0; width: 1px; background: rgba(94,92,230,.38); }
+    .today-line::before { content: ""; position: absolute; top: -4px; left: -4px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+    .inspector { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+    .inspector-head { display: flex; align-items: center; justify-content: space-between; }
+    .close-x { color: var(--text-3); font-size: 18px; }
+    .status-line { display: flex; align-items: center; justify-content: space-between; padding: 12px; background: var(--surface-subtle); border-radius: 12px; font-size: 12px; }
+    .status { color: var(--green); font-weight: 620; }
+    .progress-ring { width: 112px; height: 112px; margin: 2px auto; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--accent) 0 67%,#e6e6eb 67%); position: relative; }
+    .progress-ring::before { content: ""; position: absolute; inset: 9px; background: white; border-radius: 50%; }
+    .progress-ring b { z-index: 1; font-size: 23px; letter-spacing: -.04em; }
+    .field { padding-top: 14px; border-top: 1px solid var(--line); }
+    .field label { display: block; color: var(--text-3); font-size: 11px; margin-bottom: 7px; }
+    .field p { font-size: 12px; line-height: 1.55; }
+    .people { display: flex; margin-top: 9px; }
+    .person { width: 29px; height: 29px; margin-left: -5px; border: 2px solid white; border-radius: 50%; display: grid; place-items: center; font-size: 9px; background: #e9e9ef; }
+    .person:first-child { margin-left: 0; }
+
+    /* Daily */
+    .daily-content { display: grid; grid-template-columns: 1fr 302px; gap: 18px; height: 100%; }
+    .day-main { min-width: 0; display: flex; flex-direction: column; }
+    .day-head { height: 106px; display: flex; align-items: flex-start; padding: 2px 4px 0; }
+    .day-kpis { margin-left: auto; display: flex; gap: 10px; padding-top: 8px; }
+    .kpi-chip { padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.7); border: 1px solid var(--line); }
+    .kpi-chip b { display: block; font-size: 13px; }
+    .kpi-chip span { display: block; margin-top: 3px; color: var(--text-3); font-size: 10px; }
+    .day-timeline { flex: 1; min-height: 0; padding: 10px 0; position: relative; overflow: hidden; }
+    .hour { height: 64px; display: grid; grid-template-columns: 56px 1fr; }
+    .hour-label { padding-top: 1px; color: var(--text-3); font-size: 10px; text-align: center; }
+    .hour-line { border-top: 1px solid rgba(29,29,31,.07); position: relative; }
+    .hour-line::after { content:""; position:absolute; left:25%; top:-1px; width:1px; height:64px; background:rgba(29,29,31,.035); box-shadow: 195px 0 rgba(29,29,31,.035),390px 0 rgba(29,29,31,.035); }
+    .event { position: absolute; left: 82px; width: calc(100% - 102px); padding: 11px 14px; border-radius: 13px; display: flex; align-items: flex-start; gap: 10px; box-shadow: inset 3px 0 0 currentColor, inset 0 0 0 1px rgba(0,0,0,.025); }
+    .event strong { font-size: 12px; }
+    .event span { color: currentColor; opacity: .68; font-size: 10px; margin-left: auto; }
+    .event.focus { top: 82px; height: 104px; background: var(--accent-soft); color: var(--accent-2); }
+    .event.meeting { top: 210px; height: 57px; background: var(--blue-soft); color: #2f6dcf; }
+    .event.health { top: 338px; height: 57px; background: var(--green-soft); color: var(--green); }
+    .event.review { top: 466px; height: 89px; background: var(--amber-soft); color: var(--amber); }
+    .now-line { position: absolute; left: 56px; right: 0; top: 303px; height: 1px; background: #ff5b57; z-index: 2; }
+    .now-line::before { content:""; position:absolute; left:-4px; top:-4px; width:9px; height:9px; border-radius:50%; background:#ff5b57; }
+    .focus-panel { display: flex; flex-direction: column; gap: 14px; }
+    .focus-card { padding: 20px; }
+    .focus-number { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; color: white; background: var(--accent); font-weight: 700; box-shadow: 0 8px 18px rgba(94,92,230,.22); }
+    .focus-card .header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .focus-item { padding: 13px 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 18px 1fr; gap: 9px; }
+    .check { width: 17px; height: 17px; border: 1.5px solid #c9c9cf; border-radius: 50%; margin-top: 1px; }
+    .focus-item b { display: block; font-size: 12px; font-weight: 570; }
+    .focus-item span { display: block; color: var(--text-3); font-size: 10px; margin-top: 4px; }
+    .energy { padding: 18px 20px; }
+    .energy-row { display: flex; justify-content: space-between; align-items: center; margin-top: 13px; }
+    .energy-bars { display: flex; gap: 4px; align-items: end; }
+    .energy-bars i { width: 5px; border-radius: 3px; background: var(--accent); display: block; }
+    .energy-bars i:nth-child(1){height:7px}.energy-bars i:nth-child(2){height:11px}.energy-bars i:nth-child(3){height:16px}.energy-bars i:nth-child(4){height:12px;opacity:.22}.energy-bars i:nth-child(5){height:8px;opacity:.14}
+    .quiet { padding: 18px 20px; flex: 1; background: linear-gradient(145deg,rgba(255,255,255,.96),rgba(239,239,255,.82)); position: relative; overflow: hidden; }
+    .quiet::after { content:""; position:absolute; width:130px; height:130px; border-radius:50%; right:-55px; bottom:-55px; border:22px solid rgba(94,92,230,.08); }
+    .quiet-time { margin-top: 16px; font-size: 25px; font-weight: 650; letter-spacing: -.035em; }
+
+    /* Life map */
+    .life-content { display: flex; flex-direction: column; height: 100%; gap: 16px; }
+    .life-hero { height: 112px; display: flex; align-items: flex-start; padding: 2px 4px 0; }
+    .vision { margin-left: auto; width: 490px; padding: 15px 18px; border-radius: 15px; background: rgba(255,255,255,.72); border: 1px solid var(--line); }
+    .vision small { display:block; color:var(--accent); font-size:10px; font-weight:650; margin-bottom:5px; }
+    .vision p { font-size:12px; color:var(--text-2); line-height:1.55; }
+    .map-shell { flex: 1; min-height: 0; overflow: hidden; padding: 0; position: relative; }
+    .map-head { height: 64px; display: grid; grid-template-columns: 188px repeat(4,1fr); align-items: center; border-bottom:1px solid var(--line); }
+    .map-head > div { height:100%; display:flex; align-items:center; padding:0 18px; border-left:1px solid rgba(29,29,31,.055); }
+    .map-head > div:first-child { border-left:0; }
+    .map-head b { font-size:12px; }
+    .map-head span { color:var(--text-3);font-size:10px;margin-left:6px; }
+    .map-body { display:grid; grid-template-rows: repeat(3,1fr); height:calc(100% - 64px); }
+    .map-row { display:grid; grid-template-columns:188px 1fr; border-bottom:1px solid var(--line); }
+    .domain { padding:20px; display:flex; flex-direction:column; justify-content:space-between; }
+    .domain-icon { width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:var(--surface-subtle);color:var(--text-2);font-size:15px; }
+    .domain b { display:block;font-size:13px;margin-top:10px; }
+    .domain span { display:block;color:var(--text-3);font-size:10px;margin-top:4px; }
+    .horizons { display:grid;grid-template-columns:repeat(4,1fr);position:relative;background:repeating-linear-gradient(to right,transparent 0,transparent calc(25% - 1px),rgba(29,29,31,.055) calc(25% - 1px),rgba(29,29,31,.055) 25%); }
+    .map-card { position:absolute;top:20px;bottom:20px;padding:15px;border-radius:14px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:inset 0 0 0 1px rgba(0,0,0,.025); }
+    .map-card b { font-size:12px;line-height:1.4; }
+    .map-card p { font-size:10px;line-height:1.45;opacity:.72; }
+    .map-card .tag { align-self:flex-start;padding:4px 7px;border-radius:7px;background:rgba(255,255,255,.58);font-size:9px; }
+    .map-card.indigo { background:var(--accent-soft);color:var(--accent-2); }
+    .map-card.blue { background:var(--blue-soft);color:#2b68c8; }
+    .map-card.green { background:var(--green-soft);color:var(--green); }
+    .map-card.amber { background:var(--amber-soft);color:var(--amber); }
+    .milestone { position:absolute; width:10px;height:10px;border:2px solid white;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(94,92,230,.15);z-index:2; }
+    .map-footer { position:absolute;right:20px;bottom:18px;display:flex;gap:8px; }
+    .zoom { padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.82);border:1px solid var(--line);font-size:11px;color:var(--text-2);box-shadow:var(--shadow-small); }
+    .concept-label { position:absolute;left:94px;bottom:19px;color:var(--text-3);font-size:10px;letter-spacing:.02em;z-index:3; }
+  </style>
+</head>
+<body>
+  <section class="screen" data-screen="project">
+    <aside class="rail">
+      <div class="brand">S</div>
+      <button class="rail-btn active" aria-label="项目"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg></button>
+      <button class="rail-btn"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 3v4M16 3v4M4 10h16"/></svg></button>
+      <button class="rail-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></button>
+      <button class="rail-btn"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8M4 20h16"/></svg></button>
+      <div class="rail-spacer"></div><button class="rail-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1V21H9.6v-.08A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4H3V9.6h.08A1.7 1.7 0 0 0 4.6 8.5"/></svg></button><div class="avatar">YL</div>
+    </aside>
+    <main class="app">
+      <header class="topbar"><span class="crumb">工作空间&nbsp; / &nbsp;<strong>Q3 产品重构</strong></span><div class="top-spacer"></div><div class="segmented"><button class="segment active">时间线</button><button class="segment">看板</button><button class="segment">文档</button></div><button class="icon-button"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg></button><button class="primary">＋ 新建任务</button></header>
+      <div class="content"><div class="project-grid">
+        <div class="project-main">
+          <div class="project-hero"><div><div class="eyebrow">Project planning</div><h1>Q3 产品重构</h1><p class="sub">把复杂项目变成一条安静、可理解的路径。</p></div><div class="project-meta"><div class="metric"><strong>67%</strong><span>整体进度</span></div><div class="metric"><strong>12</strong><span>进行中任务</span></div><div class="metric"><strong>9月 28日</strong><span>目标完成</span></div></div></div>
+          <div class="timeline card"><div class="timeline-head"><div class="week">8月 03</div><div class="week">8月 10</div><div class="week now">本周 · 8月 17</div><div class="week">8月 24</div><div class="week">8月 31</div><div class="week">9月 07</div></div>
+            <div class="tl-row"><div class="tl-label"><strong>01 · 探索</strong><span>研究与需求收敛</span></div><div class="tl-track"><div class="taskbar blue" style="left:3%;width:29%"><i></i>用户访谈与洞察</div></div></div>
+            <div class="tl-row"><div class="tl-label"><strong>02 · 定义</strong><span>体验原则与范围</span></div><div class="tl-track"><div class="taskbar purple" style="left:18%;width:38%"><i></i>核心体验蓝图</div><div class="today-line"></div></div></div>
+            <div class="tl-row"><div class="tl-label"><strong>03 · 设计</strong><span>界面与交互系统</span></div><div class="tl-track"><div class="taskbar green" style="left:43%;width:42%"><i></i>高保真设计与验证</div></div></div>
+            <div class="tl-row"><div class="tl-label"><strong>04 · 交付</strong><span>构建、测试、上线</span></div><div class="tl-track"><div class="taskbar amber" style="left:70%;width:26%"><i></i>上线准备</div></div></div>
+          </div>
+        </div>
+        <aside class="inspector card"><div class="inspector-head"><div><div class="eyebrow">Selected</div><h2 style="margin-top:5px">核心体验蓝图</h2></div><span class="close-x">×</span></div><div class="status-line"><span>状态</span><span class="status">进行中</span></div><div class="progress-ring"><b>67%</b></div><div class="field"><label>时间范围</label><p>8月 12日 — 8月 28日 · 12 个工作日</p></div><div class="field"><label>目标</label><p>统一关键任务流、信息层级与跨视图体验，为视觉系统建立可靠骨架。</p></div><div class="field"><label>参与者</label><div class="people"><div class="person">YL</div><div class="person" style="background:#e8f2ff">CS</div><div class="person" style="background:#efe9ff">MZ</div></div></div><div class="field"><label>下一步</label><p style="color:var(--accent);font-weight:600">完成评审并冻结范围 →</p></div></aside>
+      </div></div>
+    </main><div class="command"><b>快速操作</b><span>搜索、创建或跳转</span><span class="kbd">⌘ K</span></div><div class="concept-label">SMARTLINE · CONCEPT 01 / PROJECT PLANNING</div>
+  </section>
+
+  <section class="screen" data-screen="daily">
+    <aside class="rail"><div class="brand">S</div><button class="rail-btn"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg></button><button class="rail-btn active"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 3v4M16 3v4M4 10h16"/></svg></button><button class="rail-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></button><button class="rail-btn"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8M4 20h16"/></svg></button><div class="rail-spacer"></div><button class="rail-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg></button><div class="avatar">YL</div></aside>
+    <main class="app"><header class="topbar"><span class="crumb">每日安排&nbsp; / &nbsp;<strong>今天</strong></span><div class="top-spacer"></div><div class="segmented"><button class="segment">日</button><button class="segment active">时间轴</button><button class="segment">周</button></div><button class="icon-button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button class="primary">安排任务</button></header>
+      <div class="content"><div class="daily-content"><div class="day-main"><div class="day-head"><div><div class="eyebrow">Monday · Week 33</div><h1>8月10日，星期一</h1><p class="sub">今天只完成三件重要的事，剩下的让时间自然发生。</p></div><div class="day-kpis"><div class="kpi-chip"><b>5h 20m</b><span>已安排</span></div><div class="kpi-chip"><b>2h 40m</b><span>专注时间</span></div><div class="kpi-chip"><b>34%</b><span>留白</span></div></div></div>
+        <div class="day-timeline card"><div class="hour"><div class="hour-label">08:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">09:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">10:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">11:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">12:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">13:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">14:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">15:00</div><div class="hour-line"></div></div><div class="hour"><div class="hour-label">16:00</div><div class="hour-line"></div></div>
+          <div class="event focus"><strong>深度工作 · 核心体验蓝图</strong><span>09:15 — 10:45</span></div><div class="event meeting"><strong>设计评审 · Q3 产品重构</strong><span>11:15 — 12:00</span></div><div class="now-line"></div><div class="event health"><strong>午间散步</strong><span>13:15 — 14:00</span></div><div class="event review"><strong>原型验证与记录</strong><span>15:15 — 16:30</span></div>
+        </div></div>
+        <aside class="focus-panel"><div class="focus-card card"><div class="header"><div class="focus-number">3</div><div><h2>今日焦点</h2><p class="sub">重要，而非紧急</p></div></div><div class="focus-item"><i class="check"></i><div><b>冻结核心体验范围</b><span>项目 · Q3 产品重构</span></div></div><div class="focus-item"><i class="check"></i><div><b>完成两个关键流程原型</b><span>设计 · 预计 90 分钟</span></div></div><div class="focus-item"><i class="check"></i><div><b>晚间复盘与明日预览</b><span>个人 · 21:30</span></div></div></div>
+          <div class="energy card"><div class="panel-title"><span class="dot"></span><h3>精力曲线</h3></div><div class="energy-row"><div><b style="font-size:13px">高峰中</b><p class="sub" style="font-size:10px">适合创造性工作</p></div><div class="energy-bars"><i></i><i></i><i></i><i></i><i></i></div></div></div>
+          <div class="quiet card"><div class="eyebrow">Protected space</div><h2 style="margin-top:6px">保留留白</h2><div class="quiet-time">2h 40m</div><p class="sub" style="margin-top:8px">空白不是未计划，<br/>而是为变化保留的呼吸感。</p></div>
+        </aside></div></div>
+    </main><div class="command"><b>快速捕捉</b><span>添加任务、想法或笔记</span><span class="kbd">⌘ ↵</span></div><div class="concept-label">SMARTLINE · CONCEPT 02 / DAILY SCHEDULE</div>
+  </section>
+
+  <section class="screen" data-screen="life">
+    <aside class="rail"><div class="brand">S</div><button class="rail-btn"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg></button><button class="rail-btn"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 3v4M16 3v4M4 10h16"/></svg></button><button class="rail-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></button><button class="rail-btn active"><svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8M4 20h16"/></svg></button><div class="rail-spacer"></div><button class="rail-btn"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg></button><div class="avatar">YL</div></aside>
+    <main class="app"><header class="topbar"><span class="crumb">人生地图&nbsp; / &nbsp;<strong>2026 — 2035</strong></span><div class="top-spacer"></div><div class="segmented"><button class="segment active">地图</button><button class="segment">旅程</button><button class="segment">回顾</button></div><button class="icon-button"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg></button><button class="primary">＋ 新增愿景</button></header>
+      <div class="content"><div class="life-content"><div class="life-hero"><div><div class="eyebrow">Life map · 10 years</div><h1>人生地图</h1><p class="sub">不是预测未来，而是让选择拥有方向。</p></div><div class="vision"><small>北极星愿景</small><p>成为一个持续创造、身心自由、与重要的人保持真实连接的人。</p></div></div>
+        <div class="map-shell card"><div class="map-head"><div><b>生命领域</b></div><div><b>现在</b><span>2026</span></div><div><b>近期</b><span>1—2 年</span></div><div><b>中期</b><span>3—5 年</span></div><div><b>远期</b><span>5—10 年</span></div></div>
+          <div class="map-body"><div class="map-row"><div class="domain"><div><div class="domain-icon">✦</div><b>创造与事业</b><span>表达 · 产品 · 影响力</span></div><span class="muted-pill">4 个愿景</span></div><div class="horizons"><div class="map-card indigo" style="left:2%;width:22%"><b>完成 SmartLine<br/>体验重构</b><p>建立真正属于自己的创造系统</p><span class="tag">进行中 · 67%</span></div><div class="map-card blue" style="left:27%;width:45%"><b>形成稳定的产品与内容节奏</b><p>每年完成一个有长期价值的作品</p><span class="tag">2027 — 2030</span></div><div class="map-card indigo" style="left:76%;width:22%"><b>独立创造者</b><p>自由选择值得投入的事</p><span class="tag">2031+</span></div><i class="milestone" style="left:48%;top:15px"></i></div></div>
+            <div class="map-row"><div class="domain"><div><div class="domain-icon">◌</div><b>健康与能量</b><span>身体 · 精神 · 节律</span></div><span class="muted-pill">3 个愿景</span></div><div class="horizons"><div class="map-card green" style="left:2%;width:31%"><b>重建稳定节律</b><p>睡眠、力量训练与户外时间</p><span class="tag">每周 · 4 次</span></div><div class="map-card green" style="left:38%;width:34%"><b>完成一次长距离徒步</b><p>让身体成为自由的底座</p><span class="tag">2028</span></div><div class="map-card blue" style="left:76%;width:22%"><b>保持旺盛好奇</b><p>健康地工作与生活</p><span class="tag">长期</span></div><i class="milestone" style="left:71%;top:calc(50% - 5px);background:var(--green)"></i></div></div>
+            <div class="map-row"><div class="domain"><div><div class="domain-icon">∞</div><b>关系与生活</b><span>家人 · 朋友 · 世界</span></div><span class="muted-pill">3 个愿景</span></div><div class="horizons"><div class="map-card amber" style="left:2%;width:22%"><b>每月深度相聚</b><p>给重要的人完整注意力</p><span class="tag">持续</span></div><div class="map-card indigo" style="left:27%;width:45%"><b>建立一处温暖、开放的家</b><p>连接家人、朋友与共同创造者</p><span class="tag">2027 — 2030</span></div><div class="map-card amber" style="left:76%;width:22%"><b>看见更大的世界</b><p>生活在多种文化之间</p><span class="tag">2031+</span></div></div></div>
+          </div><div class="map-footer"><span class="zoom">−</span><span class="zoom">100%</span><span class="zoom">＋</span><span class="zoom">适应画布</span></div>
+        </div></div></div>
+    </main><div class="command"><b>思考提示</b><span>如果只能保留一个方向，会是哪一个？</span><span class="kbd">⌘ K</span></div><div class="concept-label">SMARTLINE · CONCEPT 03 / LIFE MAP</div>
+  </section>
+  <script>
+    const key = new URLSearchParams(location.search).get('screen') || 'project';
+    document.querySelector(`[data-screen="${key}"]`)?.classList.add('active');
+  </script>
+</body>
+</html>

@@ -682,3 +682,75 @@
   .life-line__task-inspector { width: auto; top: auto; right: 12px; bottom: 92px; left: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .life-line * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Calm Intelligence surface pass: existing life-map structure is preserved. */
+.life-line {
+  --lm-accent: var(--ui-primary);
+  --lm-accent-soft: var(--ui-primary-soft);
+  --lm-ink: var(--ui-text);
+  --lm-muted: var(--ui-text-muted);
+  --lm-border: var(--ui-border);
+  --lm-canvas: var(--ui-surface);
+  color: var(--ui-text);
+  background: var(--ui-surface-subtle);
+}
+
+.life-line__toolbar {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-subtle);
+}
+
+.life-line__brand h1 {
+  color: var(--ui-text);
+  letter-spacing: -0.025em;
+}
+
+.life-line__add-button,
+.life-line__jump-button,
+.life-line__view-button,
+.life-line__scale-button,
+.life-line__planning-button,
+.life-line__next-milestone,
+.life-line__today-button {
+  height: var(--ui-control-height);
+  border-color: var(--ui-border);
+  border-radius: var(--ui-control-radius);
+  color: var(--ui-text-muted);
+  background: rgba(255, 255, 255, 0.90);
+}
+
+.life-line__add-button {
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
+
+.life-line__command-menu {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-card-radius);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--ui-dialog-shadow);
+  backdrop-filter: blur(22px) saturate(135%);
+}
+
+.life-line__scroller {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.life-line__status-line,
+.life-map-planning-summary,
+.life-line__plan-filter {
+  border-color: rgba(29, 29, 31, 0.07);
+}
+
+.life-line__plan-filter button {
+  border-color: var(--ui-border);
+  color: var(--ui-text-muted);
+  background: #fafafd;
+}
+
+.life-line__plan-filter button.is-active {
+  border-color: rgba(94, 92, 230, 0.24);
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}

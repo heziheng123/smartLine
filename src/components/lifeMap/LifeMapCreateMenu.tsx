@@ -48,8 +48,8 @@ const LifeMapCreateMenu: React.FC<LifeMapCreateMenuProps> = ({
     items[next]?.focus();
   };
   return <div ref={menuRef} id="life-map-create-menu" className="life-line__primary-create" data-testid="life-map-primary-create" role="menu" aria-label="添加人生地图内容" onKeyDown={onKeyDown}>
-    {onCreatePlan && <button type="button" role="menuitem" onClick={onCreatePlan} aria-label="新建项目">
-      <Layers3 size={16} /><span><strong>项目</strong><small>准备推进什么事情</small></span>
+    {onCreatePlan && <button type="button" role="menuitem" onClick={onCreatePlan} aria-label="新建人生计划">
+      <Layers3 size={16} /><span><strong>人生计划</strong><small>只在人生地图中设计长期推进方向</small></span>
     </button>}
     {onCreateSystem && <button type="button" role="menuitem" onClick={onCreateSystem} aria-label="新建长期系统">
       <Repeat2 size={16} /><span><strong>长期系统</strong><small>准备长期保持什么规律</small></span>
@@ -66,8 +66,8 @@ const LifeMapCreateMenu: React.FC<LifeMapCreateMenuProps> = ({
     {!hasAreas && onCreateArea && <button type="button" role="menuitem" className="life-line__primary-create-context" onClick={onCreateArea} aria-label="先创建二级分类">
       <Plus size={16} /><span><strong>先创建二级分类</strong><small>时期重点和文字便签需要所属分类</small></span>
     </button>}
-    {hasPlans && onCreatePhase && <button type="button" role="menuitem" className="life-line__primary-create-context" onClick={onCreatePhase} aria-label="给现有项目添加子阶段">
-      <CalendarRange size={16} /><span><strong>给现有项目添加子阶段</strong><small>选择项目后自动继承分类与日期</small></span>
+    {hasPlans && onCreatePhase && <button type="button" role="menuitem" className="life-line__primary-create-context" onClick={onCreatePhase} aria-label="给现有人生计划添加阶段">
+      <CalendarRange size={16} /><span><strong>给人生计划添加阶段</strong><small>选择计划后自动继承分类与日期</small></span>
     </button>}
   </div>;
 };

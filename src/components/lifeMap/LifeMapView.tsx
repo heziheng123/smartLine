@@ -12,8 +12,7 @@ import {
   type LifeMapPlanGroupFilter,
 } from '@/lifeMap/planSwimlaneLayout';
 import { LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
-import type { LifeArea, LifeGoal, LifeMapPlanGroupPreference, LifeSystem } from '@/lifeMap/types';
-import type { ProjectPlanningArea, ProjectPlanningGroup, ProjectPlanningGroupId } from '@/lifeMap/projectPlanning';
+import type { LifeArea, LifeGoal, LifeMapPlanGroupId, LifeMapPlanGroupPreference, LifeSystem } from '@/lifeMap/types';
 import LifeMapCreateMenu from './LifeMapCreateMenu';
 import '@/styles/life-map.css';
 
@@ -25,8 +24,8 @@ interface LifeMapViewProps {
   lifeStages: LifeStage[];
   planGoals: LifeGoal[];
   planSystems: LifeSystem[];
-  planAreas: Array<LifeArea | ProjectPlanningArea>;
-  planGroups: Array<LifeMapPlanGroupPreference | ProjectPlanningGroup>;
+  planAreas: LifeArea[];
+  planGroups: LifeMapPlanGroupPreference[];
   onCreateLifeStage: (stage: LifeStage) => void;
   onUpdateLifeStage: (stage: LifeStage) => void;
   onDeleteLifeStage: (stageId: string) => void;
@@ -38,7 +37,7 @@ interface LifeMapViewProps {
   onUpdateMilestone: (milestone: Milestone) => void;
   onDeleteMilestone: (milestoneId: string) => void;
   onUpdateProjectPlacement?: (taskId: string, placement: ProjectSide) => void;
-  onUpdatePlanGroupPlacement?: (groupId: ProjectPlanningGroupId, placement: ProjectSide) => void;
+  onUpdatePlanGroupPlacement?: (groupId: LifeMapPlanGroupId, placement: ProjectSide) => void;
   toolbarScope?: React.ReactNode;
   onCreatePlan?: () => void;
   onCreatePhase?: () => void;
@@ -122,7 +121,6 @@ interface RangeSegment {
   parentTaskId?: string;
   maintenanceActive?: boolean;
   maintenanceReason?: string;
-  source?: Task['lifeMapSource'];
 }
 
 interface PositionedProjectBand extends RangeSegment {
@@ -130,7 +128,7 @@ interface PositionedProjectBand extends RangeSegment {
   width: number;
   level: number;
   side: ProjectSide;
-  swimlaneGroupId?: ProjectPlanningGroupId;
+  swimlaneGroupId?: LifeMapPlanGroupId;
   swimlaneTop?: number;
 }
 
@@ -603,7 +601,6 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         parentTaskId: task.lifeMapParentId,
         maintenanceActive: task.lifeMapMaintenanceActive,
         maintenanceReason: task.lifeMapMaintenanceReason,
-        source: task.lifeMapSource,
       });
 
       getSmartTaskBlocks(task.blocks ?? []).filter((block) => !block.header.isArchived).forEach((block) => {
@@ -1848,14 +1845,14 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             </div>
           </div>
         </div>
-        <div className="life-line__plan-filter" role="group" aria-label="项目泳道筛选" data-testid="life-map-plan-filter">
-          {(['all', 'learning', 'work', 'life', ...(planGroups.some((group) => group.id === 'unclassified') ? ['unclassified' as const] : [])] as const).map((id) => <button
+        <div className="life-line__plan-filter" role="group" aria-label="人生计划泳道筛选" data-testid="life-map-plan-filter">
+          {(['all', 'learning', 'work', 'life'] as const).map((id) => <button
             type="button"
             key={id}
             className={planGroupFilter === id ? 'is-active' : ''}
             aria-pressed={planGroupFilter === id}
             onClick={() => setPlanGroupFilter(id)}
-          >{id === 'all' ? '全部项目' : id === 'unclassified' ? '未分类' : LIFE_MAP_PLAN_GROUP_META[id].name}</button>)}
+          >{id === 'all' ? '全部人生计划' : LIFE_MAP_PLAN_GROUP_META[id].name}</button>)}
         </div>
         {canvasTool !== 'select' && <div className="life-line__hint"><span>{canvasTool === 'range' ? '时期重点' : canvasTool === 'note' ? '文字便签' : '关键日期'}</span>{canvasTool === 'range' ? '在画布上横向拖动选择时间范围' : '在画布对应日期单击放置'}<button type="button" onClick={() => setCanvasTool('select')}>退出</button></div>}
 
@@ -1983,10 +1980,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                   '--band-sticky-left': `${band.swimlaneGroupId ? PLAN_SWIMLANE_LABEL_WIDTH + 12 : 12}px`,
                 } as React.CSSProperties}
                 title={`${parentPlan ? `${parentPlan.title} · ` : ''}${band.title} · ${band.groupName} · ${band.start.format('YYYY-MM-DD')}${band.openEnded ? '起长期持续' : ` 至 ${band.end.format('YYYY-MM-DD')}`} · ${band.maintenanceActive ? `维护中${band.maintenanceReason ? `：${band.maintenanceReason}` : ''}` : band.meta ?? `${Math.round(band.progress * 100)}%`}`}
-                onClick={() => {
-                  if (band.source === 'timeline-project' && band.taskId) onOpenTask(band.taskId);
-                  else setSelectedProjectId((current) => current === band.taskId ? null : band.taskId ?? null);
-                }}
+                onClick={() => setSelectedProjectId((current) => current === band.taskId ? null : band.taskId ?? null)}
                 onMouseEnter={() => setHoveredProjectId(band.taskId ?? null)}
                 onMouseLeave={() => setHoveredProjectId((current) => current === band.taskId ? null : current)}
                 onDoubleClick={() => band.taskId && onOpenTask(band.taskId)}
@@ -2038,12 +2032,12 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                 <button type="button" className="is-close" onClick={() => setSelectedProjectId(null)} aria-label="退出规划聚焦"><X size={13} /></button>
               </header>
               <div className="life-line__project-focus-actions">
-                {selectedProjectBand.source !== 'timeline-project' && selectedProjectBand.lifeMapKind !== 'phase' && <div className="life-line__project-side-switch" role="group" aria-label="规划线位置">
+                {selectedProjectBand.lifeMapKind !== 'phase' && <div className="life-line__project-side-switch" role="group" aria-label="规划线位置">
                   <button type="button" className={selectedProjectBand.side === 'above' ? 'is-active' : ''} aria-label="放到时间轴上方" aria-pressed={selectedProjectBand.side === 'above'} onClick={() => selectedProjectBand.taskId && setProjectSide(selectedProjectBand.taskId, 'above')}>上方</button>
                   <button type="button" className={selectedProjectBand.side === 'below' ? 'is-active' : ''} aria-label="放到时间轴下方" aria-pressed={selectedProjectBand.side === 'below'} onClick={() => selectedProjectBand.taskId && setProjectSide(selectedProjectBand.taskId, 'below')}>下方</button>
                 </div>}
-                {selectedProjectBand.source !== 'timeline-project' && selectedProjectBand.lifeMapKind === 'plan' && onCreatePhaseForPlan && <button type="button" onClick={() => selectedProjectBand.taskId && onCreatePhaseForPlan(selectedProjectBand.taskId)}>添加子阶段</button>}
-                {selectedProjectBand.source !== 'timeline-project' && selectedProjectBand.lifeMapKind === 'plan' && onManageProjectMaintenance && <button type="button" onClick={() => selectedProjectBand.taskId && onManageProjectMaintenance(selectedProjectBand.taskId)}>维护</button>}
+                {selectedProjectBand.lifeMapKind === 'plan' && onCreatePhaseForPlan && <button type="button" onClick={() => selectedProjectBand.taskId && onCreatePhaseForPlan(selectedProjectBand.taskId)}>添加子阶段</button>}
+                {selectedProjectBand.lifeMapKind === 'plan' && onManageProjectMaintenance && <button type="button" onClick={() => selectedProjectBand.taskId && onManageProjectMaintenance(selectedProjectBand.taskId)}>维护</button>}
                 <button type="button" className="is-open" onClick={() => selectedProjectBand.taskId && onOpenTask(selectedProjectBand.taskId)}>编辑</button>
               </div>
             </aside>}

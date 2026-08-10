@@ -63,6 +63,7 @@ test.beforeEach(async ({ page }) => {
 
 test('EBB uses the knowledge root as the category while preserving standalone manual tags', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
+  await page.getByRole('tab', { name: /复习库/ }).click();
 
   const linkedRow = page.locator('.eb-topic-row').filter({ hasText: '战国教育' });
   const manualRow = page.locator('.eb-topic-row').filter({ hasText: '独立复习主题' });

@@ -28,24 +28,6 @@ export interface WorkspaceContentCounts {
 
 export type UnifiedActivationDecision = 'new' | 'matching' | 'cloud' | 'conflict';
 
-export function canEditProjectPlanningCategory(
-  syncEnabled: boolean,
-  architecture: 'legacy' | 'unified',
-): boolean {
-  return !syncEnabled || architecture === 'unified';
-}
-
-export function assertLegacyProjectPlanningSyncSafe(tasks: unknown[]): void {
-  const hasClassification = tasks.some((task) => {
-    if (!task || typeof task !== 'object') return false;
-    const planningAreaId = (task as Record<string, unknown>).planningAreaId;
-    return typeof planningAreaId === 'string' && planningAreaId.trim().length > 0;
-  });
-  if (hasClassification) {
-    throw new Error('检测到项目已使用人生领域分类。旧模块房间无法阻止旧版本客户端覆盖该字段，请迁移到统一工作区后再开启同步。');
-  }
-}
-
 export function assertWorkspaceSchemaSupported(
   root: Record<string, unknown>,
   supportedVersion: number,

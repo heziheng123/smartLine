@@ -23,7 +23,16 @@ export function normalizeTimelineTask(task: Task): Task {
     : undefined;
   const start = validStart ?? validEnd ?? fallbackDate;
   const end = validEnd && validEnd >= start ? validEnd : start;
-  const normalizedTask = { ...task, start, end } as Task & { markdown?: string };
+  const normalizedTask = { ...task, start, end } as Task & {
+    markdown?: string;
+    planningAreaId?: unknown;
+    lifeMapSource?: unknown;
+  };
+  // Remove fields from the retired Project Planning ↔ Life Map bridge. They
+  // are intentionally not migrated because the two modules now have separate
+  // sources of truth and must not retain cross-database identifiers.
+  delete normalizedTask.planningAreaId;
+  delete normalizedTask.lifeMapSource;
   if (normalizedTask.markdown && (!normalizedTask.blocks || normalizedTask.blocks.length === 0)) {
     const blocks = migrateMarkdownToBlocks(normalizedTask);
     delete normalizedTask.markdown;

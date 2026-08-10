@@ -12,6 +12,7 @@ interface SlotStats {
   completed: number;
   totalDuration: number;
   inProgress: number;
+  availableMinutes: number;
 }
 
 interface DailySlotSectionProps {
@@ -61,11 +62,27 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
   onSubmitFree,
   onCancelFree,
 }) => {
-  const statLabel = stats.total === 0
-    ? '暂无任务'
-    : stats.completed === stats.total
-      ? '本时段已完成'
-      : `${stats.completed}/${stats.total} 完成${stats.inProgress > 0 ? ` · ${stats.inProgress} 进行中` : ''}`;
+  const loadRatio = stats.totalDuration / Math.max(1, stats.availableMinutes);
+  const loadState = stats.totalDuration === 0
+    ? 'empty'
+    : loadRatio > 1
+      ? 'overload'
+      : loadRatio > 0.72
+        ? 'balanced'
+        : 'open';
+  const loadLabel = loadState === 'overload'
+    ? `超载 ${stats.totalDuration - stats.availableMinutes} 分钟`
+    : loadState === 'balanced'
+      ? '负荷合理'
+      : loadState === 'open'
+        ? '仍有余量'
+        : '待安排';
+  const formatMinutes = (minutes: number) => {
+    if (minutes < 60) return `${minutes} 分钟`;
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return rest > 0 ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+  };
 
   return (
     <section className="ds-slot-section" aria-labelledby={`ds-slot-title-${config.slot}`}>
@@ -77,9 +94,18 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
             {String(config.startHour).padStart(2, '0')}:00 – {String(config.endHour).padStart(2, '0')}:00
           </span>
         </div>
-        <div className={`ds-slot-stats ${stats.total === 0 ? 'ds-slot-stats--empty' : ''}`}>
-          {statLabel}
-          {stats.totalDuration > 0 && <span className="ds-slot-duration">约 {stats.totalDuration} 分钟</span>}
+        <div className="ds-slot-capacity" aria-label={`${config.label}已安排 ${formatMinutes(stats.totalDuration)}，可规划 ${formatMinutes(stats.availableMinutes)}`}>
+          <div className="ds-slot-capacity-copy">
+            <span className="ds-slot-capacity-value">已安排 {formatMinutes(stats.totalDuration)} / 可规划 {formatMinutes(stats.availableMinutes)}</span>
+            <span className={`ds-slot-load-badge ds-slot-load-badge--${loadState}`}>{loadLabel}</span>
+            {stats.total > 0 && <span className="ds-slot-completion">{stats.completed}/{stats.total} 完成{stats.inProgress > 0 ? ` · ${stats.inProgress} 进行中` : ''}</span>}
+          </div>
+          <span className="ds-slot-capacity-track" aria-hidden="true">
+            <span
+              className={`ds-slot-capacity-fill ds-slot-capacity-fill--${loadState}`}
+              style={{ width: `${Math.min(100, Math.round(loadRatio * 100))}%` }}
+            />
+          </span>
         </div>
       </div>
       <Droppable droppableId={droppableIdForSlot(config.slot)}>
@@ -91,7 +117,10 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
             className={`ds-slot-dropzone ${snapshot.isDraggingOver ? 'ds-slot-dropzone--active' : ''} ${items.length === 0 ? 'ds-slot-dropzone--empty' : ''}`}
           >
             {items.length === 0 && !snapshot.isDraggingOver && (
-              <div className="ds-slot-placeholder">从任务池拖入，或添加生活安排</div>
+              <div className="ds-slot-placeholder">
+                <strong>这个时段还没有安排</strong>
+                <span>可从右侧一键安排或拖入任务</span>
+              </div>
             )}
             {items.map((item, index) => {
               const quantity = isQuantitySource(item.sourceId);

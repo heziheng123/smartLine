@@ -2735,3 +2735,62 @@
   font-size: 18px;
   line-height: 1;
 }
+
+/* Calm Intelligence surface pass: component dimensions and colors only. */
+:root {
+  --stb-radius: var(--ui-control-radius);
+  --stb-shadow: 0 1px 3px rgba(22, 22, 28, 0.04);
+  --stb-shadow-hover: 0 8px 22px rgba(22, 22, 28, 0.08);
+}
+
+.pdv-container,
+.wmv-container,
+.week-matrix-workspace {
+  color: var(--ui-text);
+  background: var(--ui-surface-subtle);
+}
+
+.pdv-container {
+  border-color: var(--ui-border);
+}
+
+.pdv-header,
+.wmv-nav {
+  border-color: var(--ui-border);
+  background: rgba(255, 255, 255, 0.90);
+}
+
+.pdv-title,
+.wmv-nav-label {
+  color: var(--ui-text);
+  letter-spacing: -0.015em;
+}
+
+.pdv-back,
+.pdv-btn,
+.wmv-nav-btn,
+.wmv-mode-btn {
+  border-radius: var(--ui-control-radius);
+  color: var(--ui-text-muted);
+}
+
+.pdv-btn--primary {
+  color: #fff;
+  background: var(--ui-primary);
+}
+
+.pdv-meta-panel,
+.pdv-filter-bar,
+.pdv-date-group,
+.wmv-matrix,
+.wmv-block-card {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-card-radius);
+}
+
+.pdv-filter-pill--active,
+.pdv-group-toggle-opt--active,
+.wmv-mode-btn--active {
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
