@@ -4,7 +4,7 @@ import { hashWorkspaceValue } from './workspaceSyncCore';
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones' | 'lifeStages'
   | 'lifeMapAreas' | 'lifeMapPlanGroups' | 'lifeMapStages' | 'lifeMapThemes' | 'lifeMapGoals'
-  | 'lifeMapSystems' | 'lifeMapSystemCheckIns' | 'lifeMapEvents' | 'lifeMapFocuses' | 'lifeMapNotes' | 'lifeMapRelations' | 'lifeMapReviews'
+  | 'lifeMapSystems' | 'lifeMapSystemCheckIns' | 'lifeMapEvents' | 'lifeMapFocuses' | 'lifeMapNotes' | 'lifeMapReviews'
   | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
   | 'schedules' | 'retrospectives' | 'nodes';
 

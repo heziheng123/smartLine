@@ -76,6 +76,17 @@ import DailyReviewPlanner from '@/ebb/components/DailyReviewPlanner';
 import DailyRetrospectiveDialog from './DailyRetrospectiveDialog';
 import { collectCompletedActivities } from '@/domain/dailyRetrospective';
 
+const formatPlanningMinutes = (minutes: number): string => {
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest > 0 ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+};
+
+const timeSlotLabel = (slot: TimeSlot): string => (
+  slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'
+);
+
 // ── 主组件 ───────────────────────────────────────────────────
 
 const DailyScheduleView: React.FC = () => {
@@ -456,6 +467,18 @@ const DailyScheduleView: React.FC = () => {
         quantityCompleted: quantityHeader ? quantityCompleted : undefined,
         quantityUnit: quantityHeader ? quantityUnit : undefined,
         quantityState: dailyStatus?.state,
+        timingLabel: todo.due
+          ? todo.due < selectedDate
+            ? '已逾期'
+            : todo.due === selectedDate
+              ? '今日截止'
+              : `截止 ${todo.due.slice(5).replace('-', '/')}`
+          : undefined,
+        urgency: todo.due && todo.due < selectedDate
+          ? 'overdue'
+          : todo.due === selectedDate
+            ? 'due'
+            : 'normal',
       });
     }
 
@@ -479,10 +502,16 @@ const DailyScheduleView: React.FC = () => {
         detail: `第${round}/${total}轮`,
         sourceId: getReviewSourceId(task.id),
         duration: getReviewRoundDuration(task, round),
+        timingLabel: task.dueDate < selectedDate ? '复习逾期' : '今日复习',
+        urgency: task.dueDate < selectedDate ? 'overdue' : 'due',
       });
     }
 
-    return items;
+    const urgencyRank = { overdue: 0, due: 1, normal: 2 } as const;
+    return items.sort((left, right) => (
+      urgencyRank[left.urgency ?? 'normal'] - urgencyRank[right.urgency ?? 'normal']
+      || (left.duration ?? 30) - (right.duration ?? 30)
+    ));
   }, [todayProjectTasks, todayReviewTasks, scheduledSourceIds, ebbReviewTasks, ebbSettingsData, getProjectBlockFromSource, selectedDate, ebbRootByNodeId]);
 
   const poolOpen = poolPreference === 'open'
@@ -544,6 +573,42 @@ const DailyScheduleView: React.FC = () => {
     },
     [daySchedule.items, checkIsCompleted, tlTasks, rawTlGroups, ebbReviewById, ebbSettingsData, getProjectBlockFromSource, selectedDate, ebbRootByNodeId],
   );
+
+  const schedulePoolItemToSlot = useCallback((poolItem: DailyPoolItem, targetSlot: TimeSlot) => {
+    const beforeIds = new Set(
+      (useDailyScheduleStore.getState().schedules[selectedDate]?.items ?? []).map((item) => item.id),
+    );
+    addScheduledItem(selectedDate, {
+      sourceId: poolItem.sourceId,
+      name: poolItem.name,
+      source: poolItem.source,
+      timeSlot: targetSlot,
+      completed: false,
+      color: poolItem.color,
+      categoryColor: poolItem.categoryColor,
+      detail: poolItem.detail,
+      duration: poolItem.duration,
+    });
+    const created = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => !beforeIds.has(item.id));
+    if (!created) return;
+    const operationId = recordOperation({
+      label: `安排“${poolItem.name}”`,
+      detail: `已安排到${timeSlotLabel(targetSlot)}`,
+      modules: ['每日安排'],
+      undoSpec: {
+        kind: 'daily-remove',
+        payload: { date: selectedDate, itemId: created.id, expectedSourceId: created.sourceId },
+      },
+    }, () => {
+      const latest = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => item.id === created.id);
+      if (!latest || latest.sourceId !== created.sourceId) return '安排项已经发生变化';
+      useDailyScheduleStore.getState().removeScheduledItem(selectedDate, created.id);
+    });
+    setBacklogFeedback({
+      text: `已将“${poolItem.name}”安排到${timeSlotLabel(targetSlot)}`,
+      operationId,
+    });
+  }, [addScheduledItem, selectedDate]);
 
   // ── 拖拽处理（时段模式） ─────────────────────────────────
   const handleDragEnd = useCallback(
@@ -617,28 +682,7 @@ const DailyScheduleView: React.FC = () => {
         const targetSlot = destDroppableId.replace('ds-slot-', '') as TimeSlot;
         const poolItem = poolItems.find((i) => i.id === draggableId);
         if (!poolItem) return;
-        const beforeIds = new Set((useDailyScheduleStore.getState().schedules[selectedDate]?.items ?? []).map((item) => item.id));
-
-        addScheduledItem(selectedDate, {
-          sourceId: poolItem.sourceId,
-          name: poolItem.name,
-          source: poolItem.source,
-          timeSlot: targetSlot,
-          completed: false,
-          color: poolItem.color,
-          categoryColor: poolItem.categoryColor,
-          detail: poolItem.detail,
-          duration: poolItem.duration,
-        });
-        const created = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => !beforeIds.has(item.id));
-        if (created) recordOperation({
-          label: `安排“${poolItem.name}”`, detail: `已拖入${targetSlot === 'morning' ? '上午' : targetSlot === 'afternoon' ? '下午' : '晚上'}`, modules: ['每日安排'],
-          undoSpec: { kind: 'daily-remove', payload: { date: selectedDate, itemId: created.id, expectedSourceId: created.sourceId } },
-        }, () => {
-          const latest = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => item.id === created.id);
-          if (!latest || latest.sourceId !== created.sourceId) return '安排项已经发生变化';
-          useDailyScheduleStore.getState().removeScheduledItem(selectedDate, created.id);
-        });
+        schedulePoolItemToSlot(poolItem, targetSlot);
         return;
       }
 
@@ -686,7 +730,6 @@ const DailyScheduleView: React.FC = () => {
       }
     },
     [
-      addScheduledItem,
       backlogTasks,
       getProjectBlockFromSource,
       getSlotItems,
@@ -694,6 +737,7 @@ const DailyScheduleView: React.FC = () => {
       poolItems,
       removeScheduledItem,
       reorderScheduledItems,
+      schedulePoolItemToSlot,
       selectedDate,
     ],
   );
@@ -843,22 +887,42 @@ const DailyScheduleView: React.FC = () => {
     if (!backlogFeedback?.operationId) return;
     const restored = await undoOperation(backlogFeedback.operationId);
     setBacklogFeedback({
-      text: restored ? '已撤销，任务已恢复到原排期和时段' : '撤销失败，任务数据可能已经发生变化',
+      text: restored ? '已撤销刚才的操作' : '撤销失败，任务数据可能已经发生变化',
     });
   }, [backlogFeedback, undoOperation]);
 
   // ── 时间段统计 ──────────────────────────────────────────
   const getSlotStats = useCallback(
-    (slot: TimeSlot) => {
-      const items = getSlotItems(slot);
+    (config: TimeSlotConfig) => {
+      const items = getSlotItems(config.slot);
       const total = items.length;
       const completed = items.filter((i) => i.completed).length;
       const inProgress = items.filter((item) => item.quantityState === 'in-progress').length;
       const totalDuration = items.reduce((sum, item) => sum + (item.duration ?? 30), 0);
-      return { total, completed, inProgress, totalDuration };
+      return { total, completed, inProgress, totalDuration, availableMinutes: config.availableMinutes };
     },
     [getSlotItems],
   );
+
+  const dailyOverview = useMemo(() => {
+    const items = slotConfigs.flatMap((config) => getSlotItems(config.slot));
+    return {
+      scheduled: items.length,
+      completed: items.filter((item) => item.completed).length,
+      plannedMinutes: items.reduce((sum, item) => sum + (item.duration ?? 30), 0),
+      availableMinutes: slotConfigs.reduce((sum, config) => sum + config.availableMinutes, 0),
+    };
+  }, [getSlotItems, slotConfigs]);
+
+  const retrospectiveStatus = retrospectiveNewCount > 0
+    ? { label: `待补充 +${retrospectiveNewCount}`, tone: 'attention' }
+    : selectedRetrospective?.status === 'completed'
+      ? { label: '已完成', tone: 'completed' }
+      : selectedRetrospective
+        ? { label: '草稿', tone: 'draft' }
+        : selectedDate < today || (dailyOverview.scheduled > 0 && dailyOverview.completed === dailyOverview.scheduled)
+          ? { label: '可开始', tone: 'ready' }
+          : { label: '尚未复盘', tone: 'idle' };
 
   // 异步加载 IndexedDB 数据
   useEffect(() => {
@@ -887,6 +951,14 @@ const DailyScheduleView: React.FC = () => {
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
             />
+            <div className="ds-day-overview" aria-label="今日安排概览">
+              <span><strong>{dailyOverview.scheduled}</strong> 项已安排</span>
+              <i aria-hidden="true" />
+              <span><strong>{poolItems.length}</strong> 项待安排</span>
+              <i aria-hidden="true" />
+              <span>{formatPlanningMinutes(dailyOverview.plannedMinutes)} / {formatPlanningMinutes(dailyOverview.availableMinutes)}</span>
+              {dailyOverview.scheduled > 0 && <span className="ds-day-completion">{dailyOverview.completed}/{dailyOverview.scheduled} 完成</span>}
+            </div>
           </div>
           <div className="ds-header-right">
             <button
@@ -898,13 +970,7 @@ const DailyScheduleView: React.FC = () => {
             >
               <BookOpenCheck size={15} />
               每日复盘
-              {retrospectiveNewCount > 0
-                ? <span className="rounded-full bg-amber-100 px-1.5 text-[10px] text-amber-700">+{retrospectiveNewCount}</span>
-                : selectedRetrospective?.status === 'completed'
-                  ? <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] text-emerald-700">已完成</span>
-                  : selectedRetrospective
-                    ? <span className="rounded-full bg-indigo-100 px-1.5 text-[10px] text-indigo-700">草稿</span>
-                    : null}
+              <span className={`ds-review-status ds-review-status--${retrospectiveStatus.tone}`}>{retrospectiveStatus.label}</span>
             </button>
             <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日复习选择">
               <CalendarCheck2 size={15} />明日复习选择
@@ -989,8 +1055,14 @@ const DailyScheduleView: React.FC = () => {
                   min={0}
                   max={23}
                   onChange={(e) => {
+                    const nextStartHour = parseInt(e.target.value) || 0;
+                    const maxMinutes = Math.max(15, (config.endHour - nextStartHour) * 60);
                     const newConfigs = [...slotConfigs];
-                    newConfigs[idx] = { ...config, startHour: parseInt(e.target.value) || 0 };
+                    newConfigs[idx] = {
+                      ...config,
+                      startHour: nextStartHour,
+                      availableMinutes: Math.min(config.availableMinutes, maxMinutes),
+                    };
                     setSlotConfigs(newConfigs);
                   }}
                 />
@@ -1002,12 +1074,36 @@ const DailyScheduleView: React.FC = () => {
                   min={0}
                   max={23}
                   onChange={(e) => {
+                    const nextEndHour = parseInt(e.target.value) || 0;
+                    const maxMinutes = Math.max(15, (nextEndHour - config.startHour) * 60);
                     const newConfigs = [...slotConfigs];
-                    newConfigs[idx] = { ...config, endHour: parseInt(e.target.value) || 0 };
+                    newConfigs[idx] = {
+                      ...config,
+                      endHour: nextEndHour,
+                      availableMinutes: Math.min(config.availableMinutes, maxMinutes),
+                    };
                     setSlotConfigs(newConfigs);
                   }}
                 />
                 <span className="ds-slot-setting-unit">时</span>
+                <span className="ds-slot-setting-capacity-label">可规划</span>
+                <input
+                  type="number"
+                  className="ds-slot-setting-input ds-slot-setting-input--capacity"
+                  value={config.availableMinutes}
+                  min={15}
+                  max={Math.max(15, (config.endHour - config.startHour) * 60)}
+                  step={15}
+                  aria-label={`${config.label}可规划分钟数`}
+                  onChange={(e) => {
+                    const maxMinutes = Math.max(15, (config.endHour - config.startHour) * 60);
+                    const nextValue = Math.min(maxMinutes, Math.max(15, parseInt(e.target.value) || 15));
+                    const newConfigs = [...slotConfigs];
+                    newConfigs[idx] = { ...config, availableMinutes: nextValue };
+                    setSlotConfigs(newConfigs);
+                  }}
+                />
+                <span className="ds-slot-setting-unit">分钟</span>
               </div>
             ))}
           </div>
@@ -1025,7 +1121,7 @@ const DailyScheduleView: React.FC = () => {
                     key={config.slot}
                     config={config}
                     items={slotItems}
-                    stats={getSlotStats(config.slot)}
+                    stats={getSlotStats(config)}
                     addingFree={addingFreeSlot === config.slot}
                     freeItemName={freeItemName}
                     freeItemDuration={freeItemDuration}
@@ -1074,6 +1170,7 @@ const DailyScheduleView: React.FC = () => {
               onFilterChange={setFilterSource}
               onShowCompletedChange={setShowCompletedPool}
               onOpenProjectSource={openProjectTaskFromSource}
+              onScheduleItem={schedulePoolItemToSlot}
               onUndoCompleted={handleUndoCompletedPoolItem}
               onScheduleBacklog={scheduleBacklogToDate}
               onOpenBacklogTask={openBacklogTask}

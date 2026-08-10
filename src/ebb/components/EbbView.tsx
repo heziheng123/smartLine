@@ -36,6 +36,7 @@ import {
   CalendarCheck2,
   Calendar,
   CalendarRange,
+  Inbox,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -55,11 +56,13 @@ import RoundsPanel from './RoundsPanel';
 import OverdueAlertModal from './OverdueAlertModal';
 import MatrixView from './MatrixView';
 import BoardView from './BoardView';
+import TodayReviewView from './TodayReviewView';
+import InboxPanel from './InboxPanel';
 import BatchAdjustPanel from './BatchAdjustPanel';
 import DailyReviewPlanner from './DailyReviewPlanner';
 import { planReviewRoundReschedule, type ReviewRescheduleMode } from '../reschedulePlanning';
 
-type ViewTab = 'matrix' | 'board';
+type ViewTab = 'today' | 'week' | 'library';
 
 const EbbView: React.FC = () => {
   const safeMode = useMemo(() => {
@@ -163,8 +166,9 @@ const EbbView: React.FC = () => {
       rescheduleReviewRounds,
     ],
   );
-  const [activeTab, setActiveTab] = useState<ViewTab>('matrix');
+  const [activeTab, setActiveTab] = useState<ViewTab>('today');
   const [addOpen, setAddOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [modal, setModal] = useState<'none' | 'settings'>('none');
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [datePicker, setDatePicker] = useState<{ taskId: string; anchor: HTMLElement | null } | null>(null);
@@ -453,7 +457,7 @@ const EbbView: React.FC = () => {
               快速添加
             </button>
           </div>
-          <section className="eb-stats-bar" aria-label="复习概览">
+          {activeTab !== 'today' ? <section className="eb-stats-bar" aria-label="复习概览">
             <div className="eb-stats-cards">
               <div className="eb-stat-card"><span className="eb-stat-icon"><LibraryBig size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.topicCount}</span><span className="eb-stat-label">学习内容</span></div>
               <div className="eb-stat-card"><span className="eb-stat-icon"><ListChecks size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.total}</span><span className="eb-stat-label">总任务</span></div>
@@ -466,7 +470,7 @@ const EbbView: React.FC = () => {
               <div className="eb-stats-progress-info"><span>完成率</span><span className="eb-stats-progress-num">{stats.completed}/{stats.total} · {Math.round(stats.ratio * 100)}%</span></div>
               <div className="eb-stats-progress-bar"><div className="eb-stats-progress-fill" style={{ width: `${stats.ratio * 100}%` }} /></div>
             </div>
-          </section>
+          </section> : <div className="eb-nav-context">今日复习工作台</div>}
           <div className="eb-nav-right">
             <button
               type="button"
@@ -482,6 +486,10 @@ const EbbView: React.FC = () => {
                 更多
               </summary>
               <div className="eb-more-menu-popover" role="menu">
+                <button type="button" role="menuitem" onClick={() => setInboxOpen(true)}>
+                  <Inbox size={15} />
+                  暂存内容
+                </button>
                 <button
                   type="button"
                   role="menuitem"
@@ -537,36 +545,64 @@ const EbbView: React.FC = () => {
           <button
             type="button"
             role="tab"
-            aria-selected={activeTab === 'matrix'}
-            aria-controls="matrix-panel"
-            id="tab-matrix"
-            className={`eb-tab ${activeTab === 'matrix' ? 'eb-tab--active' : ''}`}
-            onClick={() => setActiveTab('matrix')}
+            aria-selected={activeTab === 'today'}
+            aria-controls="today-panel"
+            id="tab-today"
+            className={`eb-tab ${activeTab === 'today' ? 'eb-tab--active' : ''}`}
+            onClick={() => setActiveTab('today')}
           >
-            <LayoutGrid size={14} aria-hidden="true" />
-            矩阵视图
+            <Calendar size={14} aria-hidden="true" />
+            今日复习
           </button>
           <button
             type="button"
             role="tab"
-            aria-selected={activeTab === 'board'}
-            aria-controls="board-panel"
-            id="tab-board"
-            className={`eb-tab ${activeTab === 'board' ? 'eb-tab--active' : ''}`}
-            onClick={() => { if (!safeMode && !highLoadMode) setActiveTab('board'); }}
+            aria-selected={activeTab === 'library'}
+            aria-controls="library-panel"
+            id="tab-library"
+            aria-label="复习库（矩阵视图）"
+            className={`eb-tab ${activeTab === 'library' ? 'eb-tab--active' : ''}`}
+            onClick={() => setActiveTab('library')}
+          >
+            <LayoutGrid size={14} aria-hidden="true" />
+            复习库
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'week'}
+            aria-controls="week-panel"
+            id="tab-week"
+            aria-label="周计划（看板视图）"
+            className={`eb-tab ${activeTab === 'week' ? 'eb-tab--active' : ''}`}
+            onClick={() => { if (!safeMode && !highLoadMode) setActiveTab('week'); }}
             disabled={safeMode || highLoadMode}
             title={safeMode || highLoadMode ? '当前数据量较大，暂不启用看板拖拽' : undefined}
           >
             <Columns3 size={14} aria-hidden="true" />
-            看板视图
+            周计划
           </button>
         </nav>
 
         {/* ── 全宽视图内容 ─────────────────────────────── */}
         <div className="eb-main-wrap">
           <main className="eb-main">
-            {activeTab === 'matrix' && (
-              <div id="matrix-panel" role="tabpanel" aria-labelledby="tab-matrix" className="h-full eb-matrix-panel">
+            {activeTab === 'today' && (
+              <div id="today-panel" role="tabpanel" aria-labelledby="tab-today" className="h-full eb-today-panel">
+                <TodayReviewView
+                  tasks={store.reviewTasks}
+                  settings={store.ebbSettings}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
+                  taskActions={taskActions}
+                  graphNodes={graphNodes}
+                  inboxCount={inboxItems.length}
+                  onOpenInbox={() => setInboxOpen(true)}
+                />
+              </div>
+            )}
+            {activeTab === 'library' && (
+              <div id="library-panel" role="tabpanel" aria-labelledby="tab-library" className="h-full eb-matrix-panel">
                 <CompactWeekStrip
                   tasks={store.reviewTasks}
                   selectedDate={selectedDate}
@@ -582,8 +618,8 @@ const EbbView: React.FC = () => {
                 </div>
               </div>
             )}
-            {activeTab === 'board' && (
-              <div id="board-panel" role="tabpanel" aria-labelledby="tab-board" className="h-full">
+            {activeTab === 'week' && (
+              <div id="week-panel" role="tabpanel" aria-labelledby="tab-week" className="h-full">
                 <BoardView
                   tasks={store.reviewTasks}
                   settings={store.ebbSettings}
@@ -632,6 +668,8 @@ const EbbView: React.FC = () => {
           onClose={() => setAddOpen(false)}
           onGenerated={() => showToast('复习任务已生成')}
         />
+
+        {inboxOpen && <InboxPanel onClose={() => setInboxOpen(false)} />}
 
         {/* 日期选择器（改期） */}
         {datePicker && (

@@ -3,7 +3,6 @@ import test from 'node:test';
 import {
   assertWorkspaceSchemaSupported,
   buildUnifiedRoomId,
-  canEditProjectPlanningCategory,
   collectWorkspaceFieldChanges,
   decideUnifiedWorkspaceActivation,
   findWorkspaceFieldConflicts,
@@ -11,7 +10,6 @@ import {
   hashWorkspaceValue,
   isWorkspaceStoreStorageReady,
   mergeWorkspaceFieldChanges,
-  assertLegacyProjectPlanningSyncSafe,
   shouldBackfillLegacyLifeMapSync,
   withTimeout,
 } from '../../src/services/workspaceSyncCore.ts';
@@ -67,20 +65,6 @@ test('future cloud schemas are rejected before the room can hydrate local stores
   assert.throws(
     () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 7 } }, 6),
     /7/,
-  );
-});
-
-test('project category edits require the unified workspace when cloud sync is enabled', () => {
-  assert.equal(canEditProjectPlanningCategory(false, 'legacy'), true);
-  assert.equal(canEditProjectPlanningCategory(true, 'unified'), true);
-  assert.equal(canEditProjectPlanningCategory(true, 'legacy'), false);
-});
-
-test('legacy rooms fail closed before an old client can erase project classifications', () => {
-  assert.doesNotThrow(() => assertLegacyProjectPlanningSyncSafe([{ id: 'plain-project' }]));
-  assert.throws(
-    () => assertLegacyProjectPlanningSyncSafe([{ id: 'classified-project', planningAreaId: 'study' }]),
-    /统一工作区/,
   );
 });
 
@@ -193,32 +177,6 @@ test('schema 6 project and key-date relationships participate in entity-level me
   );
   assert.deepEqual(mergedEvents.conflicts, []);
   assert.deepEqual(mergedEvents.fields.lifeMapEvents, [{ ...baseEvent, importance: 'core', relatedPlanId: 'plan-1' }]);
-});
-
-test('schema 7 merges a project content edit with a planning classification edit from another device', () => {
-  const base = [{ id: 'project-1', name: '项目', blocks: [{ id: 'block-1', title: 'before' }] }];
-  const local = [{ id: 'project-1', name: '项目', planningAreaId: 'study', blocks: [{ id: 'block-1', title: 'before' }] }];
-  const remote = [{ id: 'project-1', name: '项目', blocks: [{ id: 'block-1', title: 'remote edit' }] }];
-
-  const merged = mergeWorkspaceFieldChanges({ tasks: local }, { tasks: base }, { tasks: remote });
-
-  assert.deepEqual(merged.conflicts, []);
-  assert.deepEqual(merged.fields.tasks, [{
-    id: 'project-1',
-    name: '项目',
-    planningAreaId: 'study',
-    blocks: [{ id: 'block-1', title: 'remote edit' }],
-  }]);
-});
-
-test('schema 7 reports two different planning classifications on the same project as a conflict', () => {
-  const base = [{ id: 'project-1', planningAreaId: 'study' }];
-  const local = [{ id: 'project-1', planningAreaId: 'career' }];
-  const remote = [{ id: 'project-1', planningAreaId: 'health' }];
-
-  const merged = mergeWorkspaceFieldChanges({ tasks: local }, { tasks: base }, { tasks: remote });
-
-  assert.deepEqual(merged.conflicts, ['tasks[project-1].planningAreaId']);
 });
 
 test('room inspection timeout reports a visible failure instead of waiting forever', async () => {

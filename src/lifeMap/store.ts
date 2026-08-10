@@ -3,14 +3,12 @@ import dayjs from 'dayjs';
 import { liveblocks } from '@liveblocks/zustand';
 import type { WithLiveblocks } from '@liveblocks/zustand';
 import { liveblocksClient } from '@/store/client';
-import { createCoalescedPersistence, createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
+import { createCoalescedPersistence, createDedicatedStorage, createScopedStorage, readJsonStorage, writeJsonStorage } from '@/utils/persistence';
 import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
-import type { LifeStage, Milestone, Note } from '@/types';
 import {
   LIFE_MAP_FIELDS,
   canDeleteLifeArea,
   createEmptyLifeMapData,
-  hasIndependentLifeMapContent,
   migrateLegacyLifeMapLayouts,
   normalizeLifeMapData,
 } from './data';
@@ -23,7 +21,6 @@ import type {
   LifeMapNote,
   LifeMapPlanGroupId,
   LifeMapStage,
-  LifeRelation,
   LifeReview,
   LifeSystem,
   LifeSystemCheckIn,
@@ -33,12 +30,14 @@ import type {
 const STORAGE_KEY = 'line-life-map-storage-v1';
 const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
 const SYNC_SETTINGS_KEY = 'line-life-map-liveblocks';
-const LEGACY_MIGRATION_KEY = 'line-life-map-legacy-migrated-v1';
 const LEGACY_PROJECT_SIDE_KEY = 'life-map:project-sides';
 const LEGACY_NODE_LAYOUT_KEY = 'life-map:node-layouts';
 const LEGACY_PROJECT_RANK_KEY = 'life-map:project-ranks';
 export const LIFE_MAP_ROOM_PREFIX = 'life-map-';
-const lifeMapStorage = createScopedStorage('life_map_data');
+const lifeMapStorage = createDedicatedStorage('line-life-map', 'life_map_data');
+// Read-only migration source used once by installations that stored Life Map
+// in the main Smart Timeline database before the two domains were separated.
+const legacyLifeMapStorage = createScopedStorage('life_map_data');
 
 interface SyncSettings { roomCode: string; enabled: boolean }
 export type LifeMapSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -52,7 +51,6 @@ type NewSystem = Pick<LifeSystem, 'areaId' | 'name' | 'start' | 'frequency' | 't
 type NewEvent = Pick<LifeEvent, 'name' | 'date'> & Partial<Omit<LifeEvent, 'name' | 'date' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
 type NewFocus = Pick<LifeFocus, 'areaId' | 'name' | 'start' | 'end'> & Partial<Pick<LifeFocus, 'id' | 'color' | 'placement'>>;
 type NewNote = Pick<LifeMapNote, 'areaId' | 'name' | 'date' | 'type'> & Partial<Pick<LifeMapNote, 'id' | 'endDate' | 'color' | 'placement'>>;
-type NewRelation = Pick<LifeRelation, 'lifeItemType' | 'lifeItemId' | 'projectId'>;
 type NewReview = Pick<LifeReview, 'title' | 'period' | 'start' | 'end' | 'reflection' | 'adjustments' | 'snapshot'> & Partial<Pick<LifeReview, 'areaIds'>>;
 
 interface LifeMapStore extends LifeMapData {
@@ -94,14 +92,11 @@ interface LifeMapStore extends LifeMapData {
   addNote: (value: NewNote) => LifeMapNote;
   updateNote: (id: string, updates: Partial<Omit<LifeMapNote, 'id' | 'createdAt'>>) => void;
   deleteNote: (id: string) => void;
-  addRelation: (value: NewRelation) => LifeRelation;
-  deleteRelation: (id: string) => void;
   addReview: (value: NewReview) => LifeReview;
   updateReview: (id: string, updates: Partial<Omit<LifeReview, 'id' | 'createdAt'>>) => void;
   deleteReview: (id: string) => void;
   replaceLifeMapData: (data: LifeMapData) => void;
   migrateLegacyLayouts: () => boolean;
-  importLegacyTimelineData: (legacy: { lifeStages: LifeStage[]; milestones: Milestone[]; notes: Note[] }) => boolean;
 }
 
 function loadSyncSettings(): SyncSettings {
@@ -162,8 +157,15 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
         isHydrated: false,
         hydrateStore: async () => {
           try {
-            let raw = readJsonStorage<LifeMapData>(STORAGE_MIRROR_KEY)
-              ?? await lifeMapStorage.getItem<LifeMapData>(STORAGE_KEY);
+          let raw = readJsonStorage<LifeMapData>(STORAGE_MIRROR_KEY)
+            ?? await lifeMapStorage.getItem<LifeMapData>(STORAGE_KEY);
+          if (!raw) {
+            const legacy = await legacyLifeMapStorage.getItem<LifeMapData>(STORAGE_KEY);
+            if (legacy) {
+              raw = legacy;
+              await lifeMapStorage.setItem(STORAGE_KEY, legacy);
+            }
+          }
             if (typeof raw === 'string') raw = JSON.parse(raw) as LifeMapData;
             if (raw) {
               set({ ...normalizeLifeMapData(raw), isHydrated: true });
@@ -323,18 +325,6 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
         },
         updateNote: (id, updates) => updateCollection('lifeMapNotes', id, updates),
         deleteNote: (id) => deleteFromCollection('lifeMapNotes', id),
-        addRelation: (value) => {
-          const existing = get().lifeMapRelations.find((item) =>
-            !item.deletedAt
-            && item.lifeItemType === value.lifeItemType
-            && item.lifeItemId === value.lifeItemId
-            && item.projectId === value.projectId);
-          if (existing) return existing;
-          const item = stamp({ id: genId('relation'), ...value });
-          set((state) => ({ lifeMapRelations: [...state.lifeMapRelations, item] }));
-          return item;
-        },
-        deleteRelation: (id) => deleteFromCollection('lifeMapRelations', id),
         addReview: (value) => {
           const item = stamp({ id: genId('review'), ...value });
           set((state) => ({ lifeMapReviews: [...state.lifeMapReviews, item] }));
@@ -373,58 +363,6 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
             } catch { /* synchronized entity fields are already authoritative */ }
           }
           return migration.changed;
-        },
-        importLegacyTimelineData: (legacy) => {
-          if (localStorage.getItem(LEGACY_MIGRATION_KEY) === 'done') return false;
-          const current = normalizeLifeMapData(get());
-          if (hasIndependentLifeMapContent(current)) {
-            localStorage.setItem(LEGACY_MIGRATION_KEY, 'done');
-            return false;
-          }
-          if (legacy.lifeStages.length === 0 && legacy.milestones.length === 0 && legacy.notes.length === 0) {
-            return false;
-          }
-          const fallbackAreaId = 'learning';
-          const migrated: LifeMapData = {
-            ...current,
-            lifeMapStages: legacy.lifeStages.map((item) => stamp({
-              id: `legacy-stage-${item.id}`,
-              name: item.name,
-              start: item.start,
-              end: item.end,
-              color: item.color,
-            })),
-            lifeMapEvents: legacy.milestones.map((item) => stamp({
-              id: `legacy-event-${item.id}`,
-              areaId: fallbackAreaId,
-              name: item.name,
-              date: item.date,
-              color: item.color,
-              placement: item.placement,
-              importance: item.importance ?? 'normal',
-            })),
-            lifeMapFocuses: legacy.notes.filter((item) => item.type === 'range' && item.endDate).map((item) => stamp({
-              id: `legacy-focus-${item.id}`,
-              areaId: fallbackAreaId,
-              name: item.name,
-              start: item.date,
-              end: item.endDate as string,
-              color: item.color,
-              placement: item.placement,
-            })),
-            lifeMapNotes: legacy.notes.filter((item) => item.type === 'pin').map((item) => stamp({
-              id: `legacy-note-${item.id}`,
-              areaId: fallbackAreaId,
-              name: item.name,
-              date: item.date,
-              type: 'pin' as const,
-              color: item.color,
-              placement: item.placement,
-            })),
-          };
-          set(normalizeLifeMapData(migrated));
-          localStorage.setItem(LEGACY_MIGRATION_KEY, 'done');
-          return true;
         },
       };
     },

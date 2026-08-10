@@ -34,7 +34,6 @@ import {
 import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
-import { assertLegacyProjectPlanningSyncSafe } from '@/services/workspaceSyncCore';
 import { useShallow } from 'zustand/react/shallow';
 
 interface SyncDialogProps { onClose: () => void }
@@ -45,7 +44,7 @@ const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
 const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
   lifeMapAreas: '人生领域', lifeMapPlanGroups: '项目展示大类', lifeMapStages: '人生时期', lifeMapThemes: '时期重点（历史主题）', lifeMapGoals: '目标与项目',
   lifeMapSystems: '长期系统', lifeMapSystemCheckIns: '系统完成记录', lifeMapEvents: '关键日期', lifeMapFocuses: '阶段重点',
-  lifeMapNotes: '人生便签', lifeMapRelations: '项目关联', lifeMapReviews: '周期复盘', tasks: '项目任务', groups: '项目分组',
+  lifeMapNotes: '人生便签', lifeMapReviews: '周期复盘', tasks: '项目任务', groups: '项目分组',
   schedules: '每日安排', retrospectives: '每日复盘', reviewTasks: '复习任务', nodes: '知识节点',
 };
 
@@ -190,14 +189,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       return;
     }
     if (key === 'timeline') {
-      try {
-        assertLegacyProjectPlanningSyncSafe(useTimelineStore.getState().tasks);
-      } catch (error) {
-        setRestoreMessage(error instanceof Error ? error.message : '旧模块房间无法安全同步项目分类。');
-        return;
-      }
-    }
-    if (key === 'timeline') {
       timeline.enableSync(code);
       timeline.liveblocks?.enterRoom?.(code);
     } else if (key === 'ebb') {
@@ -260,13 +251,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       } catch (error) {
         setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接前检查失败。');
       }
-      return;
-    }
-
-    try {
-      assertLegacyProjectPlanningSyncSafe(useTimelineStore.getState().tasks);
-    } catch (error) {
-      setRestoreMessage(error instanceof Error ? error.message : '旧模块房间无法安全同步项目分类。');
       return;
     }
 

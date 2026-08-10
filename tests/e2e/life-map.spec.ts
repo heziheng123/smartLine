@@ -169,7 +169,6 @@ test.beforeEach(async ({ page }) => {
       lifeMapEvents: legacy.milestones.map((item) => ({ ...item, areaId: 'learning', importance: item.importance ?? 'important', ...synced })),
       lifeMapFocuses: legacy.notes.filter((item) => item.type === 'range' && item.endDate).map((item) => ({ id: item.id, areaId: 'learning', name: item.name, start: item.date, end: item.endDate, color: item.color, placement: item.placement, ...synced })),
       lifeMapNotes: legacy.notes.filter((item) => item.type === 'pin').map((item) => ({ ...item, areaId: 'learning', ...synced })),
-      lifeMapRelations: [],
       lifeMapReviews: [],
     }));
   });

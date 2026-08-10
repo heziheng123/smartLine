@@ -1,13 +1,14 @@
 import React from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { ChevronDown, CircleDashed, Link as LinkIcon, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
-import type { TaskSource } from './types';
+import type { TaskSource, TimeSlot } from './types';
 import { DROPPABLE_POOL, DROPPABLE_POOL_CONTAINER, DROPPABLE_REVIEW_POOL } from './dndIds';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { projectBadgeStyle } from './projectAppearance';
 import { isQuantityTask } from '@/utils/blocks';
 import BacklogTaskList from '@/components/smartBlock/BacklogTaskList';
 import type { BacklogTask } from '@/domain/taskBacklog';
+import TimeSlotIcon from './TimeSlotIcon';
 
 export interface DailyPoolItem {
   id: string;
@@ -25,6 +26,8 @@ export interface DailyPoolItem {
   quantityCompleted?: number;
   quantityUnit?: string;
   quantityState?: 'unrecorded' | 'in-progress' | 'achieved' | 'recorded';
+  timingLabel?: string;
+  urgency?: 'overdue' | 'due' | 'normal';
 }
 
 export interface CompletedDailyPoolItem {
@@ -54,6 +57,7 @@ interface DailyTaskPoolProps {
   onFilterChange: (filter: PoolFilter) => void;
   onShowCompletedChange: (show: boolean) => void;
   onOpenProjectSource: (sourceId: string) => void;
+  onScheduleItem: (item: DailyPoolItem, slot: TimeSlot) => void;
   onUndoCompleted: (source: TaskSource, sourceId: string) => void;
   onScheduleBacklog: (task: BacklogTask, date: string) => boolean | Promise<boolean>;
   onOpenBacklogTask: (task: BacklogTask) => void;
@@ -67,6 +71,7 @@ interface PoolGroupProps {
   checkIsUnlinkedTask: (sourceId: string) => boolean;
   checkIsLinkedTask: (sourceId: string) => boolean;
   onOpenProjectSource: (sourceId: string) => void;
+  onScheduleItem: (item: DailyPoolItem, slot: TimeSlot) => void;
 }
 
 const PoolGroup: React.FC<PoolGroupProps> = ({
@@ -77,6 +82,7 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
   checkIsUnlinkedTask,
   checkIsLinkedTask,
   onOpenProjectSource,
+  onScheduleItem,
 }) => {
   if (items.length === 0) return null;
   return (
@@ -103,35 +109,56 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
                       style={{ ...provided.draggableProps.style, backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
                       onClick={() => { if (item.source === 'project') onOpenProjectSource(item.sourceId); }}
                     >
-                      <div className="ds-pool-item-accent" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }} />
-                      <div className="ds-pool-item-content">
-                        <span className="ds-pool-item-name" title={item.name}>
-                          {item.name}
-                          {item.source === 'project' && (unlinked
-                            ? <span title="未绑定节点" className="ml-1 inline-flex items-center"><CircleDashed size={12} className="opacity-40" /></span>
-                            : checkIsLinkedTask(item.sourceId) && <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500"><LinkIcon size={12} className="opacity-60" /></span>)}
-                        </span>
-                        {quantity && (
-                          <span className="ds-pool-quantity-summary">
-                            <span>总进度 <strong>{item.quantityCompleted}/{item.quantityTotal} {item.quantityUnit}</strong></span>
-                            <span>剩余 <strong>{Math.max(0, (item.quantityTotal ?? 0) - (item.quantityCompleted ?? 0))} {item.quantityUnit}</strong></span>
-                            {item.quantityTarget !== undefined && <span>今日目标 <strong>{item.quantityTarget} {item.quantityUnit}</strong></span>}
-                            <span>每日投入 <strong>{item.duration ?? 30} 分钟</strong></span>
+                      <div className="ds-pool-item-main">
+                        <div className="ds-pool-item-accent" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }} />
+                        <div className="ds-pool-item-content">
+                          <span className="ds-pool-item-name" title={item.name}>
+                            {item.name}
+                            {item.source === 'project' && (unlinked
+                              ? <span title="未绑定节点" className="ml-1 inline-flex items-center"><CircleDashed size={12} className="opacity-40" /></span>
+                              : checkIsLinkedTask(item.sourceId) && <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500"><LinkIcon size={12} className="opacity-60" /></span>)}
                           </span>
+                          {quantity && (
+                            <span className="ds-pool-quantity-summary">
+                              <span>总进度 <strong>{item.quantityCompleted}/{item.quantityTotal} {item.quantityUnit}</strong></span>
+                              <span>剩余 <strong>{Math.max(0, (item.quantityTotal ?? 0) - (item.quantityCompleted ?? 0))} {item.quantityUnit}</strong></span>
+                              {item.quantityTarget !== undefined && <span>今日目标 <strong>{item.quantityTarget} {item.quantityUnit}</strong></span>}
+                              <span>每日投入 <strong>{item.duration ?? 30} 分钟</strong></span>
+                              {item.timingLabel && <span className={`ds-pool-timing ds-pool-timing--${item.urgency ?? 'normal'}`}>{item.timingLabel}</span>}
+                            </span>
+                          )}
+                          {!quantity && ((item.source !== 'project' && item.detail) || item.duration !== undefined || item.timingLabel) && (
+                            <span className="ds-pool-item-meta">
+                              {item.source !== 'project' && item.detail && <span>{item.detail}</span>}
+                              {item.source !== 'project' && item.detail && (item.duration !== undefined || item.timingLabel) && <i>·</i>}
+                              {item.duration !== undefined && <span>预计 {item.duration} 分钟</span>}
+                              {item.duration !== undefined && item.timingLabel && <i>·</i>}
+                              {item.timingLabel && <span className={`ds-pool-timing ds-pool-timing--${item.urgency ?? 'normal'}`}>{item.timingLabel}</span>}
+                            </span>
+                          )}
+                        </div>
+                        {item.source === 'project' && !quantity && (
+                          <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>
                         )}
-                        {!quantity && ((item.source !== 'project' && item.detail) || item.duration !== undefined) && (
-                          <span className="ds-pool-item-meta">
-                            {item.source !== 'project' && item.detail && <span>{item.detail}</span>}
-                            {item.source !== 'project' && item.detail && item.duration !== undefined && <i>·</i>}
-                            {item.duration !== undefined && <span>预计 {item.duration} 分钟</span>}
-                          </span>
-                        )}
+                        {item.source === 'review' && <span className="ds-pool-item-tag ds-pool-item-tag--review">复习{item.detail ? ` · ${item.detail}` : ''}</span>}
+                        {quantity && <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">数量</span>}
                       </div>
-                      {item.source === 'project' && !quantity && (
-                        <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>
-                      )}
-                      {item.source === 'review' && <span className="ds-pool-item-tag ds-pool-item-tag--review">复习{item.detail ? ` · ${item.detail}` : ''}</span>}
-                      {quantity && <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">数量</span>}
+                      <div className="ds-pool-quick-actions" role="group" aria-label={`安排“${item.name}”到时段`} onClick={(event) => event.stopPropagation()}>
+                        <span>安排到</span>
+                        {(['morning', 'afternoon', 'evening'] as const).map((slot) => (
+                          <button
+                            key={slot}
+                            type="button"
+                            className={`ds-pool-quick-slot ds-pool-quick-slot--${slot}`}
+                            aria-label={`安排“${item.name}”到${slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'}`}
+                            title={`安排到${slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'}`}
+                            onClick={() => onScheduleItem(item, slot)}
+                          >
+                            <TimeSlotIcon slot={slot} size={12} />
+                            {slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   );
                 }}
@@ -159,6 +186,7 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
   onFilterChange,
   onShowCompletedChange,
   onOpenProjectSource,
+  onScheduleItem,
   onUndoCompleted,
   onScheduleBacklog,
   onOpenBacklogTask,
@@ -211,7 +239,7 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
               </div>
               <div className="ds-pool-tabs" role="tablist" aria-label="任务池类型">
                 <button type="button" role="tab" aria-selected={activeTab === 'today'} className={activeTab === 'today' ? 'is-active' : ''} onClick={() => setActiveTab('today')}>
-                  今日任务 <span>{totalAvailable}</span>
+                  待安排 <span>{totalAvailable}</span>
                 </button>
                 <button type="button" role="tab" aria-selected={activeTab === 'backlog'} className={activeTab === 'backlog' ? 'is-active' : ''} onClick={() => setActiveTab('backlog')}>
                   待排期箱 <span>{backlogItems.length}</span>
@@ -237,8 +265,8 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
                   />
                 ) : (
                   <>
-                    <PoolGroup title="项目任务" dotClass="ds-pool-group-dot--project" droppableId={DROPPABLE_POOL} items={projectItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
-                    <PoolGroup title="复习任务" dotClass="ds-pool-group-dot--review" droppableId={DROPPABLE_REVIEW_POOL} items={reviewItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
+                    <PoolGroup title="项目任务" dotClass="ds-pool-group-dot--project" droppableId={DROPPABLE_POOL} items={projectItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} onScheduleItem={onScheduleItem} />
+                    <PoolGroup title="复习任务" dotClass="ds-pool-group-dot--review" droppableId={DROPPABLE_REVIEW_POOL} items={reviewItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} onScheduleItem={onScheduleItem} />
                     {visibleItems.length === 0 && (
                       <div className="ds-pool-empty">
                         <ListTodo size={22} />

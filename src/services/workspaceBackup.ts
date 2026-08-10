@@ -341,7 +341,6 @@ export function validateWorkspaceBackup(value: unknown): {
     ['人生地图关键事件', backup.lifeMap.lifeMapEvents],
     ['人生地图重点', backup.lifeMap.lifeMapFocuses],
     ['人生地图便签', backup.lifeMap.lifeMapNotes],
-    ['人生地图关联', backup.lifeMap.lifeMapRelations],
     ['人生地图周期复盘', backup.lifeMap.lifeMapReviews],
   );
   for (const [label, items] of collections) {

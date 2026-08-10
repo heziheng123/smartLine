@@ -176,22 +176,22 @@ test.beforeEach(async ({ page }) => {
   ).__smartlineAppReady)).toBe(true);
 });
 
-test('人生地图创建统一项目会写入 Timeline 离线队列并保留领域', async ({ page }) => {
+test('人生地图创建人生计划只写入 Life Map 离线队列', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   const lifeMap = page.getByRole('main', { name: '人生地图' });
   await lifeMap.getByRole('button', { name: '添加到时间线' }).click();
-  await lifeMap.getByRole('menuitem', { name: '新建项目' }).click();
-  const editor = page.locator('.tl-dialog');
-  await editor.getByLabel('任务名称').fill('多端同步健康项目');
+  await lifeMap.getByRole('menuitem', { name: '新建人生计划' }).click();
+  const editor = page.locator('.life-map-editor form');
+  await editor.getByLabel('名称').fill('多端同步健康计划');
   await editor.getByLabel('人生领域').selectOption('health');
   await editor.getByLabel('开始日期').fill(today);
   await editor.getByLabel('结束日期').fill(today);
-  await editor.getByRole('button', { name: '创建', exact: true }).click();
+  await editor.getByRole('button', { name: '保存', exact: true }).click();
 
   await expect.poll(async () => {
     const pending = await readPendingWorkspaceSync(page);
-    const fields = pending?.fields as { tasks?: Array<{ name?: string; planningAreaId?: string }> } | undefined;
-    return fields?.tasks?.find((item) => item.name === '多端同步健康项目')?.planningAreaId ?? null;
+    const fields = pending?.fields as { lifeMapGoals?: Array<{ name?: string; areaId?: string }> } | undefined;
+    return fields?.lifeMapGoals?.find((item) => item.name === '多端同步健康计划')?.areaId ?? null;
   }).toBe('health');
 });
 

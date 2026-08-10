@@ -106,8 +106,7 @@ import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { useLifeMapStore } from '@/lifeMap/store';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
-import { readWorkspaceSyncSettings, reconnectConfiguredWorkspace, WORKSPACE_CONFLICT_EVENT } from '@/services/workspaceSync';
-import { canEditProjectPlanningCategory } from '@/services/workspaceSyncCore';
+import { reconnectConfiguredWorkspace, WORKSPACE_CONFLICT_EVENT } from '@/services/workspaceSync';
 import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking, WORKSPACE_QUEUE_ERROR_EVENT } from '@/services/workspaceOfflineQueue';
 import { disconnectWorkspace } from '@/services/workspaceSync';
 import { isCurrentTabSyncLeader, startWorkspaceTabCoordinator } from '@/services/workspaceTabCoordinator';
@@ -137,7 +136,6 @@ const App: React.FC = () => {
     useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
   );
   const timelineLiveStatus = useTimelineStore((state) => state.liveblocks?.status);
-  const timelineSyncEnabled = useTimelineStore((state) => state.syncEnabled);
   const ebbLiveStatus = useEbbStore((state) => state.liveblocks?.status);
   const dailyLiveStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
   const graphLiveStatus = useGraphStore((state) => state.liveblocks?.status);
@@ -145,12 +143,10 @@ const App: React.FC = () => {
   const {
     isHydrated: isLifeMapHydrated,
     hydrateStore: hydrateLifeMapStore,
-    planningAreas,
   } = useLifeMapStore(
     useShallow((state) => ({
       isHydrated: state.isHydrated,
       hydrateStore: state.hydrateStore,
-      planningAreas: state.lifeMapAreas,
     })),
   );
 
@@ -166,7 +162,6 @@ const App: React.FC = () => {
     milestones,
     lifeStages,
     updateTask,
-    assignTasksToPlanningArea,
     deleteTask,
     restoreTask,
     toggleTaskComplete,
@@ -196,7 +191,6 @@ const App: React.FC = () => {
       milestones: s.milestones,
       lifeStages: s.lifeStages,
       updateTask: s.updateTask,
-      assignTasksToPlanningArea: s.assignTasksToPlanningArea,
       deleteTask: s.deleteTask,
       restoreTask: s.restoreTask,
       toggleTaskComplete: s.toggleTaskComplete,
@@ -229,7 +223,6 @@ const App: React.FC = () => {
       milestones,
       lifeStages,
       updateTask,
-      assignTasksToPlanningArea,
       deleteTask,
       restoreTask,
       toggleTaskComplete,
@@ -257,7 +250,6 @@ const App: React.FC = () => {
       milestones,
       lifeStages,
       updateTask,
-      assignTasksToPlanningArea,
       deleteTask,
       restoreTask,
       toggleTaskComplete,
@@ -279,11 +271,6 @@ const App: React.FC = () => {
       updateBlockHeader,
     ],
   );
-  const planningAreaReadOnly = !canEditProjectPlanningCategory(
-    timelineSyncEnabled,
-    readWorkspaceSyncSettings().architecture,
-  );
-
   // The week matrix is a task-block view, so it must receive both standalone
   // projects and projects nested inside groups. IDs are unique in Timeline;
   // de-duplicate defensively to avoid rendering a block twice on imported data.
@@ -320,7 +307,6 @@ const App: React.FC = () => {
   // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
   const [currentView, setCurrentView] = useState<AppModule>('timeline');
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
-  const legacyPlanningDisconnectRef = React.useRef(false);
 
   const handleViewChange = useCallback((view: AppModule) => {
     if (view !== currentView) {
@@ -329,20 +315,6 @@ const App: React.FC = () => {
     }
     setCurrentView(view);
   }, [currentView]);
-
-  React.useEffect(() => {
-    const unsafeLegacySync = timelineSyncEnabled
-      && readWorkspaceSyncSettings().architecture === 'legacy'
-      && tasks.some((task) => typeof task.planningAreaId === 'string' && task.planningAreaId.trim());
-    if (!unsafeLegacySync) {
-      legacyPlanningDisconnectRef.current = false;
-      return;
-    }
-    if (legacyPlanningDisconnectRef.current) return;
-    legacyPlanningDisconnectRef.current = true;
-    disconnectWorkspace(false);
-    setSyncNotice('检测到项目已使用人生领域分类，已暂停旧房间同步。请在同步设置中迁移到统一工作区，避免旧版本设备覆盖分类。');
-  }, [tasks, timelineSyncEnabled]);
 
   React.useEffect(() => {
     try {
@@ -414,11 +386,6 @@ const App: React.FC = () => {
     isLifeMapHydrated,
     hydrateLifeMapStore,
   ]);
-
-  React.useEffect(() => {
-    if (!isHydrated || !isLifeMapHydrated) return;
-    useLifeMapStore.getState().importLegacyTimelineData({ lifeStages, milestones, notes });
-  }, [isHydrated, isLifeMapHydrated, lifeStages, milestones, notes]);
 
   React.useEffect(() => {
     // “应用已就绪”意味着所有可编辑数据域均已恢复，避免自动化或用户操作
@@ -587,12 +554,6 @@ const App: React.FC = () => {
     setDrawerTaskId(task.id);
   }, []);
 
-  const handleOpenProject = useCallback((taskId: string, blockId?: string) => {
-    setDrawerTaskId(taskId);
-    setDrawerBlockId(blockId ?? null);
-    if (blockId) setDrawerFocusRequest((value) => value + 1);
-  }, []);
-
   // 抽屉：打开任务详情并展开元信息（右键"编辑"入口）
   const handleOpenDrawerWithMeta = useCallback((task: Task) => {
     setDrawerTaskId(task.id);
@@ -608,10 +569,6 @@ const App: React.FC = () => {
     const existing = store.tasks.find((t) => t.id === taskId);
     if (!existing) return;
     store.updateTask({ ...existing, ...patch });
-  }, [store]);
-
-  const handleBulkAssignPlanningArea = useCallback((taskIds: string[], planningAreaId: string) => {
-    store.assignTasksToPlanningArea(taskIds, planningAreaId);
   }, [store]);
 
   // 抽屉：删除任务
@@ -900,11 +857,7 @@ const App: React.FC = () => {
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
-                <LifeMapView
-                  timelineTasks={store.tasks}
-                  onOpenProject={handleOpenProject}
-                  onCreateProject={handleAddTask}
-                />
+                <LifeMapView />
               </Suspense>
             </div>
           </motion.div>
@@ -1014,9 +967,6 @@ const App: React.FC = () => {
                         groups={store.groups}
                         notes={store.notes}
                         milestones={store.milestones}
-                        planningAreas={planningAreas}
-                        planningAreaReadOnly={planningAreaReadOnly}
-                        onBulkAssignPlanningArea={handleBulkAssignPlanningArea}
                         displayYear={displayYear}
                         onTaskClick={handleOpenDrawer}
                         onTaskContextMenu={handleTaskContextMenu}
@@ -1062,8 +1012,6 @@ const App: React.FC = () => {
             <Suspense fallback={<ViewFallback />}>
               <ProjectDocumentView
                 task={drawerTask}
-                planningAreas={planningAreas}
-                planningAreaReadOnly={planningAreaReadOnly}
                 focusBlockId={drawerBlockId}
                 focusRequest={drawerFocusRequest}
                 onClose={handleCloseDrawer}
@@ -1080,8 +1028,6 @@ const App: React.FC = () => {
         {dialogType === 'task' && (
           <TaskDialog
             task={dialogMode === 'edit' ? editingTask : undefined}
-            planningAreas={planningAreas}
-            planningAreaReadOnly={planningAreaReadOnly}
             onSave={handleSaveTask}
             onDelete={dialogMode === 'edit' ? handleDeleteTask : undefined}
             onCancel={closeDialog}

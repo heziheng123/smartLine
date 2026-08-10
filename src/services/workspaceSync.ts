@@ -24,7 +24,7 @@ import {
   setWorkspaceQueueSuppressed,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
-import { assertLegacyProjectPlanningSyncSafe, assertWorkspaceSchemaSupported, buildUnifiedRoomId, decideUnifiedWorkspaceActivation, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, shouldBackfillLegacyLifeMapSync, withTimeout } from './workspaceSyncCore';
+import { assertWorkspaceSchemaSupported, buildUnifiedRoomId, decideUnifiedWorkspaceActivation, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, shouldBackfillLegacyLifeMapSync, withTimeout } from './workspaceSyncCore';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
 export type SyncArchitecture = 'legacy' | 'unified';
@@ -98,7 +98,6 @@ export function disconnectWorkspace(disable = false): void {
 
 export function connectLegacyWorkspace(fallbackCode?: string): void {
   const timeline = useTimelineStore.getState();
-  assertLegacyProjectPlanningSyncSafe(timeline.tasks);
   const ebb = useEbbStore.getState();
   const daily = useDailyScheduleStore.getState();
   const graph = useGraphStore.getState();
@@ -467,7 +466,6 @@ export function downloadMigrationReport(report: WorkspaceMigrationReport): void 
 }
 
 export function resetToLegacyArchitecture(roomCode: string): void {
-  assertLegacyProjectPlanningSyncSafe(useTimelineStore.getState().tasks);
   writeWorkspaceSyncSettings({ architecture: 'legacy', roomCode });
   connectLegacyWorkspace(roomCode);
 }

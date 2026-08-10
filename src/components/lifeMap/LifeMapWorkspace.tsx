@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
-import { ChevronDown, Eye, EyeOff, FastForward, Layers3, ListFilter, Palette, PauseCircle, Play, Settings2, X } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, FastForward, Layers3, ListFilter, Palette, PauseCircle, Play, Plus, Settings2, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
 import { activeLifeMapItems, LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
@@ -10,7 +10,6 @@ import { activeMaintenancePeriod, mergeMaintenancePeriods } from '@/lifeMap/main
 import { findFirstAvailablePhaseRange, resolveLifeMapCreationDefaults, type LifeMapPrimaryIntent } from '@/lifeMap/lifeMapCreationContext';
 import { createLifeMapPeriodFocusItems } from '@/lifeMap/lifeMapPeriodFocus';
 import type { LifeGoal, LifeMaintenancePeriod, LifeMapPlanGroupId, LifeMapStatus, LifeReview, LifeSystem } from '@/lifeMap/types';
-import { createProjectPlanningProjection, resolveProjectPlanningAreaId, UNCLASSIFIED_PLANNING_AREA_ID } from '@/lifeMap/projectPlanning';
 import LifeMapView from './LifeMapView';
 import LifeMapPlanningDrawer from './LifeMapPlanningDrawer';
 import LifeMapEntityEditor from './LifeMapEntityEditor';
@@ -40,17 +39,7 @@ const compareAreas = (left: { planGroupId: LifeMapPlanGroupId; order: number; id
   || left.id.localeCompare(right.id)
 );
 
-interface LifeMapWorkspaceProps {
-  timelineTasks?: Task[];
-  onOpenProject?: (taskId: string, blockId?: string) => void;
-  onCreateProject?: () => void;
-}
-
-const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
-  timelineTasks = [],
-  onOpenProject,
-  onCreateProject,
-}) => {
+const LifeMapWorkspace: React.FC = () => {
   const store = useLifeMapStore(useShallow((state) => ({
     isHydrated: state.isHydrated,
     lifeMapAreas: state.lifeMapAreas,
@@ -63,7 +52,6 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
     lifeMapEvents: state.lifeMapEvents,
     lifeMapFocuses: state.lifeMapFocuses,
     lifeMapNotes: state.lifeMapNotes,
-    lifeMapRelations: state.lifeMapRelations,
     lifeMapReviews: state.lifeMapReviews,
     addArea: state.addArea,
     updateArea: state.updateArea,
@@ -152,6 +140,10 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
     () => activeLifeMapItems(store.lifeMapAreas).sort(compareAreas),
     [store.lifeMapAreas],
   );
+  const planGroups = useMemo(
+    () => activeLifeMapItems(store.lifeMapPlanGroups).sort((left, right) => left.order - right.order),
+    [store.lifeMapPlanGroups],
+  );
   const visibleAreaIds = useMemo(
     () => new Set(selectedAreaId === 'all' ? areas.map((area) => area.id) : [selectedAreaId]),
     [areas, selectedAreaId],
@@ -189,19 +181,6 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
   const focuses = useMemo(() => activeLifeMapItems(store.lifeMapFocuses).filter((item) => visibleAreaIds.has(item.areaId)), [store.lifeMapFocuses, visibleAreaIds]);
   const lifeNotes = useMemo(() => activeLifeMapItems(store.lifeMapNotes).filter((item) => visibleAreaIds.has(item.areaId)), [store.lifeMapNotes, visibleAreaIds]);
   const periodFocusItems = useMemo(() => createLifeMapPeriodFocusItems(store).filter((item) => visibleAreaIds.has(item.areaId)), [store, visibleAreaIds]);
-  const scopedTimelineTasks = useMemo(() => selectedAreaId === 'all'
-    ? timelineTasks
-    : timelineTasks.filter((task) => task.planningAreaId === selectedAreaId), [selectedAreaId, timelineTasks]);
-  const projectProjection = useMemo(() => createProjectPlanningProjection(
-    scopedTimelineTasks,
-    areas,
-    activeLifeMapItems(store.lifeMapPlanGroups),
-  ), [areas, scopedTimelineTasks, store.lifeMapPlanGroups]);
-  const projectTaskIds = useMemo(() => new Set(timelineTasks.map((task) => task.id)), [timelineTasks]);
-  const planAreas = useMemo(() => {
-    const unclassified = projectProjection.areas.find((area) => area.id === UNCLASSIFIED_PLANNING_AREA_ID);
-    return unclassified ? [...areas, unclassified] : areas;
-  }, [areas, projectProjection.areas]);
   const areaItemCounts = useMemo(() => {
     const counts = new Map<string, number>();
     const count = (areaId?: string) => { if (areaId) counts.set(areaId, (counts.get(areaId) ?? 0) + 1); };
@@ -211,17 +190,12 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
     activeLifeMapItems(store.lifeMapEvents).forEach((item) => count(item.areaId));
     activeLifeMapItems(store.lifeMapFocuses).forEach((item) => count(item.areaId));
     activeLifeMapItems(store.lifeMapNotes).forEach((item) => count(item.areaId));
-    timelineTasks.forEach((task) => {
-      const areaId = resolveProjectPlanningAreaId(task, areas);
-      if (areaId !== UNCLASSIFIED_PLANNING_AREA_ID) count(areaId);
-    });
     return counts;
-  }, [areas, store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapSystems, store.lifeMapThemes, timelineTasks]);
+  }, [store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapSystems, store.lifeMapThemes]);
   const reviews = useMemo(() => activeLifeMapItems(store.lifeMapReviews), [store.lifeMapReviews]);
   const checkIns = useMemo(() => activeLifeMapItems(store.lifeMapSystemCheckIns), [store.lifeMapSystemCheckIns]);
   const hasVisibleLifeMapContent = useMemo(() => (
-    timelineTasks.length > 0
-    || activeLifeMapItems(store.lifeMapGoals).some((item) => item.kind === 'plan' || item.kind === 'phase')
+    activeLifeMapItems(store.lifeMapGoals).some((item) => item.kind === 'plan' || item.kind === 'phase')
     || activeLifeMapItems(store.lifeMapSystems).length > 0
     || activeLifeMapItems(store.lifeMapEvents).length > 0
     || activeLifeMapItems(store.lifeMapStages).length > 0
@@ -229,7 +203,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
     || activeLifeMapItems(store.lifeMapFocuses).length > 0
     || activeLifeMapItems(store.lifeMapNotes).length > 0
     || activeLifeMapItems(store.lifeMapReviews).length > 0
-  ), [store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapReviews, store.lifeMapStages, store.lifeMapSystems, store.lifeMapThemes, timelineTasks.length]);
+  ), [store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapReviews, store.lifeMapStages, store.lifeMapSystems, store.lifeMapThemes]);
   const activeSystems = systems.filter((item) => item.status === 'active');
   const systemStats = useMemo(() => new Map(systems.map((item) => [item.id, currentSystemStats({
     ...item,
@@ -247,11 +221,6 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       const stat = result.get(item.areaId);
       if (stat) stat.plans += 1;
     });
-    timelineTasks.forEach((task) => {
-      const areaId = resolveProjectPlanningAreaId(task, areas);
-      const stat = result.get(areaId);
-      if (stat) stat.plans += 1;
-    });
     activeLifeMapItems(store.lifeMapSystems).forEach((item) => {
       const stat = result.get(item.areaId);
       const area = areaById.get(item.areaId);
@@ -267,7 +236,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       if (stat && !stat.theme) stat.theme = item.name;
     });
     return result;
-  }, [allGoals, areaById, areas, checkIns, store.lifeMapSystems, store.lifeMapThemes, timelineTasks]);
+  }, [allGoals, areaById, areas, checkIns, store.lifeMapSystems, store.lifeMapThemes]);
 
   const rangesByArea = useMemo(() => {
     const result = new Map<string, Array<[string, string]>>();
@@ -282,7 +251,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
     return result;
   }, [planningItems, systems, themes]);
 
-  const groups = useMemo<TaskGroup[]>(() => planAreas.filter((area) => selectedAreaId === 'all' || visibleAreaIds.has(area.id)).map((area) => {
+  const groups = useMemo<TaskGroup[]>(() => areas.filter((area) => selectedAreaId === 'all' || visibleAreaIds.has(area.id)).map((area) => {
     const ranges = rangesByArea.get(area.id) ?? [];
     const dates = ranges.flat().sort();
     return {
@@ -293,7 +262,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       end: dates.at(-1) ?? futureDate(),
       children: [],
     };
-  }), [planAreas, rangesByArea, selectedAreaId, visibleAreaIds]);
+  }), [areas, rangesByArea, selectedAreaId, visibleAreaIds]);
 
   const lifeMapTasks = useMemo<Task[]>(() => [
     ...planningItems.map((item) => {
@@ -341,7 +310,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       lifeMapKind: 'review' as const, lifeMapMeta: item.period === 'month' ? '月度复盘' : '季度复盘', lifeMapPlacement: 'below' as const,
     })),
   ], [areaById, checkIns, groups, planningIndex, planningItems, reviews, systemStats, systems]);
-  const tasks = useMemo(() => [...projectProjection.tasks, ...lifeMapTasks], [lifeMapTasks, projectProjection.tasks]);
+  const tasks = lifeMapTasks;
 
   const notes = useMemo<Note[]>(() => [
     ...periodFocusItems.map((item) => ({ id: item.sourceKind === 'theme' ? `theme:${item.sourceId}` : item.sourceId, name: item.name, date: item.start, endDate: item.end, type: 'range' as const, color: item.color, placement: item.placement, layoutLane: item.layoutLane })),
@@ -717,10 +686,10 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       notes={notes}
       milestones={milestones}
       lifeStages={stages}
-      planGoals={[...projectProjection.goals, ...plans, ...phases]}
+      planGoals={[...plans, ...phases]}
       planSystems={systems}
-      planAreas={planAreas}
-      planGroups={projectProjection.groups}
+      planAreas={areas}
+      planGroups={planGroups}
       toolbarScope={<div className="life-map-scope" ref={toolbarRef} aria-label="人生领域">
         <button
           className="life-map-scope__trigger"
@@ -732,14 +701,14 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
         >
           {selectedArea ? <span className="life-map-scope__dot" style={{ background: selectedArea.color }} /> : <ListFilter size={14} />}
           <span>{selectedArea?.name ?? '全部人生'}</span>
-          <small>{selectedAreaMaintenance ? '维护中' : selectedArea ? `${projectProjection.tasks.length + plans.length}项目${phases.length ? ` · ${phases.length}子阶段` : ''}` : `${timelineTasks.length + activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length}个项目 · ${reachedSystemCount}/${activeSystems.length}系统达标`}</small>
+          <small>{selectedAreaMaintenance ? '维护中' : selectedArea ? `${plans.length}个人生计划${phases.length ? ` · ${phases.length}个阶段` : ''}` : `${activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length}个人生计划 · ${reachedSystemCount}/${activeSystems.length}系统达标`}</small>
           <ChevronDown size={13} />
         </button>
         {toolbarMenu === 'areas' && <div className="life-map-scope__menu" role="menu" aria-label="选择人生领域">
           <header><strong>查看范围</strong><small>一次聚焦一个领域，时间坐标保持不变</small></header>
           {selectedArea && <button type="button" className="life-map-scope__maintenance" onClick={() => openMaintenance('area', selectedArea.id, selectedArea.name)}>{selectedAreaMaintenance ? <Play size={16} /> : <PauseCircle size={16} />}<span><b>{selectedAreaMaintenance ? `结束“${selectedArea.name}”维护` : `“${selectedArea.name}”进入维护`}</b><small>{selectedAreaMaintenance ? `${selectedAreaMaintenance.start} 起暂停统计，唤醒时可顺延计划` : '维护期间长期系统不计算未完成'}</small></span></button>}
           <button type="button" role="menuitemradio" aria-checked={selectedAreaId === 'all'} onClick={() => { setSelectedAreaId('all'); setToolbarMenu(null); }}>
-            <ListFilter size={16} /><span><b>全部人生</b><small>{areas.length} 个二级分类 · {timelineTasks.length + activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length} 个项目 · {activeLifeMapItems(store.lifeMapSystems).length} 个长期系统</small></span>
+            <ListFilter size={16} /><span><b>全部人生</b><small>{areas.length} 个二级分类 · {activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length} 个人生计划 · {activeLifeMapItems(store.lifeMapSystems).length} 个长期系统</small></span>
           </button>
           {(['learning', 'work', 'life'] as const).map((groupId) => {
             const groupAreas = areas.filter((area) => area.planGroupId === groupId);
@@ -758,7 +727,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
           <button type="button" className="life-map-scope__manage" onClick={() => { setToolbarMenu(null); setPlanningDrawerOpen(true); }}><Settings2 size={15} /><span><b>管理二级分类</b><small>按学习、工作、生活分组管理</small></span></button>
         </div>}
       </div>}
-      onCreatePlan={() => onCreateProject ? onCreateProject() : openCreate('plan')}
+      onCreatePlan={() => openCreate('plan')}
       onCreatePhase={plans.length > 0 ? () => openCreate('phase') : undefined}
       onCreatePhaseForPlan={(taskId) => {
         if (taskId.startsWith('goal:')) openCreate('phase', { planId: taskId.slice('goal:'.length) });
@@ -780,7 +749,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
         else if (id.startsWith('system:')) store.updateSystem(id.slice('system:'.length), { placement });
       }}
       onUpdatePlanGroupPlacement={(groupId, placement) => {
-        if (groupId !== 'unclassified') store.updatePlanGroupPlacement(groupId, placement);
+        store.updatePlanGroupPlacement(groupId, placement);
       }}
       annotationAreaRequired={areas.length === 0}
       onRequireAnnotationArea={() => openAreaCreate('learning')}
@@ -803,17 +772,11 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       onCreateMilestone={(item) => store.addEvent({ id: item.id.replace(/^event:/, ''), name: item.name, date: item.date, color: item.customColor, placement: item.placement, importance: item.importance, areaId: item.areaId, relatedPlanId: item.relatedPlanId })}
       onUpdateMilestone={(item) => store.updateEvent(item.id.replace(/^event:/, ''), { name: item.name, date: item.date, color: item.customColor, placement: item.placement, importance: item.importance, layoutLane: item.layoutLane, areaId: item.areaId, relatedPlanId: item.relatedPlanId })}
       onDeleteMilestone={(id) => store.deleteEvent(id.replace(/^event:/, ''))}
-      onOpenTask={(taskId, blockId) => {
-        if (projectTaskIds.has(taskId)) onOpenProject?.(taskId, blockId);
-        else openEntity(taskId);
-      }}
+      onOpenTask={(taskId) => openEntity(taskId)}
     />
     <LifeMapPlanningDrawer
       open={planningDrawerOpen}
-      plans={[
-        ...projectProjection.tasks.filter((item) => !item.completed).map((item) => ({ id: item.id, source: 'timeline-project' as const, name: item.name, meta: `${item.start} — ${item.end} · ${item.lifeMapMeta ?? '项目规划'}` })),
-        ...plans.filter((item) => item.status === 'active').map((item) => ({ id: item.id, source: 'life-map' as const, name: item.name, meta: `${item.start} — ${item.targetDate}${activeMaintenancePeriod(item.maintenancePeriods) ? ' · 维护中' : ''}` })),
-      ]}
+      plans={plans.filter((item) => item.status === 'active').map((item) => ({ id: item.id, name: item.name, meta: `${item.start} — ${item.targetDate}${activeMaintenancePeriod(item.maintenancePeriods) ? ' · 维护中' : ''}` }))}
       systems={activeSystems.map((item) => ({ id: item.id, name: item.name, meta: systemStats.get(item.id) ? `${systemStats.get(item.id)!.label} ${systemStats.get(item.id)!.completed}/${systemStats.get(item.id)!.target}` : undefined }))}
       reviews={reviews.slice().sort((left, right) => right.end.localeCompare(left.end)).slice(0, 5).map((item) => ({ id: item.id, name: item.title, meta: `${item.period === 'month' ? '月度' : '季度'} · ${item.end}` }))}
       periods={activeLifeMapItems(store.lifeMapStages).map((item) => ({ id: item.id, name: item.name, meta: `${item.start} — ${item.end}` }))}
@@ -822,8 +785,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       onClose={() => setPlanningDrawerOpen(false)}
       onEdit={(kind, item) => {
         setPlanningDrawerOpen(false);
-        if (kind === 'plan' && item.source === 'timeline-project') onOpenProject?.(item.id);
-        else if (kind === 'plan') openEntity(`goal:${item.id}`);
+        if (kind === 'plan') openEntity(`goal:${item.id}`);
         else if (kind === 'system') openEntity(`system:${item.id}`);
         else if (kind === 'review') openEntity(`review:${item.id}`);
         else {
@@ -851,7 +813,7 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
         if (!store.deleteArea(id)) return;
         if (selectedAreaId === id) setSelectedAreaId('all');
       }}
-      onShiftProjects={plans.length > 0 ? () => { setPlanningDrawerOpen(false); openShiftEditor(); } : undefined}
+      onShiftPlans={plans.length > 0 ? () => { setPlanningDrawerOpen(false); openShiftEditor(); } : undefined}
       onUpdateGroupPlacement={store.updatePlanGroupPlacement}
     />
     {lastShift.length > 0 && <div className="life-map-shift-undo" role="status"><FastForward size={15} /><span>已统一调整 {lastShift.length} 个计划或阶段</span><button type="button" onClick={() => { store.restorePlanningItems(lastShift); setLastShift([]); }}>撤销</button><button type="button" aria-label="关闭调整提示" onClick={() => setLastShift([])}><X size={13} /></button></div>}
@@ -885,13 +847,13 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
       {!onboardingDismissed && !hasVisibleLifeMapContent && <aside className="life-map-onboarding" aria-label="人生地图入门">
       <button type="button" className="life-map-onboarding__close" onClick={dismissOnboarding} aria-label="关闭引导"><X size={16} /></button>
       <small>第一次使用</small><h2>先建立一张真实可维护的人生地图</h2>
-      <p>项目记录要推进的事情，长期系统记录要持续保持的规律，关键日期记录不能忽略的节点。</p>
+      <p>人生计划记录长期方向，长期系统记录持续规律，关键日期记录不能忽略的节点；项目规划中的任务不会出现在这里。</p>
       <div><button type="button" className="is-primary" onClick={() => applyTemplate('balanced')}>学习与生活平衡</button><button type="button" onClick={() => applyTemplate('health')}>健康重启</button><button type="button" onClick={dismissOnboarding}>从空白开始</button></div>
     </aside>}
     {editor && <LifeMapEntityEditor kind={editor.kind} onSubmit={saveEditor} onDismiss={() => setEditor(null)}>
-        <header><div><small>人生地图</small><h2>{editor.id ? '编辑' : '新建'}{editor.kind === 'plan' ? '项目' : editor.kind === 'phase' ? '项目子阶段' : editor.kind === 'system' ? '长期系统' : ['theme', 'focus', 'range-note'].includes(editor.kind) ? '时期重点' : editor.kind === 'review' ? '周期复盘' : '二级分类'}</h2></div><button type="button" onClick={() => setEditor(null)} aria-label="关闭"><X /></button></header>
-        <label>{editor.kind === 'review' ? '复盘标题' : '名称'}<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={editor.kind === 'plan' ? '例如：考研政治' : editor.kind === 'phase' ? '例如：完成马原学习' : editor.kind === 'system' ? '例如：每周跑步' : editor.kind === 'review' ? '例如：七月复盘' : '写下真正重要的方向'} /></label>
-        {['plan', 'phase'].includes(editor.kind) && <div className="life-map-editor__type-guide"><Layers3 size={15} /><span><b>这里记录需要推进的事情</b><small>项目可以继续拆分为日期互不重叠的子阶段。</small></span></div>}
+        <header><div><small>人生地图</small><h2>{editor.id ? '编辑' : '新建'}{editor.kind === 'plan' ? '人生计划' : editor.kind === 'phase' ? '计划阶段' : editor.kind === 'system' ? '长期系统' : ['theme', 'focus', 'range-note'].includes(editor.kind) ? '时期重点' : editor.kind === 'review' ? '周期复盘' : '二级分类'}</h2></div><button type="button" onClick={() => setEditor(null)} aria-label="关闭"><X /></button></header>
+        <label className="life-map-editor__name-field">{editor.kind === 'review' ? '复盘标题' : '名称'}<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={editor.kind === 'plan' ? '例如：考研政治' : editor.kind === 'phase' ? '例如：完成马原学习' : editor.kind === 'system' ? '例如：每周跑步' : editor.kind === 'review' ? '例如：七月复盘' : '写下真正重要的方向'} /></label>
+        {['plan', 'phase'].includes(editor.kind) && <div className="life-map-editor__type-guide"><Layers3 size={15} /><span><b>这里设计人生地图中的长期推进方向</b><small>人生计划及其阶段只保存在人生地图数据库，不会生成项目规划任务。</small></span></div>}
         {editor.kind === 'phase' && <label>所属项目<select required value={parentGoalId} onChange={(event) => {
           const parent = plans.find((item) => item.id === event.target.value);
           setParentGoalId(event.target.value);
@@ -908,9 +870,9 @@ const LifeMapWorkspace: React.FC<LifeMapWorkspaceProps> = ({
         {!editor.id && ['plan', 'phase', 'system'].includes(editor.kind) && <button className="life-map-editor__more-toggle" type="button" aria-expanded={showEditorMore} onClick={() => setShowEditorMore((visible) => !visible)}><span><b>更多设置</b><small>状态、进度、颜色等</small></span><ChevronDown size={15} /></button>}
         {editorMoreVisible && editor.kind === 'system' && <label className="life-map-editor__check"><input type="checkbox" checked={hasEnd} onChange={(event) => setHasEnd(event.target.checked)} />设置结束日期（不勾选表示长期持续）</label>}
         {editorMoreVisible && ['plan', 'phase', 'system'].includes(editor.kind) && <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as LifeMapStatus)}><option value="active">进行中</option><option value="completed">已完成</option><option value="paused">已暂停</option><option value="archived">已归档</option></select></label>}
-        {editorMoreVisible && ['plan', 'phase'].includes(editor.kind) && <><label>{editor.kind === 'plan' ? '项目说明' : '子阶段成果'}<textarea rows={3} value={summary} onChange={(event) => setSummary(event.target.value)} placeholder={editor.kind === 'plan' ? '例如：完成政治一轮学习并进入整卷训练' : '例如：完成课程、章节练习和一次复盘'} /></label>{editor.kind === 'phase' && <label>完成进度 <b>{progress}%</b><input type="range" min={0} max={100} value={progress} onChange={(event) => setProgress(Number(event.target.value))} /></label>}</>}
-        {editor.kind === 'plan' && editor.id && <section className="life-map-editor__phases" aria-label="项目子阶段">
-          <header><span><b>项目子阶段</b><small>把项目拆成连续、互不重叠的区间</small></span><button type="button" onClick={() => openCreate('phase', { planId: editor.id })}>添加子阶段</button></header>
+        {editorMoreVisible && ['plan', 'phase'].includes(editor.kind) && <><label className="life-map-editor__summary-field">{editor.kind === 'plan' ? '计划说明' : '阶段成果'}<textarea rows={3} value={summary} onChange={(event) => setSummary(event.target.value)} placeholder={editor.kind === 'plan' ? '例如：完成政治一轮学习并进入整卷训练' : '例如：完成课程、章节练习和一次复盘'} /></label>{editor.kind === 'phase' && <label>完成进度 <b>{progress}%</b><input type="range" min={0} max={100} value={progress} onChange={(event) => setProgress(Number(event.target.value))} /></label>}</>}
+        {editor.kind === 'plan' && editor.id && <section className="life-map-editor__phases" aria-label="人生计划阶段">
+          <header><span><b>计划阶段</b><small>把人生计划拆成清晰的推进区间</small></span><button type="button" onClick={() => openCreate('phase', { planId: editor.id })}><Plus size={14} /><span>添加阶段</span></button></header>
           {activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'phase' && item.parentGoalId === editor.id).sort((left, right) => left.start.localeCompare(right.start)).map((phase) => <button type="button" key={phase.id} onClick={() => openEntity(`goal:${phase.id}`)}><span><b>{phase.name}</b><small>{phase.start} — {phase.targetDate}</small></span><em>{calculateGoalProgress(phase)}%</em></button>)}
           {activeLifeMapItems(store.lifeMapGoals).every((item) => item.kind !== 'phase' || item.parentGoalId !== editor.id) && <p>尚无子阶段。系统会自动选择第一段未覆盖日期。</p>}
         </section>}

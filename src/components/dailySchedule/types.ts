@@ -14,6 +14,8 @@ export interface TimeSlotConfig {
   label: string;
   startHour: number;
   endHour: number;
+  /** 这个时段真正适合拿来规划任务的分钟数，可小于自然时间跨度。 */
+  availableMinutes: number;
 }
 
 /** 安排到时间段的任务条目 */
@@ -93,7 +95,7 @@ export interface DaySchedule {
 
 /** 默认时间段配置 */
 export const DEFAULT_TIME_SLOT_CONFIGS: TimeSlotConfig[] = [
-  { slot: 'morning', label: '上午', startHour: 6, endHour: 12 },
-  { slot: 'afternoon', label: '下午', startHour: 12, endHour: 18 },
-  { slot: 'evening', label: '晚上', startHour: 18, endHour: 23 },
+  { slot: 'morning', label: '上午', startHour: 6, endHour: 12, availableMinutes: 240 },
+  { slot: 'afternoon', label: '下午', startHour: 12, endHour: 18, availableMinutes: 270 },
+  { slot: 'evening', label: '晚上', startHour: 18, endHour: 23, availableMinutes: 180 },
 ];

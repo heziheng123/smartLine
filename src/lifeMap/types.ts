@@ -160,13 +160,6 @@ export interface LifeMapNote extends LifeMapSyncMeta {
   layoutLane?: LifeMapLayoutLane;
 }
 
-export interface LifeRelation extends LifeMapSyncMeta {
-  id: string;
-  lifeItemType: 'goal' | 'system' | 'event';
-  lifeItemId: string;
-  projectId: string;
-}
-
 export interface LifeMapData {
   lifeMapAreas: LifeArea[];
   lifeMapPlanGroups: LifeMapPlanGroupPreference[];
@@ -178,9 +171,8 @@ export interface LifeMapData {
   lifeMapEvents: LifeEvent[];
   lifeMapFocuses: LifeFocus[];
   lifeMapNotes: LifeMapNote[];
-  lifeMapRelations: LifeRelation[];
   lifeMapReviews: LifeReview[];
 }
 
-export type LifeMapEntity = LifeMapPlanGroupPreference | LifeMapStage | LifeTheme | LifeGoal | LifeSystem | LifeSystemCheckIn | LifeEvent | LifeFocus | LifeMapNote | LifeRelation | LifeReview;
+export type LifeMapEntity = LifeMapPlanGroupPreference | LifeMapStage | LifeTheme | LifeGoal | LifeSystem | LifeSystemCheckIn | LifeEvent | LifeFocus | LifeMapNote | LifeReview;
 export type LifeMapEntityCollection = Exclude<keyof LifeMapData, 'lifeMapAreas'>;

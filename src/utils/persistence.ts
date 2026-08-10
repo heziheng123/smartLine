@@ -118,6 +118,34 @@ export function createScopedStorage(storeName: string) {
   };
 }
 
+/**
+ * Creates a dataset in its own IndexedDB database. Use this for domains that
+ * must remain physically independent from the main application database.
+ */
+export function createDedicatedStorage(databaseName: string, storeName: string) {
+  let storage = localforage.createInstance({ name: databaseName, storeName });
+
+  const execute = async <T>(operation: (current: LocalForage) => Promise<T>): Promise<T> => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await operation(storage);
+      } catch (error) {
+        if (!isRetryableStorageError(error) || attempt === 2) throw error;
+        storage = localforage.createInstance({ name: databaseName, storeName });
+        await new Promise((resolve) => window.setTimeout(resolve, 50 * (attempt + 1)));
+      }
+    }
+    throw new Error('IndexedDB 操作重试失败。');
+  };
+
+  return {
+    getItem: <T>(key: string) => execute((current) => current.getItem<T>(key)),
+    setItem: <T>(key: string, value: T) => execute((current) => current.setItem(key, value)),
+    removeItem: (key: string) => execute((current) => current.removeItem(key)),
+    keys: () => execute((current) => current.keys()),
+  };
+}
+
 export function readJsonStorage<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(key);
