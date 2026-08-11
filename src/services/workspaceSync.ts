@@ -601,6 +601,10 @@ async function inspectUnifiedWorkspaceTarget(
   };
 }
 
+export function normalizeWorkspaceBackupForMigrationComparison(backup: WorkspaceBackup): WorkspaceBackup {
+  return rootToBackup(workspaceRootFromBackup(backup), backup);
+}
+
 /**
  * First-time unified activation is deliberately fail-closed.  Empty devices
  * may join an existing cloud workspace and equal workspaces may reconnect, but
@@ -1279,10 +1283,16 @@ function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> 
 
 async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string): Promise<WorkspaceMigrationReport> {
   const startedAt = new Date().toISOString();
-  const source = await inspectLegacyWorkspace(roomCode);
-  const localHash = await hashWorkspaceBackup(createWorkspaceBackup());
+  const local = createWorkspaceBackup();
+  const source = await inspectLegacyWorkspaceWithBase(roomCode, local);
+  // Legacy Liveblocks rooms can still contain stale group child projections or
+  // fields that are repaired by rootToBackup. Compare both sides in the same
+  // canonical form; otherwise a repairable old shape is mistaken for different
+  // user data and blocks migration even though every connected store is current.
+  const canonicalLocal = normalizeWorkspaceBackupForMigrationComparison(local);
+  const localHash = await hashWorkspaceBackup(canonicalLocal);
   if (localHash !== source.hash) {
-    throw new Error('本地数据与旧房间尚未一致。请保持联网，等待四个模块全部连接后重新检查。');
+    throw new Error('本机规范化后的数据与旧房间仍不一致。请保持联网，等待五个模块全部连接后重新检查。');
   }
   await clearPendingWorkspaceSync();
   await createLocalSnapshot('统一工作区迁移前');

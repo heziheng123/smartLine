@@ -55,6 +55,7 @@ try {
     ebbModule,
     dailyModule,
     backupModule,
+    workspaceSyncModule,
     sourceIds,
     dateSafe,
     dailyConversion,
@@ -87,6 +88,7 @@ try {
     load('/src/ebb/store.ts'),
     load('/src/components/dailySchedule/store.ts'),
     load('/src/services/workspaceBackup.ts'),
+    load('/src/services/workspaceSync.ts'),
     load('/src/components/dailySchedule/sourceIds.ts'),
     load('/src/utils/dateSafe.ts'),
     load('/src/components/dailySchedule/conversion.ts'),
@@ -1035,6 +1037,35 @@ try {
     const ids = new Set((await backupModule.listLocalSnapshots()).map((snapshot) => snapshot.id));
     assert.equal(ids.has(localSnapshot.id), true);
     assert.equal(ids.has(cloudSnapshot.id), true);
+  });
+
+  check('旧房间迁移比较会先规范化可修复的项目分组任务副本', () => {
+    const local = backupModule.createWorkspaceBackup();
+    const canonicalTask = {
+      id: 'migration-task',
+      name: '迁移任务',
+      start: '2026-08-11',
+      end: '2026-08-11',
+      groupId: 'migration-group',
+      blocks: [],
+    };
+    local.timeline.tasks = [canonicalTask];
+    local.timeline.groups = [{
+      id: 'migration-group',
+      name: '迁移项目组',
+      start: '2026-08-11',
+      end: '2026-08-11',
+      children: [{
+        id: canonicalTask.id,
+        name: canonicalTask.name,
+        start: canonicalTask.start,
+        end: canonicalTask.end,
+      }],
+    }];
+
+    const normalized = workspaceSyncModule.normalizeWorkspaceBackupForMigrationComparison(local);
+    assert.deepEqual(normalized.timeline.groups[0].children[0], normalized.timeline.tasks[0]);
+    assert.deepEqual(normalized.timeline.tasks[0].blocks, []);
   });
 
   check('EBB 单轮改期保留原计划日期、轮次编号，并清理每日安排旧引用', async () => {
