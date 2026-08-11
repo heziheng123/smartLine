@@ -20,10 +20,19 @@ import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, activeLifeMapItems, normalizeLifeMapData, validateLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
 import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
+import { setWorkspaceSystemMutationSuppressed } from './workspaceSyncQueueCore';
 
 export { WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
 const snapshotStorage = createScopedStorage('workspace_snapshots');
 const snapshotChunkStorage = createScopedStorage('workspace_snapshot_chunks');
+const SNAPSHOT_LOCK_NAME = 'smart-line-workspace-snapshots-v1';
+let snapshotWriteChain: Promise<void> = Promise.resolve();
+
+async function withSnapshotStorageLock<T>(operation: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks?.request) return await operation();
+  return await locks.request(SNAPSHOT_LOCK_NAME, { mode: 'exclusive' }, operation);
+}
 
 export interface WorkspaceBackup {
   kind: 'smart-line-workspace';
@@ -225,13 +234,36 @@ export function validateWorkspaceBackup(value: unknown): {
     && isDate(task.start) && isDate(task.end) && Array.isArray(task.blocks))) {
     errors.push('时间轴任务包含缺失字段或无效日期。');
   }
-  if (!backup.timeline.groups.every((group) => isRecord(group)
-    && typeof group.id === 'string' && typeof group.name === 'string'
-    && isDate(group.start) && isDate(group.end) && Array.isArray(group.children)
-    && group.children.every((task) => isRecord(task)
-      && typeof task.id === 'string' && typeof task.name === 'string'
-      && isDate(task.start) && isDate(task.end) && Array.isArray(task.blocks)))) {
-    errors.push('项目分组包含缺失字段或无效日期。');
+  const groupErrors: string[] = [];
+  backup.timeline.groups.forEach((group, groupIndex) => {
+    const groupPath = `groups[${groupIndex}]`;
+    if (!isRecord(group)) {
+      groupErrors.push(`${groupPath} 不是对象`);
+      return;
+    }
+    if (typeof group.id !== 'string') groupErrors.push(`${groupPath}.id 缺失`);
+    if (typeof group.name !== 'string') groupErrors.push(`${groupPath}.name 缺失`);
+    if (!isDate(group.start)) groupErrors.push(`${groupPath}.start 无效`);
+    if (!isDate(group.end)) groupErrors.push(`${groupPath}.end 无效`);
+    if (!Array.isArray(group.children)) {
+      groupErrors.push(`${groupPath}.children 不是数组`);
+      return;
+    }
+    group.children.forEach((task, taskIndex) => {
+      const taskPath = `${groupPath}.children[${taskIndex}]`;
+      if (!isRecord(task)) {
+        groupErrors.push(`${taskPath} 不是对象`);
+        return;
+      }
+      if (typeof task.id !== 'string') groupErrors.push(`${taskPath}.id 缺失`);
+      if (typeof task.name !== 'string') groupErrors.push(`${taskPath}.name 缺失`);
+      if (!isDate(task.start)) groupErrors.push(`${taskPath}.start 无效`);
+      if (!isDate(task.end)) groupErrors.push(`${taskPath}.end 无效`);
+      if (!Array.isArray(task.blocks)) groupErrors.push(`${taskPath}.blocks 缺失或不是数组`);
+    });
+  });
+  if (groupErrors.length > 0) {
+    errors.push(`项目分组包含缺失字段或无效日期：${groupErrors.slice(0, 5).join('；')}。`);
   }
   if (!backup.timeline.notes.every((note) => isRecord(note)
     && typeof note.id === 'string' && typeof note.name === 'string'
@@ -640,18 +672,28 @@ async function cleanupSnapshotChunks(snapshots: WorkspaceSnapshot[]): Promise<vo
   await Promise.all(keys.filter((key) => !referenced.has(String(key))).map((key) => snapshotChunkStorage.removeItem(key)));
 }
 
+export async function createWorkspaceSnapshot(
+  backup: WorkspaceBackup,
+  reason: string,
+): Promise<WorkspaceSnapshot> {
+  const operation = snapshotWriteChain.then(() => withSnapshotStorageLock(async () => {
+    const stored = await storeSnapshotChunks(backup);
+    const snapshot: WorkspaceSnapshot = {
+      id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `snapshot-${Date.now()}`,
+      createdAt: new Date().toISOString(), reason, format: 2,
+      chunks: stored.chunks, storedBytes: stored.storedBytes,
+    };
+    const next = retainSnapshots([snapshot, ...await listLocalSnapshots()]);
+    await snapshotStorage.setItem('items', next);
+    await cleanupSnapshotChunks(next);
+    return next.find((item) => item.id === snapshot.id) ?? snapshot;
+  }));
+  snapshotWriteChain = operation.then(() => undefined, () => undefined);
+  return await operation;
+}
+
 export async function createLocalSnapshot(reason: string): Promise<WorkspaceSnapshot> {
-  const backup = createWorkspaceBackup();
-  const stored = await storeSnapshotChunks(backup);
-  const snapshot: WorkspaceSnapshot = {
-    id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `snapshot-${Date.now()}`,
-    createdAt: new Date().toISOString(), reason, format: 2,
-    chunks: stored.chunks, storedBytes: stored.storedBytes,
-  };
-  const next = retainSnapshots([snapshot, ...await listLocalSnapshots()]);
-  await snapshotStorage.setItem('items', next);
-  await cleanupSnapshotChunks(next);
-  return next.find((item) => item.id === snapshot.id) ?? snapshot;
+  return await createWorkspaceSnapshot(createWorkspaceBackup(), reason);
 }
 
 export async function listLocalSnapshots(): Promise<WorkspaceSnapshot[]> {
@@ -696,17 +738,25 @@ export async function getSnapshotStorageStats(): Promise<SnapshotStorageStats> {
   };
 }
 
-export async function restoreWorkspaceBackup(backup: WorkspaceBackup): Promise<void> {
+export async function restoreWorkspaceBackup(
+  backup: WorkspaceBackup,
+  options: { suppressSyncJournal?: boolean } = {},
+): Promise<void> {
   await createLocalSnapshot('恢复完整工作区前');
   const before = createWorkspaceBackup();
   const apply = async (source: WorkspaceBackup) => {
     const safe = deepClone(source);
-    useTimelineStore.getState().replaceData(safe.timeline);
-    useLifeMapStore.getState().replaceLifeMapData(safe.lifeMap);
-    useEbbStore.getState().replaceEbbData(safe.ebb);
-    useGraphStore.getState().replaceGraphData(safe.graph);
-    useDailyScheduleStore.getState().replaceSchedules(safe.daily.schedules);
-    useDailyScheduleStore.getState().replaceRetrospectives(safe.daily.retrospectives);
+    if (options.suppressSyncJournal) setWorkspaceSystemMutationSuppressed(true);
+    try {
+      useTimelineStore.getState().replaceData(safe.timeline);
+      useLifeMapStore.getState().replaceLifeMapData(safe.lifeMap);
+      useEbbStore.getState().replaceEbbData(safe.ebb);
+      useGraphStore.getState().replaceGraphData(safe.graph);
+      useDailyScheduleStore.getState().replaceSchedules(safe.daily.schedules);
+      useDailyScheduleStore.getState().replaceRetrospectives(safe.daily.retrospectives);
+    } finally {
+      if (options.suppressSyncJournal) setWorkspaceSystemMutationSuppressed(false);
+    }
     await Promise.all([
       persistTimelineData({
         tasks: useTimelineStore.getState().tasks,

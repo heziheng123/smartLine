@@ -144,16 +144,32 @@ export function reconcileTimelineTaskCopies(
   const nextGroups = groups.map((group) => {
     const sourceChildren = Array.isArray(group.children) ? group.children : [];
     let childrenChanged = sourceChildren !== group.children;
+    const projectedIds = new Set<string>();
     const children = sourceChildren.map((child) => {
       const canonical = canonicalById.get(child.id);
-      if (!canonical) return child;
+      if (!canonical) {
+        projectedIds.add(child.id);
+        return child;
+      }
       const projected = canonical.groupId === group.id
         ? canonical
         : { ...canonical, groupId: group.id };
+      projectedIds.add(projected.id);
       if (taskCopiesEqual(child, projected)) return child;
       childrenChanged = true;
       return projected;
     });
+
+    // A top-level task can carry the group assignment even when an older or
+    // partially synchronized `groups` field has lost its compatibility copy.
+    // Rebuild those missing copies from the canonical collection instead of
+    // trusting the stale projection to enumerate every grouped project.
+    for (const task of canonicalById.values()) {
+      if (task.groupId !== group.id || projectedIds.has(task.id)) continue;
+      children.push(task);
+      projectedIds.add(task.id);
+      childrenChanged = true;
+    }
     if (!childrenChanged) return group;
     groupsChanged = true;
     return { ...group, children };

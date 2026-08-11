@@ -115,6 +115,7 @@ import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking, WORKSPACE_
 import { disconnectWorkspace } from '@/services/workspaceSync';
 import { isCurrentTabSyncLeader, startWorkspaceTabCoordinator } from '@/services/workspaceTabCoordinator';
 import { requestConfirmation } from '@/services/confirmation';
+import { useAuth } from '@/auth/AuthContext';
 import { resolveProjectTask, rescheduleProjectTask } from '@/services/projectTaskCommands';
 import '@/services/backlogCommands';
 
@@ -198,6 +199,7 @@ const PANEL_MOTION_VARIANTS: Variants = {
 };
 
 const App: React.FC = () => {
+  const auth = useAuth();
   const prefersReducedMotion = useReducedMotion();
   const isPhoneLayout = usePhoneLayout();
   const { isHydrated: isGraphHydrated, hydrateStore: hydrateGraphStore } = useGraphStore(
@@ -525,7 +527,7 @@ const App: React.FC = () => {
     hasAttemptedAutoReconnect.current = true;
     const stopCoordinator = startWorkspaceTabCoordinator({
       onLeader: () => {
-        void reconnectConfiguredWorkspace().catch((error) => {
+        void reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login).catch((error) => {
           setSyncNotice(error instanceof Error ? error.message : '云端工作区自动连接失败。');
         });
       },
@@ -533,7 +535,7 @@ const App: React.FC = () => {
     });
     const reconnect = () => {
       if (!isCurrentTabSyncLeader()) return;
-      void reconnectConfiguredWorkspace().catch((error) => {
+      void reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login).catch((error) => {
         setSyncNotice(error instanceof Error ? error.message : '云端工作区重新连接失败。');
       });
     };
@@ -542,7 +544,7 @@ const App: React.FC = () => {
       window.removeEventListener('online', reconnect);
       stopCoordinator();
     };
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, auth.login, auth.userId]);
 
   React.useEffect(() => {
     if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;

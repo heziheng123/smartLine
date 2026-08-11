@@ -64,6 +64,7 @@ export const workspaceQueueChannel = !isBrowserRuntime
 
 let writeChain = Promise.resolve();
 let trackingSuppressionDepth = 0;
+let systemMutationSuppressionDepth = 0;
 let volatilePending: PendingWorkspaceSync | null = null;
 
 async function withQueueStorageLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -115,6 +116,16 @@ export function setWorkspaceQueueSuppressed(value: boolean): void {
 
 export function isWorkspaceQueueSuppressed(): boolean {
   return trackingSuppressionDepth > 0;
+}
+
+export function setWorkspaceSystemMutationSuppressed(value: boolean): void {
+  systemMutationSuppressionDepth = value
+    ? systemMutationSuppressionDepth + 1
+    : Math.max(0, systemMutationSuppressionDepth - 1);
+}
+
+export function isWorkspaceSystemMutationSuppressed(): boolean {
+  return systemMutationSuppressionDepth > 0;
 }
 
 function deviceId(): string {

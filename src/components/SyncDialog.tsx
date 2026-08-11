@@ -22,16 +22,26 @@ import {
 } from '@/services/workspaceBackup';
 import {
   activateUnifiedWorkspaceSafely,
+  activateWorkspaceWithLegacyDiscovery,
   disconnectWorkspace,
   downloadMigrationReport,
   inspectLegacyWorkspace,
   migrateLegacyWorkspace,
   readWorkspaceSyncSettings,
   reconnectConfiguredWorkspace,
+  readPendingWorkspaceActivationConflict,
+  clearPendingWorkspaceActivationConflict,
+  resolveUnifiedWorkspaceConflict,
   resetToLegacyArchitecture,
+  isWorkspaceConnectionInProgress,
+  WORKSPACE_CONNECTION_PROGRESS_EVENT,
+  WORKSPACE_CONNECTION_STATE_EVENT,
+  WORKSPACE_CONFLICT_EVENT,
+  WORKSPACE_VERIFIED_EVENT,
+  UnifiedWorkspaceConflictError,
   type WorkspaceMigrationReport,
 } from '@/services/workspaceSync';
-import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
+import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
 import { useShallow } from 'zustand/react/shallow';
@@ -108,12 +118,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     enableSync: state.enableSync,
     liveblocks: state.liveblocks,
   })));
-  const [roomCode, setRoomCode] = useState(timeline.syncRoomCode || '');
+  const initialActivationConflict = useRef(readPendingWorkspaceActivationConflict()).current;
+  const [roomCode, setRoomCode] = useState(timeline.syncRoomCode || initialActivationConflict?.roomCode || '');
   const [showRoomCode, setShowRoomCode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [lastConnected, setLastConnected] = useState(readLastConnected);
   const [restoreSummary, setRestoreSummary] = useState<WorkspaceBackupSummary | null>(null);
-  const [restoreMessage, setRestoreMessage] = useState('');
+  const [restoreMessage, setRestoreMessage] = useState(() => (
+    isWorkspaceConnectionInProgress() ? '连接任务仍在后台进行，请等待当前步骤完成。' : ''
+  ));
   const [snapshots, setSnapshots] = useState<WorkspaceSnapshot[]>([]);
   const [snapshotStats, setSnapshotStats] = useState<SnapshotStorageStats | null>(null);
   const [architecture, setArchitecture] = useState(readWorkspaceSyncSettings);
@@ -124,17 +137,23 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [r2Configured, setR2Configured] = useState<boolean | null>(null);
   const [pendingFieldCount, setPendingFieldCount] = useState<number | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<WorkspaceConflictRecord[]>([]);
-  const [connectionBusy, setConnectionBusy] = useState(false);
+  const [connectionBusy, setConnectionBusy] = useState(isWorkspaceConnectionInProgress);
+  const [activationConflict, setActivationConflict] = useState<{
+    roomCode: string;
+    remoteSource: 'unified' | 'legacy';
+  } | null>(initialActivationConflict);
   const [selectedConflictFields, setSelectedConflictFields] = useState<WorkspaceStorageField[]>([]);
   const [archivePeriod, setArchivePeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const [dataPanelOpen, setDataPanelOpen] = useState(false);
 
   useEffect(() => {
+    if (!dataPanelOpen) return;
     listLocalSnapshots().then(setSnapshots).catch(() => setSnapshots([]));
     getSnapshotStorageStats().then(setSnapshotStats).catch(() => setSnapshotStats(null));
-  }, [restoreMessage]);
+  }, [dataPanelOpen]);
 
   useEffect(() => {
-    if (!auth.enabled) return;
+    if (!auth.enabled || !dataPanelOpen) return;
     fetch('/api/storage/status', {
       credentials: 'same-origin',
       cache: 'no-store',
@@ -143,7 +162,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       .then(async (response) => response.ok ? await response.json() as { r2Configured?: boolean } : null)
       .then((result) => setR2Configured(Boolean(result?.r2Configured)))
       .catch(() => setR2Configured(false));
-  }, [auth.enabled]);
+  }, [auth.enabled, dataPanelOpen]);
 
   useEffect(() => {
     const refresh = () => {
@@ -158,15 +177,58 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       }).catch(() => setSyncConflicts([]));
     };
     refresh();
-    const timer = window.setInterval(refresh, 2_000);
-    return () => window.clearInterval(timer);
-  }, [restoreMessage]);
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener(WORKSPACE_QUEUE_EVENT, refresh);
+    window.addEventListener(WORKSPACE_CONFLICT_EVENT, refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener(WORKSPACE_QUEUE_EVENT, refresh);
+      window.removeEventListener(WORKSPACE_CONFLICT_EVENT, refresh);
+    };
+  }, []);
 
   useEffect(() => {
-    const refresh = () => setLastConnected(readLastConnected());
+    const handleConnectionState = (event: Event) => {
+      const busy = (event as CustomEvent<{ busy?: boolean }>).detail?.busy;
+      if (typeof busy === 'boolean') {
+        setConnectionBusy(busy);
+        if (!busy) {
+          const pendingConflict = readPendingWorkspaceActivationConflict();
+          setActivationConflict(pendingConflict);
+          if (pendingConflict) setRoomCode((current) => current || pendingConflict.roomCode);
+        }
+      }
+    };
+    setConnectionBusy(isWorkspaceConnectionInProgress());
+    window.addEventListener(WORKSPACE_CONNECTION_STATE_EVENT, handleConnectionState);
+    return () => window.removeEventListener(WORKSPACE_CONNECTION_STATE_EVENT, handleConnectionState);
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => {
+      const next = readLastConnected();
+      setLastConnected((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
+      setArchitecture(readWorkspaceSyncSettings());
+    };
     refresh();
-    const timer = window.setInterval(refresh, 2000);
-    return () => window.clearInterval(timer);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === LAST_CONNECTED_KEY) refresh();
+    };
+    window.addEventListener(WORKSPACE_VERIFIED_EVENT, refresh);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(WORKSPACE_VERIFIED_EVENT, refresh);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleProgress = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+      if (message) setRestoreMessage(message);
+    };
+    window.addEventListener(WORKSPACE_CONNECTION_PROGRESS_EVENT, handleProgress);
+    return () => window.removeEventListener(WORKSPACE_CONNECTION_PROGRESS_EVENT, handleProgress);
   }, []);
 
   const modules = useMemo(() => [
@@ -190,7 +252,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
     if (architecture.architecture === 'unified') {
-      void reconnectConfiguredWorkspace().catch((error) => {
+      void reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login).catch((error) => {
         setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接失败。');
       });
       return;
@@ -211,7 +273,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       lifeMap.enableSync(code);
       lifeMap.liveblocks?.enterRoom?.(`${LIFE_MAP_ROOM_PREFIX}${code}`);
     }
-  }, [timeline, ebb, daily, graph, lifeMap, architecture]);
+  }, [timeline, ebb, daily, graph, lifeMap, architecture, auth.login, auth.userId]);
 
   const handleConnectAll = useCallback(async () => {
     if (!isCurrentTabSyncLeader()) {
@@ -228,6 +290,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     if (!fallbackCode) return;
 
     setConnectionBusy(true);
+    clearPendingWorkspaceActivationConflict();
+    setActivationConflict(null);
     setRestoreMessage('正在连接云端并处理本机待同步数据…');
 
     try {
@@ -239,35 +303,35 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             auth.login || undefined,
           );
           setArchitecture(readWorkspaceSyncSettings());
-          setRestoreMessage(result.source === 'cloud'
+          setRestoreMessage(result.warning ?? (result.source === 'cloud'
             ? '本机没有规划内容，已安全连接并完成云端数据加载。'
             : result.source === 'matching'
               ? '本机与云端数据一致，连接及云端确认均已完成。'
-              : '云端为空，已安全连接并完成本机工作区上传。');
+              : '云端为空，已安全连接并完成本机工作区上传。'));
         } else {
-          const result = await reconnectConfiguredWorkspace();
-          setRestoreMessage(result && result.repairedFields.length > 0
+          const result = await reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login);
+          setRestoreMessage(result?.warning ?? (result && result.repairedFields.length > 0
             ? `连接及云端确认已完成，并从云端修复了 ${result.repairedFields.length} 个不一致数据字段。`
             : result && result.applied > 0
               ? `连接及云端确认已完成，已补传 ${result.applied} 个数据字段。`
-              : '连接、队列清空及云端内容一致性校验均已完成。');
+              : '连接、队列清空及云端内容一致性校验均已完成。'));
         }
         return;
       }
 
       if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
         setRestoreMessage('正在检查本机与云端数据，连接前会先创建本地快照…');
-      const result = await activateUnifiedWorkspaceSafely(
+      const result = await activateWorkspaceWithLegacyDiscovery(
         fallbackCode,
         auth.userId || auth.login || 'owner',
         auth.login || undefined,
       );
         setArchitecture(readWorkspaceSyncSettings());
-        setRestoreMessage(result.source === 'cloud'
+        setRestoreMessage(result.warning ?? (result.source === 'cloud'
           ? '本机没有规划内容，已安全连接并完成云端数据加载。'
           : result.source === 'matching'
             ? '本机与云端数据一致，连接及云端确认均已完成。'
-            : '云端为空，已安全连接并完成本机工作区上传。');
+            : '云端为空，已安全连接并完成本机工作区上传。'));
         return;
       }
 
@@ -289,14 +353,63 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       });
       setRestoreMessage('旧房间重新连接已启动，请等待五个模块全部变为“已连接”。');
     } catch (error) {
+      if (error instanceof UnifiedWorkspaceConflictError) {
+        setActivationConflict({ roomCode: fallbackCode, remoteSource: error.remoteSource });
+      }
       setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接或补传失败。');
     } finally {
       setConnectionBusy(false);
     }
   }, [roomCode, timeline.syncRoomCode, timeline.syncEnabled, ebb.syncRoomCode, ebb.syncEnabled, daily.syncRoomCode, daily.syncEnabled, graph.syncRoomCode, graph.syncEnabled, lifeMap.syncRoomCode, lifeMap.syncEnabled, connectModule, architecture, enabledCount, auth.login, auth.userId]);
 
+  const handleResolveActivationConflict = useCallback(async (resolution: 'cloud' | 'local') => {
+    if (!activationConflict || !isCurrentTabSyncLeader()) return;
+    const keepCloud = resolution === 'cloud';
+    const confirmed = await requestConfirmation(keepCloud
+      ? '确定以云端工作区为准吗？当前电脑的数据会先保存为本地快照，然后替换为云端数据。'
+      : '确定以当前电脑为准并覆盖云端吗？当前云端数据和本机数据都会先保存为本地快照。');
+    if (!confirmed) return;
+    setConnectionBusy(true);
+    setRestoreMessage(keepCloud ? '正在保存双方恢复点并加载云端数据…' : '正在保存双方恢复点并上传本机数据…');
+    try {
+      const result = await resolveUnifiedWorkspaceConflict(
+        activationConflict.roomCode,
+        auth.userId || auth.login || 'owner',
+        resolution,
+        auth.login || undefined,
+        activationConflict.remoteSource,
+      );
+      setArchitecture(readWorkspaceSyncSettings());
+      setActivationConflict(null);
+      setRestoreMessage(result.warning ?? (
+        `${keepCloud ? '云端' : '本机'}数据已设为当前版本；五个数据域已连接、补传并校验完成`
+          + `${result.repairedFields.length > 0 ? `，另修复 ${result.repairedFields.length} 个旧格式字段` : ''}。`
+      ));
+    } catch (error) {
+      if (error instanceof UnifiedWorkspaceConflictError) {
+        setActivationConflict({
+          roomCode: activationConflict.roomCode,
+          remoteSource: error.remoteSource,
+        });
+      }
+      setRestoreMessage(error instanceof Error ? error.message : '处理本机与云端数据差异失败。');
+    } finally {
+      setConnectionBusy(false);
+    }
+  }, [activationConflict, auth.login, auth.userId]);
+
   const handleDisconnectAll = useCallback(() => {
+    disconnectWorkspace(false);
+    setRestoreMessage('已暂时断开云端连接；工作区绑定仍保留，可随时重新连接，刷新后也会自动恢复。');
+  }, []);
+
+  const handleChangeWorkspace = useCallback(async () => {
+    if (!await requestConfirmation('确定在这台设备上忘记当前工作区并更换房间号吗？本机数据不会删除，账号云端绑定也不会删除；输入新房间号后会重新建立绑定。')) return;
     disconnectWorkspace(true);
+    setArchitecture(readWorkspaceSyncSettings());
+    setActivationConflict(null);
+    setRoomCode('');
+    setRestoreMessage('已在本机停用当前工作区自动发现。现在可以输入新的房间号；本机数据和原云端房间均未删除。');
   }, []);
 
   const handleCopy = useCallback(async () => {
@@ -496,6 +609,27 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           本机最近完成云端内容校验：{formatTime(lastConnected.workspace)}
           {requiresUnifiedMigration ? ' · 当前仅连接旧模块房间，请在高级设置中迁移后再比较两台设备。' : ''}
         </p>
+        {requiresUnifiedMigration && enabledCount > 0 && (
+          <section className="tl-sync-conflict-fields" aria-label="旧同步架构迁移">
+            <strong>当前平板/电脑可能仍在旧的五个房间中，必须迁移到统一工作区后才能可靠比较多端数据。</strong>
+            <small>迁移会先创建本地快照，再复制并校验数量和 SHA-256；旧房间不会删除。</small>
+            <div className="tl-sync-backup-actions">
+              <button type="button" className="tl-sync-backup-btn" onClick={handleInspectLegacy} disabled={migrationBusy}><Check size={14} />{migrationBusy && !migrationCheck ? '检查中…' : '检查旧数据'}</button>
+              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={handleMigrate} disabled={migrationBusy || !migrationCheck}><ArrowRightLeft size={14} />{migrationBusy && migrationCheck ? '迁移中…' : '迁移到统一工作区'}</button>
+            </div>
+            {migrationStatus && <small role="status" aria-live="polite">{migrationStatus}</small>}
+          </section>
+        )}
+        {activationConflict && (
+          <section className="tl-sync-conflict-fields" aria-label="首次连接数据冲突处理">
+            <strong>电脑与{activationConflict.remoteSource === 'legacy' ? '平板旧房间' : '云端'}都有不同数据，请明确选择一个当前版本。</strong>
+            <small>两边都会先保存到本机快照中；选择完成后才会覆盖并重新校验，不会再停在无法连接的状态。</small>
+            <div className="tl-sync-backup-actions">
+              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => void handleResolveActivationConflict('cloud')} disabled={connectionBusy}><Download size={14} />以云端为准</button>
+              <button type="button" className="tl-sync-backup-btn" onClick={() => void handleResolveActivationConflict('local')} disabled={connectionBusy}><Upload size={14} />以本机为准</button>
+            </div>
+          </section>
+        )}
         {restoreMessage && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{restoreMessage}</p>}
         {syncConflicts[0] && <section className="tl-sync-conflict-fields" aria-label="选择冲突数据">
           <strong>最近冲突 · {formatTime(syncConflicts[0].detectedAt)}</strong>
@@ -542,12 +676,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           <div className="tl-sync-backup-section tl-settings-disclosure-content">
             <h4 className="tl-sync-backup-title"><Database size={15} />同步架构</h4>
             {architecture.architecture === 'legacy' ? <>
-              <p className="tl-sync-backup-hint">迁移采用“读取旧房间 → 本地快照 → 复制 → 数量和 SHA-256 校验 → 切换”，不会删除旧数据。</p>
-              <div className="tl-sync-backup-actions">
-                <button type="button" className="tl-sync-backup-btn" onClick={handleInspectLegacy} disabled={migrationBusy}><Check size={14} />{migrationBusy && !migrationCheck ? '检查中…' : '检查旧数据'}</button>
-                <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={handleMigrate} disabled={migrationBusy || !migrationCheck}><ArrowRightLeft size={14} />{migrationBusy && migrationCheck ? '迁移中…' : '迁移到统一工作区'}</button>
-              </div>
-              {migrationStatus && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{migrationStatus}</p>}
+              <p className="tl-sync-backup-hint">旧架构迁移操作已显示在连接状态下方，完成迁移后五个数据域将共享一个认证工作区。</p>
               {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.groups} 个项目组、{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.lifeMapItems} 项独立人生规划、{migrationCheck.summary.projectDocuments} 份项目文档、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.retrospectiveDays} 天复盘、{migrationCheck.summary.graphNodes} 个节点。</p>}
             </> : <>
               <p className="tl-sync-backup-hint">五个数据域共享同一底层房间连接，人生地图作为独立数据域同步。旧模块房间保持不变，仅在主动回退时重新连接。</p>
@@ -588,13 +717,18 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         </div>
 
         {enabledCount > 0 && (
-          <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} disabled={connectionBusy} style={{ marginBottom: 12 }}>
-            <RefreshCw size={14} />{connectionBusy ? '正在连接并补传…' : '全部重新连接'}
-          </button>
+          <div className="tl-sync-backup-actions" style={{ marginBottom: 12 }}>
+            <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} disabled={connectionBusy}>
+              <RefreshCw size={14} />{connectionBusy ? '正在连接并补传…' : '全部重新连接'}
+            </button>
+            <button type="button" className="tl-sync-backup-btn" onClick={() => void handleChangeWorkspace()} disabled={connectionBusy}>
+              <ArrowRightLeft size={14} />更换工作区
+            </button>
+          </div>
         )}
 
         <div className="tl-sync-divider" />
-        <details className="tl-settings-disclosure">
+        <details className="tl-settings-disclosure" onToggle={(event) => setDataPanelOpen(event.currentTarget.open)}>
           <summary><Database size={15} />数据、备份与恢复</summary>
         <div className="tl-sync-backup-section tl-settings-disclosure-content">
           <h4 className="tl-sync-backup-title">完整工作区备份与恢复</h4>
@@ -637,11 +771,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         </details>
 
         <div className="tl-dialog-actions">
-          <button type="button" className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>关闭</button>
+          <button type="button" className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>{connectionBusy ? '隐藏（连接继续）' : '关闭'}</button>
           {enabledCount === 0 ? (
             <button type="button" className="tl-dialog-btn tl-dialog-btn--primary" onClick={handleConnectAll} disabled={!roomCode.trim() || connectionBusy}><Link size={14} />{connectionBusy ? '正在连接并确认云端…' : '一键连接五个模块'}</button>
           ) : (
-            <button type="button" className="tl-dialog-btn tl-dialog-btn--danger" onClick={handleDisconnectAll} disabled={connectionBusy}><Unlink size={14} />断开全部同步</button>
+            <button type="button" className="tl-dialog-btn tl-dialog-btn--danger" onClick={handleDisconnectAll} disabled={connectionBusy}><Unlink size={14} />暂时断开</button>
           )}
         </div>
         <input ref={fileInputRef} type="file" accept="application/json,.json" hidden onChange={handleFileChange} />

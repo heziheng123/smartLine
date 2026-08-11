@@ -5,8 +5,10 @@ import {
   assertWorkspaceSchemaSupported,
   buildUnifiedRoomCandidates,
   buildUnifiedRoomId,
+  buildWorkspaceBindingRoomId,
   collectWorkspaceFieldChanges,
   commitWorkspaceQueueRevisionSafely,
+  decideLegacyWorkspaceDiscovery,
   decideUnifiedWorkspaceActivation,
   findWorkspaceFieldConflicts,
   findWorkspaceFieldsSafeToBackfill,
@@ -22,6 +24,7 @@ import {
   withTimeout,
 } from '../../src/services/workspaceSyncCore.ts';
 import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
+import { createEmptyLifeMapData } from '../../src/lifeMap/data.ts';
 import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from '../../src/services/workspaceSchema.ts';
 
 function backup(): WorkspaceBackup {
@@ -84,12 +87,31 @@ test('unified room names are stable and contain only safe characters', () => {
   assert.throws(() => buildUnifiedRoomId('***', 'owner'));
 });
 
+test('a new authenticated device discovers legacy cloud data before creating an empty unified room', () => {
+  const nonEmpty = { ...emptyCounts, tasks: 1 };
+  assert.equal(decideLegacyWorkspaceDiscovery(true, true, 'local', 'legacy', emptyCounts), 'unified');
+  assert.equal(decideLegacyWorkspaceDiscovery(false, false, 'local', 'legacy', emptyCounts), 'new');
+  assert.equal(decideLegacyWorkspaceDiscovery(false, true, 'same', 'same', nonEmpty), 'legacy-matching');
+  assert.equal(decideLegacyWorkspaceDiscovery(false, true, 'local', 'legacy', emptyCounts), 'legacy-cloud');
+  assert.equal(decideLegacyWorkspaceDiscovery(false, true, 'local', 'legacy', nonEmpty), 'conflict');
+});
+
+test('account workspace binding uses a stable owner-scoped room', () => {
+  assert.equal(
+    buildWorkspaceBindingRoomId('gh_12345'),
+    'workspace-gh_12345-__account_binding_v1__',
+  );
+});
+
 test('a pristine sample workspace may safely adopt an existing cloud workspace', () => {
   const sample = backup();
   sample.timeline.tasks = [{ id: 'demo-task-1' } as never];
   sample.timeline.groups = [{ id: 'demo-group-1' } as never];
   sample.timeline.notes = [{ id: 'demo-note-1' } as never];
   sample.timeline.milestones = [{ id: 'demo-ms-1' } as never];
+  assert.equal(isBundledDemoWorkspace(sample), true);
+
+  sample.lifeMap = createEmptyLifeMapData();
   assert.equal(isBundledDemoWorkspace(sample), true);
 
   sample.timeline.tasks.push({ id: 'real-task' } as never);

@@ -1026,6 +1026,17 @@ try {
     assert.ok((await backupModule.getSnapshotStorageStats()).chunkCount > 0);
   });
 
+  check('同时保存本机与云端恢复点时两份快照都不会丢失', async () => {
+    const backup = backupModule.createWorkspaceBackup();
+    const [localSnapshot, cloudSnapshot] = await Promise.all([
+      backupModule.createWorkspaceSnapshot(backup, '并发本机恢复点'),
+      backupModule.createWorkspaceSnapshot(backup, '并发云端恢复点'),
+    ]);
+    const ids = new Set((await backupModule.listLocalSnapshots()).map((snapshot) => snapshot.id));
+    assert.equal(ids.has(localSnapshot.id), true);
+    assert.equal(ids.has(cloudSnapshot.id), true);
+  });
+
   check('EBB 单轮改期保留原计划日期、轮次编号，并清理每日安排旧引用', async () => {
     const review = { id: 'r1', topicName: '主题', graphNodeId: 'leaf', dueDate: '2026-07-18', originalDueDate: '2026-07-18', roundOrder: 1, isCompleted: false };
     const sourceId = sourceIds.getReviewSourceId('r1');
@@ -1680,6 +1691,30 @@ try {
       reconciled.groups,
     );
     assert.equal(secondPass.changed, false);
+  });
+
+  check('顶层任务的 groupId 会补回丢失的分组兼容副本', () => {
+    const canonical = {
+      id: 'canonical-grouped-project',
+      name: 'Canonical grouped project',
+      start: '2026-08-01',
+      end: '2026-08-31',
+      groupId: 'canonical-group',
+      blocks: [],
+    };
+    const reconciled = timelineDataModule.reconcileTimelineTaskCopies(
+      [canonical],
+      [{
+        id: 'canonical-group',
+        name: 'Canonical group',
+        start: '2026-08-01',
+        end: '2026-08-31',
+        children: [],
+      }],
+    );
+
+    assert.equal(reconciled.changed, true);
+    assert.deepEqual(reconciled.groups[0].children, [canonical]);
   });
 
   check('项目任务触发的 EBB 推进、顺延和撤销由纯事务规划器稳定计算', () => {

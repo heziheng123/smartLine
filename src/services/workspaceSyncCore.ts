@@ -1,4 +1,5 @@
 import type { WorkspaceBackup } from './workspaceBackup.ts';
+import { createEmptyLifeMapData } from '../lifeMap/data.ts';
 
 export interface WorkspaceStoreReadiness {
   syncEnabled?: boolean;
@@ -38,6 +39,7 @@ export interface WorkspaceQueueCommitActions {
 }
 
 export type UnifiedActivationDecision = 'new' | 'matching' | 'cloud' | 'conflict';
+export type LegacyDiscoveryDecision = 'unified' | 'new' | 'legacy-matching' | 'legacy-cloud' | 'conflict';
 
 export function assertWorkspaceSchemaSupported(
   root: Record<string, unknown>,
@@ -79,6 +81,20 @@ export function decideUnifiedWorkspaceActivation(
   return 'conflict';
 }
 
+export function decideLegacyWorkspaceDiscovery(
+  hasUnifiedStorage: boolean,
+  legacyHasUserContent: boolean,
+  localHash: string,
+  legacyHash: string,
+  localSummary: WorkspaceContentCounts,
+): LegacyDiscoveryDecision {
+  if (hasUnifiedStorage) return 'unified';
+  if (!legacyHasUserContent) return 'new';
+  if (localHash === legacyHash) return 'legacy-matching';
+  if (!workspaceHasUserContent(localSummary)) return 'legacy-cloud';
+  return 'conflict';
+}
+
 export function isWorkspaceStoreStorageReady(state: WorkspaceStoreReadiness): boolean {
   return state.syncEnabled === true
     && state.liveblocks?.room?.getStatus() === 'connected'
@@ -103,6 +119,8 @@ export function isBundledDemoWorkspace(backup: WorkspaceBackup): boolean {
     return !Array.isArray(record.children) || hasOnlyDemoIds(record.children);
   });
   const isEmpty = (items: unknown[]) => items.length === 0;
+  const hasOnlyDefaultLifeMap = Object.values(backup.lifeMap).every((value) => Array.isArray(value) && value.length === 0)
+    || workspaceValuesEqual(backup.lifeMap, createEmptyLifeMapData());
   return hasOnlyDemoIds(backup.timeline.tasks)
     && hasOnlyDemoIds(backup.timeline.groups)
     && hasOnlyDemoIds(backup.timeline.notes)
@@ -114,7 +132,7 @@ export function isBundledDemoWorkspace(backup: WorkspaceBackup): boolean {
     && isEmpty(Object.keys(backup.daily.schedules))
     && isEmpty(Object.keys(backup.daily.retrospectives))
     && isEmpty(backup.graph.nodes)
-    && Object.values(backup.lifeMap).every((value) => Array.isArray(value) && value.length === 0);
+    && hasOnlyDefaultLifeMap;
 }
 
 export function assertWorkspaceQueueDrained(state: WorkspaceQueueDrainState): void {
@@ -163,6 +181,10 @@ export function buildUnifiedRoomId(roomCode: string, identity = 'owner'): string
   const safeCode = sanitizeRoomPart(roomCode);
   if (!safeCode) throw new Error('工作区房间号不能为空。');
   return `workspace-${safeIdentity}-${safeCode}`;
+}
+
+export function buildWorkspaceBindingRoomId(identity: string): string {
+  return buildUnifiedRoomId('__account_binding_v1__', identity);
 }
 
 export function buildUnifiedRoomCandidates(

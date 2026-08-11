@@ -3,6 +3,7 @@ import {
   type WorkspaceStoreReadiness,
 } from './workspaceSyncCore';
 import {
+  isWorkspaceSystemMutationSuppressed,
   queueWorkspaceFields,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
@@ -47,6 +48,10 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
     // Initial IndexedDB hydration establishes the local baseline; it is not a
     // user mutation and must never overwrite a newer cloud workspace.
     if (!before.isHydrated || !after.isHydrated) return;
+    // Explicit restore/adoption operations replace the whole workspace from a
+    // previously verified snapshot. They are system mutations, not new local
+    // edits, and must not recreate the queue that the operation is resolving.
+    if (isWorkspaceSystemMutationSuppressed()) return;
     if (!isUnifiedWorkspaceConfigured()) return;
     const { fields, baseFields } = collectWorkspaceFieldChanges(
       before as Record<string, unknown>,
