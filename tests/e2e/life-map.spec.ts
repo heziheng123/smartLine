@@ -844,6 +844,9 @@ test('life map keeps the 128px project label rail fixed on desktop and mobile', 
   expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(1);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.phone-workspace')).toBeVisible();
+  await page.getByLabel('打开完整视图').click();
+  await expect(page.locator('.phone-full-view-return')).toBeVisible();
   await expect(rail).toBeVisible();
   const mobile = await rail.boundingBox();
   expect(mobile?.width).toBe(128);

@@ -68,6 +68,13 @@ export interface SmartTaskBlock {
 /** 块联合类型 */
 export type Block = TextBlock | SmartTaskBlock;
 
+/** A Project Planning task may opt into a read-only projection on the Life Map. */
+export interface LifeMapTaskProjection {
+  enabled: true;
+  areaId: string;
+  placement: 'above' | 'below';
+}
+
 /** 任务定义 */
 export interface Task {
   id: string;
@@ -79,6 +86,8 @@ export interface Task {
   completed?: boolean;    // 是否已完成（显示删除线样式）
   notePath?: string;      // 关联笔记路径（网页版为链接或备注）
   groupId?: string;       // 所属分组 ID
+  /** Optional Life Map projection. Project Planning remains the source of truth. */
+  lifeMapProjection?: LifeMapTaskProjection;
   /** 智能任务块数组（新数据载体） */
   /** Semantic Life Map area. Timeline groupId remains an independent visual grouping. */
   blocks: Block[];

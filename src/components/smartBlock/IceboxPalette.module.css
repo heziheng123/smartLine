@@ -281,6 +281,14 @@
 
 }
 
+@media (max-width: 640px) {
+  .paletteContainer,
+  .paletteContainerDocked,
+  .paletteContainerDocked:not(.paletteContainerExpanded) {
+    bottom: 78px;
+  }
+}
+
 .panelBody::-webkit-scrollbar {
   width: 4px;
 }

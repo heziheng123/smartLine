@@ -750,7 +750,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 ...block,
                 header: restore
                   ? { ...block.header, date: prior.date, frozenAt: prior.frozenAt }
-                  : { ...block.header, date: undefined, frozenAt },
+                  : { ...block.header, date: prior.date, frozenAt },
               };
             });
             return { ...task, blocks, blocksUpdatedAt: now };
@@ -772,7 +772,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
           recordOperation({
             label: `自动冷冻 ${previous.size} 个逾期任务`,
-            detail: '已作为一次操作移回待规划，并清理对应的每日安排',
+            detail: '已保留原计划日期并放入冷冻仓，同时清理对应的每日安排',
             modules: ['项目文档', '周矩阵', '每日安排'],
           }, () => {
             const latestState = get();
@@ -787,7 +787,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                 const block = (Array.isArray(task.blocks) ? task.blocks : [])
                   .find((candidate) => candidate.id === prior.blockId);
                 if (block?.type !== 'smart-task'
-                  || block.header.date !== undefined
+                  || block.header.date !== prior.date
                   || block.header.frozenAt !== frozenAt) {
                   return '部分任务在自动冷冻后已被修改';
                 }

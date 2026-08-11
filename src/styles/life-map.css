@@ -51,7 +51,7 @@
 .life-line__scale-button.is-active,
 .life-line__planning-button:hover,
 .life-line__today-button:hover { color: var(--lm-accent); border-color: #d5ddeb; background: var(--lm-accent-soft); }
-.life-line__command-menu { position: absolute; z-index: 70; top: 41px; padding: 7px; border: 1px solid #dfe2e8; border-radius: 10px; color: #4b5565; background: rgba(255,255,255,.99); box-shadow: 0 18px 44px rgba(30,41,59,.16); backdrop-filter: blur(14px); }
+.life-line__command-menu { position: absolute; z-index: 70; top: 41px; padding: 7px; border: 1px solid #dfe2e8; border-radius: 10px; color: #4b5565; background: rgba(255,255,255,.99); box-shadow: 0 18px 44px rgba(30,41,59,.16); backdrop-filter: blur(14px); animation: ui-popover-in 120ms var(--ui-ease-enter) both; }
 .life-line__add-menu { width: min(306px, calc(100vw - 20px)); right: 0; }
 .life-line__add-menu > button { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 10px; padding: 7px 9px; border: 0; border-radius: 8px; color: #657083; text-align: left; background: transparent; cursor: pointer; }
 .life-line__add-menu > button:hover,
@@ -486,32 +486,8 @@
 .life-line__anchor.is-milestone.is-importance-core:hover,
 .life-line__anchor.is-milestone.is-importance-core:focus-visible { transform: translate(-7px,-7px) rotate(45deg) scale(1.18); }
 .life-line__anchor.is-complete { opacity: .48; }
-.life-line__task-rhythm-rail { height: 30px; position: absolute; z-index: 3; right: 0; left: 0; border-top: 1px solid rgba(224,227,233,.7); border-bottom: 1px solid rgba(224,227,233,.82); background: linear-gradient(to bottom, rgba(249,250,252,.46), rgba(246,247,250,.82)); pointer-events: none; }
-.life-line__task-marker { width: 6px; height: 24px; position: absolute; z-index: 14; display: flex; align-items: flex-end; justify-content: center; padding: 0; border: 0; color: #fff; background: transparent; cursor: pointer; transform: translate(-50%,-100%); }
-.life-line__task-pulse { width: 4px; height: var(--task-rhythm-height); min-height: 5px; max-height: 24px; display: flex; flex-direction: column-reverse; align-items: stretch; gap: 0; overflow: hidden; border: 0; border-radius: 3px 3px 1px 1px; box-sizing: border-box; background: #d9dde5; box-shadow: 0 0 0 1px rgba(255,255,255,.92), 0 1px 3px rgba(43,52,69,.14); transform-origin: center bottom; transition: box-shadow .16s ease, transform .16s ease; }
-.life-line__task-pulse > i { min-height: 2px; flex: 1 1 0; display: block; background: var(--pulse-color); }
-.life-line__task-marker:hover,
-.life-line__task-marker:focus-visible,
-.life-line__task-marker.is-selected { z-index: 22; outline: none; transform: translate(-50%,-100%); }
-.life-line__task-marker:hover .life-line__task-pulse,
-.life-line__task-marker:focus-visible .life-line__task-pulse,
-.life-line__task-marker.is-selected .life-line__task-pulse { box-shadow: 0 0 0 2px color-mix(in srgb, var(--task-color), transparent 60%), 0 4px 9px color-mix(in srgb, var(--task-color), transparent 72%); transform: translateY(-1px) scaleX(1.2); }
-.life-line__task-marker.is-muted { opacity: .16; filter: saturate(.35); }
-.life-line__task-marker.is-related .life-line__task-pulse { box-shadow: 0 0 0 2px color-mix(in srgb, var(--task-color), transparent 68%), 0 3px 8px color-mix(in srgb, var(--task-color), transparent 78%); transform: scaleX(1.25); }
-.life-line__task-count { min-width: 13px; height: 13px; position: absolute; z-index: 2; right: 50%; bottom: 26px; padding: 0 3px; border: 1px solid color-mix(in srgb, var(--task-color), transparent 50%); border-radius: 7px; box-sizing: border-box; color: color-mix(in srgb, var(--task-color), #2f3745 46%); background: rgba(255,255,255,.94); font-size: 7px; font-weight: 800; line-height: 11px; text-align: center; transform: translateX(50%); }
 .life-line.is-zoom-year .life-line__anchor.is-milestone.is-importance-normal { opacity: .42; }
 .life-line.is-zoom-year .life-line__anchor.is-milestone.is-importance-important { opacity: .72; }
-.life-line__task-tooltip { width: 230px; position: absolute; z-index: 40; bottom: 24px; left: 50%; display: none; padding: 9px; border: 1px solid rgba(218,222,230,.9); border-radius: 10px; box-sizing: border-box; color: #424b5c; text-align: left; background: rgba(255,255,255,.96); box-shadow: 0 12px 30px rgba(30,41,59,.14); backdrop-filter: blur(14px); transform: translateX(-50%); }
-.life-line__task-tooltip > small { display: block; margin-bottom: 6px; color: #9299a6; font-size: 8px; font-weight: 650; }
-.life-line__task-tooltip > span { display: flex; align-items: center; gap: 7px; padding: 4px 0; overflow: hidden; color: #3d4656; font-size: 9px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.life-line__task-tooltip > span > i { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--dot-color); }
-.life-line__task-tooltip > em { display: block; padding-top: 5px; border-top: 1px solid #eceef2; color: #8a92a0; font-size: 8px; font-style: normal; }
-.life-line__task-marker:hover .life-line__task-tooltip,
-.life-line__task-marker:focus-visible .life-line__task-tooltip { display: block; }
-.life-line.is-zoom-week .life-line__task-marker { width: 12px; }
-.life-line.is-zoom-week .life-line__task-pulse { width: 9px; }
-.life-line.is-zoom-day .life-line__task-marker { width: 26px; }
-.life-line.is-zoom-day .life-line__task-pulse { width: 22px; }
 .life-line__interaction-layer { position: absolute; z-index: 30; inset: 0; touch-action: none; cursor: crosshair; }
 .life-line__interaction-layer.is-note { cursor: copy; }
 .life-line__interaction-layer.is-milestone { cursor: cell; }

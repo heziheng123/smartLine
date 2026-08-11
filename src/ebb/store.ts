@@ -289,7 +289,9 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           if (sourceIds.length > 0) dailyState.removeBySourceIds(sourceIds);
 
           if (!isOperationRecordingSuppressed()) {
-            const actionLabel = request.action.kind === 'shift'
+            const actionLabel = request.action.kind === 'reanchor'
+              ? '批量重排剩余复习轮次'
+              : request.action.kind === 'shift'
               ? '批量调整复习日期'
               : request.action.kind === 'trim'
                 ? '批量精简复习轮次'
@@ -354,8 +356,8 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               dailySnapshots,
             };
             recordOperation({
-              label: `确认 ${plan.planDate} 明日复习`,
-              detail: `保留 ${plan.keptCount} 轮 · 顺延 ${plan.deferredCount} 轮${plan.cascadeCount > 0 ? ` · 联动后续 ${plan.cascadeCount} 轮` : ''}`,
+              label: `规划 ${plan.planDate} 复习负荷`,
+              detail: `明日 ${plan.keptCount} 轮 · 错峰 ${plan.deferredCount} 轮${plan.cascadeCount > 0 ? ` · 联动后续 ${plan.cascadeCount} 轮` : ''}`,
               modules: ['EBB', '每日安排', '知识大盘'],
               undoSpec: { kind: 'ebb-daily-plan', payload },
             }, () => get().restoreDailyReviewPlan(payload) ?? undefined);
@@ -371,7 +373,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           const expectedTasks = [...payload.expectedTasks].sort((a, b) => a.id.localeCompare(b.id));
           if (currentTasks.length !== expectedTasks.length
             || serializeReviewTasks(currentTasks) !== serializeReviewTasks(expectedTasks)) {
-            return '明日选择涉及的复习轮次在此操作后又被修改';
+            return '明日负荷规划涉及的复习轮次在此操作后又被修改';
           }
 
           const previousById = new Map(payload.previousTasks.map((task) => [task.id, task]));
@@ -598,24 +600,25 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         rescheduleOverdue: (taskIds) => {
           const _today = todayStr();
           const idSet = new Set(taskIds);
-          setTimeout(() => {
-            useDailyScheduleStore.getState().removeBySourceIds(
-              taskIds.map((id) => getReviewSourceId(id)),
-            );
-          }, 0);
-          set((state) => {
-            const reviewTasks = state.reviewTasks.map((t) =>
-              idSet.has(t.id) ? { ...t, dueDate: _today, originalDueDate: t.originalDueDate ?? t.dueDate, smStatus: 'scheduled' as const } : t,
-            );
-            const newData: EbbData = {
-              reviewTasks,
-              inboxItems: state.inboxItems,
-              outlineNodes: state.outlineNodes,
-              ebbSettings: state.ebbSettings,
-            };
-            saveEbbData(newData);
-            return newData;
+          const state = get();
+          const selected = state.reviewTasks.filter((task) => idSet.has(task.id) && !task.isCompleted && !task.isArchived);
+          const firstByTopic = new Map<string, ReviewTask>();
+          selected.forEach((task) => {
+            const key = getReviewTopicKey(task);
+            const current = firstByTopic.get(key);
+            if (!current || (task.roundOrder ?? Number.MAX_SAFE_INTEGER) < (current.roundOrder ?? Number.MAX_SAFE_INTEGER)) {
+              firstByTopic.set(key, task);
+            }
           });
+          const updates: Array<{ id: string; dueDate: string }> = [];
+          firstByTopic.forEach((first, topicKey) => {
+            const delta = Math.round((new Date(`${_today}T12:00:00`).getTime() - new Date(`${first.dueDate}T12:00:00`).getTime()) / 86_400_000);
+            const firstOrder = first.roundOrder ?? 0;
+            state.reviewTasks
+              .filter((task) => !task.isArchived && !task.isCompleted && getReviewTopicKey(task) === topicKey && (task.roundOrder ?? 0) >= firstOrder)
+              .forEach((task) => updates.push({ id: task.id, dueDate: addDays(task.dueDate, delta) }));
+          });
+          get().rescheduleReviewRounds(updates);
         },
 
         deleteReviewTask: (id) => {

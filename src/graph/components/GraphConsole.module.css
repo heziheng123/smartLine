@@ -1,6 +1,6 @@
 .triggerBtn {
   position: absolute;
-  top: 24px;
+  top: 76px;
   left: 24px;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(12px);
@@ -34,10 +34,10 @@
 
 .panel {
   position: absolute;
-  top: 24px;
+  top: 76px;
   left: 24px;
   width: 340px;
-  max-height: 90vh;
+  max-height: calc(100% - 164px);
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -80,16 +80,24 @@
 .panelBody::-webkit-scrollbar { width: 6px; }
 .panelBody::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
 
+@media (min-width: 641px) and (max-width: 1100px) {
+  .panel {
+    right: 12px;
+    left: auto;
+    width: min(440px, calc(100% - 24px));
+  }
+}
+
 @media (max-width: 640px) {
   .panel {
-    top: 12px;
+    top: 72px;
     left: 12px;
     width: calc(100% - 24px);
-    max-height: calc(100% - 96px);
+    max-height: calc(100% - 156px);
   }
 
   .triggerBtn {
-    top: 12px;
+    top: 72px;
     left: 12px;
   }
 }

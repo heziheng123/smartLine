@@ -22,6 +22,7 @@ import {
 } from '@/services/workloadPreferences';
 import { requestConfirmation } from '@/services/confirmation';
 import { buildProjectDescriptorMap } from '@/domain/projectDescriptor';
+import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import {
   todayStr,
   addDays,
@@ -149,7 +150,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
       const descriptor = projectDescriptors.get(task.id);
       const blocks = getSmartTaskBlocks(task.blocks ?? []);
       for (const block of blocks) {
-        if (block.header.isArchived) continue;
+        if (block.header.isArchived || block.header.frozenAt) continue;
         result.push({
           ...block,
           _taskId: task.id,
@@ -586,6 +587,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
               </div>
             )}
           </div>
+          <SyncStatusIndicator />
         </div>
       </div>
 

@@ -27,7 +27,11 @@ const addDays = (date: string, amount: number) => {
 const today = formatShanghaiDate(new Date());
 const dueDates = [addDays(today, 1), addDays(today, 3), addDays(today, 7), addDays(today, 15)];
 
-const openEbbMoreAction = async (page: Page, name: '批量调整' | '设置') => {
+const openEbbMoreAction = async (page: Page, name: '批量管理' | '设置') => {
+  if (name === '批量管理') {
+    await page.getByRole('button', { name }).click();
+    return;
+  }
   await page.getByLabel('复习更多操作').click();
   await page.getByRole('menuitem', { name }).click();
 };
@@ -37,7 +41,7 @@ const openEbbMoreAction = async (page: Page, name: '批量调整' | '设置') =>
 // 进入 EBB 后切换到「复习库」标签页（矩阵视图）。
 const openEbbLibrary = async (page: Page) => {
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('tab', { name: /复习库/ }).click();
+  await page.getByRole('tab', { name: /复习计划/ }).click();
 };
 
 const projectTask = {
@@ -95,9 +99,10 @@ test('batch trim updates rounds, daily references and knowledge color without hi
   const totalCard = page.locator('.eb-stat-card').filter({ hasText: '总任务' });
   await expect(totalCard.locator('.eb-stat-value')).toHaveText('4');
 
-  await openEbbMoreAction(page, '批量调整');
+  await openEbbMoreAction(page, '批量管理');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await expect(dialog).toBeVisible();
+  await dialog.getByRole('radio', { name: /精简末尾轮次/ }).click();
   await expect(dialog.getByLabel('批量调整预览统计')).toContainText('2 轮删除');
   await dialog.getByRole('button', { name: /确认调整 1 个计划/ }).click();
   await expect(totalCard.locator('.eb-stat-value')).toHaveText('2');
@@ -120,7 +125,7 @@ test('batch trim updates rounds, daily references and knowledge color without hi
 
 test('batch panel previews shift, append and future-template operations', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量调整');
+  await openEbbMoreAction(page, '批量管理');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   const summary = dialog.getByLabel('批量调整预览统计');
   const box = await dialog.boundingBox();
@@ -131,6 +136,10 @@ test('batch panel previews shift, append and future-template operations', async 
     expect(box.height).toBeLessThanOrEqual(682);
     expect(Math.abs((box.x + box.width / 2) - viewport.width / 2)).toBeLessThan(3);
     expect(Math.abs((box.y + box.height / 2) - viewport.height / 2)).toBeLessThan(3);
+  } else if (viewport.width > 720) {
+    expect(Math.abs(box.x - 12)).toBeLessThan(2);
+    expect(Math.abs(box.y - 12)).toBeLessThan(2);
+    expect(Math.abs(box.width - (viewport.width - 24))).toBeLessThan(2);
   } else {
     expect(box.x).toBe(0);
     expect(box.y).toBe(0);
@@ -149,9 +158,29 @@ test('batch panel previews shift, append and future-template operations', async 
   await expect(dialog.locator('.eb-batch-preview-row').filter({ hasText: '批量颜色联动知识' })).toContainText('4 → 7');
 });
 
+test('single plan can reanchor all remaining rounds from tomorrow while preserving gaps', async ({ page }) => {
+  await openEbbLibrary(page);
+  await page.getByLabel('重新安排批量颜色联动知识的剩余轮次').click();
+  const panel = page.locator('.eb-panel--rounds');
+  await expect(panel).toContainText('重新安排剩余 2 轮');
+  await panel.getByRole('button', { name: '重新安排', exact: true }).click();
+  await expect(panel.getByLabel('剩余轮次日期预览')).toContainText('R3');
+  await expect(panel.getByLabel('剩余轮次日期预览')).toContainText('R4');
+  await panel.getByRole('button', { name: '保存调整' }).click();
+  await expect(panel.getByRole('status')).toContainText('已从');
+
+  await expect.poll(async () => {
+    const data = await readPersistedStore<{ reviewTasks?: Array<{ id: string; dueDate: string }> }>(page, 'ebb_data', 'smart-ebb-data') ?? {};
+    return (data.reviewTasks ?? [])
+      .filter((task) => task.id === 'batch-r3' || task.id === 'batch-r4')
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((task) => task.dueDate);
+  }).toEqual([addDays(today, 1), addDays(today, 9)]);
+});
+
 test('appended rounds preserve existing daily arrangements without creating a history entry', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量调整');
+  await openEbbMoreAction(page, '批量管理');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await dialog.getByRole('radio', { name: /追加轮次/ }).click();
   await dialog.getByRole('button', { name: /确认调整 1 个计划/ }).click();
@@ -165,7 +194,7 @@ test('appended rounds preserve existing daily arrangements without creating a hi
 
 test('shifted rounds survive refresh and stale daily items stay removed without persistent undo', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量调整');
+  await openEbbMoreAction(page, '批量管理');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await dialog.getByRole('radio', { name: /整体改期/ }).click();
   await dialog.locator('.eb-batch-field input[type="number"]').fill('-2');
@@ -210,7 +239,7 @@ test('shifted rounds survive refresh and stale daily items stay removed without 
 
 test('future template rejects malformed intervals and preserves completed history when applied', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量调整');
+  await openEbbMoreAction(page, '批量管理');
   const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
   await dialog.getByRole('radio', { name: /套用未来模板/ }).click();
   await dialog.locator('select').selectOption('custom');

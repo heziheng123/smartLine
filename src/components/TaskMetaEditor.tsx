@@ -3,10 +3,12 @@
 // 用于嵌入右边栏顶部，改动即时保存到 store
 // ============================================================
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { requestConfirmation } from '@/services/confirmation';
 import type { Task } from '@/types';
 import { TASK_BG_PRESET } from '@/utils/timeline-utils';
+import { useLifeMapStore } from '@/lifeMap/store';
+import { activeLifeMapItems, LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
 
 interface TaskMetaEditorProps {
   task: Task;
@@ -47,6 +49,12 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
   const [isMain, setIsMain] = useState(!!task.isMain);
   const [completed, setCompleted] = useState(!!task.completed);
   const [notePath, setNotePath] = useState(task.notePath ?? '');
+  const lifeMapAreas = useLifeMapStore((state) => state.lifeMapAreas);
+  const availableLifeMapAreas = useMemo(() => activeLifeMapItems(lifeMapAreas)
+    .filter((area) => !area.isHidden)
+    .sort((left, right) => left.planGroupId.localeCompare(right.planGroupId)
+      || left.order - right.order
+      || left.name.localeCompare(right.name, 'zh-CN')), [lifeMapAreas]);
   // 记录上次任务 id，仅在任务切换时重置本地状态（避免远端更新打断本地输入）
   const lastTaskIdRef = useRef<string | null>(null);
   // 记录上次同步自远端的失焦保存字段值，用于判断本地是否处于"未编辑"状态
@@ -144,6 +152,23 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
   };
 
   const dateInvalid = start && end && end < start;
+  const projection = task.lifeMapProjection?.enabled ? task.lifeMapProjection : undefined;
+  const projectionAreaExists = Boolean(projection && availableLifeMapAreas.some((area) => area.id === projection.areaId));
+
+  const toggleLifeMapProjection = (enabled: boolean) => {
+    if (!enabled) {
+      onUpdate({ lifeMapProjection: undefined });
+      return;
+    }
+    const areaId = projectionAreaExists ? projection!.areaId : availableLifeMapAreas[0]?.id;
+    if (!areaId) return;
+    onUpdate({ lifeMapProjection: { enabled: true, areaId, placement: projection?.placement ?? 'above' } });
+  };
+
+  const updateLifeMapProjection = (patch: Partial<NonNullable<Task['lifeMapProjection']>>) => {
+    if (!projection) return;
+    onUpdate({ lifeMapProjection: { ...projection, ...patch, enabled: true } });
+  };
 
   return (
     <div className="tl-meta-editor">
@@ -243,6 +268,69 @@ const TaskMetaEditor: React.FC<TaskMetaEditorProps> = ({
           placeholder="URL 或备注内容"
         />
       </label>
+
+      <section className="tl-meta-life-map" aria-label="人生地图投影">
+        <label className="tl-meta-checkbox tl-meta-life-map__toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(projection)}
+            disabled={!projection && availableLifeMapAreas.length === 0}
+            onChange={(event) => toggleLifeMapProjection(event.target.checked)}
+          />
+          <span>
+            <b>投影到人生地图</b>
+            <small>项目规划仍是唯一数据源，人生地图仅作只读展示</small>
+          </span>
+        </label>
+
+        {projection && (
+          <div className="tl-meta-life-map__settings">
+            <label className="tl-meta-field">
+              <span className="tl-meta-label">人生类别</span>
+              <select
+                className="tl-meta-input"
+                value={projectionAreaExists ? projection.areaId : ''}
+                onChange={(event) => updateLifeMapProjection({ areaId: event.target.value })}
+              >
+                {!projectionAreaExists && <option value="">原类别已失效，请重新选择</option>}
+                {(['learning', 'work', 'life'] as const).map((groupId) => {
+                  const groupAreas = availableLifeMapAreas.filter((area) => area.planGroupId === groupId);
+                  if (groupAreas.length === 0) return null;
+                  return (
+                    <optgroup key={groupId} label={LIFE_MAP_PLAN_GROUP_META[groupId].name}>
+                      {groupAreas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+                    </optgroup>
+                  );
+                })}
+              </select>
+            </label>
+
+            <div className="tl-meta-field">
+              <span className="tl-meta-label">显示位置</span>
+              <div className="tl-meta-life-map__placement" role="group" aria-label="投影显示位置">
+                <button
+                  type="button"
+                  className={projection.placement === 'above' ? 'is-active' : ''}
+                  aria-pressed={projection.placement === 'above'}
+                  onClick={() => updateLifeMapProjection({ placement: 'above' })}
+                >时间轴上方</button>
+                <button
+                  type="button"
+                  className={projection.placement === 'below' ? 'is-active' : ''}
+                  aria-pressed={projection.placement === 'below'}
+                  onClick={() => updateLifeMapProjection({ placement: 'below' })}
+                >时间轴下方</button>
+              </div>
+            </div>
+
+            {!projectionAreaExists && <p className="tl-meta-error">原人生类别已失效，重新选择后才会展示。</p>}
+          </div>
+        )}
+
+        {!projection && availableLifeMapAreas.length === 0 && (
+          <p className="tl-meta-error">请先在人生地图中创建一个可见的二级分类。</p>
+        )}
+      </section>
 
       {/* 删除按钮 */}
       {onDelete && (

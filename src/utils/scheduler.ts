@@ -27,7 +27,7 @@ export function autoScheduleBacklog(
   allTasks.forEach(task => {
     const blocks = getSmartTaskBlocks(task.blocks ?? []);
     blocks.forEach(block => {
-      if (block.header.date && loadMap.has(block.header.date) && !block.header.isCompleted) {
+      if (block.header.date && loadMap.has(block.header.date) && !block.header.isCompleted && !block.header.frozenAt) {
         loadMap.set(block.header.date, loadMap.get(block.header.date)! + 1);
       }
     });

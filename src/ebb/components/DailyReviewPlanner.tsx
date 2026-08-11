@@ -1,129 +1,88 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  AlertTriangle,
-  CalendarCheck2,
-  CalendarClock,
-  Check,
-  ChevronRight,
-  Clock3,
-  RotateCcw,
-  Tags,
-  X,
-} from 'lucide-react';
+import '@/styles/ebb.css';
+import { AlertTriangle, CalendarCheck2, Clock3, RotateCcw, ShieldAlert, X } from 'lucide-react';
 import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { useGraphStore } from '@/graph/store';
-import type { ReviewTask } from '../types';
+import type { EbbSettings, ReviewTask } from '../types';
 import { buildRootNodeMap, resolveReviewCategory } from '../category';
 import {
+  buildBalancedDailyReviewPlan,
   getDailyReviewCandidates,
-  type DailyReviewCandidate,
   type DailyReviewPlan,
   type DailyReviewPlanRequest,
 } from '../dailyReviewPlanning';
-import { getReviewRoundDuration } from '../duration';
 
 interface DailyReviewPlannerProps {
   reviewTasks: ReviewTask[];
+  settings: EbbSettings;
   onApply: (request: DailyReviewPlanRequest) => DailyReviewPlan;
   onClose: () => void;
 }
 
-const complexityLabel = {
-  easy: '简单',
-  normal: '普通',
-  hard: '困难',
-} as const;
-
 const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
   reviewTasks,
+  settings,
   onApply,
   onClose,
 }) => {
   const planDate = addDays(todayStr(), 1);
-  const rolloverDate = addDays(planDate, 1);
-  const candidates = useMemo(
-    () => getDailyReviewCandidates(reviewTasks, planDate),
-    [planDate, reviewTasks],
+  const dates = useMemo(() => Array.from({ length: 3 }, (_, index) => addDays(planDate, index)), [planDate]);
+  const candidates = useMemo(() => getDailyReviewCandidates(reviewTasks, planDate), [planDate, reviewTasks]);
+  const automatic = useMemo(
+    () => buildBalancedDailyReviewPlan(reviewTasks, planDate, settings.dailyReviewMinutes, dates.length),
+    [dates.length, planDate, reviewTasks, settings.dailyReviewMinutes],
   );
-  const taskById = useMemo(
-    () => new Map(reviewTasks.map((task) => [task.id, task])),
-    [reviewTasks],
-  );
+  const initialAssignments = useMemo(() => {
+    const next = { ...automatic.assignmentsByTaskId };
+    candidates.forEach((candidate) => {
+      if (candidate.previousDecision === 'keep') next[candidate.taskId] = planDate;
+      if (candidate.previousDecision === 'defer' && dates.includes(candidate.dueDate)) next[candidate.taskId] = candidate.dueDate;
+    });
+    return next;
+  }, [automatic.assignmentsByTaskId, candidates, dates, planDate]);
+  const [assignments, setAssignments] = useState<Record<string, string>>(initialAssignments);
+  const [error, setError] = useState('');
   const graphNodes = useGraphStore((state) => state.nodes);
   const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
-  const [keptIds, setKeptIds] = useState(() => new Set(
-    candidates
-      .filter((candidate) => candidate.previousDecision === 'keep')
-      .map((candidate) => candidate.taskId),
-  ));
-  const [error, setError] = useState('');
-  const deferredCount = Math.max(0, candidates.length - keptIds.size);
-  const selectedMinutes = useMemo(() => candidates.reduce((sum, candidate) => {
-    if (!keptIds.has(candidate.taskId)) return sum;
-    const task = taskById.get(candidate.taskId);
-    return sum + (task ? getReviewRoundDuration(task, candidate.round) : 15);
-  }, 0), [candidates, keptIds, taskById]);
-  const groupedCandidates = useMemo(() => {
-    const byCategory = new Map<string, {
-      label: string;
-      rounds: Map<number, DailyReviewCandidate[]>;
-    }>();
+
+  const baselineMinutes = useMemo(() => {
+    const result = new Map(automatic.days.map((day) => [day.date, day.minutes]));
     candidates.forEach((candidate) => {
-      const task = taskById.get(candidate.taskId);
-      const category = task ? resolveReviewCategory(task, rootByNodeId) : null;
-      const categoryKey = category?.key ?? 'uncategorized';
-      const categoryLabel = category?.label ?? '未设置标签';
-      const group = byCategory.get(categoryKey) ?? {
-        label: categoryLabel,
-        rounds: new Map<number, DailyReviewCandidate[]>(),
-      };
-      const items = group.rounds.get(candidate.round) ?? [];
-      items.push(candidate);
-      group.rounds.set(candidate.round, items);
-      byCategory.set(categoryKey, group);
+      const date = automatic.assignmentsByTaskId[candidate.taskId];
+      result.set(date, Math.max(0, (result.get(date) ?? 0) - candidate.durationMinutes));
     });
-    return [...byCategory.entries()]
-      .sort(([, left], [, right]) => {
-        if (left.label === '未设置标签') return 1;
-        if (right.label === '未设置标签') return -1;
-        return left.label.localeCompare(right.label, 'zh-CN');
-      })
-      .map(([key, group]) => ({
-        key,
-        tag: group.label,
-        rounds: [...group.rounds.entries()]
-          .sort(([left], [right]) => left - right)
-          .map(([round, items]) => ({
-            round,
-            items: [...items].sort((left, right) => left.topicName.localeCompare(right.topicName, 'zh-CN')),
-          })),
-      }));
-  }, [candidates, rootByNodeId, taskById]);
+    return result;
+  }, [automatic, candidates]);
+  const baselineCounts = useMemo(() => {
+    const result = new Map(automatic.days.map((day) => [day.date, day.taskIds.length]));
+    candidates.forEach((candidate) => {
+      const date = automatic.assignmentsByTaskId[candidate.taskId];
+      result.set(date, Math.max(0, (result.get(date) ?? 0) - 1));
+    });
+    return result;
+  }, [automatic, candidates]);
+  const daySummaries = useMemo(() => dates.map((date) => {
+    const assigned = candidates.filter((candidate) => assignments[candidate.taskId] === date);
+    const fixedMinutes = baselineMinutes.get(date) ?? 0;
+    const fixedCount = baselineCounts.get(date) ?? 0;
+    const minutes = fixedMinutes + assigned.reduce((sum, candidate) => sum + candidate.durationMinutes, 0);
+    return { date, assigned, fixedCount, fixedMinutes, minutes, over: minutes > settings.dailyReviewMinutes };
+  }), [assignments, baselineCounts, baselineMinutes, candidates, dates, settings.dailyReviewMinutes]);
+  const tomorrow = daySummaries[0];
+  const overflowMinutes = daySummaries.reduce((sum, day) => sum + Math.max(0, day.minutes - settings.dailyReviewMinutes), 0);
 
-  const toggleKeep = (taskId: string) => {
-    setError('');
-    setKeptIds((current) => {
-      const next = new Set(current);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
-      return next;
-    });
-  };
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
-  const setGroupKept = (taskIds: string[], keep: boolean) => {
+  const setAssignment = (taskId: string, date: string) => {
     setError('');
-    setKeptIds((current) => {
-      const next = new Set(current);
-      taskIds.forEach((taskId) => {
-        if (keep) next.add(taskId);
-        else next.delete(taskId);
-      });
-      return next;
-    });
+    setAssignments((current) => ({ ...current, [taskId]: date }));
   };
 
   const handleApply = () => {
@@ -131,160 +90,83 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
       onApply({
         planDate,
         candidateTaskIds: candidates.map((candidate) => candidate.taskId),
-        keptTaskIds: [...keptIds],
+        keptTaskIds: candidates.filter((candidate) => assignments[candidate.taskId] === planDate).map((candidate) => candidate.taskId),
+        assignmentsByTaskId: assignments,
       });
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '明日选择失败，请重新打开后再试');
+      setError(cause instanceof Error ? cause.message : '明日负荷规划失败，请重新打开后再试');
     }
   };
 
   return createPortal(
     <div className="eb-panel-overlay eb-daily-plan-overlay" onClick={onClose}>
-      <div
-        className="eb-panel eb-daily-plan-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-label="明日复习选择"
-        onClick={(event) => event.stopPropagation()}
-      >
+      <div className="eb-panel eb-daily-plan-panel eb-workload-panel" role="dialog" aria-modal="true" aria-label="明日负荷规划" onClick={(event) => event.stopPropagation()}>
         <div className="eb-panel-header eb-daily-plan-header">
           <div>
-            <div className="eb-daily-plan-eyebrow"><CalendarCheck2 size={14} />每日滚动选择</div>
-            <h3 className="eb-panel-title">安排 {formatDate(planDate, 'M月D日')} 的复习</h3>
-            <p className="eb-batch-subtitle">只确认明天；未保留的当前轮次统一进入 {formatDate(rolloverDate, 'M月D日')} 待选池</p>
+            <div className="eb-daily-plan-eyebrow"><CalendarCheck2 size={14} />容量平衡</div>
+            <h3 className="eb-panel-title">规划 {formatDate(planDate, 'M月D日')} 的复习负荷</h3>
+            <p className="eb-batch-subtitle">目标 {settings.dailyReviewMinutes} 分钟；调整当前轮次时，后续未完成轮次会保持原间隔联动。</p>
           </div>
-          <button type="button" className="eb-panel-close" onClick={onClose} aria-label="关闭明日选择"><X size={16} /></button>
+          <button type="button" className="eb-panel-close" onClick={onClose} aria-label="关闭明日负荷规划"><X size={16} /></button>
         </div>
 
-        <div className="eb-daily-plan-capacity" role="status">
-          <div>
-            <span>明日已选择</span>
-            <strong>{keptIds.size} 轮 · 不限数量</strong>
+        <div className={`eb-daily-plan-capacity ${tomorrow?.over ? 'is-over' : ''}`} role="status">
+          <div><span>明日预计</span><strong>{tomorrow?.minutes ?? 0}/{settings.dailyReviewMinutes} 分钟 · {tomorrow?.assigned.length ?? 0} 轮</strong></div>
+          <small>{tomorrow?.over ? <><AlertTriangle size={13} />超载 {tomorrow.minutes - settings.dailyReviewMinutes} 分钟</> : <><CalendarCheck2 size={13} />容量正常</>}</small>
+          <div className="eb-workload-quick-actions">
+            <button type="button" className="eb-btn eb-btn--secondary eb-btn--sm" onClick={() => setAssignments({ ...automatic.assignmentsByTaskId })}><RotateCcw size={13} />一键平衡</button>
+            <button type="button" className="eb-btn eb-btn--ghost eb-btn--sm" onClick={() => setAssignments(Object.fromEntries(candidates.map((candidate) => [candidate.taskId, planDate])))}>全部安排明天</button>
           </div>
-          <small><Clock3 size={13} />预计约 {selectedMinutes} 分钟，按各主题基础时长与当前轮次计算</small>
         </div>
 
-        <div className="eb-daily-plan-body">
+        <div className="eb-workload-body">
           {candidates.length === 0 ? (
-            <div className="eb-daily-plan-empty">
-              <CalendarCheck2 size={32} />
-              <strong>明天没有需要决策的当前轮次</strong>
-              <span>后续轮次保持原计划，不会被移动。</span>
-            </div>
+            <div className="eb-daily-plan-empty"><CalendarCheck2 size={32} /><strong>明天没有需要重新分配的当前轮次</strong><span>未来轮次保持原计划。</span></div>
           ) : (
-            <>
-              <div className="eb-daily-plan-guide">
-                <span><Check size={13} />保留：明天完成</span>
-                <span><ChevronRight size={13} />未保留：统一顺延一天</span>
-                <span><RotateCcw size={13} />明晚再次选择</span>
-              </div>
-              <div className="eb-daily-plan-list">
-                {groupedCandidates.map((group) => {
-                  const groupItems = group.rounds.flatMap((round) => round.items);
-                  const groupKeptCount = groupItems.filter((candidate) => keptIds.has(candidate.taskId)).length;
-                  const groupMinutes = groupItems.reduce((sum, candidate) => {
-                    if (!keptIds.has(candidate.taskId)) return sum;
-                    const task = taskById.get(candidate.taskId);
-                    return sum + (task ? getReviewRoundDuration(task, candidate.round) : 15);
-                  }, 0);
-                  return <section className="eb-daily-plan-tag-group" key={group.key} aria-label={group.tag === '未设置标签' ? group.tag : `${group.tag}标签`}>
-                    <header className="eb-daily-plan-tag-header">
-                      <div><span><Tags size={14} /></span><strong>{group.tag}</strong><small>{groupItems.length} 个主题 · {group.rounds.length} 个轮次</small></div>
-                      <em>{groupKeptCount} 已选{groupKeptCount > 0 ? ` · 约 ${groupMinutes}m` : ''}</em>
-                    </header>
-                    <div className="eb-daily-plan-round-list">
-                      {group.rounds.map((roundGroup) => {
-                        const roundIds = roundGroup.items.map((candidate) => candidate.taskId);
-                        const allRoundKept = roundIds.every((taskId) => keptIds.has(taskId));
-                        const roundKeptCount = roundIds.filter((taskId) => keptIds.has(taskId)).length;
-                        return <section className="eb-daily-plan-round-group" key={`${group.tag}:${roundGroup.round}`} aria-label={`${group.tag}第${roundGroup.round}轮`}>
-                          <header className="eb-daily-plan-round-header">
-                            <div><strong>第 {roundGroup.round} 轮</strong><span>{roundGroup.items.length} 项 · 已选 {roundKeptCount}</span></div>
-                            <button type="button" onClick={() => setGroupKept(roundIds, !allRoundKept)}>{allRoundKept ? '本轮取消' : '本轮全选'}</button>
-                          </header>
-                          <div className="eb-daily-plan-round-cards">
-                            {roundGroup.items.map((candidate) => {
-                  const task = taskById.get(candidate.taskId);
-                  const kept = keptIds.has(candidate.taskId);
-                  const nextDeferralCount = candidate.previousDecision === 'defer'
-                    ? candidate.deferralCount
-                    : candidate.deferralCount + 1;
-                              return (
-                    <article
-                      key={candidate.taskId}
-                      className={`eb-daily-plan-card ${kept ? 'is-kept' : 'is-deferred'}`}
-                    >
-                      <button
-                        type="button"
-                        className="eb-daily-plan-choice"
-                        aria-pressed={kept}
-                        onClick={() => toggleKeep(candidate.taskId)}
-                      >
-                        <span className="eb-daily-plan-check">{kept && <Check size={14} />}</span>
-                        <span>{kept ? '明天保留' : '保留明天'}</span>
-                      </button>
-                      <div className="eb-daily-plan-card-main">
-                        <div className="eb-daily-plan-card-title">
+            <div className="eb-workload-columns">
+              {daySummaries.map((day, dayIndex) => (
+                <section className={`eb-workload-day ${day.over ? 'is-over' : ''}`} key={day.date} aria-label={`${formatDate(day.date, 'M月D日')}负荷`}>
+                  <header>
+                    <div><strong>{dayIndex === 0 ? '明天' : formatDate(day.date, 'M月D日')}</strong><span>{day.assigned.length + day.fixedCount}轮</span></div>
+                    <em>{day.minutes}/{settings.dailyReviewMinutes}m</em>
+                  </header>
+                  <div className="eb-workload-meter"><span style={{ width: `${Math.min(100, day.minutes / settings.dailyReviewMinutes * 100)}%` }} /></div>
+                  <div className="eb-workload-cards">
+                    {day.fixedCount > 0 && <div className="eb-workload-fixed"><CalendarCheck2 size={12} />已有 {day.fixedCount} 轮固定计划，占用 {day.fixedMinutes} 分钟</div>}
+                    {day.assigned.map((candidate) => {
+                      const task = reviewTasks.find((item) => item.id === candidate.taskId);
+                      const category = task ? resolveReviewCategory(task, rootByNodeId)?.label : undefined;
+                      return <article className="eb-workload-card" key={candidate.taskId}>
+                        <div className="eb-workload-card-main">
                           <strong>{candidate.topicName}</strong>
-                          <span>R{candidate.round}/{candidate.totalRounds}</span>
-                          {task?.complexity && <span>{complexityLabel[task.complexity]}</span>}
-                          {task && <span><Clock3 size={11} />约 {getReviewRoundDuration(task, candidate.round)}m</span>}
+                          <span>{category ?? '未分类'} · R{candidate.round}/{candidate.totalRounds}</span>
+                          <span><Clock3 size={11} />约 {candidate.durationMinutes} 分钟{candidate.laterPendingRounds > 0 ? ` · 后续 ${candidate.laterPendingRounds} 轮联动` : ''}</span>
+                          {candidate.recommendedLocked && <span className="eb-workload-urgent"><ShieldAlert size={11} />高优先级：已逾期或连续推迟</span>}
                         </div>
-                        <div className="eb-daily-plan-card-meta">
-                          <span>当前日期 {candidate.dueDate}</span>
-                          {candidate.laterPendingRounds > 0 && (
-                            <span>后续 {candidate.laterPendingRounds} 轮保持间隔联动</span>
-                          )}
-                          {(candidate.deferralCount > 0 || !kept) && (
-                            <span className={nextDeferralCount >= 3 ? 'is-warning' : ''}>
-                              {kept ? `此前连续顺延 ${candidate.deferralCount} 次` : `确认后连续顺延 ${nextDeferralCount} 次`}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="eb-daily-plan-destination">
-                        {kept ? (
-                          <><CalendarCheck2 size={15} /><span>{formatDate(planDate, 'M月D日')}</span></>
-                        ) : (
-                          <><CalendarClock size={15} /><span>{formatDate(rolloverDate, 'M月D日')} 待选</span></>
-                        )}
-                      </div>
-                    </article>
-                              );
-                            })}
-                          </div>
-                        </section>;
-                      })}
-                    </div>
-                  </section>;
-                })}
-              </div>
-            </>
+                        <label>
+                          <span>安排到</span>
+                          <select value={assignments[candidate.taskId]} onChange={(event) => setAssignment(candidate.taskId, event.target.value)} aria-label={`安排${candidate.topicName}`}>
+                            {dates.map((date, index) => <option key={date} value={date}>{index === 0 ? '明天' : index === 1 ? `后天 · ${formatDate(date, 'M月D日')}` : formatDate(date, 'M月D日')}</option>)}
+                          </select>
+                        </label>
+                      </article>;
+                    })}
+                    {day.assigned.length === 0 && day.fixedCount === 0 && <div className="eb-workload-empty">暂无分配</div>}
+                  </div>
+                </section>
+              ))}
+            </div>
           )}
         </div>
 
         <div className="eb-panel-footer eb-daily-plan-footer">
           <div>
-            {error ? (
-              <span className="eb-daily-plan-error"><AlertTriangle size={14} />{error}</span>
-            ) : candidates.length > 0 ? (
-              <span>保留 {keptIds.size} 轮 · 顺延 {deferredCount} 轮；后续未完成轮次同步保持间隔</span>
-            ) : (
-              <span>当前无需保存任何调整</span>
-            )}
+            {error ? <span className="eb-daily-plan-error"><AlertTriangle size={14} />{error}</span>
+              : overflowMinutes > 0 ? <span className="eb-daily-plan-error"><AlertTriangle size={14} />未来3天仍超载 {overflowMinutes} 分钟，请增加容量或继续调整</span>
+                : <span>明日保留 {tomorrow?.assigned.length ?? 0} 轮；其余轮次已分配到具体日期</span>}
           </div>
-          <div>
-            <button type="button" className="eb-btn eb-btn--ghost" onClick={onClose}>取消</button>
-            <button
-              type="button"
-              className="eb-btn eb-btn--primary"
-              disabled={candidates.length === 0}
-              onClick={handleApply}
-            >
-              确认明日选择
-            </button>
-          </div>
+          <div><button type="button" className="eb-btn eb-btn--ghost" onClick={onClose}>取消</button><button type="button" className="eb-btn eb-btn--primary" disabled={candidates.length === 0} onClick={handleApply}>保存负荷规划</button></div>
         </div>
       </div>
     </div>,

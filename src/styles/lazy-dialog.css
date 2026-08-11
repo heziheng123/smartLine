@@ -6,6 +6,7 @@
   place-items: center;
   padding: 20px;
   background: rgba(17, 24, 39, 0.34);
+  animation: lazy-dialog-overlay-in 140ms ease-out both;
 }
 
 .lazy-dialog-loading__card {
@@ -20,6 +21,17 @@
   box-shadow: 0 18px 46px rgba(17, 24, 39, 0.2);
   font-size: 13px;
   font-weight: 600;
+  animation: lazy-dialog-card-in var(--ui-motion-standard-duration, 180ms) var(--ui-ease-enter, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes lazy-dialog-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes lazy-dialog-card-in {
+  from { opacity: 0; transform: translateY(6px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .lazy-dialog-loading__spinner {
@@ -36,5 +48,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .lazy-dialog-loading,
+  .lazy-dialog-loading__card { animation-duration: 0.01ms; }
   .lazy-dialog-loading__spinner { animation-duration: 1.8s; }
 }

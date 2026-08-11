@@ -100,7 +100,7 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({
               </div>
               <div className="psd-note">
                 <Clock3 size={15} />
-                <span>已完成、已归档、未排期、日期异常以及单词/数量任务不会移动；任务截止日期保持不变。</span>
+                <span>已完成、已归档、冷冻仓、未排期、日期异常以及单词/数量任务不会移动；任务截止日期保持不变。</span>
               </div>
               {preview.daily.collisionFallbacks > 0 && (
                 <div className="psd-warning"><AlertTriangle size={15} />{preview.daily.collisionFallbacks} 个时间块在新日期发生冲突，将保留在对应的上午、下午或晚上时段。</div>

@@ -23,7 +23,7 @@ test('rich text sanitizer removes layout injection and unsafe image protocols', 
 });
 
 test('manual group dates reject missing and reversed ranges', async ({ page }) => {
-  await page.getByTitle('新建').click();
+  await page.locator('.tl-workspace-bar').getByTitle('更多').click();
   await page.getByRole('menuitem', { name: '新建项目分组' }).click();
   const dialog = page.locator('.tl-dialog');
   await dialog.getByLabel('分组名称').fill('日期校验分组');
@@ -106,8 +106,10 @@ test('overdue maintenance preserves archives and batches undo with daily restora
   });
 
   expect(frozen.count).toBe(2);
-  expect(frozen.headers['freeze-a'].date).toBeUndefined();
-  expect(frozen.headers['freeze-b'].date).toBeUndefined();
+  expect(frozen.headers['freeze-a'].date).toBe('2026-01-01');
+  expect(frozen.headers['freeze-b'].date).toBe('2026-01-02');
+  expect(frozen.headers['freeze-a'].frozenAt).toBe('2026-08-09T00:00:00.000Z');
+  expect(frozen.headers['freeze-b'].frozenAt).toBe('2026-08-09T00:00:00.000Z');
   expect(frozen.headers['archive-c'].date).toBe('2026-01-01');
   expect(frozen.updatedAt['archive-c']).toBe('unchanged');
   expect(frozen.historyCount).toBe(1);

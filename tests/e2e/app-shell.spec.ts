@@ -6,12 +6,22 @@ const setLifeMapZoom = async (page: Page, zoom: 'year' | 'month' | 'week' | 'day
   await page.getByRole('option', { name: new RegExp(`^${label}`) }).click();
 };
 
+const openFullViewOnPhone = async (page: Page) => {
+  if (await page.locator('.phone-workspace').count() === 0) return;
+  await page.getByLabel('打开完整视图').click();
+  await expect(page.locator('.phone-full-view-return')).toBeVisible();
+};
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
 
 test('timeline fills the workspace on the initial load before lazy views are opened', async ({ page }) => {
+  if (await page.locator('.phone-workspace').count() > 0) {
+    await page.getByTitle('项目规划').click();
+    await openFullViewOnPhone(page);
+  }
   const workspace = page.locator('.project-workspace-content');
   await expect(workspace).toBeVisible();
   const layout = await workspace.evaluate((element) => {
@@ -30,6 +40,59 @@ test('timeline fills the workspace on the initial load before lazy views are ope
   expect(layout.width).toBeGreaterThanOrEqual(layout.parentWidth - 2);
 });
 
+test('project details use a landscape split and a portrait right-side drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 1024 });
+  await page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    useTimelineStore.getState().addTask({
+      id: 'tablet-drawer-task', name: '平板详情测试', start: '2026-08-01', end: '2026-08-31', blocks: [],
+    });
+    window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: 'tablet-drawer-task' } }));
+  });
+
+  const drawer = page.locator('.tl-project-workspace-drawer');
+  await expect(drawer).toBeVisible();
+  await page.waitForTimeout(400);
+  const landscape = await page.locator('.project-workspace-content').evaluate((workspace) => {
+    const main = workspace.querySelector<HTMLElement>('.tl-app-main')!.getBoundingClientRect();
+    const detail = workspace.querySelector<HTMLElement>('.tl-project-workspace-drawer')!;
+    const detailRect = detail.getBoundingClientRect();
+    return {
+      position: getComputedStyle(detail).position,
+      mainRight: main.right,
+      drawerLeft: detailRect.left,
+      drawerRight: detailRect.right,
+      drawerWidth: detailRect.width,
+    };
+  });
+  expect(landscape.position).not.toBe('fixed');
+  expect(Math.abs(landscape.mainRight - landscape.drawerLeft)).toBeLessThanOrEqual(2);
+  expect(landscape.drawerWidth).toBeGreaterThanOrEqual(420);
+  expect(landscape.drawerWidth).toBeLessThanOrEqual(600);
+  expect(landscape.drawerRight).toBeLessThanOrEqual(1367);
+
+  await page.setViewportSize({ width: 820, height: 1180 });
+  const portrait = await drawer.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const contentRect = element.querySelector<HTMLElement>('.pdv-container')!.getBoundingClientRect();
+    return {
+      position: getComputedStyle(element).position,
+      left: rect.left,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      contentWidth: contentRect.width,
+    };
+  });
+  expect(portrait.position).toBe('fixed');
+  expect(portrait.left).toBeGreaterThanOrEqual(250);
+  expect(Math.abs(portrait.right - 820)).toBeLessThanOrEqual(1);
+  expect(portrait.width).toBeGreaterThanOrEqual(540);
+  expect(portrait.width).toBeLessThanOrEqual(560);
+  expect(portrait.contentWidth).toBeGreaterThanOrEqual(540);
+  expect(portrait.bottom).toBeLessThanOrEqual(1099);
+});
+
 test('six main views remain reachable through the real interface', async ({ page }) => {
   for (const title of ['人生地图', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
     await page.getByTitle(title).click();
@@ -38,8 +101,53 @@ test('six main views remain reachable through the real interface', async ({ page
   await expect(page.getByTitle('任务总览')).toHaveCount(0);
 });
 
+test('phone viewport uses dedicated execution views without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+
+  await expect(page.locator('.tl-app')).toHaveClass(/tl-app--phone/);
+  await expect(page.locator('.phone-workspace')).toBeVisible();
+  await expect(page.getByTitle('每日安排')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.phone-header h1')).toContainText('月');
+
+  for (const title of ['人生地图', '项目规划', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘']) {
+    await page.getByTitle(title).click();
+    await expect(page.getByTitle(title)).toHaveAttribute('aria-selected', 'true');
+    await expect.poll(() => page.locator('.phone-workspace').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+  }
+
+  const undersizedTargets = await page.locator('.phone-workspace button:visible, .tl-dock button:visible').evaluateAll((buttons) => buttons
+    .map((button) => button.getBoundingClientRect())
+    .filter((rect) => rect.width < 44 || rect.height < 44)
+    .length);
+  expect(undersizedTargets).toBe(0);
+
+  await page.getByLabel('打开完整视图').click();
+  await expect(page.locator('.phone-full-view-return')).toBeVisible();
+  await page.locator('.phone-full-view-return').click();
+  await expect(page.locator('.phone-workspace')).toBeVisible();
+});
+
+test('tablet viewport keeps the existing project timeline layout', async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 844 });
+  await page.reload();
+  await expect(page.locator('.tl-app')).not.toHaveClass(/tl-app--phone/);
+  await expect(page.locator('.phone-workspace')).toHaveCount(0);
+  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.tl-year-stack')).toBeVisible();
+
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await page.reload();
+
+  await expect(page.locator('.tl-app')).not.toHaveClass(/tl-app--phone/);
+  await expect(page.locator('.phone-workspace')).toHaveCount(0);
+  await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.tl-year-stack')).toBeVisible();
+});
+
 test('life map keeps every planning scale on one literal zoomable line', async ({ page }) => {
   await page.getByTitle('人生地图').click();
+  await openFullViewOnPhone(page);
   await expect(page.getByRole('heading', { name: '人生地图', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: '人生时间线' })).toBeVisible();
   await expect(page.locator('.life-line__axis')).toHaveCount(1);
@@ -56,6 +164,7 @@ test('life map keeps every planning scale on one literal zoomable line', async (
 test('project planning opens the timeline directly without an internal view menu', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   await page.getByTitle('项目规划').click();
+  await openFullViewOnPhone(page);
   await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.tl-year-stack')).toBeVisible();
   await page.getByTitle('项目规划').click();
@@ -65,22 +174,26 @@ test('project planning opens the timeline directly without an internal view menu
 
 test('daily schedule and week matrix keep focused planning controls without an all-project task shortcut', async ({ page }) => {
   await page.getByTitle('每日安排').click();
-  await expect(page.getByRole('button', { name: '明日复习选择' })).toBeVisible();
+  await openFullViewOnPhone(page);
+  await expect(page.getByRole('button', { name: '明日负荷规划' })).toBeVisible();
   await expect(page.getByRole('button', { name: '新建项目任务' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '查看全部项目任务' })).toHaveCount(0);
 
   await page.getByTitle('周矩阵').click();
+  await openFullViewOnPhone(page);
   await expect(page.getByRole('button', { name: '查看全部项目任务' })).toHaveCount(0);
   await expect(page.getByTitle('周矩阵')).toHaveAttribute('aria-selected', 'true');
 });
 
 test('retired project overview preferences are cleared after refresh', async ({ page }) => {
+  if (await page.locator('.phone-workspace').count() > 0) await page.getByTitle('项目规划').click();
   await page.evaluate(() => {
     localStorage.setItem('project-workspace-view-v1', 'overview');
     localStorage.setItem('task-overview-preferences-v1', JSON.stringify({ groupBy: 'project' }));
   });
   await page.reload();
   await expect(page.getByTitle('项目规划')).toHaveAttribute('aria-selected', 'true');
+  await openFullViewOnPhone(page);
   await expect(page.locator('.tl-year-stack')).toBeVisible();
   await expect.poll(() => page.evaluate(() => ({
     workspace: localStorage.getItem('project-workspace-view-v1'),
@@ -91,6 +204,7 @@ test('retired project overview preferences are cleared after refresh', async ({ 
 test('global search is removed while archive search remains available', async ({ page }) => {
   await expect(page.getByTitle(/全局搜索/)).toHaveCount(0);
   await page.getByTitle('知识大盘').click();
+  await openFullViewOnPhone(page);
   await page.getByTitle(/归档库/).click();
   const archiveSearch = page.getByLabel('搜索归档知识节点');
   await expect(archiveSearch).toBeVisible();
@@ -102,6 +216,7 @@ test('global search is removed while archive search remains available', async ({
 
 test('daily schedule keeps its controls clickable', async ({ page }) => {
   await page.getByTitle('每日安排').click();
+  await openFullViewOnPhone(page);
   await expect(page.getByRole('heading', { name: '每日安排' })).toBeVisible();
   await expect(page.getByRole('tab', { name: '时段' })).toBeVisible();
   await expect(page.getByRole('tab', { name: '时间块' })).toBeVisible();
@@ -154,6 +269,7 @@ test('daily task pool cards grow to fit wrapped titles and duration metadata', a
 
 test('small screens expose the daily task pool as a closable bottom drawer', async ({ page }) => {
   await page.getByTitle('每日安排').click();
+  await openFullViewOnPhone(page);
   const trigger = page.locator('.ds-task-pool-trigger');
   if ((page.viewportSize()?.width ?? 1200) > 900) return;
   await expect(trigger).toBeVisible();
@@ -195,13 +311,16 @@ test('small screens can scroll the EBB content without the fixed toolbar swallow
 test('EBB safe mode keeps recovery controls usable and disables the high-load board', async ({ page }) => {
   await page.evaluate(() => sessionStorage.setItem('smart-line-ebb-safe-mode', '1'));
   await page.getByTitle('艾宾浩斯复习').click();
+  await openFullViewOnPhone(page);
   await expect(page.getByRole('status')).toContainText('安全模式已开启');
-  await expect(page.getByRole('tab', { name: '看板视图' })).toBeDisabled();
+  await page.getByRole('tab', { name: '复习计划' }).click();
+  await expect(page.getByRole('button', { name: '日历' })).toBeDisabled();
   await expect(page.getByRole('button', { name: '退出安全模式' })).toBeVisible();
 });
 
 test('EBB complexity settings can be edited, saved and reset without closing the panel', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
+  await openFullViewOnPhone(page);
   await page.getByLabel('复习更多操作').click();
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
 

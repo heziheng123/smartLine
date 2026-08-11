@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, memo, useDeferredValue, useEffect, useRef } from 'react';
-import { Search, ChevronRight, CircleDashed, Clock3, ListChecks, Plus, RotateCcw } from 'lucide-react';
+import { Search, ChevronRight, CircleDashed, Clock3, CalendarRange, Plus, RotateCcw } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
@@ -338,12 +338,12 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
               </button>
               <button
                 type="button"
-                className="eb-icon-btn"
+                className="eb-plan-primary-action"
                 onClick={() => taskActions.onOpenRounds(taskToCheck)}
-                title="管理全部轮次"
-                aria-label={`管理${stat.topicName}的全部轮次`}
+                title="重新安排剩余轮次"
+                aria-label={`重新安排${stat.topicName}的剩余轮次`}
               >
-                <ListChecks size={14} />
+                <CalendarRange size={14} />重新安排
               </button>
             </>
           )}

@@ -50,6 +50,7 @@ export const DEFAULT_EBB_SETTINGS: EbbSettings = {
   customIntervals: '1, 2, 4, 7, 15',
   dailyTaskLimit: 3,
   dailyPointLimit: 14,
+  dailyReviewMinutes: 60,
   complexityConfigs: DEFAULT_COMPLEXITY_CONFIGS,
   maxSpreadDays: 14,
   minTopicGapDays: 1,

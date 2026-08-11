@@ -1,8 +1,9 @@
-import { addDays } from '@/utils/dateSafe';
-import type { EbbSettings, ReviewTask } from './types';
-import { buildNextRoundTask, genId, getReviewTopicKey } from './scheduler';
+import { addDays, diffDays } from '../utils/dateSafe.ts';
+import type { EbbSettings, ReviewTask } from './types.ts';
+import { buildNextRoundTask, genId, getReviewTopicKey } from './scheduler.ts';
 
 export type BatchReviewAction =
+  | { kind: 'reanchor'; startDate: string }
   | { kind: 'shift'; days: number }
   | { kind: 'trim'; count: number; minRemaining: number }
   | { kind: 'append'; count: number }
@@ -103,6 +104,42 @@ export function planBatchReviewAdjustment(
     const topicName = rounds[0]?.topicName ?? topicKey;
     if (rounds.length === 0) {
       results.push(makeSkipped(topicKey, topicName, 0, '当前没有可调整的有效轮次'));
+      continue;
+    }
+
+    if (request.action.kind === 'reanchor') {
+      const pending = rounds.filter((task) => !task.isCompleted);
+      if (!isValidDate(request.action.startDate) || pending.length === 0) {
+        nextTasks.push(...rounds);
+        results.push(makeSkipped(topicKey, topicName, rounds.length, pending.length === 0 ? '没有未完成轮次' : '下一轮日期无效'));
+        continue;
+      }
+      const delta = diffDays(request.action.startDate, pending[0].dueDate);
+      const pendingIds = new Set(pending.map((task) => task.id));
+      const shiftedDates = pending.map((task) => addDays(task.dueDate, delta));
+      const latestCompleted = [...rounds].reverse().find((task) => task.isCompleted);
+      const invalidOrder = shiftedDates.some((date, index) => index > 0 && date <= shiftedDates[index - 1])
+        || Boolean(latestCompleted && shiftedDates[0] <= (latestCompleted.completedDate ?? latestCompleted.dueDate));
+      if (new Set(shiftedDates).size !== shiftedDates.length || invalidOrder) {
+        nextTasks.push(...rounds);
+        results.push(makeSkipped(topicKey, topicName, rounds.length, '新日期会与已完成历史冲突'));
+        continue;
+      }
+      nextTasks.push(...rounds.map((task) => pendingIds.has(task.id)
+        ? { ...task, dueDate: addDays(task.dueDate, delta), originalDueDate: task.originalDueDate ?? task.dueDate, smStatus: 'scheduled' as const }
+        : task));
+      pending.forEach((task) => sourceIdsToClear.add(task.id));
+      results.push({
+        topicKey,
+        topicName,
+        status: 'changed',
+        description: `下一轮从 ${request.action.startDate} 开始，保持间隔重排 ${pending.length} 轮`,
+        beforeCount: rounds.length,
+        afterCount: rounds.length,
+        removedCount: 0,
+        addedCount: 0,
+        rescheduledCount: pending.length,
+      });
       continue;
     }
 

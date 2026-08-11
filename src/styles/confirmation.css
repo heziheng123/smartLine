@@ -7,6 +7,7 @@
   padding: var(--space-5, 20px);
   background: rgb(15 23 42 / 42%);
   backdrop-filter: blur(2px);
+  animation: app-confirm-overlay-in 140ms ease-out both;
 }
 
 .app-confirm {
@@ -22,6 +23,24 @@
   background: var(--surface-raised, #fff);
   box-shadow: var(--shadow-dialog, 0 24px 60px rgb(15 23 42 / 20%));
   color: var(--text-primary, #172033);
+  animation: app-confirm-panel-in var(--ui-motion-standard-duration, 180ms) var(--ui-ease-enter, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes app-confirm-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes app-confirm-panel-in {
+  from { opacity: 0; transform: translateY(6px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-confirm-overlay,
+  .app-confirm {
+    animation-duration: 0.01ms !important;
+  }
 }
 
 .app-confirm-icon {

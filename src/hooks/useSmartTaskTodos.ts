@@ -36,6 +36,7 @@ export function useSmartTaskTodos(tasks: Task[], groups: TaskGroup[] = []): Aggr
 
       for (const block of smartBlocks) {
         const h = block.header;
+        if (h.isArchived || h.frozenAt) continue;
         all.push({
           id: `${task.id}-blk-${block.id}`,
           text: h.title,

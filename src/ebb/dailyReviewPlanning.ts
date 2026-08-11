@@ -1,6 +1,7 @@
-import { addDays, diffDays, isValidCalendarDate } from '@/utils/dateSafe';
-import type { ReviewTask } from './types';
-import { computeRounds, getReviewTopicKey } from './scheduler';
+import { addDays, diffDays, isValidCalendarDate } from '../utils/dateSafe.ts';
+import type { ReviewTask } from './types.ts';
+import { computeRounds, getReviewTopicKey } from './scheduler.ts';
+import { getReviewRoundDuration } from './duration.ts';
 
 export interface DailyReviewCandidate {
   taskId: string;
@@ -12,12 +13,17 @@ export interface DailyReviewCandidate {
   laterPendingRounds: number;
   deferralCount: number;
   previousDecision?: 'keep' | 'defer';
+  durationMinutes: number;
+  /** 逾期或连续推迟过多的轮次默认锁定在明日，仍允许用户显式覆盖。 */
+  recommendedLocked: boolean;
 }
 
 export interface DailyReviewPlanRequest {
   planDate: string;
   candidateTaskIds: string[];
   keptTaskIds: string[];
+  /** 显式日期分配；未提供时兼容旧版“保留/顺延一天”请求。 */
+  assignmentsByTaskId?: Record<string, string>;
 }
 
 export interface DailyReviewPlan {
@@ -30,6 +36,23 @@ export interface DailyReviewPlan {
   previousTasks: ReviewTask[];
   nextTasks: ReviewTask[];
   dateChangedTaskIds: string[];
+  assignmentsByTaskId: Record<string, string>;
+}
+
+export interface DailyReviewWorkloadDay {
+  date: string;
+  minutes: number;
+  taskIds: string[];
+  overCapacity: boolean;
+}
+
+export interface BalancedDailyReviewPlan {
+  planDate: string;
+  capacityMinutes: number;
+  assignmentsByTaskId: Record<string, string>;
+  days: DailyReviewWorkloadDay[];
+  totalMinutes: number;
+  overflowMinutes: number;
 }
 
 const sortByRound = (tasks: ReviewTask[]) => [...tasks].sort((a, b) =>
@@ -74,6 +97,8 @@ export function getDailyReviewCandidates(
       laterPendingRounds: Math.max(0, group.length - 1),
       deferralCount: Math.max(0, Math.trunc(task.rollingDeferralCount ?? 0)),
       previousDecision: belongsToOpenPlan ? task.rollingDecision : undefined,
+      durationMinutes: getReviewRoundDuration(task, roundMap.get(task.id) ?? task.roundOrder ?? 1),
+      recommendedLocked: task.dueDate < planDate || Math.max(0, Math.trunc(task.rollingDeferralCount ?? 0)) >= 3,
     });
   }
 
@@ -83,6 +108,67 @@ export function getDailyReviewCandidates(
     || a.topicName.localeCompare(b.topicName, 'zh-CN')
     || a.taskId.localeCompare(b.taskId),
   );
+}
+
+/**
+ * Produces a deterministic three-day capacity proposal. Urgent items stay on
+ * the plan date; flexible items use the earliest day with room. When the whole
+ * horizon is full, the least-loaded day is chosen and the overflow is surfaced
+ * instead of silently dropping work.
+ */
+export function buildBalancedDailyReviewPlan(
+  tasks: ReviewTask[],
+  planDate: string,
+  capacityMinutes: number,
+  horizonDays = 3,
+): BalancedDailyReviewPlan {
+  const safeCapacity = Math.max(15, Math.trunc(capacityMinutes || 60));
+  const safeHorizon = Math.min(7, Math.max(1, Math.trunc(horizonDays)));
+  const dates = Array.from({ length: safeHorizon }, (_, index) => addDays(planDate, index));
+  const candidates = getDailyReviewCandidates(tasks, planDate);
+  const candidateIds = new Set(candidates.map((candidate) => candidate.taskId));
+  const minutesByDate = new Map(dates.map((date) => [date, 0]));
+  const idsByDate = new Map(dates.map((date) => [date, [] as string[]]));
+  const { roundMap } = computeRounds(tasks);
+
+  // Future rounds already occupying the horizon count toward capacity. The
+  // visible candidate rounds are excluded because they are placed below.
+  for (const task of tasks) {
+    if (task.isArchived || task.isCompleted || candidateIds.has(task.id) || !minutesByDate.has(task.dueDate)) continue;
+    const duration = getReviewRoundDuration(task, roundMap.get(task.id) ?? task.roundOrder ?? 1);
+    minutesByDate.set(task.dueDate, (minutesByDate.get(task.dueDate) ?? 0) + duration);
+    idsByDate.get(task.dueDate)!.push(task.id);
+  }
+
+  const assignmentsByTaskId: Record<string, string> = {};
+  for (const candidate of candidates) {
+    let targetDate = planDate;
+    if (!candidate.recommendedLocked) {
+      targetDate = dates.find((date) => (minutesByDate.get(date) ?? 0) + candidate.durationMinutes <= safeCapacity)
+        ?? [...dates].sort((left, right) =>
+          (minutesByDate.get(left) ?? 0) - (minutesByDate.get(right) ?? 0)
+          || left.localeCompare(right),
+        )[0];
+    }
+    assignmentsByTaskId[candidate.taskId] = targetDate;
+    minutesByDate.set(targetDate, (minutesByDate.get(targetDate) ?? 0) + candidate.durationMinutes);
+    idsByDate.get(targetDate)!.push(candidate.taskId);
+  }
+
+  const days = dates.map((date) => ({
+    date,
+    minutes: minutesByDate.get(date) ?? 0,
+    taskIds: idsByDate.get(date) ?? [],
+    overCapacity: (minutesByDate.get(date) ?? 0) > safeCapacity,
+  }));
+  return {
+    planDate,
+    capacityMinutes: safeCapacity,
+    assignmentsByTaskId,
+    days,
+    totalMinutes: candidates.reduce((sum, candidate) => sum + candidate.durationMinutes, 0),
+    overflowMinutes: days.reduce((sum, day) => sum + Math.max(0, day.minutes - safeCapacity), 0),
+  };
 }
 
 const sameTask = (a: ReviewTask, b: ReviewTask) => JSON.stringify(a) === JSON.stringify(b);
@@ -112,6 +198,15 @@ export function planDailyReviewSelection(
   if (missing.length > 0) throw new Error('复习计划已在其他位置发生变化，请重新打开规划');
 
   const rolloverDate = addDays(request.planDate, 1);
+  const assignmentsByTaskId = Object.fromEntries(requestedIds.map((id) => [
+    id,
+    request.assignmentsByTaskId?.[id] ?? (keptIds.has(id) ? request.planDate : rolloverDate),
+  ]));
+  for (const [id, date] of Object.entries(assignmentsByTaskId)) {
+    if (!candidateById.has(id) || !isValidCalendarDate(date)) throw new Error('负荷规划包含无效日期，请重新打开规划');
+    const offset = diffDays(date, request.planDate);
+    if (offset < 0 || offset > 6) throw new Error('明日负荷最多可在未来 7 天内调整');
+  }
   const nextById = new Map(tasks.map((task) => [task.id, task]));
   const previousById = new Map<string, ReviewTask>();
   const dateChangedIds = new Set<string>();
@@ -122,8 +217,8 @@ export function planDailyReviewSelection(
     const candidate = candidateById.get(candidateId)!;
     const currentTask = nextById.get(candidateId);
     if (!currentTask) throw new Error('复习轮次已经不存在，请重新打开规划');
-    const keep = keptIds.has(candidateId);
-    const desiredDate = keep ? request.planDate : rolloverDate;
+    const desiredDate = assignmentsByTaskId[candidateId];
+    const keep = desiredDate === request.planDate;
     const delta = diffDays(desiredDate, currentTask.dueDate);
     const currentOrder = currentTask.roundOrder ?? candidate.round;
     const topicTasks = sortByRound(tasks.filter((task) =>
@@ -203,5 +298,6 @@ export function planDailyReviewSelection(
     previousTasks,
     nextTasks,
     dateChangedTaskIds: [...dateChangedIds],
+    assignmentsByTaskId,
   };
 }

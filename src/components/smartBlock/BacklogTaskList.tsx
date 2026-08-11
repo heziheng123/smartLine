@@ -130,6 +130,7 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
         </div>
         <div className={styles.meta}>
           <span><Clock3 size={12} />{task.duration} 分钟</span>
+          {task.originalDate && <span className={styles.danger}>原计划 {formatDate(task.originalDate, 'M月D日')}</span>}
           <DeadlineLabel task={task} />
           <span title={task.graphNodeCount > 0 ? `已绑定 ${task.graphNodeCount} 个知识节点` : '未绑定知识节点'}>
             {task.graphNodeCount > 0 ? <LinkIcon size={12} /> : <CircleDashed size={12} />}

@@ -3,9 +3,9 @@
 // 查看某主题的所有轮次 · 改期 · 删除单轮 · 追加轮次 · 完成进度
 // ============================================================
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, Trash2, Plus, CalendarRange, RotateCcw, Clock3 } from 'lucide-react';
+import { X, Calendar, Trash2, Plus, CalendarRange, RotateCcw, Clock3, ArrowRight, Sparkles } from 'lucide-react';
 import { addDays, diffDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
@@ -60,6 +60,9 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const [isRestartDatePickerOpen, setIsRestartDatePickerOpen] = useState(false);
   const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
   const [actionError, setActionError] = useState('');
+  const [actionNotice, setActionNotice] = useState('');
+  const [replanOpen, setReplanOpen] = useState(false);
+  const [replanStartDate, setReplanStartDate] = useState(addDays(todayStr(), 1));
 
   // 该主题所有任务，按 dueDate 升序
   const topicTasks = useMemo(
@@ -87,6 +90,43 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const explicitBaseDuration = durationTemplate?.baseDurationMinutes;
   const automaticBaseDuration = getDefaultReviewBaseDuration(durationTemplate?.complexity);
   const effectiveBaseDuration = durationTemplate ? getReviewBaseDuration(durationTemplate) : automaticBaseDuration;
+  const pendingTasks = useMemo(() => topicTasks.filter((task) => !task.isCompleted), [topicTasks]);
+  const replanPreview = useMemo(() => {
+    const first = pendingTasks[0];
+    if (!first) return { updates: [] as Array<{ id: string; dueDate: string }>, invalid: '' };
+    const delta = diffDays(replanStartDate, first.dueDate);
+    const updates = pendingTasks.map((task) => ({ id: task.id, dueDate: addDays(task.dueDate, delta) }));
+    const newDates = updates.map((update) => update.dueDate);
+    if (new Set(newDates).size !== newDates.length) return { updates, invalid: '调整后会有两个未完成轮次落在同一天' };
+    const latestCompleted = [...topicTasks].reverse().find((task) => task.isCompleted);
+    if (latestCompleted && newDates[0] <= (latestCompleted.completedDate ?? latestCompleted.dueDate)) {
+      return { updates, invalid: '下一轮不能早于最近一次实际完成日期' };
+    }
+    for (let index = 1; index < newDates.length; index += 1) {
+      if (newDates[index] <= newDates[index - 1]) return { updates, invalid: '未完成轮次日期必须依次递增' };
+    }
+    return { updates, invalid: '' };
+  }, [pendingTasks, replanStartDate, topicTasks]);
+
+  const hasReplanChanges = replanPreview.updates.some(
+    (update) => topicTasks.find((task) => task.id === update.id)?.dueDate !== update.dueDate,
+  );
+
+  const applyReplan = useCallback(() => {
+    if (replanPreview.invalid || replanPreview.updates.length === 0 || !hasReplanChanges) return;
+    rescheduleReviewRounds(replanPreview.updates);
+    setActionError('');
+    setActionNotice(`已从 ${formatDate(replanStartDate, 'M月D日')} 起重排 ${replanPreview.updates.length} 个未完成轮次`);
+    setReplanOpen(false);
+  }, [hasReplanChanges, replanPreview, replanStartDate, rescheduleReviewRounds]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   // 积分统计
   const pointsInfo = useMemo(() => {
@@ -218,16 +258,17 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
 
   return createPortal(
     <div className="eb-panel-overlay" onClick={onClose}>
-      <div className="eb-panel eb-panel--rounds" onClick={(e) => e.stopPropagation()}>
+      <div className="eb-panel eb-panel--rounds" role="dialog" aria-modal="true" aria-label={`复习计划 ${topicName}`} onClick={(e) => e.stopPropagation()}>
         <div className="eb-panel-header">
-          <h3 className="eb-panel-title">轮次管理 · {topicName}</h3>
-          <button type="button" className="eb-panel-close" onClick={onClose}>
+          <h3 className="eb-panel-title">复习计划 · {topicName}</h3>
+          <button type="button" className="eb-panel-close" onClick={onClose} aria-label="关闭复习计划">
             <X size={16} />
           </button>
         </div>
 
         <div className="eb-panel-body">
           {actionError && <div className="eb-field-error">{actionError}</div>}
+          {actionNotice && <div className="eb-action-notice" role="status">{actionNotice}</div>}
           {/* 进度概览 */}
           <div className="eb-rounds-summary">
             <div className="eb-rounds-stats">
@@ -250,6 +291,37 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
               <span className="eb-rounds-progress-text">{Math.round(ratio * 100)}%</span>
             </div>
           </div>
+
+          {pendingTasks.length > 0 && (
+            <section className="eb-replan-card" aria-label="重新安排剩余轮次">
+              <div className="eb-replan-card-head">
+                <div><span><Sparkles size={14} />推荐操作</span><strong>重新安排剩余 {pendingTasks.length} 轮</strong><small>已完成 {completedCount} 轮锁定不变；默认保持当前轮次间隔。</small></div>
+                {!replanOpen && <button type="button" className="eb-btn eb-btn--primary eb-btn--sm" onClick={() => { setActionNotice(''); setReplanOpen(true); }}>重新安排</button>}
+              </div>
+              {replanOpen && (
+                <div className="eb-replan-editor">
+                  <div className="eb-replan-fields">
+                    <label><span>下一轮安排在</span><input type="date" min={todayStr()} value={replanStartDate} onChange={(event) => setReplanStartDate(event.target.value)} /></label>
+                    <div className="eb-replan-shortcuts">
+                      <button type="button" onClick={() => setReplanStartDate(todayStr())}>今天</button>
+                      <button type="button" onClick={() => setReplanStartDate(addDays(todayStr(), 1))}>明天</button>
+                    </div>
+                    <div className="eb-replan-rhythm"><span>后续节奏</span><strong>保持当前间隔</strong><small>如需逐轮指定，可使用下方每轮的改期按钮。</small></div>
+                  </div>
+                  <div className="eb-replan-preview" aria-label="剩余轮次日期预览">
+                    {pendingTasks.map((task, index) => {
+                      const nextDate = replanPreview.updates.find((update) => update.id === task.id)?.dueDate ?? task.dueDate;
+                      const unchanged = nextDate === task.dueDate;
+                      return <div key={task.id} className={unchanged ? 'is-unchanged' : ''}><span>R{task.roundOrder ?? completedCount + index + 1}</span>{unchanged ? <><strong>{formatDate(nextDate, 'M.D')}</strong><em>不变</em></> : <><b>{formatDate(task.dueDate, 'M.D')}</b><ArrowRight size={12} /><strong>{formatDate(nextDate, 'M.D')}</strong></>}</div>;
+                    })}
+                  </div>
+                  {replanPreview.invalid && <div className="eb-field-error">{replanPreview.invalid}</div>}
+                  {!replanPreview.invalid && !hasReplanChanges && <div className="eb-replan-unchanged">当前下一轮已经是这个日期，无需保存。</div>}
+                  <div className="eb-replan-actions"><button type="button" className="eb-btn eb-btn--ghost eb-btn--sm" onClick={() => setReplanOpen(false)}>取消</button><button type="button" className="eb-btn eb-btn--primary eb-btn--sm" disabled={Boolean(replanPreview.invalid) || !hasReplanChanges} onClick={applyReplan}>保存调整</button></div>
+                </div>
+              )}
+            </section>
+          )}
 
           {durationTemplate && (
             <div className="eb-field" style={{ marginBottom: 16 }}>
@@ -389,7 +461,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
         <div className="eb-panel-footer">
           <button type="button" className="eb-btn eb-btn--ghost eb-btn--sm" onClick={() => setIsRestartDatePickerOpen(true)}>
             <RotateCcw size={14} />
-            重新开始
+            重新开始完整周期
           </button>
           <button
             type="button"

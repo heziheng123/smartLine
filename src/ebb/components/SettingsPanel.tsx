@@ -27,6 +27,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
   const [customIntervals, setCustomIntervals] = useState(s.customIntervals);
   const [dailyTaskLimit, setDailyTaskLimit] = useState(s.dailyTaskLimit);
   const [dailyPointLimit, setDailyPointLimit] = useState(s.dailyPointLimit);
+  const [dailyReviewMinutes, setDailyReviewMinutes] = useState(s.dailyReviewMinutes);
   const [maxSpreadDays, setMaxSpreadDays] = useState(s.maxSpreadDays);
   const [minTopicGapDays, setMinTopicGapDays] = useState(s.minTopicGapDays);
   const [autoProcessOverdue, setAutoProcessOverdue] = useState(s.autoProcessOverdue);
@@ -42,6 +43,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
       customIntervals,
       dailyTaskLimit,
       dailyPointLimit,
+      dailyReviewMinutes,
       maxSpreadDays,
       minTopicGapDays,
       autoProcessOverdue,
@@ -50,7 +52,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
     };
     store.updateSettings(patch);
     onClose();
-  }, [customIntervals, dailyTaskLimit, dailyPointLimit, maxSpreadDays, minTopicGapDays, autoProcessOverdue, overdueThreshold, loadThresholds, store, onClose]);
+  }, [customIntervals, dailyTaskLimit, dailyPointLimit, dailyReviewMinutes, maxSpreadDays, minTopicGapDays, autoProcessOverdue, overdueThreshold, loadThresholds, store, onClose]);
 
   // 复杂度配置编辑
   const [editingComplexity, setEditingComplexity] = useState<ComplexityLevel | null>(null);
@@ -97,6 +99,22 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
           {/* 负载均衡 */}
           <section className="eb-settings-section">
             <h4 className="eb-settings-section-title">负载均衡</h4>
+            <div className="eb-slider-row">
+              <label className="eb-slider-label">
+                每日复习目标容量
+                <span className="eb-slider-value">{dailyReviewMinutes} 分钟</span>
+              </label>
+              <input
+                type="range"
+                min={15}
+                max={240}
+                step={5}
+                value={dailyReviewMinutes}
+                onChange={(e) => setDailyReviewMinutes(parseInt(e.target.value, 10))}
+                className="eb-slider"
+              />
+              <span className="eb-field-hint">用于明日负荷规划和未来日期超载预警，不会阻止你手动保存。</span>
+            </div>
             <div className="eb-slider-row">
               <label className="eb-slider-label">
                 每日任务数上限
@@ -225,7 +243,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
           <section className="eb-settings-section">
             <h4 className="eb-settings-section-title">逾期处理</h4>
             <label className="eb-switch-row">
-              <span>自动处理逾期任务（顺延到今天）</span>
+              <span>在今日复习中突出显示逾期提醒</span>
               <input
                 type="checkbox"
                 checked={autoProcessOverdue}

@@ -11,6 +11,8 @@ import { getUniqueTasks } from '@/store/timelineData';
 import { useShallow } from 'zustand/react/shallow';
 // import TimelineView from '@/components/TimelineView';
 import Toolbar, { type AppModule } from '@/components/Toolbar';
+import PhoneWorkspace from '@/components/mobile/PhoneWorkspace';
+import { OPEN_WORKSPACE_SYNC_EVENT } from '@/components/SyncStatusIndicator';
 import ContextMenu from '@/components/ContextMenu';
 import ProjectTaskBlockModal from '@/components/smartBlock/ProjectTaskBlockModal';
 import ProjectTaskCreateDialog from '@/components/smartBlock/ProjectTaskCreateDialog';
@@ -19,7 +21,8 @@ import ConfirmationDialogHost from '@/components/ConfirmationDialogHost';
 import ChoiceDialogHost from '@/components/ChoiceDialogHost';
 import FinalReviewRoundDialogHost from '@/components/FinalReviewRoundDialogHost';
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
-import { AnimatePresence, motion } from 'framer-motion';
+import { isPhoneLayoutViewport, usePhoneLayout } from '@/hooks/usePhoneLayout';
+import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer-motion';
 
 import '@/styles/design-tokens.css';
 import '@/styles/confirmation.css';
@@ -122,7 +125,80 @@ const ViewFallback: React.FC = () => (
   </div>
 );
 
+const APP_VIEW_ORDER: AppModule[] = [
+  'life-map',
+  'timeline',
+  'daily-schedule',
+  'week-matrix',
+  'ebb',
+  'knowledge-graph',
+];
+
+const PHONE_LAST_VIEW_STORAGE_KEY = 'smart-line-phone-last-view-v1';
+
+function getInitialAppView(): AppModule {
+  if (!isPhoneLayoutViewport()) return 'timeline';
+  try {
+    const saved = localStorage.getItem(PHONE_LAST_VIEW_STORAGE_KEY) as AppModule | null;
+    if (saved && APP_VIEW_ORDER.includes(saved)) return saved;
+  } catch {
+    // Storage is optional; the phone execution view remains the safe default.
+  }
+  return 'daily-schedule';
+}
+
+interface ViewMotionContext {
+  direction: number;
+  reducedMotion: boolean;
+}
+
+interface PanelMotionContext {
+  reducedMotion: boolean;
+}
+
+const VIEW_MOTION_VARIANTS: Variants = {
+  initial: ({ direction, reducedMotion }: ViewMotionContext) => (
+    reducedMotion ? { opacity: 0 } : { opacity: 0, x: direction * 10 }
+  ),
+  animate: ({ reducedMotion }: ViewMotionContext) => ({
+    opacity: 1,
+    x: 0,
+    transition: reducedMotion
+      ? { duration: 0.08 }
+      : { duration: 0.18, ease: [0.22, 1, 0.36, 1] },
+  }),
+  exit: ({ direction, reducedMotion }: ViewMotionContext) => ({
+    opacity: 0,
+    x: reducedMotion ? 0 : direction * -4,
+    transition: reducedMotion
+      ? { duration: 0.06 }
+      : { duration: 0.09, ease: [0.4, 0, 1, 1] },
+  }),
+};
+
+const PANEL_MOTION_VARIANTS: Variants = {
+  initial: ({ reducedMotion }: PanelMotionContext) => (
+    reducedMotion ? { opacity: 0 } : { opacity: 0, x: 24 }
+  ),
+  animate: ({ reducedMotion }: PanelMotionContext) => ({
+    opacity: 1,
+    x: 0,
+    transition: reducedMotion
+      ? { duration: 0.08 }
+      : { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+  }),
+  exit: ({ reducedMotion }: PanelMotionContext) => ({
+    opacity: 0,
+    x: reducedMotion ? 0 : 16,
+    transition: reducedMotion
+      ? { duration: 0.06 }
+      : { duration: 0.14, ease: [0.4, 0, 1, 1] },
+  }),
+};
+
 const App: React.FC = () => {
+  const prefersReducedMotion = useReducedMotion();
+  const isPhoneLayout = usePhoneLayout();
   const { isHydrated: isGraphHydrated, hydrateStore: hydrateGraphStore } = useGraphStore(
     useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
   );
@@ -305,16 +381,32 @@ const App: React.FC = () => {
   );
 
   // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
-  const [currentView, setCurrentView] = useState<AppModule>('timeline');
+  const [currentView, setCurrentView] = useState<AppModule>(getInitialAppView);
+  const [phoneFullView, setPhoneFullView] = useState(false);
+  const [viewDirection, setViewDirection] = useState(1);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const viewMotionContext = useMemo<ViewMotionContext>(() => ({
+    direction: viewDirection,
+    reducedMotion: Boolean(prefersReducedMotion),
+  }), [prefersReducedMotion, viewDirection]);
+  const panelMotionContext = useMemo<PanelMotionContext>(() => ({
+    reducedMotion: Boolean(prefersReducedMotion),
+  }), [prefersReducedMotion]);
 
   const handleViewChange = useCallback((view: AppModule) => {
     if (view !== currentView) {
+      const currentIndex = APP_VIEW_ORDER.indexOf(currentView);
+      const nextIndex = APP_VIEW_ORDER.indexOf(view);
+      setViewDirection(nextIndex >= currentIndex ? 1 : -1);
       setDrawerTaskId(null);
       setDrawerBlockId(null);
+      setPhoneFullView(false);
     }
     setCurrentView(view);
-  }, [currentView]);
+    if (isPhoneLayout) {
+      try { localStorage.setItem(PHONE_LAST_VIEW_STORAGE_KEY, view); } catch { /* optional preference */ }
+    }
+  }, [currentView, isPhoneLayout]);
 
   React.useEffect(() => {
     try {
@@ -532,7 +624,7 @@ const App: React.FC = () => {
       const e = event as CustomEvent<TimelineNavigateDetail>;
       const detail = e.detail;
       if (detail?.view) {
-        setCurrentView(detail.view);
+        handleViewChange(detail.view);
       }
       if (detail?.taskId) {
         setDrawerTaskId(detail.taskId);
@@ -794,7 +886,12 @@ const App: React.FC = () => {
 
   const handleOpenSync = useCallback(() => {
     setDialogType('sync');
-  }, []);
+  }, [handleViewChange]);
+
+  React.useEffect(() => {
+    window.addEventListener(OPEN_WORKSPACE_SYNC_EVENT, handleOpenSync);
+    return () => window.removeEventListener(OPEN_WORKSPACE_SYNC_EVENT, handleOpenSync);
+  }, [handleOpenSync]);
 
   const preloadView = useCallback((view: AppModule) => {
     if (view === 'life-map') { void loadLifeMapView(); return; }
@@ -814,17 +911,10 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`tl-app ${(currentView === 'life-map' || currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''}`}>
+    <div className={`tl-app ${isPhoneLayout ? 'tl-app--phone' : ''} ${(currentView === 'life-map' || currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''} ${currentView === 'timeline' && drawerTask ? 'tl-app--project-split-open' : ''}`}>
       <Toolbar
         currentView={currentView}
         onViewChange={handleViewChange}
-        displayYear={displayYear}
-        onYearChange={setDisplayYear}
-        onAddTask={handleAddTask}
-        onAddGroup={handleAddGroup}
-        onAddNote={handleAddNote}
-        onAddMilestone={handleAddMilestone}
-        onOpenSync={handleOpenSync}
         onViewPreload={preloadView}
       />
 
@@ -843,17 +933,32 @@ const App: React.FC = () => {
         safeModeKey={currentView === 'ebb' ? 'smart-line-ebb-safe-mode' : undefined}
         onExit={currentView === 'timeline' ? undefined : () => handleViewChange('timeline')}
       >
-      <AnimatePresence mode="wait">
+      {isPhoneLayout && !phoneFullView ? (
+        <PhoneWorkspace
+          currentView={currentView}
+          tasks={weekMatrixTasks}
+          groups={store.groups}
+          onAddProject={handleAddTask}
+          onOpenProject={(taskId, blockId) => {
+            setDrawerTaskId(taskId);
+            setDrawerBlockId(blockId ?? null);
+            setDrawerFocusRequest((value) => value + 1);
+          }}
+          onOpenFullView={() => setPhoneFullView(true)}
+        />
+      ) : (
+      <AnimatePresence mode="popLayout" initial={false} custom={viewMotionContext}>
         {currentView === 'life-map' && (
           <motion.div
             key="life-map"
             id="view-life-map"
             role="tabpanel"
             className="tl-app-split tl-app-split--ebb"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            custom={viewMotionContext}
+            variants={VIEW_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -869,10 +974,11 @@ const App: React.FC = () => {
             id="view-ebb"
             role="tabpanel"
             className="tl-app-split tl-app-split--ebb"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            custom={viewMotionContext}
+            variants={VIEW_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -888,10 +994,11 @@ const App: React.FC = () => {
             id="view-daily-schedule"
             role="tabpanel"
             className="tl-app-split tl-app-split--ebb"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            custom={viewMotionContext}
+            variants={VIEW_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -907,10 +1014,11 @@ const App: React.FC = () => {
             id="view-week-matrix"
             role="tabpanel"
             className="tl-app-split tl-app-split--ebb"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            custom={viewMotionContext}
+            variants={VIEW_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
             <div className="tl-app-main week-matrix-workspace">
               <div className="week-matrix-content">
@@ -934,10 +1042,11 @@ const App: React.FC = () => {
             id="view-knowledge-graph"
             role="tabpanel"
             className="tl-app-split tl-app-split--ebb"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            custom={viewMotionContext}
+            variants={VIEW_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -953,10 +1062,11 @@ const App: React.FC = () => {
             id="view-timeline"
             role="tabpanel"
             className="tl-app-split project-workspace"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            custom={viewMotionContext}
+            variants={VIEW_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
             <div className="project-workspace-content">
               <>
@@ -968,6 +1078,12 @@ const App: React.FC = () => {
                         notes={store.notes}
                         milestones={store.milestones}
                         displayYear={displayYear}
+                        onYearChange={setDisplayYear}
+                        onAddTask={handleAddTask}
+                        onAddGroup={handleAddGroup}
+                        onAddNote={handleAddNote}
+                        onAddMilestone={handleAddMilestone}
+                        onOpenSync={handleOpenSync}
                         onTaskClick={handleOpenDrawer}
                         onTaskContextMenu={handleTaskContextMenu}
                         onNoteDoubleClick={handleEditNote}
@@ -993,21 +1109,54 @@ const App: React.FC = () => {
                   </Suspense>
                 </div>
 
+                <AnimatePresence>
+                  {drawerTask && (
+                    <motion.aside
+                      className="tl-project-workspace-drawer"
+                      key={`workspace-project:${drawerTask.id}`}
+                      custom={panelMotionContext}
+                      variants={PANEL_MOTION_VARIANTS}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                    >
+                      <Suspense fallback={<ViewFallback />}>
+                        <ProjectDocumentView
+                          task={drawerTask}
+                          focusBlockId={drawerBlockId}
+                          focusRequest={drawerFocusRequest}
+                          onClose={handleCloseDrawer}
+                          onUpdateTask={handleUpdateTaskMeta}
+                          onDeleteTask={handleDeleteTaskFromDrawer}
+                        />
+                      </Suspense>
+                    </motion.aside>
+                  )}
+                </AnimatePresence>
+
               </>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+      )}
+
+      {isPhoneLayout && phoneFullView && (
+        <button type="button" className="phone-full-view-return" onClick={() => setPhoneFullView(false)}>
+          ← 返回手机视图
+        </button>
+      )}
 
       <AnimatePresence>
-        {drawerTask && (
+        {drawerTask && (currentView !== 'timeline' || isPhoneLayout) && (
           <motion.aside
             className="tl-global-project-drawer"
             key={`global-project:${drawerTask.id}`}
-            initial={{ opacity: 0, x: 32 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 32 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            custom={panelMotionContext}
+            variants={PANEL_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
             <Suspense fallback={<ViewFallback />}>
               <ProjectDocumentView
@@ -1076,7 +1225,7 @@ const App: React.FC = () => {
 
       {/* 项目时间线保留悬浮入口；周矩阵使用不遮挡日期列的内嵌右侧抽屉。 */}
       <AnimatePresence>
-        {currentView === 'timeline' && (
+        {currentView === 'timeline' && (!isPhoneLayout || phoneFullView) && (
           <Suspense fallback={null}>
             <IceboxPalette />
           </Suspense>

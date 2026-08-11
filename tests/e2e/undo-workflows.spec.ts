@@ -185,6 +185,7 @@ test('multiple operations never surface a central history list', async ({ page }
 
 test('EBB completion remains committed without a global undo library', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
+  await page.getByRole('tab', { name: '复习计划' }).click();
   await page.locator('.eb-topic-row-main').filter({ hasText: 'E2E复习撤销' }).click();
   const toggle = page.getByLabel('标记第 1 轮完成');
   await expect(toggle).toBeVisible();
@@ -193,6 +194,7 @@ test('EBB completion remains committed without a global undo library', async ({ 
   await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
   await page.reload();
   await page.getByTitle('艾宾浩斯复习').click();
+  await page.getByRole('tab', { name: '复习计划' }).click();
   await page.locator('.eb-topic-row-main').filter({ hasText: 'E2E复习撤销' }).click();
   await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
 });

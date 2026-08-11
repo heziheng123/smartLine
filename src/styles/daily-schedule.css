@@ -687,6 +687,11 @@
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
 }
 
+.ds-item-menu[open] > div {
+  transform-origin: top right;
+  animation: ui-popover-in 120ms var(--ui-ease-enter) both;
+}
+
 .ds-item-menu > div button {
   display: flex;
   width: 100%;

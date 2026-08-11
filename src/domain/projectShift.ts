@@ -75,7 +75,7 @@ const nextSlotOrder = (items: ScheduledItem[], timeSlot: TimeSlot): number =>
 function shiftBlock(block: Block, days: number, previews: ProjectShiftTaskPreview[], taskId: string): Block {
   if (block.type !== 'smart-task') return block;
   const { header } = block;
-  if (header.isCompleted || header.isArchived || !header.date
+  if (header.isCompleted || header.isArchived || header.frozenAt || !header.date
     || !isValidCalendarDate(header.date) || isContinuousTask(block)) return block;
   const toDate = addDays(header.date, days);
   previews.push({
@@ -124,10 +124,10 @@ export function planProjectShift(task: Task, rawDays: number): ProjectShiftPlan 
     tasks,
     skippedCompleted: smartBlocks.filter((block) => block.header.isCompleted).length,
     skippedArchived: smartBlocks.filter((block) => block.header.isArchived).length,
-    skippedUnscheduled: smartBlocks.filter((block) => !block.header.isCompleted && !block.header.isArchived && !block.header.date).length,
+    skippedUnscheduled: smartBlocks.filter((block) => !block.header.isCompleted && !block.header.isArchived && !block.header.frozenAt && !block.header.date).length,
     skippedInvalidDates: smartBlocks.filter((block) => !block.header.isCompleted && !block.header.isArchived
-      && Boolean(block.header.date) && !isValidCalendarDate(block.header.date!)).length,
-    skippedContinuous: smartBlocks.filter((block) => !block.header.isCompleted && !block.header.isArchived && Boolean(block.header.date) && isContinuousTask(block)).length,
+      && !block.header.frozenAt && Boolean(block.header.date) && !isValidCalendarDate(block.header.date!)).length,
+    skippedContinuous: smartBlocks.filter((block) => !block.header.isCompleted && !block.header.isArchived && !block.header.frozenAt && Boolean(block.header.date) && isContinuousTask(block)).length,
     shiftedStart: nextTask.start,
     shiftedEnd: nextTask.end,
   };

@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarDays,
+  CalendarCheck2,
   Check,
   ChevronRight,
   Clock3,
@@ -40,6 +41,10 @@ interface TodayReviewViewProps {
   graphNodes: GraphNode[];
   inboxCount: number;
   onOpenInbox: () => void;
+  tomorrowMinutes: number;
+  tomorrowCapacity: number;
+  tomorrowRounds: number;
+  onOpenTomorrowPlan: () => void;
 }
 
 const slotIcon: Record<TimeSlot, string> = {
@@ -63,6 +68,10 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
   graphNodes,
   inboxCount,
   onOpenInbox,
+  tomorrowMinutes,
+  tomorrowCapacity,
+  tomorrowRounds,
+  onOpenTomorrowPlan,
 }) => {
   const today = todayStr();
   const [retrospectiveOpen, setRetrospectiveOpen] = useState(false);
@@ -122,13 +131,13 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
         || left.topicName.localeCompare(right.topicName, 'zh-CN')),
     [dueTasks, scheduledSourceIds],
   );
-  const futureTasks = useMemo(
+  const allFutureTasks = useMemo(
     () => tasks
       .filter((task) => !task.isCompleted && task.dueDate > selectedDate)
-      .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.topicName.localeCompare(right.topicName, 'zh-CN'))
-      .slice(0, 4),
+      .sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.topicName.localeCompare(right.topicName, 'zh-CN')),
     [selectedDate, tasks],
   );
+  const futureTasks = allFutureTasks.slice(0, 4);
 
   const getTaskForItem = (item: ScheduledItem) => {
     const taskId = item.sourceId.startsWith('review-') ? item.sourceId.slice('review-'.length) : '';
@@ -243,7 +252,20 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
           <input type="date" value={selectedDate} onChange={(event) => onSelectDate(event.target.value)} aria-label="今日复习日期" />
           <button type="button" onClick={() => onSelectDate(today)} disabled={selectedDate === today}>今天</button>
         </div>
-        <div className="eb-today-toolbar-hint">先安排，再按时段执行；跨日期移动会保留艾宾浩斯间隔</div>
+        <div className="eb-today-toolbar-right">
+          <span className="eb-today-toolbar-hint">先安排，再按时段执行</span>
+          <button
+            type="button"
+            className={`eb-tomorrow-load-button ${tomorrowMinutes > tomorrowCapacity ? 'is-over' : ''}`}
+            onClick={onOpenTomorrowPlan}
+            aria-label={`明日 ${tomorrowMinutes}/${tomorrowCapacity} 分钟`}
+          >
+            <CalendarCheck2 size={14} />
+            <span>明日 {tomorrowRounds} 轮</span>
+            <strong>{tomorrowMinutes}/{tomorrowCapacity} 分钟</strong>
+            {tomorrowMinutes > tomorrowCapacity && <em>超载 {tomorrowMinutes - tomorrowCapacity} 分钟</em>}
+          </button>
+        </div>
       </div>
 
       <section className="eb-today-summary" aria-label="今日复习状态">
@@ -323,11 +345,16 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
           )}
           {futureTasks.length > 0 && (
             <section className="eb-today-pool-secondary">
-              <header><strong>明日候选</strong><span>{futureTasks.length} 项</span></header>
+              <header><strong>近期计划</strong><span>{allFutureTasks.length} 项</span></header>
               {futureTasks.map((task) => {
                 const meta = getTaskMeta(task);
                 return <button type="button" key={task.id} onClick={() => taskActions.onOpenRounds(task)}><span className="eb-today-pool-secondary-dot" style={{ background: meta.color }} /><span>{task.topicName}</span><small>R{meta.round}/{meta.totalRounds} · {task.dueDate.slice(5).replace('-', '/')}</small><ChevronRight size={13} /></button>;
               })}
+              {allFutureTasks.length > futureTasks.length && (
+                <button type="button" className="eb-today-pool-secondary-more" onClick={onOpenTomorrowPlan}>
+                  <CalendarCheck2 size={13} /><span>还有 {allFutureTasks.length - futureTasks.length} 项，规划明日负荷</span><ChevronRight size={13} />
+                </button>
+              )}
             </section>
           )}
           <section className="eb-today-pool-secondary">

@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CalendarRange, ListChecks, Plus, RefreshCcw, Search, Trash2, X } from 'lucide-react';
-import { todayStr } from '@/utils/dateSafe';
+import { addDays, todayStr } from '@/utils/dateSafe';
 import type { EbbSettings, ReviewTask } from '../types';
 import {
   planBatchReviewAdjustment,
@@ -21,6 +21,7 @@ interface BatchAdjustPanelProps {
 type ActionKind = BatchReviewAction['kind'];
 
 const ACTIONS: Array<{ kind: ActionKind; label: string; description: string; icon: React.ReactNode }> = [
+  { kind: 'reanchor', label: '重排剩余轮次', description: '让每个计划的下一轮从指定日期开始', icon: <RefreshCcw size={15} /> },
   { kind: 'shift', label: '整体改期', description: '统一提前或顺延所有未完成轮次', icon: <CalendarRange size={15} /> },
   { kind: 'trim', label: '精简末尾轮次', description: '从每个计划末尾删除 N 个未完成轮次', icon: <Trash2 size={15} /> },
   { kind: 'append', label: '追加轮次', description: '为每个计划追加相同数量的未来轮次', icon: <Plus size={15} /> },
@@ -66,7 +67,8 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
 
   const [selectedKeys, setSelectedKeys] = useState(() => new Set(topics.map((topic) => topic.key)));
   const [query, setQuery] = useState('');
-  const [actionKind, setActionKind] = useState<ActionKind>('trim');
+  const [actionKind, setActionKind] = useState<ActionKind>('reanchor');
+  const [reanchorDate, setReanchorDate] = useState(() => addDays(todayStr(), 1));
   const [shiftDays, setShiftDays] = useState(7);
   const [trimCount, setTrimCount] = useState(2);
   const [appendCount, setAppendCount] = useState(1);
@@ -80,6 +82,7 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
   }, [query, topics]);
 
   const action = useMemo<BatchReviewAction>(() => {
+    if (actionKind === 'reanchor') return { kind: 'reanchor', startDate: reanchorDate };
     if (actionKind === 'shift') return { kind: 'shift', days: boundedInteger(shiftDays, -365, 365, 0) };
     if (actionKind === 'trim') return { kind: 'trim', count: boundedInteger(trimCount, 1, 12, 1), minRemaining: 1 };
     if (actionKind === 'append') return { kind: 'append', count: boundedInteger(appendCount, 1, 12, 1) };
@@ -88,12 +91,20 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
       startDate: templateStartDate,
       intervals: preset === 'custom' ? parseIntervals(customIntervals) : PRESETS[preset] ?? PRESETS.standard,
     };
-  }, [actionKind, appendCount, customIntervals, preset, shiftDays, templateStartDate, trimCount]);
+  }, [actionKind, appendCount, customIntervals, preset, reanchorDate, shiftDays, templateStartDate, trimCount]);
 
   const request = useMemo<BatchReviewRequest>(() => ({ topicKeys: [...selectedKeys], action }), [action, selectedKeys]);
   const preview = useMemo(() => planBatchReviewAdjustment(reviewTasks, settings, request), [request, reviewTasks, settings]);
   const selectedVisibleCount = visibleTopics.filter((topic) => selectedKeys.has(topic.key)).length;
   const allVisibleSelected = visibleTopics.length > 0 && selectedVisibleCount === visibleTopics.length;
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   const toggleVisible = () => setSelectedKeys((current) => {
     const next = new Set(current);
@@ -171,6 +182,9 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
             </div>
 
             <div className="eb-batch-parameters">
+              {actionKind === 'reanchor' && (
+                <label className="eb-batch-field"><span>每个计划的下一轮日期</span><input type="date" min={todayStr()} value={reanchorDate} onChange={(event) => setReanchorDate(event.target.value)} /><small>仅移动未完成轮次，并分别保持各计划当前间隔</small></label>
+              )}
               {actionKind === 'shift' && (
                 <label className="eb-batch-field"><span>调整天数</span><input type="number" value={shiftDays} min={-365} max={365} onChange={(event) => setShiftDays(Number(event.target.value))} /><small>正数顺延，负数提前</small></label>
               )}

@@ -9,7 +9,8 @@ import { diffDays, todayStr } from '@/utils/dateSafe';
 import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, Focus, MoveRight, Check, ListFilter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
-import { TimeCapsuleModal } from '@/components/GlobalSearch';
+import { ArchiveLibraryModal, TimeCapsuleModal } from '@/components/GlobalSearch';
+import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import {
   getQuantityCompleted,
   getQuantityProgressPercent,
@@ -187,9 +188,6 @@ export const KnowledgeGraphView: React.FC = () => {
   const dockControlsRef = useRef<HTMLDivElement>(null);
   const dockPanelRef = useRef<HTMLDivElement>(null);
 
-  // Portal into Dock
-  const dockPortalTarget = document.getElementById('tl-dock-portal-target');
-
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const svgRef = useRef<SVGSVGElement>(null);
@@ -198,6 +196,7 @@ export const KnowledgeGraphView: React.FC = () => {
 
   // Hover states
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
+  const [isArchiveLibraryOpen, setIsArchiveLibraryOpen] = useState(false);
 
   const [showHint, setShowHint] = useState(() => {
     return localStorage.getItem('knowledge-graph-hint-dismissed') !== 'true';
@@ -1026,8 +1025,15 @@ export const KnowledgeGraphView: React.FC = () => {
         ) : null}
       </AnimatePresence>
 
-      {/* Portal Dock Controls */}
-      {dockPortalTarget && createPortal(
+      {/* 页面级操作固定在知识大盘顶部，底部 Dock 只负责应用切换。 */}
+      {!bindingSession.active && <header className="kg-workspace-bar">
+        <div className="kg-workspace-heading">
+          <span className="kg-workspace-heading-icon"><Network size={18} /></span>
+          <div>
+            <h1>知识大盘</h1>
+            <p>{nodes.length} 个知识节点</p>
+          </div>
+        </div>
         <motion.div
           ref={dockControlsRef}
           layout
@@ -1036,11 +1042,9 @@ export const KnowledgeGraphView: React.FC = () => {
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 20 }}
           transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-          className="flex items-center gap-1 px-1"
-          data-testid="knowledge-graph-dock-actions"
+          className="kg-workspace-actions"
+          data-testid="knowledge-graph-page-actions"
         >
-          <div className="tl-dock-divider mx-0.5" />
-
           <div className="tl-dock-popover-wrap">
             <button
               type="button"
@@ -1057,7 +1061,7 @@ export const KnowledgeGraphView: React.FC = () => {
               <div
                 ref={dockPanelRef}
                 className="tl-dock-popover p-3"
-                style={{ position: 'fixed', left: '50%', bottom: 88, zIndex: 12000, width: 'min(300px, calc(100vw - 24px))', transform: 'translateX(-50%)' }}
+                style={{ position: 'fixed', right: 16, top: 72, zIndex: 12000, width: 'min(300px, calc(100vw - 24px))' }}
                 role="dialog"
                 aria-label="知识大盘视图设置"
               >
@@ -1130,7 +1134,7 @@ export const KnowledgeGraphView: React.FC = () => {
               <div
                 ref={dockPanelRef}
                 className="tl-dock-popover p-2"
-                style={{ position: 'fixed', left: '50%', bottom: 88, zIndex: 12000, width: 'min(250px, calc(100vw - 24px))', transform: 'translateX(-50%)' }}
+                style={{ position: 'fixed', right: 16, top: 72, zIndex: 12000, width: 'min(250px, calc(100vw - 24px))' }}
                 role="dialog"
                 aria-label="知识状态筛选菜单"
               >
@@ -1179,7 +1183,7 @@ export const KnowledgeGraphView: React.FC = () => {
               <div
                 ref={dockPanelRef}
                 className="tl-dock-popover p-3"
-                style={{ position: 'fixed', left: '50%', bottom: 88, zIndex: 12000, width: 'min(280px, calc(100vw - 24px))', transform: 'translateX(-50%)' }}
+                style={{ position: 'fixed', right: 16, top: 72, zIndex: 12000, width: 'min(280px, calc(100vw - 24px))' }}
                 role="search"
                 aria-label="搜索知识节点"
               >
@@ -1221,11 +1225,21 @@ export const KnowledgeGraphView: React.FC = () => {
               </motion.button>
             )}
           </AnimatePresence>
-        </motion.div>,
-        dockPortalTarget
-      )}
+          <SyncStatusIndicator />
+          <button
+            type="button"
+            onClick={() => setIsArchiveLibraryOpen(true)}
+            className="tl-dock-btn text-slate-500 hover:text-indigo-600"
+            title="归档库"
+            aria-label="打开归档库"
+          >
+            <Archive size={17} />
+          </button>
+        </motion.div>
+      </header>}
 
       {capsuleNodeId && <TimeCapsuleModal nodeId={capsuleNodeId} onClose={() => setCapsuleNodeId(null)} />}
+      <ArchiveLibraryModal isOpen={isArchiveLibraryOpen} onClose={() => setIsArchiveLibraryOpen(false)} />
 
       {/* SVG Sunburst Canvas */}
       <svg

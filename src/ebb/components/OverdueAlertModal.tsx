@@ -3,7 +3,7 @@
 // 启动时检测逾期任务，提示用户顺延或忽略
 // ============================================================
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Calendar, SkipForward, X } from 'lucide-react';
 import { useEbbStore } from '../store';
@@ -58,7 +58,15 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
 
   const toggleOne = selection.toggle;
 
-  // 顺延选中任务到今天
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  // 将选中主题的最早逾期轮次安排到今天，并保持后续轮次间隔
   const handleReschedule = useCallback(() => {
     if (selectedIds.size === 0) return;
     rescheduleOverdue(Array.from(selectedIds));
@@ -72,21 +80,21 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
   }, [overdueTasks, rescheduleOverdue, onClose]);
 
   return createPortal(
-    <div className="eb-modal-overlay" onClick={onClose}>
-      <div className="eb-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+    <div className="eb-modal-overlay eb-overdue-overlay" onClick={onClose}>
+      <div className="eb-modal eb-overdue-modal" role="dialog" aria-modal="true" aria-label="处理逾期复习" onClick={(e) => e.stopPropagation()}>
         <div className="eb-modal-header">
           <h3 className="eb-modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <AlertTriangle size={18} style={{ color: '#D4A0A0' }} />
-            逾期任务提醒
+            处理逾期复习
           </h3>
-          <button type="button" className="eb-modal-close" onClick={onClose}><X size={16} /></button>
+          <button type="button" className="eb-modal-close" onClick={onClose} aria-label="关闭逾期处理"><X size={16} /></button>
         </div>
         <div className="eb-modal-body">
-          <p className="eb-overdue-summary">
-            检测到 <strong>{overdueTasks.length}</strong> 个逾期未完成的复习任务，
-            涉及 <strong>{groupedByTopic.size}</strong> 个主题。
-            可以将逾期任务顺延至今天重新安排。
-          </p>
+          <div className="eb-overdue-summary">
+            <div><strong>{overdueTasks.length}</strong><span>逾期轮次</span></div>
+            <div><strong>{groupedByTopic.size}</strong><span>涉及计划</span></div>
+            <p>补做时只把每个计划最早的逾期轮次移到今天，后续轮次保持原间隔。</p>
+          </div>
 
           <div className="eb-overdue-list">
             {Array.from(groupedByTopic.entries()).map(([topicKey, tasks]) => (
@@ -166,11 +174,11 @@ const OverdueAlertModal: React.FC<OverdueAlertModalProps> = ({ onClose }) => {
               onClick={handleReschedule}
             >
               <Calendar size={14} />
-              顺延选中 ({selectedIds.size})
+              今天补做选中 ({selectedIds.size})
             </button>
             <button type="button" className="eb-btn eb-btn--primary" onClick={handleRescheduleAll}>
               <SkipForward size={14} />
-              全部顺延
+              今天补做全部
             </button>
           </div>
         </div>

@@ -20,7 +20,7 @@ export function collectOverdueFreezeTargets(
     for (const block of Array.isArray(task.blocks) ? task.blocks : []) {
       if (block.type !== 'smart-task') continue;
       const header = block.header;
-      if (header.isArchived || header.isCompleted || isContinuousTask(header) || !header.date) continue;
+      if (header.isArchived || header.isCompleted || header.frozenAt || isContinuousTask(header) || !header.date) continue;
       if (header.date >= thresholdDate) continue;
       targets.push({ taskId: task.id, blockId: block.id, expectedDate: header.date });
     }

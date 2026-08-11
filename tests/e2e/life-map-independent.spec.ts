@@ -65,7 +65,7 @@ test('人生地图创建人生计划只写入人生地图数据源', async ({ pa
   expect(editorLayout.horizontalOverflow).toBe(false);
 });
 
-test('项目规划任务不会投影到人生地图', async ({ page }) => {
+test('旧版关联字段不会让项目规划任务隐式投影到人生地图', async ({ page }) => {
   await page.evaluate(async () => {
     const [{ useTimelineStore }, { useLifeMapStore }] = await Promise.all([
       import('/src/store/index.ts'),
@@ -88,6 +88,58 @@ test('项目规划任务不会投影到人生地图', async ({ page }) => {
     const task = useTimelineStore.getState().tasks.find((item) => item.id === 'timeline-only') as Record<string, unknown> | undefined;
     return task ? ['planningAreaId' in task, 'lifeMapSource' in task] : null;
   })).toEqual([false, false]);
+});
+
+test('项目规划任务可显式投影到指定人生类别，并保持项目为唯一数据源', async ({ page }) => {
+  await page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    useTimelineStore.getState().addTask({
+      id: 'projected-task',
+      name: '健康类别中的项目投影',
+      start: '2026-08-01',
+      end: '2026-10-31',
+      color: '#10B981',
+      blocks: [],
+    });
+    window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: 'projected-task' } }));
+  });
+
+  await page.locator('.pdv-title').click();
+  const projectionEditor = page.locator('.tl-meta-life-map');
+  await projectionEditor.getByRole('checkbox', { name: /投影到人生地图/ }).check();
+  await projectionEditor.getByRole('combobox', { name: '人生类别' }).selectOption('health');
+  await expect.poll(() => page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    return useTimelineStore.getState().tasks.find((item) => item.id === 'projected-task')?.lifeMapProjection;
+  })).toEqual({ enabled: true, areaId: 'health', placement: 'above' });
+  await page.getByRole('button', { name: '关闭项目文档' }).click();
+
+  await page.getByTitle('人生地图').click();
+  const lifeMap = page.getByRole('main', { name: '人生地图' });
+  const projectedBand = lifeMap.locator('.life-line__project-band.is-life-plan').filter({ hasText: '健康类别中的项目投影' });
+  await expect(projectedBand).toBeVisible();
+
+  await projectedBand.click();
+  const focusCard = lifeMap.locator('.life-line__project-focus-card');
+  await expect(focusCard).toContainText('项目规划投影');
+  await expect(focusCard.getByRole('button', { name: '添加子阶段' })).toHaveCount(0);
+  await expect(focusCard.getByRole('button', { name: '维护' })).toHaveCount(0);
+  await expect(focusCard.getByRole('button', { name: '打开项目' })).toBeVisible();
+
+  await page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/store/index.ts');
+    const task = useTimelineStore.getState().tasks.find((item) => item.id === 'projected-task');
+    if (task) useTimelineStore.getState().updateTask({ ...task, name: '原项目改名后同步' });
+  });
+  await expect(lifeMap.locator('.life-line__project-band.is-life-plan').filter({ hasText: '原项目改名后同步' })).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+    return useLifeMapStore.getState().lifeMapGoals.some((item) => item.name === '原项目改名后同步');
+  })).toBe(false);
+
+  await expect(focusCard).toContainText('原项目改名后同步');
+  await focusCard.getByRole('button', { name: '打开项目' }).click();
+  await expect(page.locator('.pdv-container')).toContainText('原项目改名后同步');
 });
 
 test('同名数据的编辑和删除互不影响', async ({ page }) => {

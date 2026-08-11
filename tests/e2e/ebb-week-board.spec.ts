@@ -71,8 +71,9 @@ test.beforeEach(async ({ page }) => {
   }, { ebbData: ebb, dailyData: daily });
   await page.goto('/');
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('tab', { name: '看板视图' }).click();
-  await page.getByRole('button', { name: '下一周' }).click();
+  await page.getByRole('tab', { name: '复习计划' }).click();
+  await page.getByRole('button', { name: '日历' }).click();
+  await page.locator('.eb-week-board-nav').getByRole('button', { name: '下一周' }).click();
 });
 
 test('weekly board shows rounds under dates without topic rows', async ({ page }) => {
@@ -91,7 +92,7 @@ test('weekly board shows rounds under dates without topic rows', async ({ page }
 });
 
 test('matrix replaces the mini calendar with a compact week selector and highlights the selected date', async ({ page }) => {
-  await page.getByRole('tab', { name: '矩阵视图' }).click();
+  await page.getByRole('button', { name: '列表' }).click();
   await expect(page.locator('.eb-mini-cal')).toHaveCount(0);
   const strip = page.locator('.eb-compact-week');
   await expect(strip).toBeVisible();

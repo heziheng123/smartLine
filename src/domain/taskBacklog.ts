@@ -22,6 +22,7 @@ export interface BacklogTask {
   tagColor: string;
   duration: number;
   deadline?: string;
+  originalDate?: string;
   frozenAt?: string;
   graphNodeCount: number;
   block: SmartTaskBlock;
@@ -66,7 +67,8 @@ export function collectBacklogTasks(tasks: readonly Task[], groups: readonly Tas
       if (seen.has(key)) continue;
       seen.add(key);
       const header = block.header;
-      if (header.isCompleted || header.isArchived || header.date || isQuantityTask(header)) continue;
+      if (header.isCompleted || header.isArchived || isQuantityTask(header)) continue;
+      if (header.date && !header.frozenAt) continue;
       const descriptor = projectDescriptors.get(task.id);
       result.push({
         id: `backlog:${key}`,
@@ -82,6 +84,7 @@ export function collectBacklogTasks(tasks: readonly Task[], groups: readonly Tas
         tagColor: header.tagColor,
         duration: getTaskEstimatedMinutes(header),
         deadline: header.deadline,
+        originalDate: header.frozenAt ? header.date : undefined,
         frozenAt: header.frozenAt,
         graphNodeCount: getValidGraphNodeIds(header).length,
         block,
@@ -191,7 +194,7 @@ export function calculateDateWorkloads(input: {
   for (const task of tasks) {
     for (const block of getSmartTaskBlocks(task.blocks ?? [])) {
       const { header } = block;
-      if (header.isArchived || !header.date) continue;
+      if (header.isArchived || header.frozenAt || !header.date) continue;
       const sourceId = getProjectBlockSourceId(task.id, block.id);
       if (isQuantityTask(header)) {
         const lastActiveDate = header.isCompleted ? (header.completedDate ?? header.date) : undefined;

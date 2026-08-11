@@ -52,6 +52,7 @@ import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { parseSourceId } from './conversion';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
 import { openProjectTaskModal } from '@/components/smartBlock/projectTaskModal';
+import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import {
   resolveProjectAppearance,
 } from './projectAppearance';
@@ -972,8 +973,8 @@ const DailyScheduleView: React.FC = () => {
               每日复盘
               <span className={`ds-review-status ds-review-status--${retrospectiveStatus.tone}`}>{retrospectiveStatus.label}</span>
             </button>
-            <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日复习选择">
-              <CalendarCheck2 size={15} />明日复习选择
+            <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日负荷规划">
+              <CalendarCheck2 size={15} />明日负荷规划
             </button>
             {/* 视图模式切换 */}
             <div className="ds-mode-switch" role="tablist" aria-label="排期模式切换">
@@ -1009,6 +1010,7 @@ const DailyScheduleView: React.FC = () => {
                 时间段设置
               </button>
             )}
+            <SyncStatusIndicator />
           </div>
         </header>
 
@@ -1213,9 +1215,10 @@ const DailyScheduleView: React.FC = () => {
         {dailyPlanOpen && (
           <DailyReviewPlanner
             reviewTasks={ebbReviewTasks}
+            settings={ebbSettingsData}
             onApply={(request) => {
               const result = applyDailyReviewPlan(request);
-              setDailyPlanFeedback(`明日保留 ${result.keptCount} 轮，其余 ${result.deferredCount} 轮顺延一天`);
+              setDailyPlanFeedback(`已保存明日负荷：明日 ${result.keptCount} 轮，另有 ${result.deferredCount} 轮完成错峰`);
               return result;
             }}
             onClose={() => setDailyPlanOpen(false)}

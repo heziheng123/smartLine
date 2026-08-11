@@ -244,7 +244,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
                     </div>
                     <div className="eb-week-round-card-footer">
                       <span style={{ color: item.categoryColor }}>{item.categoryLabel}</span>
-                      <button type="button" onClick={(event) => { event.stopPropagation(); taskActions.onOpenRounds(item.task); }} aria-label={`管理${item.task.topicName}的全部轮次`}><ListChecks size={13} /></button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); taskActions.onOpenRounds(item.task); }} aria-label={`重新安排${item.task.topicName}的剩余轮次`}><ListChecks size={13} /></button>
                       <button type="button" onClick={(event) => { event.stopPropagation(); void taskActions.onToggle(item.task.id); }} aria-label={item.task.isCompleted ? `取消第${item.round}轮完成` : `标记第${item.round}轮完成`}><Check size={13} /></button>
                     </div>
                   </article>}

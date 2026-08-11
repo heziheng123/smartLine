@@ -189,6 +189,9 @@ export function normalizeEbbData(value: unknown): EbbData {
       && incomingSettings.loadThresholds.length === 4
       ? incomingSettings.loadThresholds
       : DEFAULT_EBB_SETTINGS.loadThresholds,
+    dailyReviewMinutes: Number.isFinite(incomingSettings?.dailyReviewMinutes)
+      ? Math.min(480, Math.max(15, Math.trunc(incomingSettings!.dailyReviewMinutes!)))
+      : DEFAULT_EBB_SETTINGS.dailyReviewMinutes,
   };
   return {
     reviewTasks,

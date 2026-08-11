@@ -102,7 +102,7 @@ function convertLegacySettings(data: UnknownData): EbbSettings {
       ? d.collapsedGroups.filter((g): g is string => typeof g === 'string')
       : DEFAULT_EBB_SETTINGS.collapsedGroups,
     // 以下字段旧格式中不存在，使用默认值：
-    // customIntervals, dailyTaskLimit, dailyPointLimit, complexityConfigs, loadThresholds
+    // customIntervals, dailyTaskLimit, dailyPointLimit, dailyReviewMinutes, complexityConfigs, loadThresholds
   };
 }
 

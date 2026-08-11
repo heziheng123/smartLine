@@ -14,6 +14,7 @@ import {
 import { LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
 import type { LifeArea, LifeGoal, LifeMapPlanGroupId, LifeMapPlanGroupPreference, LifeSystem } from '@/lifeMap/types';
 import LifeMapCreateMenu from './LifeMapCreateMenu';
+import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import '@/styles/life-map.css';
 
 interface LifeMapViewProps {
@@ -603,7 +604,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         maintenanceReason: task.lifeMapMaintenanceReason,
       });
 
-      getSmartTaskBlocks(task.blocks ?? []).filter((block) => !block.header.isArchived).forEach((block) => {
+      getSmartTaskBlocks(task.blocks ?? []).filter((block) => !block.header.isArchived && !block.header.frozenAt).forEach((block) => {
         const actionDate = block.header.date ?? block.header.deadline;
         if (validDate(actionDate)) {
           nextNodes.push({
@@ -982,6 +983,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const hasProjectRowsAbove = planTopExtent > 0 || projectAboveLaneCount > 0;
   const hasProjectRowsBelow = planBottomExtent > 0 || projectBelowLaneCount > 0;
   const selectedProjectBand = selectedProjectId ? projectBandIndex.byTaskId.get(selectedProjectId) : undefined;
+  const selectedProjectIsTimelineProjection = selectedProjectBand?.taskId?.startsWith('goal:timeline-project:') ?? false;
   const activeProjectId = selectedProjectId ?? hoveredProjectId;
   const visibleAnnotations = useMemo(() => annotations.filter((annotation) => {
     if (!layers.annotations) return false;
@@ -1843,6 +1845,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                 </section>
               </div>}
             </div>
+            <SyncStatusIndicator />
           </div>
         </div>
         <div className="life-line__plan-filter" role="group" aria-label="人生计划泳道筛选" data-testid="life-map-plan-filter">
@@ -2027,18 +2030,18 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             {selectedProjectBand && <aside className="life-line__project-focus-card">
               <header>
                 <i style={{ '--project-color': selectedProjectBand.color } as React.CSSProperties} />
-                <span><small>{selectedProjectBand.groupName} · {selectedProjectBand.lifeMapKind === 'system' ? '长期系统' : selectedProjectBand.lifeMapKind === 'plan' ? '项目' : selectedProjectBand.lifeMapKind === 'phase' ? '项目子阶段' : `${selectedProjectBand.start.format('M月D日')}—${selectedProjectBand.end.format('M月D日')}`}</small><strong>{selectedProjectBand.title}</strong></span>
+                <span><small>{selectedProjectBand.groupName} · {selectedProjectIsTimelineProjection ? '项目规划投影' : selectedProjectBand.lifeMapKind === 'system' ? '长期系统' : selectedProjectBand.lifeMapKind === 'plan' ? '项目' : selectedProjectBand.lifeMapKind === 'phase' ? '项目子阶段' : `${selectedProjectBand.start.format('M月D日')}—${selectedProjectBand.end.format('M月D日')}`}</small><strong>{selectedProjectBand.title}</strong></span>
                 <em>{selectedProjectBand.meta ?? `${Math.round(selectedProjectBand.progress * 100)}%`}</em>
                 <button type="button" className="is-close" onClick={() => setSelectedProjectId(null)} aria-label="退出规划聚焦"><X size={13} /></button>
               </header>
               <div className="life-line__project-focus-actions">
-                {selectedProjectBand.lifeMapKind !== 'phase' && <div className="life-line__project-side-switch" role="group" aria-label="规划线位置">
+                {!selectedProjectIsTimelineProjection && selectedProjectBand.lifeMapKind !== 'phase' && <div className="life-line__project-side-switch" role="group" aria-label="规划线位置">
                   <button type="button" className={selectedProjectBand.side === 'above' ? 'is-active' : ''} aria-label="放到时间轴上方" aria-pressed={selectedProjectBand.side === 'above'} onClick={() => selectedProjectBand.taskId && setProjectSide(selectedProjectBand.taskId, 'above')}>上方</button>
                   <button type="button" className={selectedProjectBand.side === 'below' ? 'is-active' : ''} aria-label="放到时间轴下方" aria-pressed={selectedProjectBand.side === 'below'} onClick={() => selectedProjectBand.taskId && setProjectSide(selectedProjectBand.taskId, 'below')}>下方</button>
                 </div>}
-                {selectedProjectBand.lifeMapKind === 'plan' && onCreatePhaseForPlan && <button type="button" onClick={() => selectedProjectBand.taskId && onCreatePhaseForPlan(selectedProjectBand.taskId)}>添加子阶段</button>}
-                {selectedProjectBand.lifeMapKind === 'plan' && onManageProjectMaintenance && <button type="button" onClick={() => selectedProjectBand.taskId && onManageProjectMaintenance(selectedProjectBand.taskId)}>维护</button>}
-                <button type="button" className="is-open" onClick={() => selectedProjectBand.taskId && onOpenTask(selectedProjectBand.taskId)}>编辑</button>
+                {!selectedProjectIsTimelineProjection && selectedProjectBand.lifeMapKind === 'plan' && onCreatePhaseForPlan && <button type="button" onClick={() => selectedProjectBand.taskId && onCreatePhaseForPlan(selectedProjectBand.taskId)}>添加子阶段</button>}
+                {!selectedProjectIsTimelineProjection && selectedProjectBand.lifeMapKind === 'plan' && onManageProjectMaintenance && <button type="button" onClick={() => selectedProjectBand.taskId && onManageProjectMaintenance(selectedProjectBand.taskId)}>维护</button>}
+                <button type="button" className="is-open" onClick={() => selectedProjectBand.taskId && onOpenTask(selectedProjectBand.taskId)}>{selectedProjectIsTimelineProjection ? '打开项目' : '编辑'}</button>
               </div>
             </aside>}
 
@@ -2155,36 +2158,6 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
                 data-anchor-count={count}
                 data-anchor-date={node.date.format('YYYY-MM-DD')}
               >
-              </button>
-            ))}
-
-            {taskMarkerClusters.some((cluster) => intersectsRenderWindow(dateToX(cluster.date))) && <div className="life-line__task-rhythm-rail" style={{ top: axisY + 37 }} aria-label="每日任务节奏带" />}
-            {taskMarkerClusters.filter((cluster) => intersectsRenderWindow(dateToX(cluster.date))).map((cluster) => (
-              <button
-                type="button"
-                className={`life-line__task-marker ${selectedTaskDate === cluster.key ? 'is-selected' : ''} ${cluster.nodes.some((node) => node.kind === 'deadline') ? 'has-deadline' : ''} ${activeProjectId && !cluster.nodes.some((node) => node.taskId === activeProjectId) ? 'is-muted' : ''} ${activeProjectId && cluster.nodes.some((node) => node.taskId === activeProjectId) ? 'is-related' : ''}`}
-                key={`task-marker:${cluster.key}`}
-                style={{ left: dateToX(cluster.date), top: axisY + 65, '--task-color': cluster.color, '--task-rhythm-height': `${Math.min(24, Math.max(5, Math.round(cluster.minutes / 60 * 4)))}px` } as React.CSSProperties}
-                onClick={() => setSelectedTaskDate((current) => current === cluster.key ? null : cluster.key)}
-                onDoubleClick={() => { const node = cluster.nodes[0]; if (node?.taskId) onOpenTask(node.taskId, node.blockId); }}
-                aria-label={cluster.nodes.length === 1 && !cluster.aggregate ? `${cluster.nodes[0].title}，${cluster.date.format('YYYY年M月D日')}` : `${cluster.label}，${cluster.nodes.length}项任务`}
-                title={`${cluster.label} · ${cluster.nodes.length} 项任务`}
-                data-preview={cluster.nodes.length === 1 ? cluster.nodes[0].title : `${cluster.nodes.length} 项任务`}
-              >
-                {cluster.nodes.length > 1 && (zoom === 'week' || zoom === 'day') && <b className="life-line__task-count">{cluster.nodes.length}</b>}
-                <span
-                  className="life-line__task-pulse"
-                  aria-hidden="true"
-                >
-                  {cluster.nodes.slice(0, zoom === 'week' ? 2 : 4).map((node) => (
-                    <i key={`pulse:${node.id}`} style={{ '--pulse-color': node.color } as React.CSSProperties} />
-                  ))}
-                </span>
-                <span className="life-line__task-tooltip" aria-hidden="true">
-                  <small>{cluster.label} · {cluster.nodes.length}项任务</small>
-                  {cluster.nodes.slice(0, 5).map((node) => <span key={`preview:${node.id}`}><i style={{ '--dot-color': node.color } as React.CSSProperties} />{node.title}</span>)}
-                  {cluster.nodes.length > 5 && <em>还有 {cluster.nodes.length - 5} 项，点击查看全部</em>}
-                </span>
               </button>
             ))}
 

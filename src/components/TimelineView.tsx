@@ -5,13 +5,21 @@
 import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  BookmarkPlus,
+  CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   ChevronsDownUp,
   ChevronsUpDown,
+  Cloud,
+  Flag,
+  FolderPlus,
   GripVertical,
+  MoreHorizontal,
+  Plus,
   Search,
   Settings2,
   X,
@@ -38,6 +46,7 @@ import {
   sliceTasksForYear,
 } from '@/utils/timeline-utils';
 import MonthRow from './MonthRow';
+import SyncStatusIndicator from './SyncStatusIndicator';
 
 interface TimelinePreferences {
   density: TimelineDensity;
@@ -163,6 +172,12 @@ interface TimelineViewProps {
   notes: Note[];
   milestones: Milestone[];
   displayYear: number;
+  onYearChange: (year: number) => void;
+  onAddTask: () => void;
+  onAddGroup: () => void;
+  onAddNote: () => void;
+  onAddMilestone: () => void;
+  onOpenSync: () => void;
   onTaskClick?: (task: Task) => void;
   onTaskContextMenu?: (e: React.MouseEvent, taskId: string) => void;
   onNoteDoubleClick?: (note: Note) => void;
@@ -179,6 +194,12 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   notes,
   milestones,
   displayYear,
+  onYearChange,
+  onAddTask,
+  onAddGroup,
+  onAddNote,
+  onAddMilestone,
+  onOpenSync,
   onTaskClick,
   onTaskContextMenu,
   onNoteDoubleClick,
@@ -193,21 +214,23 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   const [projectQuery, setProjectQuery] = useState('');
   const [isProjectPanelOpen, setIsProjectPanelOpen] = useState(false);
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
-  const [dockPortalTarget, setDockPortalTarget] = useState<HTMLElement | null>(null);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [draggedGroupId, setDraggedGroupId] = useState<string | null>(null);
   const viewMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setDockPortalTarget(document.getElementById('tl-dock-portal-target'));
-  }, []);
-
-  useEffect(() => {
-    if (!isViewMenuOpen) return;
+    if (!isViewMenuOpen && !isMoreMenuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!viewMenuRef.current?.contains(event.target as Node)) setIsViewMenuOpen(false);
+      const target = event.target as Node;
+      if (!viewMenuRef.current?.contains(target)) setIsViewMenuOpen(false);
+      if (!moreMenuRef.current?.contains(target)) setIsMoreMenuOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsViewMenuOpen(false);
+      if (event.key === 'Escape') {
+        setIsViewMenuOpen(false);
+        setIsMoreMenuOpen(false);
+      }
     };
     document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
@@ -215,7 +238,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isViewMenuOpen]);
+  }, [isMoreMenuOpen, isViewMenuOpen]);
 
   useEffect(() => {
     if (!isProjectPanelOpen) return;
@@ -387,21 +410,24 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     updatePreferences({ hiddenGroupIds: [], hideCompleted: false });
   };
 
-  const dockViewControl = dockPortalTarget ? createPortal(
-    <div className="tl-dock-popover-wrap" ref={viewMenuRef}>
+  const viewControl = (
+    <div className="tl-workspace-menu-wrap" ref={viewMenuRef}>
       <button
-        className={`tl-dock-btn ${isViewMenuOpen || activeFilterCount > 0 || preferences.density !== 'standard' ? 'tl-dock-btn--view-active' : ''}`}
+        className={`tl-workspace-icon-btn ${isViewMenuOpen || activeFilterCount > 0 || preferences.density !== 'standard' ? 'tl-workspace-icon-btn--active' : ''}`}
         type="button"
-        onClick={() => setIsViewMenuOpen((open) => !open)}
-        title="时间线视图"
+        onClick={() => {
+          setIsMoreMenuOpen(false);
+          setIsViewMenuOpen((open) => !open);
+        }}
+        title="搜索与显示"
         aria-haspopup="dialog"
         aria-expanded={isViewMenuOpen}
       >
         <Settings2 size={18} />
-        {activeFilterCount > 0 && <span className="tl-dock-status-badge">{activeFilterCount}</span>}
+        {activeFilterCount > 0 && <span className="tl-workspace-status-badge">{activeFilterCount}</span>}
       </button>
       {isViewMenuOpen && (
-        <div className="tl-dock-popover tl-view-menu" role="dialog" aria-label="时间线视图设置">
+        <div className="tl-workspace-menu-panel tl-view-menu" role="dialog" aria-label="时间线视图设置">
           <div className="tl-view-menu-title">时间线视图</div>
           <div className="tl-density-switch" role="group" aria-label="显示密度">
             {(['compact', 'standard', 'detailed'] as const).map((density) => (
@@ -451,11 +477,66 @@ const TimelineView: React.FC<TimelineViewProps> = ({
             <span>项目显示与排序</span>
             <ChevronRight size={15} />
           </button>
+
         </div>
       )}
-    </div>,
-    dockPortalTarget,
-  ) : null;
+    </div>
+  );
+
+  const runMoreAction = (action: () => void) => {
+    setIsMoreMenuOpen(false);
+    action();
+  };
+
+  const workspaceHeader = (
+    <header className="tl-workspace-bar">
+      <div className="tl-workspace-heading">
+        <CalendarDays size={17} aria-hidden="true" />
+        <h1>项目规划</h1>
+      </div>
+
+      <div className="tl-workspace-actions">
+        <div className="tl-workspace-year" aria-label="时间线年份">
+          <button type="button" onClick={() => onYearChange(displayYear - 1)} title="上一年"><ChevronLeft size={16} /></button>
+          <span>{displayYear}</span>
+          <button type="button" onClick={() => onYearChange(displayYear + 1)} title="下一年"><ChevronRight size={16} /></button>
+        </div>
+
+        <button type="button" className="tl-workspace-primary-btn" onClick={onAddTask}>
+          <Plus size={17} />
+          <span>新建项目</span>
+        </button>
+
+        {viewControl}
+
+        <SyncStatusIndicator />
+
+        <div className="tl-workspace-menu-wrap" ref={moreMenuRef}>
+          <button
+            type="button"
+            className={`tl-workspace-icon-btn ${isMoreMenuOpen ? 'tl-workspace-icon-btn--active' : ''}`}
+            onClick={() => {
+              setIsViewMenuOpen(false);
+              setIsMoreMenuOpen((open) => !open);
+            }}
+            title="更多"
+            aria-haspopup="menu"
+            aria-expanded={isMoreMenuOpen}
+          >
+            <MoreHorizontal size={18} />
+          </button>
+          {isMoreMenuOpen && (
+            <div className="tl-workspace-menu-panel tl-create-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => runMoreAction(onAddGroup)}><FolderPlus size={16} /><span>新建项目分组</span></button>
+              <button type="button" role="menuitem" onClick={() => runMoreAction(onAddNote)}><BookmarkPlus size={16} /><span>新建便签</span></button>
+              <button type="button" role="menuitem" onClick={() => runMoreAction(onAddMilestone)}><Flag size={16} /><span>新建里程碑</span></button>
+              <button type="button" role="menuitem" onClick={() => runMoreAction(onOpenSync)}><Cloud size={16} /><span>同步与备份</span></button>
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  );
 
   const projectDrawer = isProjectPanelOpen ? createPortal(
     <div className="tl-project-drawer-overlay" onPointerDown={(event) => {
@@ -512,7 +593,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
 
   return (
     <div className={`tl-year-stack tl-year-stack--${preferences.density}`}>
-      {dockViewControl}
+      {workspaceHeader}
 
       {activeFilterCount > 0 && (
         <div className="tl-filter-status">

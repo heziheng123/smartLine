@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { ChevronDown, Eye, EyeOff, FastForward, Layers3, ListFilter, Palette, PauseCircle, Play, Plus, Settings2, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
+import { useTimelineStore } from '@/store';
 import { activeLifeMapItems, LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
 import { calculateGoalProgress, currentSystemStats, systemCompletedForRange, systemTargetForRange } from '@/lifeMap/metrics';
 import { useLifeMapStore, type LifeMapShiftSnapshot } from '@/lifeMap/store';
@@ -40,6 +41,7 @@ const compareAreas = (left: { planGroupId: LifeMapPlanGroupId; order: number; id
 );
 
 const LifeMapWorkspace: React.FC = () => {
+  const timelineTasks = useTimelineStore((state) => state.tasks);
   const store = useLifeMapStore(useShallow((state) => ({
     isHydrated: state.isHydrated,
     lifeMapAreas: state.lifeMapAreas,
@@ -150,6 +152,27 @@ const LifeMapWorkspace: React.FC = () => {
   );
   const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
   const selectedArea = selectedAreaId === 'all' ? null : areaById.get(selectedAreaId) ?? null;
+  const allProjectedTimelineTasks = useMemo(() => timelineTasks.filter((task) => {
+    const projection = task.lifeMapProjection;
+    return projection?.enabled && areaById.has(projection.areaId);
+  }), [areaById, timelineTasks]);
+  const projectedTimelineTasks = useMemo(() => allProjectedTimelineTasks.filter((task) => (
+    visibleAreaIds.has(task.lifeMapProjection!.areaId)
+  )), [allProjectedTimelineTasks, visibleAreaIds]);
+  const projectedPlanGoals = useMemo<LifeGoal[]>(() => projectedTimelineTasks.map((task) => ({
+    id: `timeline-project:${task.id}`,
+    areaId: task.lifeMapProjection!.areaId,
+    name: task.name,
+    start: task.start,
+    targetDate: task.end,
+    color: task.color ?? areaById.get(task.lifeMapProjection!.areaId)?.color,
+    placement: task.lifeMapProjection!.placement,
+    status: task.completed ? 'completed' : 'active',
+    kind: 'plan',
+    createdAt: '',
+    updatedAt: '',
+    revision: 0,
+  })), [areaById, projectedTimelineTasks]);
   useEffect(() => {
     if (selectedAreaId !== 'all' && !areaById.has(selectedAreaId)) setSelectedAreaId('all');
   }, [areaById, selectedAreaId]);
@@ -190,8 +213,9 @@ const LifeMapWorkspace: React.FC = () => {
     activeLifeMapItems(store.lifeMapEvents).forEach((item) => count(item.areaId));
     activeLifeMapItems(store.lifeMapFocuses).forEach((item) => count(item.areaId));
     activeLifeMapItems(store.lifeMapNotes).forEach((item) => count(item.areaId));
+    allProjectedTimelineTasks.forEach((item) => count(item.lifeMapProjection?.areaId));
     return counts;
-  }, [store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapSystems, store.lifeMapThemes]);
+  }, [allProjectedTimelineTasks, store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapSystems, store.lifeMapThemes]);
   const reviews = useMemo(() => activeLifeMapItems(store.lifeMapReviews), [store.lifeMapReviews]);
   const checkIns = useMemo(() => activeLifeMapItems(store.lifeMapSystemCheckIns), [store.lifeMapSystemCheckIns]);
   const hasVisibleLifeMapContent = useMemo(() => (
@@ -203,7 +227,8 @@ const LifeMapWorkspace: React.FC = () => {
     || activeLifeMapItems(store.lifeMapFocuses).length > 0
     || activeLifeMapItems(store.lifeMapNotes).length > 0
     || activeLifeMapItems(store.lifeMapReviews).length > 0
-  ), [store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapReviews, store.lifeMapStages, store.lifeMapSystems, store.lifeMapThemes]);
+    || allProjectedTimelineTasks.length > 0
+  ), [allProjectedTimelineTasks, store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapReviews, store.lifeMapStages, store.lifeMapSystems, store.lifeMapThemes]);
   const activeSystems = systems.filter((item) => item.status === 'active');
   const systemStats = useMemo(() => new Map(systems.map((item) => [item.id, currentSystemStats({
     ...item,
@@ -214,12 +239,16 @@ const LifeMapWorkspace: React.FC = () => {
     return stats && stats.target > 0 && stats.completed >= stats.target;
   }).length;
   const areaScopeStats = useMemo(() => {
-    const result = new Map<string, { plans: number; systems: number; reached: number; theme?: string }>();
-    areas.forEach((area) => result.set(area.id, { plans: 0, systems: 0, reached: 0 }));
+    const result = new Map<string, { plans: number; projected: number; systems: number; reached: number; theme?: string }>();
+    areas.forEach((area) => result.set(area.id, { plans: 0, projected: 0, systems: 0, reached: 0 }));
     allGoals.forEach((item) => {
       if (item.kind !== 'plan') return;
       const stat = result.get(item.areaId);
       if (stat) stat.plans += 1;
+    });
+    allProjectedTimelineTasks.forEach((item) => {
+      const stat = result.get(item.lifeMapProjection!.areaId);
+      if (stat) stat.projected += 1;
     });
     activeLifeMapItems(store.lifeMapSystems).forEach((item) => {
       const stat = result.get(item.areaId);
@@ -236,7 +265,7 @@ const LifeMapWorkspace: React.FC = () => {
       if (stat && !stat.theme) stat.theme = item.name;
     });
     return result;
-  }, [allGoals, areaById, areas, checkIns, store.lifeMapSystems, store.lifeMapThemes]);
+  }, [allGoals, allProjectedTimelineTasks, areaById, areas, checkIns, store.lifeMapSystems, store.lifeMapThemes]);
 
   const rangesByArea = useMemo(() => {
     const result = new Map<string, Array<[string, string]>>();
@@ -246,10 +275,11 @@ const LifeMapWorkspace: React.FC = () => {
       result.set(areaId, ranges);
     };
     planningItems.forEach((item) => append(item.areaId, [item.start, item.targetDate]));
+    projectedTimelineTasks.forEach((item) => append(item.lifeMapProjection!.areaId, [item.start, item.end]));
     systems.forEach((item) => append(item.areaId, [item.start, item.end ?? dayjs().add(5, 'year').format('YYYY-MM-DD')]));
     themes.forEach((item) => append(item.areaId, [item.start, item.end]));
     return result;
-  }, [planningItems, systems, themes]);
+  }, [planningItems, projectedTimelineTasks, systems, themes]);
 
   const groups = useMemo<TaskGroup[]>(() => areas.filter((area) => selectedAreaId === 'all' || visibleAreaIds.has(area.id)).map((area) => {
     const ranges = rangesByArea.get(area.id) ?? [];
@@ -289,6 +319,15 @@ const LifeMapWorkspace: React.FC = () => {
       lifeMapMaintenanceActive: Boolean(currentMaintenance), lifeMapMaintenanceReason: currentMaintenance?.reason,
       };
     }),
+    ...projectedTimelineTasks.map((item) => ({
+      ...item,
+      id: `goal:timeline-project:${item.id}`,
+      groupId: item.lifeMapProjection!.areaId,
+      isMain: true,
+      lifeMapKind: 'plan' as const,
+      lifeMapMeta: '来自项目规划 · 只读投影',
+      lifeMapPlacement: item.lifeMapProjection!.placement,
+    })),
     ...systems.map((item) => {
       const maintenancePeriods = mergeMaintenancePeriods(item.maintenancePeriods, areaById.get(item.areaId)?.maintenancePeriods);
       const currentMaintenance = activeMaintenancePeriod(maintenancePeriods);
@@ -309,7 +348,7 @@ const LifeMapWorkspace: React.FC = () => {
       color: '#64748B', groupId: item.areaIds?.[0] ?? groups[0]?.id, completed: true, blocks: [],
       lifeMapKind: 'review' as const, lifeMapMeta: item.period === 'month' ? '月度复盘' : '季度复盘', lifeMapPlacement: 'below' as const,
     })),
-  ], [areaById, checkIns, groups, planningIndex, planningItems, reviews, systemStats, systems]);
+  ], [areaById, checkIns, groups, planningIndex, planningItems, projectedTimelineTasks, reviews, systemStats, systems]);
   const tasks = lifeMapTasks;
 
   const notes = useMemo<Note[]>(() => [
@@ -394,6 +433,12 @@ const LifeMapWorkspace: React.FC = () => {
     };
   }, [toolbarMenu]);
   const openEntity = (taskId: string) => {
+    const projectedTaskPrefix = 'goal:timeline-project:';
+    if (taskId.startsWith(projectedTaskPrefix)) {
+      const sourceTaskId = taskId.slice(projectedTaskPrefix.length);
+      if (sourceTaskId) window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { taskId: sourceTaskId } }));
+      return;
+    }
     const [kind, id] = taskId.split(':');
     if (!id || !['goal', 'system', 'theme', 'review'].includes(kind)) return;
     if (kind === 'review') {
@@ -686,7 +731,7 @@ const LifeMapWorkspace: React.FC = () => {
       notes={notes}
       milestones={milestones}
       lifeStages={stages}
-      planGoals={[...plans, ...phases]}
+      planGoals={[...plans, ...phases, ...projectedPlanGoals]}
       planSystems={systems}
       planAreas={areas}
       planGroups={planGroups}
@@ -701,14 +746,14 @@ const LifeMapWorkspace: React.FC = () => {
         >
           {selectedArea ? <span className="life-map-scope__dot" style={{ background: selectedArea.color }} /> : <ListFilter size={14} />}
           <span>{selectedArea?.name ?? '全部人生'}</span>
-          <small>{selectedAreaMaintenance ? '维护中' : selectedArea ? `${plans.length}个人生计划${phases.length ? ` · ${phases.length}个阶段` : ''}` : `${activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length}个人生计划 · ${reachedSystemCount}/${activeSystems.length}系统达标`}</small>
+          <small>{selectedAreaMaintenance ? '维护中' : selectedArea ? `${plans.length}个人生计划${projectedTimelineTasks.length ? ` · ${projectedTimelineTasks.length}个项目投影` : ''}${phases.length ? ` · ${phases.length}个阶段` : ''}` : `${activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length}个人生计划 · ${allProjectedTimelineTasks.length}个项目投影 · ${reachedSystemCount}/${activeSystems.length}系统达标`}</small>
           <ChevronDown size={13} />
         </button>
         {toolbarMenu === 'areas' && <div className="life-map-scope__menu" role="menu" aria-label="选择人生领域">
           <header><strong>查看范围</strong><small>一次聚焦一个领域，时间坐标保持不变</small></header>
           {selectedArea && <button type="button" className="life-map-scope__maintenance" onClick={() => openMaintenance('area', selectedArea.id, selectedArea.name)}>{selectedAreaMaintenance ? <Play size={16} /> : <PauseCircle size={16} />}<span><b>{selectedAreaMaintenance ? `结束“${selectedArea.name}”维护` : `“${selectedArea.name}”进入维护`}</b><small>{selectedAreaMaintenance ? `${selectedAreaMaintenance.start} 起暂停统计，唤醒时可顺延计划` : '维护期间长期系统不计算未完成'}</small></span></button>}
           <button type="button" role="menuitemradio" aria-checked={selectedAreaId === 'all'} onClick={() => { setSelectedAreaId('all'); setToolbarMenu(null); }}>
-            <ListFilter size={16} /><span><b>全部人生</b><small>{areas.length} 个二级分类 · {activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length} 个人生计划 · {activeLifeMapItems(store.lifeMapSystems).length} 个长期系统</small></span>
+            <ListFilter size={16} /><span><b>全部人生</b><small>{areas.length} 个二级分类 · {activeLifeMapItems(store.lifeMapGoals).filter((item) => item.kind === 'plan').length} 个人生计划 · {allProjectedTimelineTasks.length} 个项目投影 · {activeLifeMapItems(store.lifeMapSystems).length} 个长期系统</small></span>
           </button>
           {(['learning', 'work', 'life'] as const).map((groupId) => {
             const groupAreas = areas.filter((area) => area.planGroupId === groupId);
@@ -716,9 +761,9 @@ const LifeMapWorkspace: React.FC = () => {
               <strong className="life-map-scope__group-title">{LIFE_MAP_PLAN_GROUP_META[groupId].name}</strong>
               {groupAreas.length === 0 && <small className="life-map-scope__group-empty">暂无可见二级分类</small>}
               {groupAreas.map((area) => {
-                const stats = areaScopeStats.get(area.id) ?? { plans: 0, systems: 0, reached: 0 };
+                const stats = areaScopeStats.get(area.id) ?? { plans: 0, projected: 0, systems: 0, reached: 0 };
                 return <button key={area.id} type="button" role="menuitemradio" aria-checked={selectedAreaId === area.id} onClick={() => { setSelectedAreaId(area.id); setToolbarMenu(null); }}>
-                  <span className="life-map-scope__dot" style={{ background: area.color }} /><span><b>{area.name}</b><small>{stats.theme ?? `${stats.plans} 个项目 · ${stats.systems} 个系统`}{stats.systems > 0 ? ` · ${stats.reached}/${stats.systems}达标` : ''}</small></span>
+                  <span className="life-map-scope__dot" style={{ background: area.color }} /><span><b>{area.name}</b><small>{stats.theme ?? `${stats.plans} 个人生计划 · ${stats.projected} 个项目投影 · ${stats.systems} 个系统`}{stats.systems > 0 ? ` · ${stats.reached}/${stats.systems}达标` : ''}</small></span>
                 </button>;
               })}
             </section>;
@@ -730,17 +775,19 @@ const LifeMapWorkspace: React.FC = () => {
       onCreatePlan={() => openCreate('plan')}
       onCreatePhase={plans.length > 0 ? () => openCreate('phase') : undefined}
       onCreatePhaseForPlan={(taskId) => {
-        if (taskId.startsWith('goal:')) openCreate('phase', { planId: taskId.slice('goal:'.length) });
+        if (taskId.startsWith('goal:') && !taskId.startsWith('goal:timeline-project:')) openCreate('phase', { planId: taskId.slice('goal:'.length) });
       }}
       onCreateSystem={() => openCreate('system')}
       onOpenPlanning={() => setPlanningDrawerOpen(true)}
       lifeStageEditorRequest={lifeStageEditorRequest}
       onManageProjectMaintenance={(taskId) => {
+        if (taskId.startsWith('goal:timeline-project:')) return;
         const id = taskId.replace(/^goal:/, '');
         const plan = goals.find((item) => item.id === id && item.kind === 'plan');
         if (plan) openMaintenance('plan', plan.id, plan.name);
       }}
       onUpdateProjectPlacement={(id, placement) => {
+        if (id.startsWith('goal:timeline-project:')) return;
         if (id.startsWith('goal:')) {
           const goalId = id.slice('goal:'.length);
           const goal = activeLifeMapItems(store.lifeMapGoals).find((item) => item.id === goalId);

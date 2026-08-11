@@ -86,7 +86,7 @@ const openReviewTopic = async (page: Page, topicName: string) => {
   await page.getByTitle('艾宾浩斯复习').click();
   // 主题行（.eb-topic-row-main）位于「复习库」标签页的矩阵视图中，
   // 「今日复习」标签页不渲染主题行，因此需要先切换到「复习库」。
-  await page.getByRole('tab', { name: /复习库/ }).click();
+  await page.getByRole('tab', { name: /复习计划/ }).click();
   const row = page.locator('.eb-topic-row-main').filter({ hasText: topicName });
   await expect(row).toBeVisible();
   await row.click();
@@ -106,7 +106,7 @@ test.beforeEach(async ({ page }) => {
 
 test('review topic base duration and per-round override persist independently', async ({ page }) => {
   await openReviewTopic(page, '末轮提醒测试');
-  await page.getByLabel('管理末轮提醒测试的全部轮次').click();
+  await page.getByLabel('重新安排末轮提醒测试的剩余轮次').click();
   const panel = page.locator('.eb-panel--rounds');
   await expect(panel).toContainText('当前基础 15 分钟');
 
@@ -119,7 +119,7 @@ test('review topic base duration and per-round override persist independently', 
 
   await page.reload();
   await openReviewTopic(page, '末轮提醒测试');
-  await page.getByLabel('管理末轮提醒测试的全部轮次').click();
+  await page.getByLabel('重新安排末轮提醒测试的剩余轮次').click();
   const reopenedPanel = page.locator('.eb-panel--rounds');
   await expect(reopenedPanel).toContainText('当前基础 30 分钟');
   await expect(reopenedPanel.getByLabel('第2轮预计时长')).toHaveValue('45');

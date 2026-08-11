@@ -60,9 +60,12 @@ import TodayReviewView from './TodayReviewView';
 import InboxPanel from './InboxPanel';
 import BatchAdjustPanel from './BatchAdjustPanel';
 import DailyReviewPlanner from './DailyReviewPlanner';
+import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import { planReviewRoundReschedule, type ReviewRescheduleMode } from '../reschedulePlanning';
+import { buildBalancedDailyReviewPlan } from '../dailyReviewPlanning';
 
-type ViewTab = 'today' | 'week' | 'library';
+type ViewTab = 'today' | 'plans';
+type PlanViewMode = 'list' | 'calendar';
 
 const EbbView: React.FC = () => {
   const safeMode = useMemo(() => {
@@ -167,6 +170,7 @@ const EbbView: React.FC = () => {
     ],
   );
   const [activeTab, setActiveTab] = useState<ViewTab>('today');
+  const [planViewMode, setPlanViewMode] = useState<PlanViewMode>('list');
   const [addOpen, setAddOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [modal, setModal] = useState<'none' | 'settings'>('none');
@@ -188,14 +192,6 @@ const EbbView: React.FC = () => {
       hydrateStore();
     }
   }, [isHydrated, hydrateStore]);
-
-  // 启动时检测逾期任务
-  useEffect(() => {
-    const hasOverdue = store.reviewTasks.some((t) => !t.isCompleted && isOverdue(t));
-    if (hasOverdue && store.ebbSettings.autoProcessOverdue) {
-      setOverdueAlertOpen(true);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -223,6 +219,13 @@ const EbbView: React.FC = () => {
       ratio: tasks.length > 0 ? completed / tasks.length : 0,
     };
   }, [store.reviewTasks, store.ebbSettings]);
+
+  const tomorrowWorkload = useMemo(() => buildBalancedDailyReviewPlan(
+    reviewTasks,
+    addDays(todayStr(), 1),
+    store.ebbSettings.dailyReviewMinutes,
+    3,
+  ), [reviewTasks, store.ebbSettings.dailyReviewMinutes]);
 
   const hasUndo = store.undoStack.length > 0;
   // 注意：store 把最新撤销项放在 index 0（[entry, ...stack]），故读 [0]
@@ -472,14 +475,17 @@ const EbbView: React.FC = () => {
             </div>
           </section> : <div className="eb-nav-context">今日复习工作台</div>}
           <div className="eb-nav-right">
-            <button
-              type="button"
-              className="eb-nav-btn"
-              onClick={() => setDailyPlanOpen(true)}
-            >
-              <CalendarCheck2 size={15} />
-              明日选择
-            </button>
+            {activeTab !== 'today' && (
+              <button
+                type="button"
+                className="eb-nav-btn"
+                onClick={() => setDailyPlanOpen(true)}
+              >
+                <CalendarCheck2 size={15} />
+                明日 {tomorrowWorkload.totalMinutes}/{store.ebbSettings.dailyReviewMinutes} 分钟
+              </button>
+            )}
+            <SyncStatusIndicator />
             <details className="eb-more-menu">
               <summary className="eb-nav-btn" aria-label="复习更多操作">
                 <MoreHorizontal size={15} />
@@ -489,15 +495,6 @@ const EbbView: React.FC = () => {
                 <button type="button" role="menuitem" onClick={() => setInboxOpen(true)}>
                   <Inbox size={15} />
                   暂存内容
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => setBatchAdjustOpen(true)}
-                  disabled={reviewTasks.length === 0}
-                >
-                  <SlidersHorizontal size={15} />
-                  批量调整
                 </button>
                 <button type="button" role="menuitem" onClick={() => setModal('settings')}>
                   <SettingsIcon size={15} />
@@ -530,6 +527,13 @@ const EbbView: React.FC = () => {
           </div>
         )}
 
+        {activeTab === 'today' && stats.overdue > 0 && store.ebbSettings.autoProcessOverdue && (
+          <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900" role="status">
+            <span className="flex items-center gap-2"><TriangleAlert size={16} />{stats.overdue} 个逾期轮次需要处理；不会再在启动时自动改期。</span>
+            <button type="button" onClick={() => setOverdueAlertOpen(true)} className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold hover:bg-rose-100">处理逾期</button>
+          </div>
+        )}
+
         {/* ── 统计区 ──────────────────────────────────────── */}
         {/* ── 撤销条 ──────────────────────────────────────── */}
         {hasUndo && lastUndo && (
@@ -557,30 +561,15 @@ const EbbView: React.FC = () => {
           <button
             type="button"
             role="tab"
-            aria-selected={activeTab === 'library'}
-            aria-controls="library-panel"
-            id="tab-library"
-            aria-label="复习库（矩阵视图）"
-            className={`eb-tab ${activeTab === 'library' ? 'eb-tab--active' : ''}`}
-            onClick={() => setActiveTab('library')}
+            aria-selected={activeTab === 'plans'}
+            aria-controls="plans-panel"
+            id="tab-plans"
+            aria-label="复习计划"
+            className={`eb-tab ${activeTab === 'plans' ? 'eb-tab--active' : ''}`}
+            onClick={() => setActiveTab('plans')}
           >
             <LayoutGrid size={14} aria-hidden="true" />
-            复习库
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'week'}
-            aria-controls="week-panel"
-            id="tab-week"
-            aria-label="周计划（看板视图）"
-            className={`eb-tab ${activeTab === 'week' ? 'eb-tab--active' : ''}`}
-            onClick={() => { if (!safeMode && !highLoadMode) setActiveTab('week'); }}
-            disabled={safeMode || highLoadMode}
-            title={safeMode || highLoadMode ? '当前数据量较大，暂不启用看板拖拽' : undefined}
-          >
-            <Columns3 size={14} aria-hidden="true" />
-            周计划
+            复习计划
           </button>
         </nav>
 
@@ -598,35 +587,32 @@ const EbbView: React.FC = () => {
                   graphNodes={graphNodes}
                   inboxCount={inboxItems.length}
                   onOpenInbox={() => setInboxOpen(true)}
+                  tomorrowMinutes={tomorrowWorkload.totalMinutes}
+                  tomorrowCapacity={store.ebbSettings.dailyReviewMinutes}
+                  tomorrowRounds={Object.keys(tomorrowWorkload.assignmentsByTaskId).length}
+                  onOpenTomorrowPlan={() => setDailyPlanOpen(true)}
                 />
               </div>
             )}
-            {activeTab === 'library' && (
-              <div id="library-panel" role="tabpanel" aria-labelledby="tab-library" className="h-full eb-matrix-panel">
+            {activeTab === 'plans' && (
+              <div id="plans-panel" role="tabpanel" aria-labelledby="tab-plans" className="h-full eb-matrix-panel">
                 <CompactWeekStrip
                   tasks={store.reviewTasks}
                   selectedDate={selectedDate}
                   onSelectDate={setSelectedDate}
                 />
-                <div className="eb-matrix-panel-content">
-                  <MatrixView
-                    tasks={store.reviewTasks}
-                    settings={store.ebbSettings}
-                    taskActions={taskActions}
-                    selectedDate={selectedDate}
-                  />
+                <div className="eb-plan-view-toolbar">
+                  <div><strong>复习计划</strong><span>管理主题和所有未完成轮次</span></div>
+                  <div className="eb-plan-view-actions">
+                    <button type="button" className={planViewMode === 'list' ? 'is-active' : ''} onClick={() => setPlanViewMode('list')}><LayoutGrid size={13} />列表</button>
+                    <button type="button" className={planViewMode === 'calendar' ? 'is-active' : ''} disabled={safeMode || highLoadMode} title={safeMode || highLoadMode ? '当前数据量较大，暂不启用日历拖拽' : undefined} onClick={() => setPlanViewMode('calendar')}><Columns3 size={13} />日历</button>
+                    <button type="button" className="is-primary" disabled={reviewTasks.length === 0} onClick={() => setBatchAdjustOpen(true)}><SlidersHorizontal size={13} />批量管理</button>
+                  </div>
                 </div>
-              </div>
-            )}
-            {activeTab === 'week' && (
-              <div id="week-panel" role="tabpanel" aria-labelledby="tab-week" className="h-full">
-                <BoardView
-                  tasks={store.reviewTasks}
-                  settings={store.ebbSettings}
-                  taskActions={taskActions}
-                  selectedDate={selectedDate}
-                  onSelectDate={setSelectedDate}
-                />
+                <div className="eb-matrix-panel-content">
+                  {planViewMode === 'list' ? <MatrixView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} />
+                    : <BoardView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} onSelectDate={setSelectedDate} />}
+                </div>
               </div>
             )}
           </main>
@@ -653,9 +639,10 @@ const EbbView: React.FC = () => {
         {dailyPlanOpen && (
           <DailyReviewPlanner
             reviewTasks={reviewTasks}
+            settings={store.ebbSettings}
             onApply={(request) => {
               const result = applyDailyReviewPlan(request);
-              showToast(`明日保留 ${result.keptCount} 轮，其余 ${result.deferredCount} 轮顺延一天`);
+              showToast(`已保存明日负荷：明日 ${result.keptCount} 轮，另有 ${result.deferredCount} 轮完成错峰`);
               return result;
             }}
             onClose={() => setDailyPlanOpen(false)}

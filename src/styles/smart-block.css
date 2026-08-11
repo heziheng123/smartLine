@@ -167,6 +167,8 @@
   z-index: 50;
   min-width: 120px;
   padding: 6px;
+  transform-origin: top right;
+  animation: ui-popover-in 120ms var(--ui-ease-enter) both;
 }
 .pdv-more-menu {
   min-width: 160px;
@@ -1892,6 +1894,8 @@
   width: 260px;
   box-shadow: 0 8px 30px rgba(0,0,0,.12);
   border: 1px solid #e5e7eb;
+  transform-origin: top left;
+  animation: ui-popover-in 120ms var(--ui-ease-enter) both;
 }
 
 .slash-menu-title {

@@ -18,5 +18,23 @@
   --ui-overlay: rgba(20, 20, 24, 0.30);
   --ui-card-shadow: 0 8px 26px rgba(22, 22, 28, 0.07), 0 1px 3px rgba(22, 22, 28, 0.05);
   --ui-dialog-shadow: 0 24px 70px -18px rgba(22, 22, 28, 0.24);
-  --ui-motion-standard: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  --ui-motion-fast: 100ms;
+  --ui-motion-standard-duration: 180ms;
+  --ui-motion-panel: 220ms;
+  --ui-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ui-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ui-motion-standard: var(--ui-motion-standard-duration) var(--ui-ease-enter);
+}
+
+@keyframes ui-popover-in {
+  from { opacity: 0; transform: translateY(4px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ui-motion-fast: 0.01ms;
+    --ui-motion-standard-duration: 0.01ms;
+    --ui-motion-panel: 0.01ms;
+  }
 }

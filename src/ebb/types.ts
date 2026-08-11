@@ -49,9 +49,9 @@ export interface ReviewTask {
   /** 自动完成逾期轮次前，后续轮次的日期快照，用于安全取消完成。 */
   previousSchedule?: Array<{ reviewTaskId: string; dueDate: string }>;
   isSupplemental?: boolean;
-  /** 最近一次“明日选择”针对的计划日期。用于当晚重新打开后恢复选择状态。 */
+  /** 最近一次明日负荷规划针对的日期，用于重新打开后恢复日期分配。 */
   rollingPlanDate?: string;
-  /** 最近一次“明日选择”的决定；只描述当前轮次，不改变知识节点绑定。 */
+  /** 最近一次负荷规划的兼容状态；只描述当前轮次，不改变知识节点绑定。 */
   rollingDecision?: 'keep' | 'defer';
   /** 当前轮次连续被顺延的次数；保留到明天时归零。 */
   rollingDeferralCount?: number;
@@ -117,6 +117,8 @@ export interface EbbSettings {
   customIntervals: string; // 默认间隔，逗号分隔
   dailyTaskLimit: number; // 每日任务数上限
   dailyPointLimit: number; // 每日积分上限
+  /** 每日复习目标容量（分钟），用于明日负荷规划与未来负荷预警。 */
+  dailyReviewMinutes: number;
   complexityConfigs: ComplexityConfigs;
   maxSpreadDays: number; // 智能分散最大天数
   minTopicGapDays: number; // 同主题最小间隔

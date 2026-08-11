@@ -25,6 +25,11 @@ export default defineConfig({
   },
   projects: [
     { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'small-screen', use: { ...devices['iPhone 13'], browserName: 'chromium', isMobile: false } },
+    {
+      name: 'small-screen',
+      // Cover the unchanged tablet workspace. Dedicated phone behavior and the
+      // exact 600px non-phone boundary are exercised explicitly in app-shell.
+      use: { ...devices['iPhone 13'], viewport: { width: 820, height: 1180 }, browserName: 'chromium', isMobile: false },
+    },
   ],
 });

@@ -61,14 +61,14 @@ test('reading and expanded modes automatically focus one disk from the multi-dis
   await expect(sizeGroup.getByRole('button', { name: '总览' })).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('knowledge graph keeps a compact dock and moves secondary controls into popovers', async ({ page }) => {
-  const dockActions = page.getByTestId('knowledge-graph-dock-actions');
+test('knowledge graph keeps the app dock navigation-only and moves page controls into the header', async ({ page }) => {
+  const dockActions = page.getByTestId('knowledge-graph-page-actions');
   const dock = page.locator('.tl-dock');
   const viewportWidth = page.viewportSize()?.width ?? 0;
 
-  await expect(dockActions.getByRole('button')).toHaveCount(3);
+  await expect(dockActions.getByRole('button')).toHaveCount(5);
   await expect.poll(async () => (await dockActions.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
-    .toBeLessThanOrEqual(170);
+    .toBeLessThanOrEqual(240);
   await expect.poll(async () => (await dock.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
     .toBeLessThanOrEqual(viewportWidth - 16);
 

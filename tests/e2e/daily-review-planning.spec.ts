@@ -98,7 +98,7 @@ const dailySchedules = {
 };
 
 test.beforeEach(async ({ page }, testInfo) => {
-  const seededTasks = testInfo.title.includes('more than the configured daily task limit')
+  const seededTasks = testInfo.title.includes('minute capacity')
     ? [...reviewTasks, ...extraReviewTasks]
     : reviewTasks;
   await page.addInitScript(({ tasks, schedules }) => {
@@ -125,24 +125,20 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.goto('/');
 });
 
-test('nightly selection keeps tomorrow, rolls the rest one day and preserves every relation', async ({ page }) => {
+test('workload planning assigns concrete dates and preserves every relation', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('button', { name: '明日选择' }).click();
-  const dialog = page.getByRole('dialog', { name: '明日复习选择' });
+  await page.getByRole('button', { name: /明日 \d+\/60 分钟/ }).first().click();
+  const dialog = page.getByRole('dialog', { name: '明日负荷规划' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.eb-daily-plan-card')).toHaveCount(2);
-  await expect(dialog.getByRole('region', { name: '政治根分类标签' })).toContainText('第 2 轮');
-  await expect(dialog.getByRole('region', { name: '英语根分类标签' })).toContainText('第 1 轮');
+  await expect(dialog.locator('.eb-workload-card')).toHaveCount(2);
+  await expect(dialog.locator('.eb-workload-card').filter({ hasText: '重点关系知识' })).toContainText('政治根分类 · R2/3');
+  await expect(dialog.locator('.eb-workload-card').filter({ hasText: '常规关系知识' })).toContainText('英语根分类 · R1/2');
   await expect(dialog.getByText('旧任务标签A', { exact: true })).toHaveCount(0);
   await expect(dialog.getByText('旧任务标签B', { exact: true })).toHaveCount(0);
-  await expect(dialog).toContainText('后续 1 轮保持间隔联动');
-
-  const important = dialog.locator('.eb-daily-plan-card').filter({ hasText: '重点关系知识' });
-  const routine = dialog.locator('.eb-daily-plan-card').filter({ hasText: '常规关系知识' });
-  await important.getByRole('button', { name: '保留明天' }).click();
-  await expect(important.getByRole('button', { name: '明天保留' })).toBeVisible();
-  await expect(routine).toContainText('待选');
-  await dialog.getByRole('button', { name: '确认明日选择' }).click();
+  await expect(dialog).toContainText('后续 1 轮联动');
+  await dialog.getByLabel('安排重点关系知识').selectOption(tomorrow);
+  await dialog.getByLabel('安排常规关系知识').selectOption(dayAfterTomorrow);
+  await dialog.getByRole('button', { name: '保存负荷规划' }).click();
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{
@@ -191,15 +187,10 @@ test('nightly selection keeps tomorrow, rolls the rest one day and preserves eve
       .filter((entry) => entry.sourceId?.startsWith('review-rolling-')).length;
   }).toBe(0);
 
-  await page.getByRole('button', { name: '明日选择' }).click();
-  await expect(page.getByRole('dialog', { name: '明日复习选择' }).locator('.eb-daily-plan-card')).toHaveCount(2);
-  await expect(
-    page.getByRole('dialog', { name: '明日复习选择' })
-      .locator('.eb-daily-plan-card')
-      .filter({ hasText: '重点关系知识' })
-      .getByRole('button', { name: '明天保留' }),
-  ).toBeVisible();
-  await page.getByLabel('关闭明日选择').click();
+  await page.getByRole('button', { name: /明日 \d+\/60 分钟/ }).first().click();
+  await expect(page.getByRole('dialog', { name: '明日负荷规划' }).locator('.eb-workload-card')).toHaveCount(2);
+  await expect(page.getByRole('dialog', { name: '明日负荷规划' }).getByLabel('安排重点关系知识')).toHaveValue(tomorrow);
+  await page.getByLabel('关闭明日负荷规划').click();
 
   await page.reload();
   await page.getByTitle('艾宾浩斯复习').click();
@@ -248,25 +239,18 @@ test('nightly selection keeps tomorrow, rolls the rest one day and preserves eve
   }).toBe(0);
 });
 
-test('nightly selection allows keeping more than the configured daily task limit', async ({ page }) => {
+test('workload planning uses minute capacity rather than the legacy task count limit', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('button', { name: '明日选择' }).click();
-  const dialog = page.getByRole('dialog', { name: '明日复习选择' });
-  await expect(dialog.locator('.eb-daily-plan-card')).toHaveCount(4);
-  const politics = dialog.getByRole('region', { name: '政治根分类标签' });
-  await expect(politics.getByRole('region', { name: '政治根分类第2轮' })).toContainText('重点关系知识');
-  await expect(dialog.getByRole('region', { name: '独立手工标签标签' })).toContainText('额外复习主题C');
-  await expect(dialog.getByRole('region', { name: '未设置标签', exact: true })).toContainText('额外复习主题D');
-  await politics.getByRole('region', { name: '政治根分类第2轮' }).getByRole('button', { name: '本轮全选' }).click();
-  await expect(politics.getByRole('region', { name: '政治根分类第2轮' }).getByRole('button', { name: '本轮取消' })).toBeVisible();
-  const unselectedButtons = dialog.getByRole('button', { name: '保留明天' });
-  while (await unselectedButtons.count() > 0) {
-    await unselectedButtons.first().click();
-  }
-  await expect(dialog.getByRole('button', { name: '明天保留' })).toHaveCount(4);
-  await expect(dialog).toContainText('4 轮 · 不限数量');
-  await expect(dialog).not.toContainText('容量已满');
-  await dialog.getByRole('button', { name: '确认明日选择' }).click();
+  await page.getByRole('button', { name: /明日 \d+\/60 分钟/ }).first().click();
+  const dialog = page.getByRole('dialog', { name: '明日负荷规划' });
+  await expect(dialog.locator('.eb-workload-card')).toHaveCount(4);
+  await expect(dialog).toContainText('重点关系知识');
+  await expect(dialog).toContainText('额外复习主题C');
+  await expect(dialog).toContainText('额外复习主题D');
+  await dialog.getByRole('button', { name: '全部安排明天' }).click();
+  await expect(dialog.getByLabel(/安排/)).toHaveCount(4);
+  await expect(dialog).toContainText('明日预计');
+  await dialog.getByRole('button', { name: '保存负荷规划' }).click();
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{ reviewTasks?: Array<{ rollingPlanDate?: string; rollingDecision?: string }> }>(
@@ -278,17 +262,19 @@ test('nightly selection allows keeping more than the configured daily task limit
   }).toBe(4);
 });
 
-test('reopening the same nightly plan does not double-count deferrals and can revise the choice', async ({ page }) => {
+test('reopening the same workload plan does not double-count deferrals and can revise dates', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('button', { name: '明日选择' }).click();
-  let dialog = page.getByRole('dialog', { name: '明日复习选择' });
-  await dialog.getByRole('button', { name: '确认明日选择' }).click();
+  await page.getByRole('button', { name: /明日 \d+\/60 分钟/ }).first().click();
+  let dialog = page.getByRole('dialog', { name: '明日负荷规划' });
+  await dialog.getByLabel('安排重点关系知识').selectOption(dayAfterTomorrow);
+  await dialog.getByLabel('安排常规关系知识').selectOption(dayAfterTomorrow);
+  await dialog.getByRole('button', { name: '保存负荷规划' }).click();
 
-  await page.getByRole('button', { name: '明日选择' }).click();
-  dialog = page.getByRole('dialog', { name: '明日复习选择' });
-  await expect(dialog.locator('.eb-daily-plan-card')).toHaveCount(2);
-  await expect(dialog.locator('.eb-daily-plan-card').filter({ hasText: '重点关系知识' })).toContainText('连续顺延 1 次');
-  await dialog.getByRole('button', { name: '确认明日选择' }).click();
+  await page.getByRole('button', { name: /明日 \d+\/60 分钟/ }).first().click();
+  dialog = page.getByRole('dialog', { name: '明日负荷规划' });
+  await expect(dialog.locator('.eb-workload-card')).toHaveCount(2);
+  await expect(dialog.getByLabel('安排重点关系知识')).toHaveValue(dayAfterTomorrow);
+  await dialog.getByRole('button', { name: '保存负荷规划' }).click();
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{
@@ -303,10 +289,10 @@ test('reopening the same nightly plan does not double-count deferrals and can re
     { id: 'rolling-b1', dueDate: dayAfterTomorrow, count: 1 },
   ]);
 
-  await page.getByRole('button', { name: '明日选择' }).click();
-  dialog = page.getByRole('dialog', { name: '明日复习选择' });
-  await dialog.locator('.eb-daily-plan-card').filter({ hasText: '重点关系知识' }).getByRole('button', { name: '保留明天' }).click();
-  await dialog.getByRole('button', { name: '确认明日选择' }).click();
+  await page.getByRole('button', { name: /明日 \d+\/60 分钟/ }).first().click();
+  dialog = page.getByRole('dialog', { name: '明日负荷规划' });
+  await dialog.getByLabel('安排重点关系知识').selectOption(tomorrow);
+  await dialog.getByRole('button', { name: '保存负荷规划' }).click();
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{
@@ -327,14 +313,15 @@ test('reopening the same nightly plan does not double-count deferrals and can re
   ]);
 });
 
-test('daily schedule exposes the same nightly review transaction', async ({ page }) => {
+test('daily schedule exposes the same workload planning transaction', async ({ page }) => {
   await page.getByTitle('每日安排').click();
-  await page.getByRole('button', { name: '明日复习选择' }).click();
-  const dialog = page.getByRole('dialog', { name: '明日复习选择' });
-  await expect(dialog.locator('.eb-daily-plan-card')).toHaveCount(2);
-  await dialog.locator('.eb-daily-plan-card').filter({ hasText: '重点关系知识' }).getByRole('button', { name: '保留明天' }).click();
-  await dialog.getByRole('button', { name: '确认明日选择' }).click();
-  await expect(page.getByRole('status')).toContainText('明日保留 1 轮，其余 1 轮顺延一天');
+  await page.getByRole('button', { name: '明日负荷规划' }).click();
+  const dialog = page.getByRole('dialog', { name: '明日负荷规划' });
+  await expect(dialog.locator('.eb-workload-card')).toHaveCount(2);
+  await dialog.getByLabel('安排重点关系知识').selectOption(tomorrow);
+  await dialog.getByLabel('安排常规关系知识').selectOption(dayAfterTomorrow);
+  await dialog.getByRole('button', { name: '保存负荷规划' }).click();
+  await expect(page.getByRole('status')).toContainText('已保存明日负荷：明日 1 轮，另有 1 轮完成错峰');
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{ reviewTasks?: Array<{ id: string; dueDate: string }> }>(
