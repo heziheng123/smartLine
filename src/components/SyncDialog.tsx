@@ -39,6 +39,7 @@ import { useShallow } from 'zustand/react/shallow';
 interface SyncDialogProps { onClose: () => void }
 type ModuleKey = 'timeline' | 'ebb' | 'daily' | 'graph' | 'lifeMap';
 type DisplayStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+type LastConnectedRecord = Partial<Record<ModuleKey | 'workspace', string>>;
 
 const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
 const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
@@ -48,9 +49,9 @@ const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
   schedules: '每日安排', retrospectives: '每日复盘', reviewTasks: '复习任务', nodes: '知识节点',
 };
 
-function readLastConnected(): Partial<Record<ModuleKey, string>> {
+function readLastConnected(): LastConnectedRecord {
   try {
-    return JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}') as Partial<Record<ModuleKey, string>>;
+    return JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}') as LastConnectedRecord;
   } catch {
     return {};
   }
@@ -180,7 +181,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const enabledCount = modules.filter((module) => module.enabled).length;
   const connectedCount = modules.filter((module) => module.enabled && module.status === 'connected').length;
   const allConnected = enabledCount === 5 && connectedCount === 5;
-  const fullySynchronized = allConnected && pendingFieldCount === 0 && syncConflicts.length === 0;
+  const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && architecture.architecture !== 'unified';
+  const fullySynchronized = allConnected
+    && pendingFieldCount === 0
+    && syncConflicts.length === 0
+    && !requiresUnifiedMigration;
 
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
@@ -241,9 +246,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               : '云端为空，已安全连接并完成本机工作区上传。');
         } else {
           const result = await reconnectConfiguredWorkspace();
-          setRestoreMessage(result && result.applied > 0
-            ? `连接及云端确认已完成，已补传 ${result.applied} 个数据字段。`
-            : '连接及云端确认已完成，待同步队列为空。');
+          setRestoreMessage(result && result.repairedFields.length > 0
+            ? `连接及云端确认已完成，并从云端修复了 ${result.repairedFields.length} 个不一致数据字段。`
+            : result && result.applied > 0
+              ? `连接及云端确认已完成，已补传 ${result.applied} 个数据字段。`
+              : '连接、队列清空及云端内容一致性校验均已完成。');
         }
         return;
       }
@@ -472,6 +479,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           <span className="tl-sync-dot" style={{ backgroundColor: fullySynchronized ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
           <strong>{fullySynchronized
             ? (architecture.architecture === 'unified' ? '统一工作区已同步' : '旧房间同步 5/5')
+            : allConnected && requiresUnifiedMigration
+              ? '旧架构已连接，尚未进入统一工作区'
             : allConnected && syncConflicts.length > 0
               ? `已连接，存在 ${syncConflicts.length} 个冲突副本`
               : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
@@ -483,6 +492,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           {auth.login ? ` · GitHub：${auth.login}` : ''}
         </p>
         <p className="tl-dialog-hint">待补传字段：{pendingFieldCount ?? '检查中'} · 冲突副本：{syncConflicts.length}</p>
+        <p className="tl-dialog-hint">
+          本机最近完成云端内容校验：{formatTime(lastConnected.workspace)}
+          {requiresUnifiedMigration ? ' · 当前仅连接旧模块房间，请在高级设置中迁移后再比较两台设备。' : ''}
+        </p>
         {restoreMessage && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{restoreMessage}</p>}
         {syncConflicts[0] && <section className="tl-sync-conflict-fields" aria-label="选择冲突数据">
           <strong>最近冲突 · {formatTime(syncConflicts[0].detectedAt)}</strong>
@@ -553,7 +566,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 <span style={{ color: module.status === 'connected' ? '#059669' : module.status === 'connecting' ? '#D97706' : '#9CA3AF' }}>
                   {module.status === 'connected' ? '已连接' : module.status === 'connecting' ? '连接中' : module.status === 'error' ? '连接异常' : '未连接'}
                 </span>
-                <small style={{ marginLeft: 8 }}>上次：{formatTime(lastConnected[module.key])}</small>
                 {enabledCount > 0 && module.status !== 'connected' && (
                   <button
                     type="button"

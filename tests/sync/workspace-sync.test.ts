@@ -9,8 +9,11 @@ import {
   commitWorkspaceQueueRevisionSafely,
   decideUnifiedWorkspaceActivation,
   findWorkspaceFieldConflicts,
+  findWorkspaceFieldsSafeToBackfill,
+  findWorkspaceFieldMismatches,
   hashWorkspaceBackup,
   hashWorkspaceValue,
+  isBundledDemoWorkspace,
   hasWorkspaceFieldSnapshotChanged,
   isWorkspaceStoreStorageReady,
   isWorkspaceRevisionSuperseded,
@@ -81,6 +84,25 @@ test('unified room names are stable and contain only safe characters', () => {
   assert.throws(() => buildUnifiedRoomId('***', 'owner'));
 });
 
+test('a pristine sample workspace may safely adopt an existing cloud workspace', () => {
+  const sample = backup();
+  sample.timeline.tasks = [{ id: 'demo-task-1' } as never];
+  sample.timeline.groups = [{ id: 'demo-group-1' } as never];
+  sample.timeline.notes = [{ id: 'demo-note-1' } as never];
+  sample.timeline.milestones = [{ id: 'demo-ms-1' } as never];
+  assert.equal(isBundledDemoWorkspace(sample), true);
+
+  sample.timeline.tasks.push({ id: 'real-task' } as never);
+  assert.equal(isBundledDemoWorkspace(sample), false);
+
+  const sampleGroup = backup();
+  sampleGroup.timeline.groups = [{
+    id: 'demo-group-1',
+    children: [{ id: 'real-child-task' }],
+  } as never];
+  assert.equal(isBundledDemoWorkspace(sampleGroup), false);
+});
+
 test('new devices probe both stable-id and historical-login unified rooms', () => {
   assert.deepEqual(
     buildUnifiedRoomCandidates('study', 'gh_12345', 'Old.Owner'),
@@ -105,6 +127,54 @@ test('queue flush detects a remote field change after its initial snapshot', () 
     { ...before, notes: [{ id: 'note-1' }] },
     ['tasks', 'metadata'],
   ), false);
+});
+
+test('workspace convergence compares actual content instead of connection state', () => {
+  const remote = {
+    tasks: [{ id: 'task-1', name: 'cloud' }],
+    reviewTasks: [{ id: 'review-1', dueDate: '2026-08-11' }],
+    schedules: { '2026-08-11': { date: '2026-08-11', items: [], blocks: [] } },
+  };
+  const local = {
+    ...remote,
+    tasks: [{ id: 'task-1', name: 'stale local copy' }],
+  };
+  assert.deepEqual(
+    findWorkspaceFieldMismatches(local, remote, ['tasks', 'reviewTasks', 'schedules']),
+    ['tasks'],
+  );
+  assert.deepEqual(
+    findWorkspaceFieldMismatches(remote, remote, ['tasks', 'reviewTasks', 'schedules']),
+    [],
+  );
+});
+
+test('canonical write-back never overwrites a newer cloud field', () => {
+  const snapshot = {
+    tasks: [{ id: 'task-1', name: 'legacy value' }],
+    nodes: [],
+  };
+  const canonical = {
+    tasks: [{ id: 'task-1', name: 'normalized value' }],
+    nodes: [{ id: 'node-1' }],
+  };
+  assert.deepEqual(
+    findWorkspaceFieldsSafeToBackfill(snapshot, { ...snapshot }, canonical, ['tasks', 'nodes']),
+    ['tasks', 'nodes'],
+  );
+  assert.deepEqual(
+    findWorkspaceFieldsSafeToBackfill(
+      snapshot,
+      { ...snapshot, tasks: [{ id: 'task-1', name: 'newer remote value' }] },
+      canonical,
+      ['tasks', 'nodes'],
+    ),
+    ['nodes'],
+  );
+  assert.deepEqual(
+    findWorkspaceFieldsSafeToBackfill(snapshot, { tasks: snapshot.tasks }, canonical, ['nodes']),
+    ['nodes'],
+  );
 });
 
 test('a durable queue revision discards the older emergency revision it superseded', () => {

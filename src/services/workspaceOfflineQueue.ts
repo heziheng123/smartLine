@@ -40,7 +40,7 @@ export {
 } from './workspaceSyncQueueCore';
 export { acknowledgeAppliedWorkspaceSync } from './workspaceSyncQueueCore';
 
-function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
+export function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
   const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones', 'lifeStages']
     .some((key) => fields[key as WorkspaceStorageField] !== undefined);
   if (hasTimelineFields) {
@@ -192,19 +192,26 @@ export async function restoreWorkspaceConflictFields(
   } : null);
 }
 
-function isUnifiedWorkspaceConfigured(): boolean {
+function readUnifiedWorkspaceRoomId(): string | null {
   try {
     const settings = JSON.parse(
       localStorage.getItem('smart-line-sync-architecture-v1') ?? 'null',
-    ) as { architecture?: string } | null;
-    return settings?.architecture === 'unified';
+    ) as { architecture?: string; unifiedRoomId?: string } | null;
+    return settings?.architecture === 'unified' && typeof settings.unifiedRoomId === 'string'
+      ? settings.unifiedRoomId
+      : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
+function isUnifiedWorkspaceConfigured(): boolean {
+  return readUnifiedWorkspaceRoomId() !== null;
+}
+
 function isWorkspaceStorageReady(): boolean {
-  if (!isUnifiedWorkspaceConfigured()) return true;
+  const targetRoomId = readUnifiedWorkspaceRoomId();
+  if (!targetRoomId) return true;
   const stores = [
     useTimelineStore.getState(),
     useEbbStore.getState(),
@@ -213,6 +220,8 @@ function isWorkspaceStorageReady(): boolean {
     useLifeMapStore.getState(),
   ];
   return stores.every((state) => (
+    state.liveblocks?.room?.id === targetRoomId
+    &&
     state.liveblocks?.room?.getStatus() === 'connected'
     && state.liveblocks?.status === 'connected'
     && !state.liveblocks?.isStorageLoading

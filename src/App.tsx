@@ -42,8 +42,9 @@ const RETIRED_PROJECT_VIEW_STORAGE_KEYS = [
   'task-overview-preferences-v1',
 ] as const;
 
-function mapLiveblocksStatus(status: string | undefined) {
-  if (status === 'connected') return 'connected' as const;
+function mapLiveblocksStatus(status: string | undefined, isStorageLoading = false) {
+  if (status === 'connected' && !isStorageLoading) return 'connected' as const;
+  if (status === 'connected' && isStorageLoading) return 'connecting' as const;
   if (status === 'connecting' || status === 'reconnecting') return 'connecting' as const;
   if (status === 'disconnected' || status === 'initial') return 'disconnected' as const;
   return 'error' as const;
@@ -211,11 +212,16 @@ const App: React.FC = () => {
   } = useDailyScheduleStore(
     useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
   );
-  const timelineLiveStatus = useTimelineStore((state) => state.liveblocks?.status);
-  const ebbLiveStatus = useEbbStore((state) => state.liveblocks?.status);
-  const dailyLiveStatus = useDailyScheduleStore((state) => state.liveblocks?.status);
-  const graphLiveStatus = useGraphStore((state) => state.liveblocks?.status);
-  const lifeMapLiveStatus = useLifeMapStore((state) => state.liveblocks?.status);
+  const timelineLive = useTimelineStore(useShallow((state) => ({ status: state.liveblocks?.status, storageLoading: state.liveblocks?.isStorageLoading })));
+  const ebbLive = useEbbStore(useShallow((state) => ({ status: state.liveblocks?.status, storageLoading: state.liveblocks?.isStorageLoading })));
+  const dailyLive = useDailyScheduleStore(useShallow((state) => ({ status: state.liveblocks?.status, storageLoading: state.liveblocks?.isStorageLoading })));
+  const graphLive = useGraphStore(useShallow((state) => ({ status: state.liveblocks?.status, storageLoading: state.liveblocks?.isStorageLoading })));
+  const lifeMapLive = useLifeMapStore(useShallow((state) => ({ status: state.liveblocks?.status, storageLoading: state.liveblocks?.isStorageLoading })));
+  const timelineLiveStatus = timelineLive.status;
+  const ebbLiveStatus = ebbLive.status;
+  const dailyLiveStatus = dailyLive.status;
+  const graphLiveStatus = graphLive.status;
+  const lifeMapLiveStatus = lifeMapLive.status;
   const {
     isHydrated: isLifeMapHydrated,
     hydrateStore: hydrateLifeMapStore,
@@ -568,31 +574,31 @@ const App: React.FC = () => {
 
   React.useEffect(() => {
     if (timelineLiveStatus) {
-      useTimelineStore.getState().setSyncStatus(mapLiveblocksStatus(timelineLiveStatus));
+      useTimelineStore.getState().setSyncStatus(mapLiveblocksStatus(timelineLiveStatus, timelineLive.storageLoading));
     }
-  }, [timelineLiveStatus]);
+  }, [timelineLiveStatus, timelineLive.storageLoading]);
 
   React.useEffect(() => {
     if (ebbLiveStatus) {
-      useEbbStore.getState().setSyncStatus(mapLiveblocksStatus(ebbLiveStatus));
+      useEbbStore.getState().setSyncStatus(mapLiveblocksStatus(ebbLiveStatus, ebbLive.storageLoading));
     }
-  }, [ebbLiveStatus]);
+  }, [ebbLiveStatus, ebbLive.storageLoading]);
 
   React.useEffect(() => {
     if (dailyLiveStatus) {
-      useDailyScheduleStore.getState().setSyncStatus(mapLiveblocksStatus(dailyLiveStatus));
+      useDailyScheduleStore.getState().setSyncStatus(mapLiveblocksStatus(dailyLiveStatus, dailyLive.storageLoading));
     }
-  }, [dailyLiveStatus]);
+  }, [dailyLiveStatus, dailyLive.storageLoading]);
 
   React.useEffect(() => {
     if (graphLiveStatus) {
-      useGraphStore.getState().setSyncStatus(mapLiveblocksStatus(graphLiveStatus));
+      useGraphStore.getState().setSyncStatus(mapLiveblocksStatus(graphLiveStatus, graphLive.storageLoading));
     }
-  }, [graphLiveStatus]);
+  }, [graphLiveStatus, graphLive.storageLoading]);
 
   React.useEffect(() => {
-    if (lifeMapLiveStatus) useLifeMapStore.getState().setSyncStatus(mapLiveblocksStatus(lifeMapLiveStatus));
-  }, [lifeMapLiveStatus]);
+    if (lifeMapLiveStatus) useLifeMapStore.getState().setSyncStatus(mapLiveblocksStatus(lifeMapLiveStatus, lifeMapLive.storageLoading));
+  }, [lifeMapLiveStatus, lifeMapLive.storageLoading]);
 
   // 全局漫游导航监听
   React.useEffect(() => {

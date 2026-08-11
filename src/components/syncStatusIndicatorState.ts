@@ -25,6 +25,7 @@ export function deriveSyncIndicatorState(snapshot: SyncIndicatorSnapshot): SyncI
   if (
     !snapshot.online
     || snapshot.pendingCount > 0
+    || enabledModules.length !== snapshot.modules.length
     || enabledModules.some((module) => module.status === 'disconnected')
   ) return 'pending';
   if (enabledModules.every((module) => module.status === 'connected')) return 'connected';

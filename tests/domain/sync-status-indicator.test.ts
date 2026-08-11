@@ -55,3 +55,17 @@ test('sync errors take precedence over pending and offline states', () => {
     queueError: true,
   }), 'error');
 });
+
+test('a partially enabled workspace is not reported as fully synchronized', () => {
+  assert.equal(deriveSyncIndicatorState({
+    modules: [
+      connected,
+      { enabled: false, status: 'disconnected' },
+      { enabled: false, status: 'disconnected' },
+    ],
+    online: true,
+    pendingCount: 0,
+    conflictCount: 0,
+    queueError: false,
+  }), 'pending');
+});

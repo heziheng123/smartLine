@@ -86,6 +86,37 @@ export function isWorkspaceStoreStorageReady(state: WorkspaceStoreReadiness): bo
     && !state.liveblocks?.isStorageLoading;
 }
 
+/**
+ * A fresh browser starts with the product's sample timeline. It must not be
+ * treated as user content when that browser joins an existing workspace on a
+ * second device.
+ */
+export function isBundledDemoWorkspace(backup: WorkspaceBackup): boolean {
+  const hasOnlyDemoIds = (items: unknown[]): boolean => items.every((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const record = item as { id?: unknown; children?: unknown; blocks?: unknown };
+    if (typeof record.id !== 'string' || !record.id.startsWith('demo-')) return false;
+    // A task added to a sample group or a task block added to a sample task is
+    // genuine user content even though the containing sample still has a
+    // demo-prefixed id. Never replace that state during first connection.
+    if (Array.isArray(record.blocks) && record.blocks.length > 0) return false;
+    return !Array.isArray(record.children) || hasOnlyDemoIds(record.children);
+  });
+  const isEmpty = (items: unknown[]) => items.length === 0;
+  return hasOnlyDemoIds(backup.timeline.tasks)
+    && hasOnlyDemoIds(backup.timeline.groups)
+    && hasOnlyDemoIds(backup.timeline.notes)
+    && hasOnlyDemoIds(backup.timeline.milestones)
+    && isEmpty(backup.timeline.lifeStages)
+    && isEmpty(backup.ebb.reviewTasks)
+    && isEmpty(backup.ebb.inboxItems)
+    && isEmpty(backup.ebb.outlineNodes)
+    && isEmpty(Object.keys(backup.daily.schedules))
+    && isEmpty(Object.keys(backup.daily.retrospectives))
+    && isEmpty(backup.graph.nodes)
+    && Object.values(backup.lifeMap).every((value) => Array.isArray(value) && value.length === 0);
+}
+
 export function assertWorkspaceQueueDrained(state: WorkspaceQueueDrainState): void {
   if (state.conflictDetected) {
     throw new Error('检测到多设备同步冲突，本机修改已保留。请在同步设置中处理冲突副本。');
@@ -165,6 +196,34 @@ export function hasWorkspaceFieldSnapshotChanged(
   fieldNames: readonly string[],
 ): boolean {
   return fieldNames.some((fieldName) => !workspaceValuesEqual(before[fieldName], after[fieldName]));
+}
+
+export function findWorkspaceFieldMismatches(
+  local: Record<string, unknown>,
+  remote: Record<string, unknown>,
+  fieldNames: readonly string[],
+): string[] {
+  return fieldNames.filter((fieldName) => !workspaceValuesEqual(local[fieldName], remote[fieldName]));
+}
+
+/**
+ * Selects fields which can be written back after a local normalizer has
+ * repaired data received from the cloud. A field is eligible only when it is
+ * still absent, or when its cloud value is exactly the value that was read
+ * before the normalizer ran. This makes the write-back conditional: a newer
+ * edit from another device always wins and is handled on the next pass.
+ */
+export function findWorkspaceFieldsSafeToBackfill(
+  initialRemote: Record<string, unknown>,
+  currentRemote: Record<string, unknown>,
+  canonicalLocal: Record<string, unknown>,
+  fieldNames: readonly string[],
+): string[] {
+  return fieldNames.filter((fieldName) => {
+    if (!Object.prototype.hasOwnProperty.call(currentRemote, fieldName)) return true;
+    return workspaceValuesEqual(currentRemote[fieldName], initialRemote[fieldName])
+      && !workspaceValuesEqual(canonicalLocal[fieldName], currentRemote[fieldName]);
+  });
 }
 
 export function isWorkspaceRevisionSuperseded(

@@ -33,18 +33,23 @@ import {
   commitWorkspaceQueueRevisionSafely,
   decideUnifiedWorkspaceActivation,
   findWorkspaceFieldConflicts,
+  findWorkspaceFieldsSafeToBackfill,
+  findWorkspaceFieldMismatches,
   hasWorkspaceFieldSnapshotChanged,
   hashWorkspaceBackup,
+  isBundledDemoWorkspace,
   mergeWorkspaceFieldChanges,
   shouldBackfillLegacyLifeMapSync,
   withTimeout,
   workspaceValuesEqual,
 } from './workspaceSyncCore';
+import { applyWorkspaceFields } from './workspaceOfflineQueue';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
 export type SyncArchitecture = 'legacy' | 'unified';
 
 const MAX_QUEUE_FLUSH_RESTARTS = 8;
+const WORKSPACE_VERIFICATION_INTERVAL_MS = 5_000;
 
 export interface WorkspaceSyncSettings {
   architecture: SyncArchitecture;
@@ -72,11 +77,13 @@ export interface UnifiedWorkspaceActivationResult {
   roomId: string;
   source: 'new' | 'matching' | 'cloud';
   applied: number;
+  repairedFields: string[];
 }
 
 export interface UnifiedWorkspaceConnectionResult {
   roomId: string;
   applied: number;
+  repairedFields: string[];
 }
 
 const SETTINGS_KEY = 'smart-line-sync-architecture-v1';
@@ -89,7 +96,11 @@ const EXPECTED_KEYS = [
 let queueListenerStarted = false;
 let queueFlushTimer: number | null = null;
 let queueFlushInFlight: Promise<{ applied: number; conflict: boolean }> | null = null;
+let workspaceVerificationTimer: number | null = null;
+let workspaceVerificationInFlight: Promise<void> | null = null;
+let workspaceVerificationRoomId: string | null = null;
 export const WORKSPACE_CONFLICT_EVENT = 'smartline:workspace-conflict';
+export const WORKSPACE_VERIFIED_EVENT = 'smartline:workspace-verified';
 
 export function readWorkspaceSyncSettings(): WorkspaceSyncSettings {
   try {
@@ -115,12 +126,14 @@ function enableAll(code: string): void {
 }
 
 export function disconnectWorkspace(disable = false): void {
+  stopWorkspaceVerificationMonitor();
   const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState(), useLifeMapStore.getState()];
   stores.forEach((store) => store.liveblocks?.leaveRoom?.());
   if (disable) stores.forEach((store) => store.disableSync());
 }
 
 export function connectLegacyWorkspace(fallbackCode?: string): void {
+  stopWorkspaceVerificationMonitor();
   const timeline = useTimelineStore.getState();
   const ebb = useEbbStore.getState();
   const daily = useDailyScheduleStore.getState();
@@ -152,6 +165,7 @@ export function connectLegacyWorkspace(fallbackCode?: string): void {
 export async function connectUnifiedWorkspace(roomCode: string, roomId?: string): Promise<UnifiedWorkspaceConnectionResult> {
   const settings = readWorkspaceSyncSettings();
   const targetRoomId = roomId || settings.unifiedRoomId || buildUnifiedRoomId(roomCode);
+  stopWorkspaceVerificationMonitor();
   setWorkspaceQueueSuppressed(true);
   try {
     enableAll(roomCode);
@@ -162,7 +176,7 @@ export async function connectUnifiedWorkspace(roomCode: string, roomId?: string)
     useLifeMapStore.getState().liveblocks?.enterRoom?.(targetRoomId);
     ensureQueueListener();
 
-    await waitForUnifiedStorage();
+    await waitForUnifiedStorage(targetRoomId);
     if (queueFlushTimer) {
       window.clearTimeout(queueFlushTimer);
       queueFlushTimer = null;
@@ -179,8 +193,11 @@ export async function connectUnifiedWorkspace(roomCode: string, roomId?: string)
       throw new Error('统一工作区连接在补传完成前中断，请检查网络后重试。');
     }
     await waitForRoomStorageSynchronized(room);
+    const repairedFields = await ensureUnifiedWorkspaceConvergence(targetRoomId);
+    recordWorkspaceVerification(targetRoomId, repairedFields);
+    startWorkspaceVerificationMonitor(targetRoomId);
     window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
-    return { roomId: targetRoomId, applied: flushed.applied };
+    return { roomId: targetRoomId, applied: flushed.applied, repairedFields };
   } finally {
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
   }
@@ -304,11 +321,21 @@ export async function activateUnifiedWorkspaceSafely(
     hashWorkspaceBackup(remote),
   ]);
   const [localSummary, remoteSummary] = [summaryOf(local), summaryOf(remote)];
-  const decision = decideUnifiedWorkspaceActivation(hasRemoteStorage, localHash, remoteHash, localSummary, remoteSummary);
+  // A newly opened device contains only product samples until it downloads the
+  // workspace. Count that state as empty so it can safely adopt cloud data.
+  const localDecisionSummary = isBundledDemoWorkspace(local)
+    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0 }
+    : localSummary;
+  const decision = decideUnifiedWorkspaceActivation(hasRemoteStorage, localHash, remoteHash, localDecisionSummary, remoteSummary);
   if (decision !== 'conflict') {
     writeWorkspaceSyncSettings({ architecture: 'unified', roomCode, unifiedRoomId: targetRoomId });
     const connected = await connectUnifiedWorkspace(roomCode, targetRoomId);
-    return { roomId: connected.roomId, source: decision, applied: connected.applied };
+    return {
+      roomId: connected.roomId,
+      source: decision,
+      applied: connected.applied,
+      repairedFields: connected.repairedFields,
+    };
   }
 
   throw new Error(
@@ -328,12 +355,16 @@ export async function inspectLegacyWorkspace(roomCode: string): Promise<{ backup
   return { backup, summary: summaryOf(backup), hash: await hashWorkspaceBackup(backup) };
 }
 
-function waitForUnifiedStorage(timeoutMs = 20_000): Promise<void> {
+function waitForUnifiedStorage(targetRoomId: string, timeoutMs = 20_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const timer = window.setInterval(() => {
       const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState(), useLifeMapStore.getState()];
-      const ready = stores.every((store) => store.liveblocks?.status === 'connected' && !store.liveblocks?.isStorageLoading);
+      const ready = stores.every((store) => (
+        store.liveblocks?.room?.id === targetRoomId
+        && store.liveblocks?.status === 'connected'
+        && !store.liveblocks?.isStorageLoading
+      ));
       if (ready) {
         window.clearInterval(timer);
         resolve();
@@ -343,6 +374,155 @@ function waitForUnifiedStorage(timeoutMs = 20_000): Promise<void> {
       }
     }, 100);
   });
+}
+
+function isUnifiedStorageReady(targetRoomId: string): boolean {
+  const stores = [
+    useTimelineStore.getState(),
+    useEbbStore.getState(),
+    useDailyScheduleStore.getState(),
+    useGraphStore.getState(),
+    useLifeMapStore.getState(),
+  ];
+  return stores.every((store) => (
+    store.liveblocks?.room?.id === targetRoomId
+    && store.liveblocks?.room?.getStatus() === 'connected'
+    && store.liveblocks?.status === 'connected'
+    && !store.liveblocks?.isStorageLoading
+  ));
+}
+
+function stopWorkspaceVerificationMonitor(): void {
+  if (workspaceVerificationTimer) window.clearTimeout(workspaceVerificationTimer);
+  workspaceVerificationTimer = null;
+  workspaceVerificationRoomId = null;
+}
+
+function startWorkspaceVerificationMonitor(roomId: string): void {
+  stopWorkspaceVerificationMonitor();
+  workspaceVerificationRoomId = roomId;
+
+  const schedule = () => {
+    if (workspaceVerificationRoomId !== roomId) return;
+    workspaceVerificationTimer = window.setTimeout(() => {
+      workspaceVerificationTimer = null;
+      if (workspaceVerificationRoomId !== roomId || !isUnifiedStorageReady(roomId)) {
+        schedule();
+        return;
+      }
+      if (workspaceVerificationInFlight) {
+        schedule();
+        return;
+      }
+
+      const operation = (async () => {
+        const pending = await readPendingWorkspaceSync();
+        if (pending) {
+          const flushed = await flushWorkspaceQueue();
+          if (flushed.conflict || await readPendingWorkspaceSync()) return;
+        }
+        const repairedFields = await ensureUnifiedWorkspaceConvergence(roomId);
+        if (repairedFields.length > 0) recordWorkspaceVerification(roomId, repairedFields);
+      })();
+      workspaceVerificationInFlight = operation;
+      void operation.catch((error) => {
+        // Do not surface a stale error after this tab became a follower or
+        // switched rooms. A current connected workspace must expose failures
+        // instead of retaining a misleading green status.
+        if (workspaceVerificationRoomId === roomId && isUnifiedStorageReady(roomId)) {
+          reportQueueFlushFailure(error);
+        }
+      }).finally(() => {
+        if (workspaceVerificationInFlight === operation) workspaceVerificationInFlight = null;
+        schedule();
+      });
+    }, WORKSPACE_VERIFICATION_INTERVAL_MS);
+  };
+
+  schedule();
+}
+
+function recordWorkspaceVerification(roomId: string, repairedFields: string[]): void {
+  const verifiedAt = new Date().toISOString();
+  try {
+    const current = JSON.parse(localStorage.getItem('smart-line-sync-last-connected') ?? '{}') as Record<string, string>;
+    localStorage.setItem('smart-line-sync-last-connected', JSON.stringify({
+      ...current,
+      workspace: verifiedAt,
+    }));
+  } catch {
+    // Verification remains valid when optional localStorage is unavailable.
+  }
+  window.dispatchEvent(new CustomEvent(WORKSPACE_VERIFIED_EVENT, {
+    detail: { roomId, verifiedAt, repairedFields },
+  }));
+}
+
+async function ensureUnifiedWorkspaceConvergence(targetRoomId: string): Promise<string[]> {
+  const room = useTimelineStore.getState().liveblocks?.room;
+  if (!room || room.id !== targetRoomId || room.getStatus() !== 'connected') {
+    throw new Error('统一工作区连接已切换，无法完成数据一致性校验。');
+  }
+  const { root } = await room.getStorage();
+  const repaired = new Set<string>();
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await waitForRoomStorageSynchronized(room);
+    const remote = root.toJSON() as Record<string, unknown>;
+    assertWorkspaceSchemaSupported(remote, WORKSPACE_SCHEMA_VERSION);
+    const local = workspaceRootFromBackup(createWorkspaceBackup()) as Record<string, unknown>;
+    const mismatches = findWorkspaceFieldMismatches(local, remote, EXPECTED_KEYS);
+    if (mismatches.length === 0) return [...repaired];
+
+    const pending = await readPendingWorkspaceSync();
+    if (pending) {
+      throw new Error('本机仍有修改等待同步，已停止云端一致性修复以避免覆盖。');
+    }
+
+    const latestRemoteBeforeRepair = root.toJSON() as Record<string, unknown>;
+    if (hasWorkspaceFieldSnapshotChanged(remote, latestRemoteBeforeRepair, mismatches)) {
+      // Another device updated one of the mismatched fields while this device
+      // was checking its durable queue. Restart from the newer cloud snapshot.
+      continue;
+    }
+
+    const remoteFields: Partial<Record<WorkspaceStorageField, unknown>> = {};
+    for (const key of mismatches) {
+      repaired.add(key);
+      if (Object.prototype.hasOwnProperty.call(remote, key)) {
+        remoteFields[key as WorkspaceStorageField] = remote[key];
+      }
+    }
+
+    // A populated cloud field is authoritative once the durable local queue is
+    // empty. Rehydrate stale Zustand slices from that exact cloud snapshot.
+    applyWorkspaceFields(remoteFields);
+    await Promise.resolve();
+
+    // Normalizers can repair legacy values (for example group task copies)
+    // while an old room can lack newly introduced fields. Write the canonical
+    // values back only if that individual cloud field is still unchanged from
+    // the snapshot. A simultaneous remote edit is never overwritten.
+    if (!await readPendingWorkspaceSync()) {
+      const latestRemote = root.toJSON() as Record<string, unknown>;
+      const latestLocal = workspaceRootFromBackup(createWorkspaceBackup()) as Record<string, unknown>;
+      const fieldsToBackfill = findWorkspaceFieldsSafeToBackfill(
+        remote,
+        latestRemote,
+        latestLocal,
+        mismatches,
+      );
+      if (fieldsToBackfill.length === 0) continue;
+      room.batch(() => {
+        for (const key of fieldsToBackfill) root.set(key, latestLocal[key] as Json);
+      });
+    }
+  }
+
+  const finalRemote = root.toJSON() as Record<string, unknown>;
+  const finalLocal = workspaceRootFromBackup(createWorkspaceBackup()) as Record<string, unknown>;
+  const remaining = findWorkspaceFieldMismatches(finalLocal, finalRemote, EXPECTED_KEYS);
+  throw new Error(`云端已连接，但 ${remaining.join('、') || '部分数据'} 未能在本机收敛，请重新连接后重试。`);
 }
 
 function waitForRoomStorageSynchronized(

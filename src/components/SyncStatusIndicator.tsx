@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Cloud, CloudOff, LoaderCircle, TriangleAlert } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
@@ -12,6 +12,8 @@ import {
   WORKSPACE_QUEUE_ERROR_EVENT,
   WORKSPACE_QUEUE_EVENT,
 } from '@/services/workspaceOfflineQueue';
+import { readWorkspaceSyncSettings, WORKSPACE_VERIFIED_EVENT } from '@/services/workspaceSync';
+import { liveblocksAuthMode } from '@/auth/config';
 import {
   deriveSyncIndicatorState,
   type ModuleSyncState,
@@ -22,31 +24,21 @@ const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
 
 function readLastConnectedAt(): string | null {
   try {
-    const values = Object.values(JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}'))
-      .filter((value): value is string => typeof value === 'string' && !Number.isNaN(Date.parse(value)));
-    return values.sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null;
+    const value = (JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}') as Record<string, unknown>).workspace;
+    return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
   } catch {
     return null;
   }
 }
 
-function persistLastSynchronizedAt(value: string): void {
-  try {
-    const current = JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}') as Record<string, string>;
-    localStorage.setItem(LAST_CONNECTED_KEY, JSON.stringify({ ...current, workspace: value }));
-  } catch {
-    // The in-memory status remains accurate when optional localStorage fails.
-  }
-}
-
 function formatLastConnected(value: string | null): string {
-  if (!value) return '暂无成功同步记录';
+  if (!value) return '暂无完整校验记录';
   const date = new Date(value);
   const today = new Date();
   const sameDay = date.toDateString() === today.toDateString();
   return sameDay
-    ? `最后同步 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    : `最后同步 ${date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+    ? `完整校验 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
+    : `完整校验 ${date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' }) => {
@@ -61,7 +53,9 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   const [queueError, setQueueError] = useState(false);
   const [queueLoaded, setQueueLoaded] = useState(false);
   const [lastConnectedAt, setLastConnectedAt] = useState<string | null>(readLastConnectedAt);
-  const wasFullySynchronized = useRef(false);
+  const [unifiedArchitecture, setUnifiedArchitecture] = useState(
+    () => readWorkspaceSyncSettings().architecture === 'unified',
+  );
 
   const modules = useMemo<ModuleSyncState[]>(
     () => [timeline, ebb, daily, graph, lifeMap],
@@ -95,11 +89,19 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     const handleQueueError = () => setQueueError(true);
     const handleStorage = (event: StorageEvent) => {
       if (event.key === 'smart-line-sync-last-connected') setLastConnectedAt(readLastConnectedAt());
+      if (event.key === 'smart-line-sync-architecture-v1') {
+        setUnifiedArchitecture(readWorkspaceSyncSettings().architecture === 'unified');
+      }
+    };
+    const handleVerified = () => {
+      setLastConnectedAt(readLastConnectedAt());
+      setUnifiedArchitecture(readWorkspaceSyncSettings().architecture === 'unified');
     };
     const interval = window.setInterval(() => void refreshQueueState(), 15_000);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('storage', handleStorage);
+    window.addEventListener(WORKSPACE_VERIFIED_EVENT, handleVerified);
     window.addEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
     window.addEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
     return () => {
@@ -107,39 +109,32 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(WORKSPACE_VERIFIED_EVENT, handleVerified);
       window.removeEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
       window.removeEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
     };
   }, [refreshQueueState]);
 
-  useEffect(() => {
-    const fullySynchronized = queueLoaded
-      && online
-      && enabledModules.length > 0
-      && connectedCount === enabledModules.length
-      && pendingCount === 0
-      && conflictCount === 0
-      && !queueError;
-    if (fullySynchronized && !wasFullySynchronized.current) {
-      const now = new Date().toISOString();
-      setLastConnectedAt(now);
-      persistLastSynchronizedAt(now);
-    }
-    wasFullySynchronized.current = fullySynchronized;
-  }, [connectedCount, conflictCount, enabledModules.length, online, pendingCount, queueError, queueLoaded]);
-
-  const indicatorState = deriveSyncIndicatorState({
-    modules,
-    online,
-    pendingCount,
-    conflictCount,
-    queueError,
-  });
+  const derivedIndicatorState = !queueLoaded && enabledModules.length > 0
+    ? 'connecting'
+    : deriveSyncIndicatorState({
+      modules,
+      online,
+      pendingCount,
+      conflictCount,
+      queueError,
+    });
+  const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && !unifiedArchitecture;
+  const indicatorState = requiresUnifiedMigration && derivedIndicatorState === 'connected'
+    ? 'pending'
+    : derivedIndicatorState;
 
   const issueCount = conflictCount + errorCount;
   const description = indicatorState === 'off'
     ? '同步未开启'
-    : indicatorState === 'connecting'
+    : requiresUnifiedMigration
+      ? '旧同步架构已连接，需要迁移到统一工作区'
+      : indicatorState === 'connecting'
       ? `正在同步 ${connectedCount}/${enabledModules.length} 个数据模块`
       : indicatorState === 'connected'
         ? `已同步 ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
