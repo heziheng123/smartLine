@@ -16,6 +16,7 @@ import {
 } from './workspaceBackup';
 import {
   WORKSPACE_QUEUE_EVENT,
+  WORKSPACE_QUEUE_ERROR_EVENT,
   acknowledgeAppliedWorkspaceSync,
   clearPendingWorkspaceSync,
   getPendingWorkspaceSyncToken,
@@ -24,7 +25,7 @@ import {
   setWorkspaceQueueSuppressed,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
-import { assertWorkspaceSchemaSupported, buildUnifiedRoomId, decideUnifiedWorkspaceActivation, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, shouldBackfillLegacyLifeMapSync, withTimeout } from './workspaceSyncCore';
+import { assertWorkspaceQueueDrained, assertWorkspaceSchemaSupported, buildUnifiedRoomId, commitWorkspaceQueueRevisionSafely, decideUnifiedWorkspaceActivation, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, shouldBackfillLegacyLifeMapSync, withTimeout } from './workspaceSyncCore';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
 export type SyncArchitecture = 'legacy' | 'unified';
@@ -54,6 +55,12 @@ export interface WorkspaceMigrationReport {
 export interface UnifiedWorkspaceActivationResult {
   roomId: string;
   source: 'new' | 'matching' | 'cloud';
+  applied: number;
+}
+
+export interface UnifiedWorkspaceConnectionResult {
+  roomId: string;
+  applied: number;
 }
 
 const SETTINGS_KEY = 'smart-line-sync-architecture-v1';
@@ -65,6 +72,7 @@ const EXPECTED_KEYS = [
 ] as const;
 let queueListenerStarted = false;
 let queueFlushTimer: number | null = null;
+let queueFlushInFlight: Promise<{ applied: number; conflict: boolean }> | null = null;
 export const WORKSPACE_CONFLICT_EVENT = 'smartline:workspace-conflict';
 
 export function readWorkspaceSyncSettings(): WorkspaceSyncSettings {
@@ -125,41 +133,61 @@ export function connectLegacyWorkspace(fallbackCode?: string): void {
   if (connectedLifeMap.syncEnabled) connectedLifeMap.liveblocks?.enterRoom?.(`${LIFE_MAP_ROOM_PREFIX}${connectedLifeMap.syncRoomCode || code}`);
 }
 
-export function connectUnifiedWorkspace(roomCode: string, roomId?: string): string {
+export async function connectUnifiedWorkspace(roomCode: string, roomId?: string): Promise<UnifiedWorkspaceConnectionResult> {
   const settings = readWorkspaceSyncSettings();
   const targetRoomId = roomId || settings.unifiedRoomId || buildUnifiedRoomId(roomCode);
   setWorkspaceQueueSuppressed(true);
-  enableAll(roomCode);
-  useTimelineStore.getState().liveblocks?.enterRoom?.(targetRoomId);
-  useEbbStore.getState().liveblocks?.enterRoom?.(targetRoomId);
-  useDailyScheduleStore.getState().liveblocks?.enterRoom?.(targetRoomId);
-  useGraphStore.getState().liveblocks?.enterRoom?.(targetRoomId);
-  useLifeMapStore.getState().liveblocks?.enterRoom?.(targetRoomId);
-  ensureQueueListener();
-  void waitForUnifiedStorage()
-    .then(() => flushWorkspaceQueue())
-    .catch(() => undefined)
-    .finally(() => window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0));
-  return targetRoomId;
+  try {
+    enableAll(roomCode);
+    useTimelineStore.getState().liveblocks?.enterRoom?.(targetRoomId);
+    useEbbStore.getState().liveblocks?.enterRoom?.(targetRoomId);
+    useDailyScheduleStore.getState().liveblocks?.enterRoom?.(targetRoomId);
+    useGraphStore.getState().liveblocks?.enterRoom?.(targetRoomId);
+    useLifeMapStore.getState().liveblocks?.enterRoom?.(targetRoomId);
+    ensureQueueListener();
+
+    await waitForUnifiedStorage();
+    if (queueFlushTimer) {
+      window.clearTimeout(queueFlushTimer);
+      queueFlushTimer = null;
+    }
+    const flushed = await flushWorkspaceQueue();
+    const remaining = await readPendingWorkspaceSync();
+    assertWorkspaceQueueDrained({
+      pendingFieldCount: Object.keys(remaining?.fields ?? {}).length,
+      conflictDetected: flushed.conflict,
+    });
+
+    const room = useTimelineStore.getState().liveblocks?.room;
+    if (!room || room.getStatus() !== 'connected') {
+      throw new Error('统一工作区连接在补传完成前中断，请检查网络后重试。');
+    }
+    await waitForRoomStorageSynchronized(room);
+    window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
+    return { roomId: targetRoomId, applied: flushed.applied };
+  } finally {
+    window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
+  }
 }
 
-export function activateUnifiedWorkspace(roomCode: string, identity: string): string {
+export async function activateUnifiedWorkspace(roomCode: string, identity: string): Promise<UnifiedWorkspaceConnectionResult> {
   const roomId = buildUnifiedRoomId(roomCode, identity);
   writeWorkspaceSyncSettings({ architecture: 'unified', roomCode, unifiedRoomId: roomId });
   return connectUnifiedWorkspace(roomCode, roomId);
 }
 
-export async function reconnectConfiguredWorkspace(): Promise<void> {
+export async function reconnectConfiguredWorkspace(): Promise<UnifiedWorkspaceConnectionResult | null> {
   const settings = readWorkspaceSyncSettings();
   const anyEnabled = [useTimelineStore, useEbbStore, useDailyScheduleStore, useGraphStore, useLifeMapStore]
     .some((store) => store.getState().syncEnabled);
-  if (!anyEnabled) return;
+  if (!anyEnabled) return null;
   if (settings.architecture === 'unified' && settings.unifiedRoomId) {
     const root = await inspectRoom(settings.unifiedRoomId, '统一工作区');
     assertWorkspaceSchemaSupported(root, WORKSPACE_SCHEMA_VERSION);
-    connectUnifiedWorkspace(settings.roomCode, settings.unifiedRoomId);
+    return await connectUnifiedWorkspace(settings.roomCode, settings.unifiedRoomId);
   } else {
     connectLegacyWorkspace(settings.roomCode);
+    return null;
   }
 }
 
@@ -240,7 +268,8 @@ export async function activateUnifiedWorkspaceSafely(
   const [localSummary, remoteSummary] = [summaryOf(local), summaryOf(remote)];
   const decision = decideUnifiedWorkspaceActivation(hasRemoteStorage, localHash, remoteHash, localSummary, remoteSummary);
   if (decision !== 'conflict') {
-    return { roomId: activateUnifiedWorkspace(roomCode, identity), source: decision };
+    const connected = await activateUnifiedWorkspace(roomCode, identity);
+    return { roomId: connected.roomId, source: decision, applied: connected.applied };
   }
 
   throw new Error(
@@ -277,17 +306,60 @@ function waitForUnifiedStorage(timeoutMs = 20_000): Promise<void> {
   });
 }
 
+function waitForRoomStorageSynchronized(
+  room: { getStatus: () => string; getStorageStatus?: () => string },
+  timeoutMs = 20_000,
+): Promise<void> {
+  if (typeof room.getStorageStatus !== 'function') return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      if (room.getStatus() !== 'connected') {
+        window.clearInterval(timer);
+        reject(new Error('向云端确认补传结果时连接中断，请检查网络后重试。'));
+        return;
+      }
+      if (room.getStorageStatus?.() === 'synchronized') {
+        window.clearInterval(timer);
+        resolve();
+      } else if (Date.now() - startedAt > timeoutMs) {
+        window.clearInterval(timer);
+        reject(new Error('本机修改已提交，但云端确认超时。请保持页面开启并稍后重试。'));
+      }
+    }, 100);
+  });
+}
+
+function reportQueueFlushFailure(error: unknown): void {
+  const message = error instanceof Error ? error.message : '待同步数据补传失败，请保持页面开启并重试。';
+  window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, { detail: { message } }));
+}
+
 function ensureQueueListener(): void {
   if (queueListenerStarted || typeof window === 'undefined') return;
   queueListenerStarted = true;
   window.addEventListener(WORKSPACE_QUEUE_EVENT, () => {
     if (readWorkspaceSyncSettings().architecture !== 'unified') return;
     if (queueFlushTimer) window.clearTimeout(queueFlushTimer);
-    queueFlushTimer = window.setTimeout(() => { void flushWorkspaceQueue(); }, 700);
+    queueFlushTimer = window.setTimeout(() => {
+      queueFlushTimer = null;
+      void flushWorkspaceQueue().catch(reportQueueFlushFailure);
+    }, 700);
   });
 }
 
-export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict: boolean }> {
+export function flushWorkspaceQueue(): Promise<{ applied: number; conflict: boolean }> {
+  if (queueFlushInFlight) return queueFlushInFlight;
+  const operation = flushWorkspaceQueueInternal();
+  queueFlushInFlight = operation;
+  operation.then(
+    () => { if (queueFlushInFlight === operation) queueFlushInFlight = null; },
+    () => { if (queueFlushInFlight === operation) queueFlushInFlight = null; },
+  );
+  return operation;
+}
+
+async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflict: boolean }> {
   const pending = await readPendingWorkspaceSync();
   if (!pending) return { applied: 0, conflict: false };
   const room = useTimelineStore.getState().liveblocks?.room;
@@ -330,7 +402,7 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
   const latest = await readPendingWorkspaceSync();
   if (!latest) return { applied: 0, conflict: false };
   if (getPendingWorkspaceSyncToken(latest) !== getPendingWorkspaceSyncToken(pending)) {
-    return flushWorkspaceQueue();
+    return flushWorkspaceQueueInternal();
   }
 
   if (fieldConflicts.length > 0 || metadataConflict) {
@@ -339,24 +411,31 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
     const conflictingFields = [...new Set(fieldConflicts.map((path) => path.split(/[.[]/, 1)[0] as WorkspaceStorageField))];
     await preserveWorkspaceConflict(pending, remoteUpdatedAt, remoteFields, metadataConflict ? pendingKeys : conflictingFields);
     window.dispatchEvent(new CustomEvent(WORKSPACE_CONFLICT_EVENT));
+    window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
     return { applied: 0, conflict: true };
   }
 
   setWorkspaceQueueSuppressed(true);
   try {
-    room.batch(() => {
-      for (const [key, value] of Object.entries(merged.fields)) root.set(key, value as Json);
-      root.set('metadata', {
-        ...metadata,
-        schemaVersion: WORKSPACE_SCHEMA_VERSION,
-        updatedAt: pending.updatedAt,
-        deviceId: pending.deviceId,
-      } as Json);
+    // The local queue is the last durable copy of offline edits. Keep it until
+    // Liveblocks confirms that the batch reached the cloud; a disconnect or
+    // timeout must leave the queue intact so the next reconnect can retry.
+    await commitWorkspaceQueueRevisionSafely({
+      apply: () => room.batch(() => {
+        for (const [key, value] of Object.entries(merged.fields)) root.set(key, value as Json);
+        root.set('metadata', {
+          ...metadata,
+          schemaVersion: WORKSPACE_SCHEMA_VERSION,
+          updatedAt: pending.updatedAt,
+          deviceId: pending.deviceId,
+        } as Json);
+      }),
+      confirm: () => waitForRoomStorageSynchronized(room),
+      // Keep tracking suppressed until the exact queue revision applied above
+      // is durably removed. Releasing suppression first lets the Liveblocks
+      // echo recreate an identical pending record while IndexedDB is clearing.
+      clear: () => clearPendingWorkspaceSync(pending),
     });
-    // Keep tracking suppressed until the exact queue revision applied above is
-    // durably removed. Releasing suppression first lets the Liveblocks echo
-    // recreate an identical pending record while IndexedDB is still clearing.
-    await clearPendingWorkspaceSync(pending);
     // A newer local revision may have landed after the last pre-batch check.
     // Never report a successful flush while a journal entry is still pending:
     // keep suppression active and immediately drain the newest revision. This
@@ -367,11 +446,12 @@ export async function flushWorkspaceQueue(): Promise<{ applied: number; conflict
       remaining = await readPendingWorkspaceSync();
     }
     if (remaining) {
-      return flushWorkspaceQueue();
+      return flushWorkspaceQueueInternal();
     }
   } finally {
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
   }
+  window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
   return { applied: Object.keys(merged.fields).length, conflict: false };
 }
 
@@ -416,8 +496,8 @@ export async function migrateLegacyWorkspace(roomCode: string, identity: string)
   }
 
   try {
-    const target = connectUnifiedWorkspace(roomCode, targetRoomId);
-    await waitForUnifiedStorage();
+    const connection = await connectUnifiedWorkspace(roomCode, targetRoomId);
+    const target = connection.roomId;
     const timelineRoom = useTimelineStore.getState().liveblocks?.room;
     if (!timelineRoom) throw new Error('统一工作区连接未建立。');
     const { root } = await timelineRoom.getStorage();
@@ -432,6 +512,7 @@ export async function migrateLegacyWorkspace(roomCode: string, identity: string)
       migratedAt: new Date().toISOString(),
       migrationHash: source.hash,
     });
+    await waitForRoomStorageSynchronized(timelineRoom);
     const verifiedRoot = root.toJSON() as Record<string, unknown>;
     const verifiedBackup = rootToBackup(verifiedRoot, source.backup);
     const targetHash = await hashWorkspaceBackup(verifiedBackup);

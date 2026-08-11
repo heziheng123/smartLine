@@ -26,6 +26,17 @@ export interface WorkspaceContentCounts {
   graphNodes: number;
 }
 
+export interface WorkspaceQueueDrainState {
+  pendingFieldCount: number;
+  conflictDetected: boolean;
+}
+
+export interface WorkspaceQueueCommitActions {
+  apply: () => void | Promise<void>;
+  confirm: () => Promise<void>;
+  clear: () => Promise<void>;
+}
+
 export type UnifiedActivationDecision = 'new' | 'matching' | 'cloud' | 'conflict';
 
 export function assertWorkspaceSchemaSupported(
@@ -73,6 +84,21 @@ export function isWorkspaceStoreStorageReady(state: WorkspaceStoreReadiness): bo
     && state.liveblocks?.room?.getStatus() === 'connected'
     && state.liveblocks?.status === 'connected'
     && !state.liveblocks?.isStorageLoading;
+}
+
+export function assertWorkspaceQueueDrained(state: WorkspaceQueueDrainState): void {
+  if (state.conflictDetected) {
+    throw new Error('检测到多设备同步冲突，本机修改已保留。请在同步设置中处理冲突副本。');
+  }
+  if (state.pendingFieldCount > 0) {
+    throw new Error(`云端已连接，但仍有 ${state.pendingFieldCount} 个数据字段等待补传。请保持页面开启并重试。`);
+  }
+}
+
+export async function commitWorkspaceQueueRevisionSafely(actions: WorkspaceQueueCommitActions): Promise<void> {
+  await actions.apply();
+  await actions.confirm();
+  await actions.clear();
 }
 
 export function shouldBackfillLegacyLifeMapSync(

@@ -121,8 +121,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [migrationBusy, setMigrationBusy] = useState(false);
   const [migrationStatus, setMigrationStatus] = useState('');
   const [r2Configured, setR2Configured] = useState<boolean | null>(null);
-  const [pendingFieldCount, setPendingFieldCount] = useState(0);
+  const [pendingFieldCount, setPendingFieldCount] = useState<number | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<WorkspaceConflictRecord[]>([]);
+  const [connectionBusy, setConnectionBusy] = useState(false);
   const [selectedConflictFields, setSelectedConflictFields] = useState<WorkspaceStorageField[]>([]);
   const [archivePeriod, setArchivePeriod] = useState(() => new Date().toISOString().slice(0, 7));
 
@@ -145,7 +146,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   useEffect(() => {
     const refresh = () => {
-      readPendingWorkspaceSync().then((pending) => setPendingFieldCount(Object.keys(pending?.fields ?? {}).length)).catch(() => setPendingFieldCount(0));
+      readPendingWorkspaceSync().then((pending) => setPendingFieldCount(Object.keys(pending?.fields ?? {}).length)).catch(() => setPendingFieldCount(null));
       listWorkspaceConflicts().then((items) => {
         setSyncConflicts(items);
         if (items[0]) setSelectedConflictFields((current) => {
@@ -179,6 +180,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const enabledCount = modules.filter((module) => module.enabled).length;
   const connectedCount = modules.filter((module) => module.enabled && module.status === 'connected').length;
   const allConnected = enabledCount === 5 && connectedCount === 5;
+  const fullySynchronized = allConnected && pendingFieldCount === 0 && syncConflicts.length === 0;
 
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
@@ -220,56 +222,62 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       || lifeMap.syncRoomCode;
     if (!fallbackCode) return;
 
-    if (architecture.architecture === 'unified') {
-      try {
+    setConnectionBusy(true);
+    setRestoreMessage('正在连接云端并处理本机待同步数据…');
+
+    try {
+      if (architecture.architecture === 'unified') {
         if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
           const result = await activateUnifiedWorkspaceSafely(fallbackCode, auth.userId || auth.login || 'owner');
           setArchitecture(readWorkspaceSyncSettings());
           setRestoreMessage(result.source === 'cloud'
-            ? '本机没有规划内容，已安全连接并加载云端工作区。'
+            ? '本机没有规划内容，已安全连接并完成云端数据加载。'
             : result.source === 'matching'
-              ? '本机与云端数据一致，已安全重新连接。'
-              : '云端为空，已安全重新连接并准备上传本机工作区。');
+              ? '本机与云端数据一致，连接及云端确认均已完成。'
+              : '云端为空，已安全连接并完成本机工作区上传。');
         } else {
-          await reconnectConfiguredWorkspace();
+          const result = await reconnectConfiguredWorkspace();
+          setRestoreMessage(result && result.applied > 0
+            ? `连接及云端确认已完成，已补传 ${result.applied} 个数据字段。`
+            : '连接及云端确认已完成，待同步队列为空。');
         }
-      } catch (error) {
-        setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接失败。');
+        return;
       }
-      return;
-    }
-    if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
-      try {
+
+      if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
         setRestoreMessage('正在检查本机与云端数据，连接前会先创建本地快照…');
         const result = await activateUnifiedWorkspaceSafely(fallbackCode, auth.userId || auth.login || 'owner');
         setArchitecture(readWorkspaceSyncSettings());
         setRestoreMessage(result.source === 'cloud'
-          ? '本机没有规划内容，已安全连接并加载云端工作区。'
+          ? '本机没有规划内容，已安全连接并完成云端数据加载。'
           : result.source === 'matching'
-            ? '本机与云端数据一致，已安全连接。'
-            : '云端为空，已安全连接并准备上传本机工作区。');
-      } catch (error) {
-        setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接前检查失败。');
+            ? '本机与云端数据一致，连接及云端确认均已完成。'
+            : '云端为空，已安全连接并完成本机工作区上传。');
+        return;
       }
-      return;
-    }
 
-    // Existing workspaces may still use four historical room codes. Reconnect
-    // each module to its saved room instead of silently moving it to the first
-    // code shown in the dialog. A brand-new connection still uses one code for
-    // all four modules.
-    const savedCodes: Record<ModuleKey, string> = {
-      timeline: timeline.syncRoomCode,
-      ebb: ebb.syncRoomCode,
-      daily: daily.syncRoomCode,
-      graph: graph.syncRoomCode,
-      lifeMap: lifeMap.syncRoomCode,
-    };
-    const reconnectingExisting = timeline.syncEnabled || ebb.syncEnabled || daily.syncEnabled || graph.syncEnabled || lifeMap.syncEnabled;
-    (['timeline', 'ebb', 'daily', 'graph', 'lifeMap'] as ModuleKey[]).forEach((key) => {
-      const moduleCode = reconnectingExisting ? (savedCodes[key] || fallbackCode) : fallbackCode;
-      connectModule(key, moduleCode);
-    });
+      // Existing workspaces may still use five historical room codes. Reconnect
+      // each module to its saved room instead of silently moving it to the first
+      // code shown in the dialog. A brand-new connection still uses one code for
+      // all five modules.
+      const savedCodes: Record<ModuleKey, string> = {
+        timeline: timeline.syncRoomCode,
+        ebb: ebb.syncRoomCode,
+        daily: daily.syncRoomCode,
+        graph: graph.syncRoomCode,
+        lifeMap: lifeMap.syncRoomCode,
+      };
+      const reconnectingExisting = timeline.syncEnabled || ebb.syncEnabled || daily.syncEnabled || graph.syncEnabled || lifeMap.syncEnabled;
+      (['timeline', 'ebb', 'daily', 'graph', 'lifeMap'] as ModuleKey[]).forEach((key) => {
+        const moduleCode = reconnectingExisting ? (savedCodes[key] || fallbackCode) : fallbackCode;
+        connectModule(key, moduleCode);
+      });
+      setRestoreMessage('旧房间重新连接已启动，请等待五个模块全部变为“已连接”。');
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接或补传失败。');
+    } finally {
+      setConnectionBusy(false);
+    }
   }, [roomCode, timeline.syncRoomCode, timeline.syncEnabled, ebb.syncRoomCode, ebb.syncEnabled, daily.syncRoomCode, daily.syncEnabled, graph.syncRoomCode, graph.syncEnabled, lifeMap.syncRoomCode, lifeMap.syncEnabled, connectModule, architecture, enabledCount, auth.login, auth.userId]);
 
   const handleDisconnectAll = useCallback(() => {
@@ -453,14 +461,21 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         <h3 className="tl-dialog-title"><Cloud size={18} />云同步与完整备份</h3>
 
         <div className="tl-sync-status">
-          <span className="tl-sync-dot" style={{ backgroundColor: allConnected ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
-          <strong>{allConnected ? (architecture.architecture === 'unified' ? '统一工作区已连接' : '旧房间同步 5/5') : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}</strong>
+          <span className="tl-sync-dot" style={{ backgroundColor: fullySynchronized ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
+          <strong>{fullySynchronized
+            ? (architecture.architecture === 'unified' ? '统一工作区已同步' : '旧房间同步 5/5')
+            : allConnected && syncConflicts.length > 0
+              ? `已连接，存在 ${syncConflicts.length} 个冲突副本`
+              : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
+                ? `已连接，等待补传 ${pendingFieldCount} 个字段`
+                : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}</strong>
         </div>
         <p className="tl-dialog-hint">
           认证方式：{liveblocksAuthMode === 'authenticated' ? '用户身份认证' : '公钥兼容模式'}
           {auth.login ? ` · GitHub：${auth.login}` : ''}
         </p>
-        <p className="tl-dialog-hint">待补传字段：{pendingFieldCount} · 冲突副本：{syncConflicts.length}</p>
+        <p className="tl-dialog-hint">待补传字段：{pendingFieldCount ?? '检查中'} · 冲突副本：{syncConflicts.length}</p>
+        {restoreMessage && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{restoreMessage}</p>}
         {syncConflicts[0] && <section className="tl-sync-conflict-fields" aria-label="选择冲突数据">
           <strong>最近冲突 · {formatTime(syncConflicts[0].detectedAt)}</strong>
           <small>仅勾选你确认要用本机版本覆盖云端的部分；未选择的字段会继续保留在冲突副本中。</small>
@@ -553,8 +568,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         </div>
 
         {enabledCount > 0 && (
-          <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} style={{ marginBottom: 12 }}>
-            <RefreshCw size={14} />全部重新连接
+          <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} disabled={connectionBusy} style={{ marginBottom: 12 }}>
+            <RefreshCw size={14} />{connectionBusy ? '正在连接并补传…' : '全部重新连接'}
           </button>
         )}
 
@@ -583,7 +598,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadArchive()}><Download size={14} />下载月度归档</button>
           </div>}
           {restoreSummary && <p className="tl-sync-backup-hint">最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.retrospectiveEntries} 条复盘、{restoreSummary.graphNodes} 个节点。</p>}
-          {restoreMessage && <p className="tl-sync-backup-hint" role="status">{restoreMessage}</p>}
           {snapshots.length > 0 && (
             <div className="tl-sync-info" style={{ marginTop: 10 }}>
               {snapshots.slice(0, 5).map((snapshot) => (
@@ -605,9 +619,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         <div className="tl-dialog-actions">
           <button type="button" className="tl-dialog-btn tl-dialog-btn--cancel" onClick={onClose}>关闭</button>
           {enabledCount === 0 ? (
-            <button type="button" className="tl-dialog-btn tl-dialog-btn--primary" onClick={handleConnectAll} disabled={!roomCode.trim()}><Link size={14} />一键连接五个模块</button>
+            <button type="button" className="tl-dialog-btn tl-dialog-btn--primary" onClick={handleConnectAll} disabled={!roomCode.trim() || connectionBusy}><Link size={14} />{connectionBusy ? '正在连接并确认云端…' : '一键连接五个模块'}</button>
           ) : (
-            <button type="button" className="tl-dialog-btn tl-dialog-btn--danger" onClick={handleDisconnectAll}><Unlink size={14} />断开全部同步</button>
+            <button type="button" className="tl-dialog-btn tl-dialog-btn--danger" onClick={handleDisconnectAll} disabled={connectionBusy}><Unlink size={14} />断开全部同步</button>
           )}
         </div>
         <input ref={fileInputRef} type="file" accept="application/json,.json" hidden onChange={handleFileChange} />

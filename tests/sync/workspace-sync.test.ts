@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assertWorkspaceQueueDrained,
   assertWorkspaceSchemaSupported,
   buildUnifiedRoomId,
   collectWorkspaceFieldChanges,
+  commitWorkspaceQueueRevisionSafely,
   decideUnifiedWorkspaceActivation,
   findWorkspaceFieldConflicts,
   hashWorkspaceBackup,
@@ -226,6 +228,42 @@ test('workspace storage is writable only after connection and storage hydration 
     }),
     true,
   );
+});
+
+test('a unified connection is successful only after its local queue is fully drained', () => {
+  assert.doesNotThrow(() => assertWorkspaceQueueDrained({
+    pendingFieldCount: 0,
+    conflictDetected: false,
+  }));
+  assert.throws(
+    () => assertWorkspaceQueueDrained({ pendingFieldCount: 10, conflictDetected: false }),
+    /10 个数据字段等待补传/,
+  );
+  assert.throws(
+    () => assertWorkspaceQueueDrained({ pendingFieldCount: 0, conflictDetected: true }),
+    /多设备同步冲突/,
+  );
+});
+
+test('offline queue data is cleared only after cloud storage confirms the write', async () => {
+  const completed: string[] = [];
+  await commitWorkspaceQueueRevisionSafely({
+    apply: () => { completed.push('apply'); },
+    confirm: async () => { completed.push('confirm'); },
+    clear: async () => { completed.push('clear'); },
+  });
+  assert.deepEqual(completed, ['apply', 'confirm', 'clear']);
+
+  const interrupted: string[] = [];
+  await assert.rejects(
+    commitWorkspaceQueueRevisionSafely({
+      apply: () => { interrupted.push('apply'); },
+      confirm: async () => { interrupted.push('confirm'); throw new Error('connection lost'); },
+      clear: async () => { interrupted.push('clear'); },
+    }),
+    /connection lost/,
+  );
+  assert.deepEqual(interrupted, ['apply', 'confirm']);
 });
 
 test('legacy workspaces automatically include Life Map after the module is introduced', () => {
