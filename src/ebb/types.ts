@@ -2,6 +2,8 @@
 // Ebbinghaus 复习模块 - 核心类型定义
 // ============================================================
 
+import type { TimeSlotConfig } from '../components/dailySchedule/types.ts';
+
 /** 复杂度等级 */
 export type ComplexityLevel = 'easy' | 'normal' | 'hard';
 
@@ -19,6 +21,11 @@ export interface ReviewTask {
   id: string;
   topicName: string;
   dueDate: string; // YYYY-MM-DD
+  /**
+   * The instant when this review round was generated. Legacy records may omit
+   * it; normalization restores a deterministic value before data is stored.
+   */
+  createdAt?: string;
   /** 首次生成时的计划日期；改期时保留，用于追溯原计划。旧数据缺失时回退到 dueDate。 */
   originalDueDate?: string;
   /**
@@ -130,6 +137,8 @@ export interface EbbSettings {
   calViewMode: 'month' | 'week'; // 日历视图模式
   /** 日历任务量分级阈值（升序，4 个值界定 5 级：≤t1=L1, ≤t2=L2, ≤t3=L3, ≤t4=L4, >t4=L5） */
   loadThresholds: [number, number, number, number];
+  /** 每日安排的全局时段与容量设置；作为工作区设置在多端同步。 */
+  dailyTimeSlots?: TimeSlotConfig[];
 }
 
 /** Ebb 模块完整数据 */
@@ -161,6 +170,8 @@ export interface TagStat {
 export interface TopicStat {
   topicKey: string;
   topicName: string;
+  /** Earliest round creation time, used as the stable plan creation time. */
+  createdAt?: string;
   tag?: string;
   complexity?: ComplexityLevel;
   totalRounds: number;

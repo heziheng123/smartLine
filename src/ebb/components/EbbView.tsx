@@ -5,6 +5,7 @@
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { requestConfirmation } from '@/services/confirmation';
 import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
 import '@/styles/ebb.css';
@@ -53,7 +54,6 @@ import AddContentModal from './AddContentModal';
 import SettingsPanel from './SettingsPanel';
 import EbbDatePicker from './EbbDatePicker';
 import RoundsPanel from './RoundsPanel';
-import OverdueAlertModal from './OverdueAlertModal';
 import MatrixView from './MatrixView';
 import BoardView from './BoardView';
 import TodayReviewView from './TodayReviewView';
@@ -61,13 +61,18 @@ import InboxPanel from './InboxPanel';
 import BatchAdjustPanel from './BatchAdjustPanel';
 import DailyReviewPlanner from './DailyReviewPlanner';
 import SyncStatusIndicator from '@/components/SyncStatusIndicator';
+import WorkspaceHeader from '@/components/WorkspaceHeader';
 import { planReviewRoundReschedule, type ReviewRescheduleMode } from '../reschedulePlanning';
 import { buildBalancedDailyReviewPlan } from '../dailyReviewPlanning';
+import { useOperationHistory } from '@/services/operationHistory';
+import { MOTION_DURATION, MOTION_EASE_ENTER } from '@/motion/system';
 
 type ViewTab = 'today' | 'plans';
 type PlanViewMode = 'list' | 'calendar';
+const REVIEW_ADJUSTMENT_INTENT_KEY = 'smart-line-review-adjustment-intent';
 
 const EbbView: React.FC = () => {
+  const prefersReducedMotion = useReducedMotion();
   const safeMode = useMemo(() => {
     try { return sessionStorage.getItem('smart-line-ebb-safe-mode') === '1'; }
     catch { return false; }
@@ -178,13 +183,18 @@ const EbbView: React.FC = () => {
   const [datePicker, setDatePicker] = useState<{ taskId: string; anchor: HTMLElement | null } | null>(null);
   const [roundsTopic, setRoundsTopic] = useState<string | null>(null);
   const [toast, setToast] = useState<string>('');
-  const [overdueAlertOpen, setOverdueAlertOpen] = useState(false);
+  const [toastCanUndo, setToastCanUndo] = useState(false);
+  const [toastCanReviewChanges, setToastCanReviewChanges] = useState(false);
   const [timelineTopic, setTimelineTopic] = useState<string | null>(null);
   const [batchAdjustOpen, setBatchAdjustOpen] = useState(false);
+  const [adjustmentPreset, setAdjustmentPreset] = useState<'default' | 'backlog'>('default');
+  const [adjustmentPreviewExpanded, setAdjustmentPreviewExpanded] = useState(false);
   const [dailyPlanOpen, setDailyPlanOpen] = useState(false);
   const [pendingDragReschedule, setPendingDragReschedule] = useState<{ taskId: string; targetDate: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const latestOperation = useOperationHistory((state) => state.entries[0]);
+  const undoOperation = useOperationHistory((state) => state.undo);
 
   // 异步加载 IndexedDB 数据
   useEffect(() => {
@@ -193,11 +203,42 @@ const EbbView: React.FC = () => {
     }
   }, [isHydrated, hydrateStore]);
 
-  const showToast = useCallback((msg: string) => {
+  const showToast = useCallback((msg: string, canUndo = false, canReviewChanges = false) => {
     setToast(msg);
+    setToastCanUndo(canUndo);
+    setToastCanReviewChanges(canReviewChanges);
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(''), 2500);
+    toastTimer.current = window.setTimeout(() => {
+      setToast('');
+      setToastCanUndo(false);
+      setToastCanReviewChanges(false);
+    }, canUndo || canReviewChanges ? 8000 : 2500);
   }, []);
+
+  const openAdjustmentDetails = useCallback(() => {
+    setToast('');
+    setToastCanReviewChanges(false);
+    setAdjustmentPreset('default');
+    setAdjustmentPreviewExpanded(true);
+    setBatchAdjustOpen(true);
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(REVIEW_ADJUSTMENT_INTENT_KEY) !== 'daily-plan') return;
+      sessionStorage.removeItem(REVIEW_ADJUSTMENT_INTENT_KEY);
+      setActiveTab('plans');
+      openAdjustmentDetails();
+    } catch {
+      // Session storage is optional; direct in-module navigation remains available.
+    }
+  }, [openAdjustmentDetails]);
+
+  const handleUndoLatestOperation = useCallback(async () => {
+    if (!latestOperation) return;
+    const undone = await undoOperation(latestOperation.id);
+    showToast(undone ? `已撤销：${latestOperation.label}` : latestOperation.error ?? '撤销失败');
+  }, [latestOperation, showToast, undoOperation]);
 
   // ── 统计数据 ──────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -256,23 +297,13 @@ const EbbView: React.FC = () => {
     (newDate: string | undefined) => {
       if (!datePicker) return;
       if (newDate) {
-        const selectedTask = store.reviewTasks.find((task) => task.id === datePicker.taskId);
-        if (selectedTask) {
-          const topicKey = getReviewTopicKey(selectedTask);
-          const hasConflict = store.reviewTasks.some(
-            (task) =>
-              task.id !== selectedTask.id
-              && getReviewTopicKey(task) === topicKey
-              && task.dueDate === newDate,
-          );
-          if (hasConflict) {
-            showToast('同一主题在该日期已经有复习轮次');
-            setDatePicker(null);
-            return;
-          }
+        try {
+          const plan = planReviewRoundReschedule(store.reviewTasks, datePicker.taskId, newDate, 'single');
+          store.rescheduleReviewRounds(plan.updates);
+          showToast('已安全改期');
+        } catch (cause) {
+          showToast(cause instanceof Error ? cause.message : '轮次改期失败');
         }
-        store.updateReviewTask(datePicker.taskId, { dueDate: newDate });
-        showToast('已改期');
       }
       setDatePicker(null);
     },
@@ -304,21 +335,17 @@ const EbbView: React.FC = () => {
 
   const rescheduleTask = useCallback(
     (taskId: string, dueDate: string, patch: Partial<ReviewTask> = {}) => {
-      const selectedTask = store.reviewTasks.find((task) => task.id === taskId);
-      if (!selectedTask) return false;
-      const topicKey = getReviewTopicKey(selectedTask);
-      const hasConflict = store.reviewTasks.some(
-        (task) =>
-          task.id !== taskId
-          && getReviewTopicKey(task) === topicKey
-          && task.dueDate === dueDate,
-      );
-      if (hasConflict) {
-        showToast('同一主题在该日期已经有复习轮次');
+      try {
+        const plan = planReviewRoundReschedule(store.reviewTasks, taskId, dueDate, 'single');
+        store.rescheduleReviewRounds(plan.updates);
+        const remainingPatch = { ...patch };
+        delete remainingPatch.dueDate;
+        if (Object.keys(remainingPatch).length > 0) store.updateReviewTask(taskId, remainingPatch);
+        return true;
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : '轮次改期失败');
         return false;
       }
-      store.updateReviewTask(taskId, { ...patch, dueDate });
-      return true;
     },
     [store, showToast],
   );
@@ -444,54 +471,75 @@ const EbbView: React.FC = () => {
     );
   }
 
+  const planViewActions = (
+    <div className="eb-plan-view-actions" role="group" aria-label="复习计划显示方式">
+      <button type="button" className={planViewMode === 'list' ? 'is-active' : ''} onClick={() => setPlanViewMode('list')}><LayoutGrid size={13} />列表</button>
+      <button type="button" className={planViewMode === 'calendar' ? 'is-active' : ''} disabled={safeMode || highLoadMode} title={safeMode || highLoadMode ? '当前数据量较大，暂不启用日历拖拽' : undefined} onClick={() => setPlanViewMode('calendar')}><Columns3 size={13} />日历</button>
+      <button type="button" className="is-primary" disabled={reviewTasks.length === 0} onClick={() => { setAdjustmentPreset('default'); setAdjustmentPreviewExpanded(false); setBatchAdjustOpen(true); }}><SlidersHorizontal size={13} />批量管理</button>
+    </div>
+  );
+
   return (
     <DragDropContext onDragEnd={handleDndEnd}>
       <div className="eb-app">
         {/* ── 顶部导航栏 ──────────────────────────────────── */}
-        <header className="eb-nav">
-          <div className="eb-nav-left">
-            <span className="eb-nav-brand"><BrainCircuit size={18} aria-hidden="true" />艾宾浩斯复习</span>
-            <button
-              type="button"
-              className="eb-nav-btn eb-nav-btn--primary"
-              onClick={() => setAddOpen(true)}
-            >
-              <Plus size={15} />
-              快速添加
-            </button>
+        <WorkspaceHeader className="eb-nav" aria-label="艾宾浩斯复习工作区">
+          <div className="eb-nav-left ui-workspace-header__identity">
+            <span className="ui-workspace-header__identity-icon"><BrainCircuit size={18} aria-hidden="true" /></span>
+            <div className="ui-workspace-header__identity-copy">
+              <h1 className="eb-nav-brand">艾宾浩斯复习</h1>
+              <p>记忆与复习工作台</p>
+            </div>
           </div>
-          {activeTab !== 'today' ? <section className="eb-stats-bar" aria-label="复习概览">
+          {activeTab !== 'today' ? <section className="eb-stats-bar ui-workspace-header__context" aria-label="复习概览">
             <div className="eb-stats-cards">
               <div className="eb-stat-card"><span className="eb-stat-icon"><LibraryBig size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.topicCount}</span><span className="eb-stat-label">学习内容</span></div>
               <div className="eb-stat-card"><span className="eb-stat-icon"><ListChecks size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.total}</span><span className="eb-stat-label">总任务</span></div>
               <div className={`eb-stat-card ${stats.todayDue > 0 ? 'eb-stat-card--warn' : ''}`}><span className="eb-stat-icon"><AlarmClock size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayDue}</span><span className="eb-stat-label">今日到期</span></div>
               <div className={`eb-stat-card ${stats.overdue > 0 ? 'eb-stat-card--danger' : ''}`}><span className="eb-stat-icon"><TriangleAlert size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.overdue}</span><span className="eb-stat-label">逾期</span></div>
-              <div className="eb-stat-card"><span className="eb-stat-icon"><Target size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayPoints}</span><span className="eb-stat-label">今日积分</span></div>
-              <div className="eb-stat-card"><span className="eb-stat-icon"><ChartNoAxesColumn size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.weekPoints}</span><span className="eb-stat-label">本周积分</span></div>
+              <div className="eb-stat-card eb-stat-card--secondary"><span className="eb-stat-icon"><Target size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayPoints}</span><span className="eb-stat-label">今日积分</span></div>
+              <div className="eb-stat-card eb-stat-card--secondary"><span className="eb-stat-icon"><ChartNoAxesColumn size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.weekPoints}</span><span className="eb-stat-label">本周积分</span></div>
             </div>
             <div className="eb-stats-progress">
               <div className="eb-stats-progress-info"><span>完成率</span><span className="eb-stats-progress-num">{stats.completed}/{stats.total} · {Math.round(stats.ratio * 100)}%</span></div>
               <div className="eb-stats-progress-bar"><div className="eb-stats-progress-fill" style={{ width: `${stats.ratio * 100}%` }} /></div>
             </div>
-          </section> : <div className="eb-nav-context">今日复习工作台</div>}
-          <div className="eb-nav-right">
+          </section> : <div className="eb-nav-context ui-workspace-header__context">今日复习工作台</div>}
+          <div className="eb-nav-right ui-workspace-header__actions">
+            <button
+              type="button"
+              className="eb-nav-btn eb-nav-btn--primary"
+              onClick={() => setAddOpen(true)}
+              aria-label="快速添加复习内容"
+              title="快速添加复习内容"
+            >
+              <Plus size={15} />
+              <span className="eb-nav-btn-label">快速添加</span>
+            </button>
             {activeTab !== 'today' && (
               <button
                 type="button"
-                className="eb-nav-btn"
+                className="eb-nav-btn eb-nav-tomorrow"
                 onClick={() => setDailyPlanOpen(true)}
+                aria-label={`明日 ${tomorrowWorkload.totalMinutes}/${store.ebbSettings.dailyReviewMinutes} 分钟，打开复习负荷规划`}
               >
                 <CalendarCheck2 size={15} />
-                明日 {tomorrowWorkload.totalMinutes}/{store.ebbSettings.dailyReviewMinutes} 分钟
+                <span>明日</span>
+                <strong>{tomorrowWorkload.totalMinutes}/{store.ebbSettings.dailyReviewMinutes}</strong>
+                <span className="eb-nav-tomorrow-unit">分钟</span>
               </button>
             )}
             <SyncStatusIndicator />
             <details className="eb-more-menu">
               <summary className="eb-nav-btn" aria-label="复习更多操作">
                 <MoreHorizontal size={15} />
-                更多
+                <span className="eb-nav-btn-label">更多</span>
               </summary>
               <div className="eb-more-menu-popover" role="menu">
+                <div className="eb-more-menu-overview" aria-label="已收纳的积分概览">
+                  <span>今日积分<strong>{stats.todayPoints}</strong></span>
+                  <span>本周积分<strong>{stats.weekPoints}</strong></span>
+                </div>
                 <button type="button" role="menuitem" onClick={() => setInboxOpen(true)}>
                   <Inbox size={15} />
                   暂存内容
@@ -516,7 +564,7 @@ const EbbView: React.FC = () => {
               </div>
             </details>
           </div>
-        </header>
+        </WorkspaceHeader>
 
         {(safeMode || highLoadMode) && (
           <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">
@@ -530,7 +578,7 @@ const EbbView: React.FC = () => {
         {activeTab === 'today' && stats.overdue > 0 && store.ebbSettings.autoProcessOverdue && (
           <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900" role="status">
             <span className="flex items-center gap-2"><TriangleAlert size={16} />{stats.overdue} 个逾期轮次需要处理；不会再在启动时自动改期。</span>
-            <button type="button" onClick={() => setOverdueAlertOpen(true)} className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold hover:bg-rose-100">处理逾期</button>
+            <button type="button" onClick={() => { setAdjustmentPreset('backlog'); setAdjustmentPreviewExpanded(false); setBatchAdjustOpen(true); }} className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold hover:bg-rose-100">处理逾期</button>
           </div>
         )}
 
@@ -545,7 +593,7 @@ const EbbView: React.FC = () => {
         )}
 
         {/* ── 视图Tab ─────────────────────────────────────── */}
-        <nav className="eb-tabs" role="tablist" aria-label="复习视图切换">
+        <nav className="eb-tabs ui-workspace-context-bar ui-workspace-context-bar--tabs" role="tablist" aria-label="复习视图切换">
           <button
             type="button"
             role="tab"
@@ -574,10 +622,24 @@ const EbbView: React.FC = () => {
         </nav>
 
         {/* ── 全宽视图内容 ─────────────────────────────── */}
-        <div className="eb-main-wrap">
+        <div className="eb-main-wrap ui-workspace-content-stage">
           <main className="eb-main">
+            <AnimatePresence mode="wait" initial={false}>
             {activeTab === 'today' && (
-              <div id="today-panel" role="tabpanel" aria-labelledby="tab-today" className="h-full eb-today-panel">
+              <motion.div
+                key="today"
+                id="today-panel"
+                role="tabpanel"
+                aria-labelledby="tab-today"
+                className="h-full eb-today-panel"
+                initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -2 }}
+                transition={{
+                  duration: prefersReducedMotion ? MOTION_DURATION.instant : MOTION_DURATION.fast,
+                  ease: MOTION_EASE_ENTER,
+                }}
+              >
                 <TodayReviewView
                   tasks={store.reviewTasks}
                   settings={store.ebbSettings}
@@ -592,29 +654,43 @@ const EbbView: React.FC = () => {
                   tomorrowRounds={Object.keys(tomorrowWorkload.assignmentsByTaskId).length}
                   onOpenTomorrowPlan={() => setDailyPlanOpen(true)}
                 />
-              </div>
+              </motion.div>
             )}
             {activeTab === 'plans' && (
-              <div id="plans-panel" role="tabpanel" aria-labelledby="tab-plans" className="h-full eb-matrix-panel">
-                <CompactWeekStrip
-                  tasks={store.reviewTasks}
-                  selectedDate={selectedDate}
-                  onSelectDate={setSelectedDate}
-                />
-                <div className="eb-plan-view-toolbar">
-                  <div><strong>复习计划</strong><span>管理主题和所有未完成轮次</span></div>
-                  <div className="eb-plan-view-actions">
-                    <button type="button" className={planViewMode === 'list' ? 'is-active' : ''} onClick={() => setPlanViewMode('list')}><LayoutGrid size={13} />列表</button>
-                    <button type="button" className={planViewMode === 'calendar' ? 'is-active' : ''} disabled={safeMode || highLoadMode} title={safeMode || highLoadMode ? '当前数据量较大，暂不启用日历拖拽' : undefined} onClick={() => setPlanViewMode('calendar')}><Columns3 size={13} />日历</button>
-                    <button type="button" className="is-primary" disabled={reviewTasks.length === 0} onClick={() => setBatchAdjustOpen(true)}><SlidersHorizontal size={13} />批量管理</button>
-                  </div>
-                </div>
-                <div className="eb-matrix-panel-content">
+              <motion.div
+                key="plans"
+                id="plans-panel"
+                role="tabpanel"
+                aria-labelledby="tab-plans"
+                className="h-full eb-matrix-panel"
+                initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -2 }}
+                transition={{
+                  duration: prefersReducedMotion ? MOTION_DURATION.instant : MOTION_DURATION.fast,
+                  ease: MOTION_EASE_ENTER,
+                }}
+              >
+                {planViewMode === 'list' && (
+                  <>
+                    <CompactWeekStrip
+                      tasks={store.reviewTasks}
+                      selectedDate={selectedDate}
+                      onSelectDate={setSelectedDate}
+                    />
+                    <div className="eb-plan-view-toolbar">
+                      <div><strong>计划列表</strong><span>按主题管理所有未完成轮次</span></div>
+                      {planViewActions}
+                    </div>
+                  </>
+                )}
+                <div className={`eb-matrix-panel-content ${planViewMode === 'calendar' ? 'is-calendar' : ''}`}>
                   {planViewMode === 'list' ? <MatrixView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} />
-                    : <BoardView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} onSelectDate={setSelectedDate} />}
+                    : <BoardView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} onSelectDate={setSelectedDate} toolbarActions={planViewActions} />}
                 </div>
-              </div>
+              </motion.div>
             )}
+            </AnimatePresence>
           </main>
         </div>
 
@@ -627,9 +703,12 @@ const EbbView: React.FC = () => {
           <BatchAdjustPanel
             reviewTasks={reviewTasks}
             settings={store.ebbSettings}
+            initialGoal={adjustmentPreset === 'backlog' ? 'backlog' : undefined}
+            initialScope={adjustmentPreset === 'backlog' ? 'overdue' : 'all'}
+            initialPreviewExpanded={adjustmentPreviewExpanded}
             onApply={(request) => {
               const result = applyBatchReviewAdjustment(request);
-              showToast(`已调整 ${result.affectedTopics} 个复习计划，关联日程已同步更新`);
+              showToast(`已调整 ${result.affectedTopics} 个复习计划，关联日程已同步更新`, true);
               return result;
             }}
             onClose={() => setBatchAdjustOpen(false)}
@@ -642,7 +721,10 @@ const EbbView: React.FC = () => {
             settings={store.ebbSettings}
             onApply={(request) => {
               const result = applyDailyReviewPlan(request);
-              showToast(`已保存明日负荷：明日 ${result.keptCount} 轮，另有 ${result.deferredCount} 轮完成错峰`);
+              const deferredDates = [...new Set(Object.values(result.assignmentsByTaskId).filter((date) => date !== result.planDate))]
+                .sort()
+                .map((date) => formatDate(date, 'M月D日'));
+              showToast(`明天保留 ${result.keptCount} 轮；另外 ${result.deferredCount} 轮已调整${deferredDates.length > 0 ? `至 ${deferredDates.join('、')}` : ''}`, false, result.deferredCount > 0);
               return result;
             }}
             onClose={() => setDailyPlanOpen(false)}
@@ -671,11 +753,6 @@ const EbbView: React.FC = () => {
         {/* 轮次管理弹窗 */}
         {roundsTopic && (
           <RoundsPanel topicKey={roundsTopic} onClose={() => setRoundsTopic(null)} />
-        )}
-
-        {/* 逾期提醒弹窗 */}
-        {overdueAlertOpen && (
-          <OverdueAlertModal onClose={() => setOverdueAlertOpen(false)} />
         )}
 
         {/* 时间线浮层 */}
@@ -721,7 +798,7 @@ const EbbView: React.FC = () => {
         })()}
 
         {/* Toast */}
-        {toast && <div className="eb-toast">{toast}</div>}
+        {toast && <div className="eb-toast">{toast}{toastCanReviewChanges && <button type="button" onClick={openAdjustmentDetails}>查看这些改期</button>}{toastCanUndo && latestOperation?.canUndo && <button type="button" onClick={() => void handleUndoLatestOperation()}>撤销本次调整</button>}</div>}
       </div>
     </DragDropContext>
   );

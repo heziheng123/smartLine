@@ -1,0 +1,765 @@
+/* Shared page shell for all first-level workspaces. */
+.ui-workspace-header {
+  --workspace-header-height: 56px;
+  --workspace-control-height: var(--ui-control-height);
+  --workspace-control-radius: var(--ui-control-radius);
+  --workspace-control-border: var(--ui-border);
+  --workspace-control-bg: var(--ui-surface);
+  --workspace-control-hover: var(--ui-surface-muted);
+  width: 100%;
+  min-height: var(--workspace-header-height);
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-card-radius);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  box-shadow: none;
+}
+
+.ui-workspace-header__identity,
+.ui-workspace-header__context,
+.ui-workspace-header__actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.ui-workspace-header__identity {
+  gap: 9px;
+}
+
+.ui-workspace-header__identity-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
+
+/* Keep legacy view-level span rules from shifting the shared identity mark. */
+.ui-workspace-header__identity > .ui-workspace-header__identity-icon {
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  font-size: inherit;
+}
+
+.ui-workspace-header__identity-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.ui-workspace-header__identity h1,
+.ui-workspace-header__identity-copy h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 720;
+  line-height: 1.25;
+  letter-spacing: -0.018em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-workspace-header__identity p,
+.ui-workspace-header__identity-copy p,
+.ui-workspace-header__meta {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-workspace-header__context {
+  justify-content: flex-start;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.ui-workspace-header__actions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* ── Shared control vocabulary ─────────────────────────────── */
+.ui-workspace-header :is(
+  .tl-workspace-primary-btn,
+  .tl-workspace-icon-btn,
+  .life-map-scope__trigger,
+  .life-line__add-button,
+  .life-line__jump-button,
+  .life-line__view-button,
+  .life-line__scale-button,
+  .life-line__planning-button,
+  .life-line__next-milestone,
+  .life-line__today-button,
+  .ds-date-input,
+  .ds-header-btn,
+  .wmv-nav-btn,
+  .eb-nav-btn,
+  .workspace-sync-status,
+  :where(.kg-workspace-actions > .tl-dock-popover-wrap > .tl-dock-btn)
+) {
+  box-sizing: border-box;
+  height: var(--workspace-control-height);
+  min-height: var(--workspace-control-height);
+  border: 1px solid var(--workspace-control-border);
+  border-radius: var(--workspace-control-radius);
+  color: var(--ui-text-muted);
+  background: var(--workspace-control-bg);
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    border-color var(--ui-motion-standard),
+    color var(--ui-motion-standard),
+    background-color var(--ui-motion-standard),
+    box-shadow var(--ui-motion-standard);
+}
+
+.ui-workspace-header :is(
+  .tl-workspace-icon-btn,
+  .life-line__jump-button,
+  .life-line__view-button,
+  .workspace-sync-status,
+  :where(.kg-workspace-actions > .tl-dock-popover-wrap > .tl-dock-btn)
+) {
+  width: var(--workspace-control-height);
+  min-width: var(--workspace-control-height);
+  padding: 0;
+}
+
+.ui-workspace-header .tl-workspace-primary-btn,
+.ui-workspace-header .life-line__add-button,
+.ui-workspace-header .eb-nav-btn.eb-nav-btn--primary {
+  border-color: var(--ui-primary);
+  color: #fff;
+  background: var(--ui-primary);
+}
+
+.ui-workspace-header :is(
+  .tl-workspace-icon-btn,
+  .life-map-scope__trigger,
+  .life-line__jump-button,
+  .life-line__view-button,
+  .life-line__scale-button,
+  .life-line__planning-button,
+  .life-line__next-milestone,
+  .life-line__today-button,
+  .ds-date-input,
+  .ds-header-btn,
+  .wmv-nav-btn,
+  .eb-nav-btn,
+  .workspace-sync-status,
+  :where(.kg-workspace-actions > .tl-dock-popover-wrap > .tl-dock-btn)
+):hover {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-text);
+  background: var(--workspace-control-hover);
+  transform: none;
+}
+
+.ui-workspace-header .tl-workspace-primary-btn:hover,
+.ui-workspace-header .life-line__add-button:hover,
+.ui-workspace-header .eb-nav-btn.eb-nav-btn--primary:hover {
+  border-color: var(--ui-primary-hover);
+  color: #fff;
+  background: var(--ui-primary-hover);
+}
+
+.ui-workspace-header :is(
+  .tl-workspace-icon-btn--active,
+  .life-map-scope__trigger[aria-expanded='true'],
+  .life-line__jump-button.is-active,
+  .life-line__view-button.is-active,
+  .life-line__scale-button.is-active,
+  .ds-header-btn--active,
+  .kg-workspace-actions .tl-dock-btn--view-active
+) {
+  border-color: rgba(94, 92, 230, 0.24);
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
+
+.ui-workspace-header :is(button, input, select, summary):focus-visible {
+  outline: none;
+  border-color: rgba(94, 92, 230, 0.42);
+  box-shadow: 0 0 0 3px rgba(94, 92, 230, 0.12);
+}
+
+.ui-workspace-header :is(button, input, select, summary):disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* Date and range controls use the same inset segmented surface. */
+.ui-workspace-header .tl-workspace-year,
+.ui-workspace-header .wmv-date-navigation {
+  min-height: var(--workspace-control-height);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid var(--workspace-control-border);
+  border-radius: var(--workspace-control-radius);
+  background: var(--ui-surface-subtle);
+}
+
+.ui-workspace-header .tl-workspace-year button,
+.ui-workspace-header .wmv-date-navigation .wmv-nav-btn {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+}
+
+.ui-workspace-header .wmv-date-navigation .wmv-nav-btn:last-child {
+  width: auto;
+  padding: 0 9px;
+}
+
+.ui-workspace-header .wmv-date-navigation .wmv-nav-btn:hover,
+.ui-workspace-header .tl-workspace-year button:hover {
+  color: var(--ui-text);
+  background: var(--ui-surface-muted);
+}
+
+.ui-workspace-header .tl-workspace-year span,
+.ui-workspace-header .wmv-nav-label {
+  min-width: 58px;
+  color: var(--ui-text);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.ui-workspace-header .wmv-nav-label {
+  min-width: 104px;
+}
+
+/* Segmented filters share a quiet surface and one active treatment. */
+.ui-workspace-header .wmv-group-switch,
+.ui-workspace-header .wmv-mode-switch {
+  min-height: var(--workspace-control-height);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--workspace-control-radius);
+  background: var(--ui-surface-muted);
+}
+
+.ui-workspace-header .wmv-mode-btn {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ui-text-muted);
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ui-workspace-header .wmv-mode-btn:hover {
+  color: var(--ui-text);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.ui-workspace-header .wmv-mode-btn--active {
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+  box-shadow: 0 1px 2px rgba(22, 22, 28, 0.04);
+}
+
+.ui-workspace-header .wmv-group-switch-label {
+  padding: 0 6px;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* View-specific context controls adopt the same typography. */
+.ui-workspace-header .life-map-scope__trigger {
+  min-width: 154px;
+  max-width: 260px;
+  gap: 7px;
+  padding: 0 10px;
+}
+
+.ui-workspace-header .life-map-scope__trigger > span:not(.life-map-scope__dot) {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ui-workspace-header .life-map-scope__trigger > small {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.ui-workspace-header .life-line__scale-button {
+  min-width: 72px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.ui-workspace-header .ds-date-input {
+  min-width: 132px;
+  padding: 0 10px;
+  color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-workspace-header .ds-day-overview,
+.ui-workspace-header .eb-nav-context {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.ui-workspace-header .ds-header-btn,
+.ui-workspace-header .eb-nav-btn {
+  gap: 6px;
+  padding: 0 11px;
+  white-space: nowrap;
+}
+
+.ui-workspace-header .workspace-sync-status__badge {
+  top: -6px;
+  right: -6px;
+}
+
+.ui-workspace-header .workspace-sync-status--connecting {
+  border-color: #bfdbfe;
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+.ui-workspace-header .workspace-sync-status--connected {
+  border-color: #bbf7d0;
+  color: #059669;
+  background: #f0fdf4;
+}
+
+.ui-workspace-header .workspace-sync-status--pending {
+  border-color: #fde68a;
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.ui-workspace-header .workspace-sync-status--error {
+  border-color: #fecaca;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+/* ── Shared context rail and content entry ─────────────────── */
+.ui-workspace-context-bar {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border: 1px solid var(--ui-border);
+  border-top: 0;
+  border-radius: 0;
+  color: var(--ui-text-muted);
+  background: var(--ui-surface-subtle);
+}
+
+.ui-workspace-context-bar :is(button, [role='tab']) {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ui-text-muted);
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    border-color var(--ui-motion-standard),
+    color var(--ui-motion-standard),
+    background-color var(--ui-motion-standard);
+}
+
+.ui-workspace-context-bar :is(button, [role='tab']):hover {
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+
+.ui-workspace-context-bar :is(
+  button.is-active,
+  button[aria-pressed='true'],
+  [role='tab'][aria-selected='true']
+) {
+  border-color: rgba(94, 92, 230, 0.20);
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
+
+.ui-workspace-context-bar :is(button, [role='tab']):focus-visible {
+  outline: none;
+  border-color: rgba(94, 92, 230, 0.38);
+  box-shadow: 0 0 0 3px rgba(94, 92, 230, 0.10);
+}
+
+.ui-workspace-context-bar--status {
+  justify-content: flex-start;
+  min-height: 38px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ui-workspace-content-stage {
+  box-sizing: border-box;
+  box-shadow: none;
+}
+
+/* Existing view shells retain their placement, but share one visual frame. */
+.ui-workspace-header.tl-workspace-bar {
+  min-height: var(--workspace-header-height);
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
+}
+
+.ui-workspace-header.life-line__toolbar {
+  position: relative;
+  min-height: var(--workspace-header-height);
+  padding: 9px 12px;
+  border-bottom: 0;
+  border-radius: var(--ui-card-radius) var(--ui-card-radius) 0 0;
+  background: var(--ui-surface);
+}
+
+.ui-workspace-header.ds-header,
+.ui-workspace-header.eb-nav {
+  width: auto;
+  margin: 12px 20px 0;
+  flex: 0 0 auto;
+  border-bottom: 0;
+  border-radius: var(--ui-card-radius) var(--ui-card-radius) 0 0;
+}
+
+.ui-workspace-header.wmv-nav {
+  min-height: var(--workspace-header-height);
+  margin-bottom: 0;
+  padding: 9px 12px;
+  border-bottom: 0;
+  border-radius: var(--ui-card-radius) var(--ui-card-radius) 0 0;
+}
+
+.ui-workspace-header.kg-workspace-bar {
+  width: auto;
+  min-height: var(--workspace-header-height);
+  padding: 9px 12px;
+}
+
+/* Life map: title, scope chips and the canvas read as one continuous frame. */
+.ui-workspace-header.life-line__toolbar + .life-line__plan-filter {
+  min-height: 42px;
+  padding: 6px 12px;
+  background: var(--ui-surface-subtle);
+}
+
+.ui-workspace-header.life-line__toolbar + .life-line__plan-filter button {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ui-workspace-header.life-line__toolbar ~ .life-line__hint {
+  min-height: 36px;
+  margin: 0;
+  border-right: 1px solid var(--ui-border);
+  border-left: 1px solid var(--ui-border);
+  border-radius: 0;
+}
+
+.ui-workspace-header.life-line__toolbar ~ .life-line__scroller {
+  border: 1px solid var(--ui-border);
+  border-top: 0;
+  border-radius: 0 0 var(--ui-card-radius) var(--ui-card-radius);
+}
+
+/* Daily schedule: the header becomes the upper edge of the scheduling area. */
+.ui-workspace-header.ds-header ~ .ds-body {
+  margin: 0 20px 12px;
+  border: 1px solid var(--ui-border);
+  border-top: 0;
+  border-radius: 0 0 var(--ui-card-radius) var(--ui-card-radius);
+  background: var(--ui-surface-subtle);
+}
+
+.ui-workspace-header.ds-header ~ .ds-body .ds-left {
+  padding-top: 12px;
+  padding-right: 12px;
+  padding-bottom: 12px;
+  padding-left: 12px;
+}
+
+.ui-workspace-header.ds-header + .ds-slot-settings {
+  margin: 0 20px;
+  border-right: 1px solid var(--ui-border);
+  border-left: 1px solid var(--ui-border);
+}
+
+/* Week matrix: the weekday row is the second level of the same workspace. */
+.ui-workspace-header.wmv-nav + .wmv-matrix {
+  border: 1px solid var(--ui-border);
+  border-top: 0;
+  border-radius: 0 0 var(--ui-card-radius) var(--ui-card-radius);
+  background: var(--ui-surface);
+}
+
+/* Review workspace: header, tabs and content share one aligned frame. */
+.ui-workspace-header.eb-nav ~ .eb-tabs {
+  margin: 0 20px;
+  padding: 6px 12px;
+  background: var(--ui-surface-subtle);
+}
+
+.ui-workspace-header.eb-nav ~ .eb-tabs .eb-tab {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ui-workspace-header.eb-nav ~ .eb-tabs .eb-tab--active {
+  border-color: rgba(94, 92, 230, 0.20);
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
+
+.ui-workspace-header.eb-nav ~ .eb-main-wrap {
+  margin: 0 20px 12px;
+  border: 1px solid var(--ui-border);
+  border-top: 0;
+  border-radius: 0 0 var(--ui-card-radius) var(--ui-card-radius);
+  background: var(--ui-surface-subtle);
+}
+
+/* Timeline filter feedback becomes the same connected context rail. */
+.ui-workspace-header.tl-workspace-bar ~ .tl-filter-status {
+  align-self: stretch;
+  max-width: none;
+  height: auto;
+  margin: 0;
+  border-right: 1px solid var(--ui-border);
+  border-left: 1px solid var(--ui-border);
+  border-radius: 0;
+  background: var(--ui-surface-subtle);
+}
+
+.ui-workspace-header.tl-workspace-bar ~ .tl-filter-status button {
+  min-height: 24px;
+  margin-left: auto;
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
+
+.ui-workspace-header.tl-workspace-bar ~ .tl-year-card,
+.ui-workspace-header.tl-workspace-bar ~ .tl-empty {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: none;
+}
+
+.ui-workspace-header.tl-workspace-bar + .tl-year-card,
+.ui-workspace-header.tl-workspace-bar + .tl-empty {
+  border-top-color: var(--ui-border);
+}
+
+.ui-workspace-header.tl-workspace-bar + .tl-filter-status + .tl-year-card,
+.ui-workspace-header.tl-workspace-bar + .tl-filter-status + .tl-empty {
+  border-top: 0;
+}
+
+/* The graph is a canvas, so its entry edge is expressed by a quiet header rail. */
+.knowledge-graph-view .ui-workspace-header.kg-workspace-bar {
+  border-bottom-color: var(--ui-border);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.knowledge-graph-view .kg-canvas-stage {
+  background: transparent;
+}
+
+/* Knowledge controls are top-right utility popovers, not bottom Dock sheets. */
+.kg-control-popover {
+  bottom: auto !important;
+  left: auto !important;
+  height: max-content;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  transform: none !important;
+}
+
+.kg-control-popover button {
+  appearance: none;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  font-family: inherit;
+}
+
+.kg-control-popover button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(94, 92, 230, 0.12);
+}
+
+.kg-control-popover .kg-filter-option {
+  border-radius: 8px;
+  color: var(--ui-text-muted);
+  background: transparent;
+}
+
+.kg-control-popover .kg-filter-option + .kg-filter-option {
+  margin-top: 2px;
+}
+
+.kg-control-popover .kg-filter-option:hover {
+  color: var(--ui-text);
+  background: var(--ui-surface-muted);
+}
+
+.kg-control-popover .kg-filter-option[aria-pressed='true'] {
+  color: var(--ui-primary);
+  background: var(--ui-primary-soft);
+}
+
+.kg-control-popover button[aria-pressed='true']:not(.kg-filter-option) {
+  color: var(--ui-primary);
+  background: var(--ui-surface);
+  box-shadow: 0 1px 3px rgba(29, 29, 31, 0.08);
+}
+
+@media (max-width: 1100px) {
+  .ui-workspace-header {
+    --workspace-header-height: 52px;
+    grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .ui-workspace-header__identity-icon {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+
+  .ui-workspace-header__identity h1,
+  .ui-workspace-header__identity-copy h1 {
+    font-size: 14px;
+  }
+
+  .ui-workspace-header.ds-header,
+  .ui-workspace-header.eb-nav {
+    margin: 10px 12px 0;
+  }
+
+  .ui-workspace-header.ds-header ~ .ds-body,
+  .ui-workspace-header.eb-nav ~ .eb-main-wrap {
+    margin-right: 12px;
+    margin-left: 12px;
+  }
+
+  .ui-workspace-header.eb-nav ~ .eb-tabs,
+  .ui-workspace-header.ds-header + .ds-slot-settings {
+    margin-right: 12px;
+    margin-left: 12px;
+  }
+}
+
+@media (max-width: 900px) {
+  .ui-workspace-header.life-line__toolbar :is(
+    .life-line__next-milestone,
+    .life-line__today-button,
+    .life-line__add-button,
+    .life-line__planning-button
+  ) {
+    width: var(--workspace-control-height);
+    min-width: var(--workspace-control-height);
+    padding: 0;
+  }
+
+  .ui-workspace-header.life-line__toolbar :is(
+    .life-line__next-milestone,
+    .life-line__add-button,
+    .life-line__planning-button
+  ) span {
+    display: none;
+  }
+
+  .ui-workspace-header.life-line__toolbar .life-line__today-button {
+    font-size: 0;
+  }
+
+  .ui-workspace-header.life-line__toolbar .life-line__scale-button {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .ui-workspace-header {
+    --workspace-header-height: 48px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    border-radius: 12px;
+  }
+
+  .ui-workspace-header__identity-icon {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+    border-radius: 8px;
+  }
+
+  .ui-workspace-header__meta,
+  .ui-workspace-header__identity p,
+  .ui-workspace-header__identity-copy p {
+    display: none;
+  }
+}

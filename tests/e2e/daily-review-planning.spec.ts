@@ -74,6 +74,17 @@ const extraReviewTasks = [
   },
 ];
 
+const denseTabletPoolTasks = Array.from({ length: 18 }, (_, index) => ({
+  id: `tablet-pool-${index}`,
+  topicName: `平板待安排复习 ${index + 1}`,
+  dueDate: today,
+  originalDueDate: today,
+  roundOrder: 1,
+  isCompleted: false,
+  complexity: 'normal' as const,
+  smStatus: 'scheduled' as const,
+}));
+
 const dailySchedules = {
   [today]: {
     date: today,
@@ -98,9 +109,11 @@ const dailySchedules = {
 };
 
 test.beforeEach(async ({ page }, testInfo) => {
-  const seededTasks = testInfo.title.includes('minute capacity')
-    ? [...reviewTasks, ...extraReviewTasks]
-    : reviewTasks;
+  const seededTasks = testInfo.title.includes('tablet pending pool')
+    ? [...reviewTasks, ...denseTabletPoolTasks]
+    : testInfo.title.includes('minute capacity')
+      ? [...reviewTasks, ...extraReviewTasks]
+      : reviewTasks;
   await page.addInitScript(({ tasks, schedules }) => {
     if (sessionStorage.getItem('daily-review-plan-seeded') === '1') return;
     sessionStorage.setItem('daily-review-plan-seeded', '1');
@@ -125,6 +138,34 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.goto('/');
 });
 
+test('tablet pending pool expands into the Today view instead of creating nested scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1080, height: 900 });
+  await page.getByTitle('艾宾浩斯复习').click();
+  const poolList = page.locator('.eb-today-pool-list');
+  await expect(poolList.locator('.eb-today-pool-card')).toHaveCount(18);
+
+  const poolMetrics = await poolList.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      overflowY: style.overflowY,
+      maxHeight: style.maxHeight,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    };
+  });
+  expect(poolMetrics.overflowY).toBe('visible');
+  expect(poolMetrics.maxHeight).toBe('none');
+  expect(Math.abs(poolMetrics.scrollHeight - poolMetrics.clientHeight)).toBeLessThanOrEqual(1);
+
+  const panelMetrics = await page.locator('.eb-today-panel').evaluate((element) => ({
+    overflowY: getComputedStyle(element).overflowY,
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(panelMetrics.overflowY).toBe('auto');
+  expect(panelMetrics.scrollHeight).toBeGreaterThan(panelMetrics.clientHeight);
+});
+
 test('workload planning assigns concrete dates and preserves every relation', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
   await page.getByRole('button', { name: /明日 \d+\/60 分钟/ }).first().click();
@@ -139,6 +180,8 @@ test('workload planning assigns concrete dates and preserves every relation', as
   await dialog.getByLabel('安排重点关系知识').selectOption(tomorrow);
   await dialog.getByLabel('安排常规关系知识').selectOption(dayAfterTomorrow);
   await dialog.getByRole('button', { name: '保存负荷规划' }).click();
+  await expect(page.getByText(/明天保留 1 轮；另外 1 轮已调整至/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看这些改期' })).toBeVisible();
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{
@@ -321,7 +364,7 @@ test('daily schedule exposes the same workload planning transaction', async ({ p
   await dialog.getByLabel('安排重点关系知识').selectOption(tomorrow);
   await dialog.getByLabel('安排常规关系知识').selectOption(dayAfterTomorrow);
   await dialog.getByRole('button', { name: '保存负荷规划' }).click();
-  await expect(page.getByRole('status')).toContainText('已保存明日负荷：明日 1 轮，另有 1 轮完成错峰');
+  await expect(page.getByRole('status')).toContainText(/明天保留 1 轮；另外 1 轮已调整至/);
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{ reviewTasks?: Array<{ id: string; dueDate: string }> }>(
@@ -334,4 +377,9 @@ test('daily schedule exposes the same workload planning transaction', async ({ p
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((task) => task.dueDate);
   }).toEqual([tomorrow, dayAfterTomorrow]);
+
+  await page.getByRole('button', { name: '查看这些改期' }).click();
+  const adjustment = page.getByRole('dialog', { name: '复习计划调整中心' });
+  await expect(adjustment).toBeVisible();
+  await expect(adjustment.locator('details.eb-adjust-preview-details')).toHaveAttribute('open', '');
 });

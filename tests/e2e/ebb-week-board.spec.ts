@@ -19,13 +19,14 @@ const movedDate = addDays(nextMonday, 1);
 
 const ebb = {
   reviewTasks: [
-    { id: 'matrix-r1', topicName: '矩阵拖拽测试', dueDate: addDays(nextMonday, -3), originalDueDate: addDays(nextMonday, -3), roundOrder: 1, isCompleted: true, completedDate: addDays(nextMonday, -3), tag: '政治', complexity: 'normal', smStatus: 'confirmed' },
-    { id: 'matrix-r2', topicName: '矩阵拖拽测试', dueDate: nextMonday, originalDueDate: nextMonday, roundOrder: 2, isCompleted: false, tag: '政治', complexity: 'normal', smStatus: 'scheduled' },
-    { id: 'matrix-r3', topicName: '矩阵拖拽测试', dueDate: addDays(nextMonday, 3), originalDueDate: addDays(nextMonday, 3), roundOrder: 3, isCompleted: false, tag: '政治', complexity: 'normal', smStatus: 'scheduled' },
-    { id: 'matrix-r4', topicName: '矩阵拖拽测试', dueDate: addDays(nextMonday, 10), originalDueDate: addDays(nextMonday, 10), roundOrder: 4, isCompleted: false, tag: '政治', complexity: 'normal', smStatus: 'scheduled' },
+    { id: 'matrix-r1', topicName: '矩阵拖拽测试', createdAt: '2026-01-01T00:00:00.000Z', dueDate: addDays(nextMonday, -3), originalDueDate: addDays(nextMonday, -3), roundOrder: 1, isCompleted: true, completedDate: addDays(nextMonday, -3), tag: '政治', complexity: 'normal', smStatus: 'confirmed' },
+    { id: 'matrix-r2', topicName: '矩阵拖拽测试', createdAt: '2026-01-01T00:00:00.000Z', dueDate: nextMonday, originalDueDate: nextMonday, roundOrder: 2, isCompleted: false, tag: '政治', complexity: 'normal', smStatus: 'scheduled' },
+    { id: 'matrix-r3', topicName: '矩阵拖拽测试', createdAt: '2026-01-01T00:00:00.000Z', dueDate: addDays(nextMonday, 3), originalDueDate: addDays(nextMonday, 3), roundOrder: 3, isCompleted: false, tag: '政治', complexity: 'normal', smStatus: 'scheduled' },
+    { id: 'matrix-r4', topicName: '矩阵拖拽测试', createdAt: '2026-01-01T00:00:00.000Z', dueDate: addDays(nextMonday, 10), originalDueDate: addDays(nextMonday, 10), roundOrder: 4, isCompleted: false, tag: '政治', complexity: 'normal', smStatus: 'scheduled' },
     ...Array.from({ length: 14 }, (_, index) => ({
       id: `crowded-${index + 1}`,
       topicName: `高负载日期任务 ${index + 1}`,
+      createdAt: new Date(Date.UTC(2026, 1, index + 1)).toISOString(),
       dueDate: nextMonday,
       originalDueDate: nextMonday,
       roundOrder: 1,
@@ -91,6 +92,33 @@ test('weekly board shows rounds under dates without topic rows', async ({ page }
   await expect(page.locator(`.eb-week-day[data-date="${nextMonday}"]`)).toContainText('矩阵拖拽测试');
 });
 
+test('tablet calendar consolidates duplicate headers and keeps overview controls separate', async ({ page }) => {
+  await page.setViewportSize({ width: 1081, height: 898 });
+
+  await expect(page.locator('.eb-compact-week')).toHaveCount(0);
+  await expect(page.locator('.eb-plan-view-toolbar')).toHaveCount(0);
+  await expect(page.locator('.eb-week-board-toolbar .eb-week-board-summary')).toBeVisible();
+  await expect(page.locator('.eb-week-board-toolbar .eb-plan-view-actions')).toBeVisible();
+
+  const toolbarHeight = await page.locator('.eb-week-board-toolbar').evaluate((element) => element.getBoundingClientRect().height);
+  expect(toolbarHeight).toBeLessThanOrEqual(100);
+
+  const navLayout = await page.locator('.eb-nav').evaluate((element) => {
+    const [left, stats, right] = Array.from(element.children).map((child) => child.getBoundingClientRect());
+    return {
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      leftRight: left.right,
+      statsLeft: stats.left,
+      statsRight: stats.right,
+      rightLeft: right.left,
+    };
+  });
+  expect(navLayout.scrollWidth).toBeLessThanOrEqual(navLayout.clientWidth + 1);
+  expect(navLayout.leftRight).toBeLessThanOrEqual(navLayout.statsLeft + 1);
+  expect(navLayout.statsRight).toBeLessThanOrEqual(navLayout.rightLeft + 1);
+});
+
 test('matrix replaces the mini calendar with a compact week selector and highlights the selected date', async ({ page }) => {
   await page.getByRole('button', { name: '列表' }).click();
   await expect(page.locator('.eb-mini-cal')).toHaveCount(0);
@@ -98,6 +126,18 @@ test('matrix replaces the mini calendar with a compact week selector and highlig
   await expect(strip).toBeVisible();
   await strip.locator('button[title*="15 个复习轮次"]').click();
   await expect(page.locator('.eb-topic-row.is-date-match').filter({ hasText: '矩阵拖拽测试' })).toBeVisible();
+});
+
+test('matrix sorts plans by generation time in both directions and reveals the basis', async ({ page }) => {
+  await page.getByRole('button', { name: '列表' }).click();
+  const sortSelect = page.locator('.eb-filter-select').nth(2);
+
+  await sortSelect.selectOption('created-desc');
+  await expect(page.locator('.eb-topic-row').first()).toContainText('高负载日期任务 14');
+  await expect(page.locator('.eb-topic-row').first().locator('.eb-topic-row-created')).toContainText('生成于');
+
+  await sortSelect.selectOption('created-asc');
+  await expect(page.locator('.eb-topic-row').first()).toContainText('矩阵拖拽测试');
 });
 
 test('month mode keeps date columns and scrolls horizontally through the whole month', async ({ page }) => {

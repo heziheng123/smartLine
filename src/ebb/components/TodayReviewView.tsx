@@ -17,7 +17,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { GraphNode } from '@/graph/types';
 import type { DailyRetrospective, CompletedActivity } from '@/components/dailySchedule/retrospectiveTypes';
 import {
-  DEFAULT_TIME_SLOT_CONFIGS,
+  normalizeTimeSlotConfigs,
   type ScheduledItem,
   type TimeSlot,
 } from '@/components/dailySchedule/types';
@@ -74,6 +74,7 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
   onOpenTomorrowPlan,
 }) => {
   const today = todayStr();
+  const slotConfigs = useMemo(() => normalizeTimeSlotConfigs(settings.dailyTimeSlots), [settings.dailyTimeSlots]);
   const [retrospectiveOpen, setRetrospectiveOpen] = useState(false);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<TimeSlot | null>(null);
@@ -160,14 +161,14 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
     const items = getSlotItems(slot);
     const minutes = items.reduce((sum, item) => sum + (getTaskForItem(item) ? getTaskMeta(getTaskForItem(item)!).duration : item.duration ?? 30), 0);
     const completed = items.filter((item) => getTaskForItem(item)?.isCompleted).length;
-    const capacity = DEFAULT_TIME_SLOT_CONFIGS.find((config) => config.slot === slot)?.availableMinutes ?? 0;
+    const capacity = slotConfigs.find((config) => config.slot === slot)?.availableMinutes ?? 0;
     return { items, minutes, completed, capacity };
   };
 
   const scheduledTasks = scheduledReviewItems.map(getTaskForItem).filter(Boolean) as ReviewTask[];
   const totalScheduledMinutes = scheduledTasks.reduce((sum, task) => sum + getTaskMeta(task).duration, 0);
   const remainingDueMinutes = dueTasks.reduce((sum, task) => sum + getTaskMeta(task).duration, 0);
-  const totalCapacity = DEFAULT_TIME_SLOT_CONFIGS.reduce((sum, config) => sum + config.availableMinutes, 0);
+  const totalCapacity = slotConfigs.reduce((sum, config) => sum + config.availableMinutes, 0);
   const scheduledCompleted = scheduledTasks.filter((task) => task.isCompleted).length;
   const dueCompleted = completedTasks.length;
   const reviewStatus = retrospectives[selectedDate]?.status === 'completed'
@@ -180,7 +181,7 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
 
   const recommendedSlot = (task: ReviewTask): TimeSlot => {
     const meta = getTaskMeta(task);
-    const ranked = DEFAULT_TIME_SLOT_CONFIGS.map((config) => {
+    const ranked = slotConfigs.map((config) => {
       const stats = slotStats(config.slot);
       return { slot: config.slot, remaining: stats.capacity - stats.minutes };
     }).sort((left, right) => right.remaining - left.remaining);
@@ -285,7 +286,7 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
 
       <div className="eb-today-layout">
         <main className="eb-today-plan" aria-label="今日安排">
-          {DEFAULT_TIME_SLOT_CONFIGS.map((config) => {
+          {slotConfigs.map((config) => {
             const stats = slotStats(config.slot);
             const ratio = stats.capacity > 0 ? Math.min(1.2, stats.minutes / stats.capacity) : 0;
             const overloaded = stats.minutes > stats.capacity;
@@ -337,7 +338,7 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
                   <article key={task.id} className={`eb-today-pool-card ${isOverdue(task) ? 'is-overdue' : ''}`} draggable onDragStart={() => setDraggedId(`pool-review-${task.id}`)} onDragEnd={() => { setDraggedId(null); setDragOverSlot(null); }}>
                     <div className="eb-today-pool-card-title"><strong>{task.topicName}</strong><span>R{meta.round}/{meta.totalRounds}</span></div>
                     <div className="eb-today-pool-card-meta"><span style={{ color: meta.color }}>{meta.categoryLabel}</span><span><Clock3 size={12} />{meta.duration}分钟</span><span className={isOverdue(task) ? 'is-danger' : ''}>{isOverdue(task) ? '逾期' : '今天到期'}</span></div>
-                    <div className="eb-today-pool-card-actions"><button type="button" className="eb-today-recommend" onClick={() => scheduleTask(task, suggested)}>推荐到{DEFAULT_TIME_SLOT_CONFIGS.find((config) => config.slot === suggested)?.label}</button><button type="button" onClick={() => scheduleTask(task)} aria-label={`安排${task.topicName}`} title="按推荐时段安排"><Plus size={14} />安排</button></div>
+                    <div className="eb-today-pool-card-actions"><button type="button" className="eb-today-recommend" onClick={() => scheduleTask(task, suggested)}>推荐到{slotConfigs.find((config) => config.slot === suggested)?.label}</button><button type="button" onClick={() => scheduleTask(task)} aria-label={`安排${task.topicName}`} title="按推荐时段安排"><Plus size={14} />安排</button></div>
                   </article>
                 );
               })}

@@ -15,6 +15,7 @@ interface EbbTaskSyncPlanInput {
   ebbSettings: EbbSettings;
   payload: SyncTaskToEbbPayload;
   today?: string;
+  createdAt?: string;
   createReviewTaskId?: () => string;
 }
 
@@ -33,6 +34,7 @@ export function planEbbTaskSync({
   ebbSettings,
   payload,
   today = todayStr(),
+  createdAt = `${today}T00:00:00.000Z`,
   createReviewTaskId = () => genId('rt'),
 }: EbbTaskSyncPlanInput): EbbTaskSyncPlan {
   const {
@@ -128,6 +130,7 @@ export function planEbbTaskSync({
       id: createReviewTaskId(),
       topicName,
       graphNodeId,
+      createdAt,
       dueDate: dueDates[index],
       originalDueDate: dueDates[index],
       roundOrder: index + 1,
@@ -211,6 +214,7 @@ export function planEbbTaskSync({
         id: createReviewTaskId(),
         topicName,
         graphNodeId,
+        createdAt,
         dueDate,
         originalDueDate: dueDate,
         roundOrder: nextRoundOrder,

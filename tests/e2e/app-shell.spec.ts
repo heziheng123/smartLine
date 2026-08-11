@@ -214,14 +214,36 @@ test('global search is removed while archive search remains available', async ({
   await expect(archiveSearch).toBeHidden();
 });
 
-test('daily schedule keeps its controls clickable', async ({ page }) => {
+test('daily schedule uses the single slot view without a mode switch', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   await openFullViewOnPhone(page);
   await expect(page.getByRole('heading', { name: '每日安排' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: '时段' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: '时间块' })).toBeVisible();
-  await page.getByRole('tab', { name: '时间块' }).click();
-  await expect(page.getByRole('tab', { name: '时间块' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: '时段' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: '时间块' })).toHaveCount(0);
+  await expect(page.locator('.ds-mode-switch')).toHaveCount(0);
+  await expect(page.getByTestId('daily-slot-morning')).toBeVisible();
+  await expect(page.getByTestId('daily-slot-afternoon')).toBeVisible();
+  await expect(page.getByTestId('daily-slot-evening')).toBeVisible();
+  const settingsButton = page.getByTitle('时间段设置');
+  await expect(settingsButton).toBeVisible();
+  await settingsButton.click();
+  const settingsPanel = page.getByLabel('时间段与可规划时间设置');
+  await expect(settingsPanel).toBeVisible();
+  await expect(settingsPanel).toContainText('可规划时间只参与负荷提醒');
+  await expect(settingsPanel).toContainText('随统一工作区同步');
+  await expect.poll(() => settingsPanel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+  const morningStart = page.getByLabel('上午开始时间');
+  await morningStart.selectOption('7');
+  await expect(morningStart).toHaveValue('7');
+  const morningCapacity = page.getByLabel('上午可规划时间');
+  await morningCapacity.selectOption('180');
+  await expect(morningCapacity).toHaveValue('180');
+  await page.getByLabel('关闭时间设置').click();
+  await expect(page.locator('.ds-slot-capacity').first()).toHaveAttribute('aria-label', /可规划 3 小时/);
+  await settingsButton.click();
+  await expect(page.getByLabel('上午开始时间')).toHaveValue('7');
+  await expect(page.getByLabel('上午可规划时间')).toHaveValue('180');
 });
 
 test('daily task pool cards grow to fit wrapped titles and duration metadata', async ({ page }) => {

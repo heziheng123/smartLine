@@ -289,15 +289,26 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           if (sourceIds.length > 0) dailyState.removeBySourceIds(sourceIds);
 
           if (!isOperationRecordingSuppressed()) {
-            const actionLabel = request.action.kind === 'reanchor'
-              ? '批量重排剩余复习轮次'
-              : request.action.kind === 'shift'
-              ? '批量调整复习日期'
-              : request.action.kind === 'trim'
-                ? '批量精简复习轮次'
-                : request.action.kind === 'append'
-                  ? '批量追加复习轮次'
-                  : '批量套用复习模板';
+            const actionKind = request.mode === 'goal' ? request.goal.kind : request.action.kind;
+            const actionLabel = actionKind === 'backlog'
+              ? '清理复习积压'
+              : actionKind === 'balance'
+                ? '平衡未来复习负荷'
+                : actionKind === 'cadence'
+                  ? '调整复习节奏'
+                  : actionKind === 'lifecycle'
+                    ? '调整复习计划周期'
+                    : actionKind === 'reanchor'
+                      ? '批量重排剩余复习轮次'
+                      : actionKind === 'shift'
+                        ? '批量调整复习日期'
+                        : actionKind === 'trim'
+                          ? '批量精简复习轮次'
+                          : actionKind === 'append'
+                            ? '批量追加复习轮次'
+                            : actionKind === 'template'
+                              ? '批量套用复习模板'
+                              : '精确调整复习计划';
             const detailParts = [
               `${plan.affectedTopics} 个计划`,
               plan.rescheduledRounds > 0 ? `改期 ${plan.rescheduledRounds} 轮` : '',
@@ -559,9 +570,11 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             : (state.ebbSettings.customIntervals.split(',').map(Number).filter((value) => Number.isInteger(value) && value > 0));
           if (intervals.length === 0) return false;
           const dates = buildAbsoluteScheduleDates(startDate, intervals);
+          const createdAt = new Date().toISOString();
           const replacementTasks: ReviewTask[] = dates.map((dueDate, index) => ({
             id: genId('rt'),
             topicName: template.topicName,
+            createdAt,
             dueDate,
             originalDueDate: dueDate,
             roundOrder: index + 1,
@@ -979,6 +992,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           const idSet = new Set(ids);
           const items = state.inboxItems.filter((i) => idSet.has(i.id) && i.status === 'staged');
           const allGenerated: ReviewTask[] = [];
+          const createdAt = new Date().toISOString();
 
           for (const item of items) {
             if (!item.intervals || !item.startDate || item.intervals.length === 0) continue;
@@ -1001,6 +1015,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               generated.push({
                 id: genId('rt'),
                 topicName: item.topicName,
+                createdAt,
                 dueDate,
                 originalDueDate: dueDate,
                 roundOrder: nextRoundOrder,
@@ -1312,6 +1327,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             reviewTasks: before.reviewTasks,
             ebbSettings: before.ebbSettings,
             payload,
+            createdAt: new Date().toISOString(),
           });
           if (!plan.changed) return;
 

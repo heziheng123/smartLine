@@ -3,6 +3,7 @@
 // ============================================================
 
 import type { ComplexityConfigs, ComplexityLevel, EbbSettings } from './types';
+import { DEFAULT_TIME_SLOT_CONFIGS } from '../components/dailySchedule/types.ts';
 
 /** 轮次节点 8 色循环（莫兰迪色系） */
 export const ROUND_COLORS = [
@@ -61,6 +62,7 @@ export const DEFAULT_EBB_SETTINGS: EbbSettings = {
   collapsedGroups: [],
   calViewMode: 'month',
   loadThresholds: [2, 4, 6, 9],
+  dailyTimeSlots: DEFAULT_TIME_SLOT_CONFIGS.map((config) => ({ ...config })),
 };
 
 /** LocalStorage 键 */

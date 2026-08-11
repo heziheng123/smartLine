@@ -6,6 +6,7 @@ import { useGraphStore } from '@/graph/store';
 import { LIFE_MAP_ROOM_PREFIX, useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeTimelineData } from '@/store/timelineData';
+import { normalizeEbbData } from '@/ebb/dataNormalization';
 import { liveblocksClient } from '@/store/client';
 import {
   createLocalSnapshot,
@@ -437,6 +438,14 @@ function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): Wor
     milestones: [],
     lifeStages: [],
   });
+  const normalizedEbb = normalizeEbbData({
+    reviewTasks: Array.isArray(root.reviewTasks) ? root.reviewTasks : [],
+    inboxItems: Array.isArray(root.inboxItems) ? root.inboxItems : [],
+    outlineNodes: Array.isArray(root.outlineNodes) ? root.outlineNodes : [],
+    ebbSettings: root.ebbSettings && typeof root.ebbSettings === 'object'
+      ? root.ebbSettings as WorkspaceBackup['ebb']['ebbSettings']
+      : base.ebb.ebbSettings,
+  });
   return {
     ...base,
     timeline: {
@@ -446,14 +455,7 @@ function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): Wor
       milestones: Array.isArray(root.milestones) ? root.milestones as WorkspaceBackup['timeline']['milestones'] : [],
       lifeStages: Array.isArray(root.lifeStages) ? root.lifeStages as WorkspaceBackup['timeline']['lifeStages'] : [],
     },
-    ebb: {
-      reviewTasks: Array.isArray(root.reviewTasks) ? root.reviewTasks as WorkspaceBackup['ebb']['reviewTasks'] : [],
-      inboxItems: Array.isArray(root.inboxItems) ? root.inboxItems as WorkspaceBackup['ebb']['inboxItems'] : [],
-      outlineNodes: Array.isArray(root.outlineNodes) ? root.outlineNodes as WorkspaceBackup['ebb']['outlineNodes'] : [],
-      ebbSettings: root.ebbSettings && typeof root.ebbSettings === 'object'
-        ? root.ebbSettings as WorkspaceBackup['ebb']['ebbSettings']
-        : base.ebb.ebbSettings,
-    },
+    ebb: normalizedEbb,
     daily: {
       schedules: root.schedules && typeof root.schedules === 'object'
         ? root.schedules as WorkspaceBackup['daily']['schedules']

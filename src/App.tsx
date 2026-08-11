@@ -23,12 +23,18 @@ import FinalReviewRoundDialogHost from '@/components/FinalReviewRoundDialogHost'
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
 import { isPhoneLayoutViewport, usePhoneLayout } from '@/hooks/usePhoneLayout';
 import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer-motion';
+import {
+  MOTION_DURATION,
+  MOTION_EASE_ENTER,
+  MOTION_EASE_EXIT,
+} from '@/motion/system';
 
 import '@/styles/design-tokens.css';
 import '@/styles/confirmation.css';
 import '@/styles/timeline.css';
 import '@/styles/smart-block.css';
 import '@/styles/lazy-dialog.css';
+import '@/styles/motion-system.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 type TimelineNavigateDetail = {
@@ -122,7 +128,12 @@ import '@/services/backlogCommands';
 const ViewFallback: React.FC = () => (
   <div className="tl-app-split tl-app-split--ebb">
     <div className="tl-app-main flex items-center justify-center text-sm text-slate-500">
-      正在加载视图...
+      <div className="ui-view-loading" role="status" aria-live="polite">
+        <span className="ui-view-loading__copy">正在加载视图…</span>
+        <span className="ui-view-loading__line" aria-hidden="true" />
+        <span className="ui-view-loading__line" aria-hidden="true" />
+        <span className="ui-view-loading__line" aria-hidden="true" />
+      </div>
     </div>
   </div>
 );
@@ -166,15 +177,15 @@ const VIEW_MOTION_VARIANTS: Variants = {
     opacity: 1,
     x: 0,
     transition: reducedMotion
-      ? { duration: 0.08 }
-      : { duration: 0.18, ease: [0.22, 1, 0.36, 1] },
+      ? { duration: MOTION_DURATION.instant }
+      : { duration: MOTION_DURATION.standard, ease: MOTION_EASE_ENTER },
   }),
   exit: ({ direction, reducedMotion }: ViewMotionContext) => ({
     opacity: 0,
     x: reducedMotion ? 0 : direction * -4,
     transition: reducedMotion
-      ? { duration: 0.06 }
-      : { duration: 0.09, ease: [0.4, 0, 1, 1] },
+      ? { duration: MOTION_DURATION.instant }
+      : { duration: MOTION_DURATION.exit, ease: MOTION_EASE_EXIT },
   }),
 };
 
@@ -186,15 +197,15 @@ const PANEL_MOTION_VARIANTS: Variants = {
     opacity: 1,
     x: 0,
     transition: reducedMotion
-      ? { duration: 0.08 }
-      : { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+      ? { duration: MOTION_DURATION.instant }
+      : { duration: MOTION_DURATION.panel, ease: MOTION_EASE_ENTER },
   }),
   exit: ({ reducedMotion }: PanelMotionContext) => ({
     opacity: 0,
     x: reducedMotion ? 0 : 16,
     transition: reducedMotion
-      ? { duration: 0.06 }
-      : { duration: 0.14, ease: [0.4, 0, 1, 1] },
+      ? { duration: MOTION_DURATION.instant }
+      : { duration: MOTION_DURATION.fast, ease: MOTION_EASE_EXIT },
   }),
 };
 

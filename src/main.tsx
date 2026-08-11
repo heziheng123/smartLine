@@ -1,6 +1,8 @@
 import { lazy, StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
+import { MotionConfig } from 'framer-motion'
 import AuthGate from './auth/AuthGate'
+import { MOTION_TRANSITION_STANDARD } from './motion/system'
 
 const importApp = () => import('./App')
 let appPromise: ReturnType<typeof importApp> | undefined
@@ -25,11 +27,13 @@ export const AppLoadingFallback = () => {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthGate>
-      <Suspense fallback={<AppLoadingFallback />}>
-        <App />
-      </Suspense>
-    </AuthGate>
+    <MotionConfig reducedMotion="user" transition={MOTION_TRANSITION_STANDARD}>
+      <AuthGate>
+        <Suspense fallback={<AppLoadingFallback />}>
+          <App />
+        </Suspense>
+      </AuthGate>
+    </MotionConfig>
   </StrictMode>,
 )
 

@@ -20,6 +20,7 @@ import {
   getReviewRoundDuration,
   REVIEW_DURATION_OPTIONS,
 } from '../duration';
+import { planReviewRoundReschedule } from '../reschedulePlanning';
 
 interface RoundsPanelProps {
   topicKey: string;
@@ -154,34 +155,25 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
         const targetIndex = topicTasks.findIndex((task) => task.id === datePickerTaskId);
         const target = topicTasks[targetIndex];
         if (!target) return;
-        const delta = diffDays(newDate, target.dueDate);
-        const affected = rescheduleMode === 'following'
-          ? topicTasks.slice(targetIndex).filter((task) => !task.isCompleted)
-          : [target];
-        const updates = affected.map((task) => ({
-          id: task.id,
-          dueDate: task.id === target.id ? newDate : addDays(task.dueDate, delta),
-        }));
-        const updateMap = new Map(updates.map((item) => [item.id, item.dueDate]));
-        const resultingDates = topicTasks.map((task) => updateMap.get(task.id) ?? task.dueDate);
-        if (new Set(resultingDates).size !== resultingDates.length) {
-          setActionError('同一主题在该日期已经有复习轮次，请选择其他日期。');
-          setDatePickerTaskId(null);
-          return;
+        try {
+          const plan = planReviewRoundReschedule(reviewTasks, datePickerTaskId, newDate, rescheduleMode);
+          const delta = diffDays(newDate, target.dueDate);
+          setPendingChange({
+            kind: 'reschedule',
+            title: rescheduleMode === 'following' ? '确认整体顺延' : '确认单轮改期',
+            description: rescheduleMode === 'following'
+              ? `将第 ${targetIndex + 1} 轮及之后 ${plan.updates.length} 个未完成轮次整体移动 ${Math.abs(delta)} 天${delta < 0 ? '（提前）' : delta > 0 ? '（顺延）' : ''}。已完成轮次不会改变。`
+              : `第 ${targetIndex + 1} 轮将从 ${target.dueDate} 改为 ${newDate}，其他轮次不变。`,
+            updates: plan.updates,
+          });
+          setActionError('');
+        } catch (cause) {
+          setActionError(cause instanceof Error ? cause.message : '轮次改期失败');
         }
-        setPendingChange({
-          kind: 'reschedule',
-          title: rescheduleMode === 'following' ? '确认整体顺延' : '确认单轮改期',
-          description: rescheduleMode === 'following'
-            ? `将第 ${targetIndex + 1} 轮及之后 ${updates.length} 个未完成轮次整体移动 ${Math.abs(delta)} 天${delta < 0 ? '（提前）' : delta > 0 ? '（顺延）' : ''}。已完成轮次不会改变。`
-            : `第 ${targetIndex + 1} 轮将从 ${target.dueDate} 改为 ${newDate}，其他轮次不变。`,
-          updates,
-        });
-        setActionError('');
       }
       setDatePickerTaskId(null);
     },
-    [datePickerTaskId, rescheduleMode, topicTasks],
+    [datePickerTaskId, rescheduleMode, reviewTasks, topicTasks],
   );
 
   // 删除单轮

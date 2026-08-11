@@ -1,12 +1,12 @@
 // ============================================================
 // 每日任务安排页面 - 主视图
 // 左右分栏：左侧 2/3 时间安排区 + 右侧 1/3 任务池
-// 支持两种模式：时段模式(slots) / 时间块模式(blocks)
+// 固定使用上午、下午、晚上三个时段进行安排
 // ============================================================
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import '@/styles/daily-schedule.css';
-import { todayStr } from '@/utils/dateSafe';
+import { formatDate, todayStr } from '@/utils/dateSafe';
 import { projectTasksForDate, reviewTasksForDate } from '@/domain/dailyTaskProjection';
 import {
   DragDropContext,
@@ -15,7 +15,10 @@ import {
 import {
   BookOpenCheck,
   CalendarCheck2,
+  CalendarClock,
+  RotateCcw,
   Settings2,
+  X,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
@@ -37,15 +40,14 @@ import { getReviewRoundDuration } from '@/ebb/duration';
 import { buildRootNodeMap, getReviewCategoryColor, resolveReviewCategory } from '@/ebb/category';
 import { useDailyScheduleStore, EMPTY_DAY_SCHEDULE } from './store';
 import { getProjectBlockSourceId, getReviewSourceId } from './sourceIds';
-import BlockModeView from './BlockModeView';
 import QuantityProgressDialog from './QuantityProgressDialog';
 import {
   DEFAULT_TIME_SLOT_CONFIGS,
+  normalizeTimeSlotConfigs,
   type TimeSlot,
   type TaskSource,
   type ScheduledItem,
   type TimeSlotConfig,
-  type ScheduleViewMode,
 } from './types';
 import type { SmartTaskBlock } from '@/types';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
@@ -76,6 +78,7 @@ import {
 import DailyReviewPlanner from '@/ebb/components/DailyReviewPlanner';
 import DailyRetrospectiveDialog from './DailyRetrospectiveDialog';
 import { collectCompletedActivities } from '@/domain/dailyRetrospective';
+import WorkspaceHeader from '@/components/WorkspaceHeader';
 
 const formatPlanningMinutes = (minutes: number): string => {
   if (minutes < 60) return `${minutes} 分钟`;
@@ -87,6 +90,8 @@ const formatPlanningMinutes = (minutes: number): string => {
 const timeSlotLabel = (slot: TimeSlot): string => (
   slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'
 );
+
+const REVIEW_ADJUSTMENT_INTENT_KEY = 'smart-line-review-adjustment-intent';
 
 // ── 主组件 ───────────────────────────────────────────────────
 
@@ -104,7 +109,6 @@ const DailyScheduleView: React.FC = () => {
     }
     return today;
   });
-  const [viewMode, setViewMode] = useState<ScheduleViewMode>('slots');
   const [showCompletedPool, setShowCompletedPool] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [backlogFeedback, setBacklogFeedback] = useState<{ text: string; operationId?: string } | null>(null);
@@ -115,6 +119,11 @@ const DailyScheduleView: React.FC = () => {
   const [dailyPlanFeedback, setDailyPlanFeedback] = useState<string | null>(null);
   const [poolPreference, setPoolPreference] = useState<'auto' | 'open' | 'closed'>('auto');
   const [isCompactLayout, setIsCompactLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches);
+
+  const openReviewAdjustmentDetails = useCallback(() => {
+    try { sessionStorage.setItem(REVIEW_ADJUSTMENT_INTENT_KEY, 'daily-plan'); } catch { /* optional storage */ }
+    window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'ebb' } }));
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 900px)');
@@ -158,11 +167,13 @@ const DailyScheduleView: React.FC = () => {
     reviewTasks: rawEbbReviewTasks,
     ebbSettings: ebbSettingsData,
     applyDailyReviewPlan,
+    updateSettings: updateEbbSettings,
   } = useEbbStore(
     useShallow((s) => ({
       reviewTasks: s.reviewTasks,
       ebbSettings: s.ebbSettings,
       applyDailyReviewPlan: s.applyDailyReviewPlan,
+      updateSettings: s.updateSettings,
     })),
   );
 
@@ -260,8 +271,34 @@ const DailyScheduleView: React.FC = () => {
   const scheduleForDate = useDailyScheduleStore((s) => s.schedules[selectedDate]);
   const daySchedule = scheduleForDate ?? EMPTY_DAY_SCHEDULE;
 
-  // 时间段配置（可自定义）
-  const [slotConfigs, setSlotConfigs] = useState<TimeSlotConfig[]>(DEFAULT_TIME_SLOT_CONFIGS);
+  // 时间段配置作为全局工作区设置保存在 ebbSettings 中，因此会随统一工作区跨设备同步。
+  const slotConfigs = useMemo(
+    () => normalizeTimeSlotConfigs(ebbSettingsData.dailyTimeSlots),
+    [ebbSettingsData.dailyTimeSlots],
+  );
+  const setSlotConfigs = useCallback((configs: TimeSlotConfig[]) => {
+    updateEbbSettings({ dailyTimeSlots: normalizeTimeSlotConfigs(configs) });
+  }, [updateEbbSettings]);
+  const updateSlotConfig = useCallback((slot: TimeSlot, patch: Partial<TimeSlotConfig>) => {
+    setSlotConfigs(slotConfigs.map((config) => config.slot === slot ? { ...config, ...patch } : config));
+  }, [setSlotConfigs, slotConfigs]);
+  const slotSettingsAreDefault = useMemo(
+    () => slotConfigs.every((config, index) => {
+      const fallback = DEFAULT_TIME_SLOT_CONFIGS[index];
+      return config.startHour === fallback.startHour
+        && config.endHour === fallback.endHour
+        && config.availableMinutes === fallback.availableMinutes;
+    }),
+    [slotConfigs],
+  );
+  const totalNaturalMinutes = useMemo(
+    () => slotConfigs.reduce((sum, config) => sum + (config.endHour - config.startHour) * 60, 0),
+    [slotConfigs],
+  );
+  const totalAvailableMinutes = useMemo(
+    () => slotConfigs.reduce((sum, config) => sum + config.availableMinutes, 0),
+    [slotConfigs],
+  );
   const [showSlotSettings, setShowSlotSettings] = useState(false);
 
   // 筛选/排序
@@ -943,9 +980,15 @@ const DailyScheduleView: React.FC = () => {
   return (
     <div className="ds-page">
         {/* ── 顶部栏 ─────────────────────────────────────── */}
-        <header className="ds-header">
-          <div className="ds-header-left">
-            <h1 className="ds-title">每日安排</h1>
+        <WorkspaceHeader className="ds-header" aria-label="每日安排工作区">
+          <div className="ds-header-left ui-workspace-header__identity">
+            <span className="ui-workspace-header__identity-icon"><CalendarClock size={17} aria-hidden="true" /></span>
+            <div className="ui-workspace-header__identity-copy">
+              <h1 className="ds-title">每日安排</h1>
+              <p>当天执行工作台</p>
+            </div>
+          </div>
+          <div className="ui-workspace-header__context">
             <input
               type="date"
               className="ds-date-input"
@@ -961,7 +1004,7 @@ const DailyScheduleView: React.FC = () => {
               {dailyOverview.scheduled > 0 && <span className="ds-day-completion">{dailyOverview.completed}/{dailyOverview.scheduled} 完成</span>}
             </div>
           </div>
-          <div className="ds-header-right">
+          <div className="ds-header-right ui-workspace-header__actions">
             <button
               type="button"
               className="ds-header-btn"
@@ -976,43 +1019,20 @@ const DailyScheduleView: React.FC = () => {
             <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日负荷规划">
               <CalendarCheck2 size={15} />明日负荷规划
             </button>
-            {/* 视图模式切换 */}
-            <div className="ds-mode-switch" role="tablist" aria-label="排期模式切换">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewMode === 'slots'}
-                aria-controls="slots-view"
-                className={`ds-mode-btn ${viewMode === 'slots' ? 'ds-mode-btn--active' : ''}`}
-                onClick={() => setViewMode('slots')}
-              >
-                时段
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewMode === 'blocks'}
-                aria-controls="blocks-view"
-                className={`ds-mode-btn ${viewMode === 'blocks' ? 'ds-mode-btn--active' : ''}`}
-                onClick={() => setViewMode('blocks')}
-              >
-                时间块
-              </button>
-            </div>
-            {viewMode === 'slots' && (
-              <button
-                type="button"
-                className="ds-header-btn"
-                onClick={() => setShowSlotSettings(!showSlotSettings)}
-                title="时间段设置"
-              >
-                <Settings2 size={15} />
-                时间段设置
-              </button>
-            )}
+            <button
+              type="button"
+              className={`ds-header-btn ${showSlotSettings ? 'ds-header-btn--active' : ''}`}
+              onClick={() => setShowSlotSettings(!showSlotSettings)}
+              title="时间段设置"
+              aria-expanded={showSlotSettings}
+              aria-controls="daily-time-settings"
+            >
+              <Settings2 size={15} />
+              时间与容量
+            </button>
             <SyncStatusIndicator />
           </div>
-        </header>
+        </WorkspaceHeader>
 
         {operationError && (
           <div className="mx-5 mt-3 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" role="alert">
@@ -1039,82 +1059,103 @@ const DailyScheduleView: React.FC = () => {
         {dailyPlanFeedback && (
           <div className="ds-backlog-feedback" role="status" aria-live="polite">
             <span>{dailyPlanFeedback}</span>
+            <button type="button" onClick={openReviewAdjustmentDetails}>查看这些改期</button>
             <button type="button" onClick={() => setDailyPlanFeedback(null)} aria-label="关闭明日复习提示">×</button>
           </div>
         )}
 
-        {/* ── 时间段设置面板（仅时段模式） ──────────────── */}
-        {viewMode === 'slots' && showSlotSettings && (
-          <div className="ds-slot-settings">
-            {slotConfigs.map((config, idx) => (
-              <div key={config.slot} className="ds-slot-setting-row">
-                <span className={`ds-slot-setting-icon ds-slot-icon--${config.slot}`}><TimeSlotIcon slot={config.slot} size={14} /></span>
-                <span className="ds-slot-setting-label">{config.label}</span>
-                <input
-                  type="number"
-                  className="ds-slot-setting-input"
-                  value={config.startHour}
-                  min={0}
-                  max={23}
-                  onChange={(e) => {
-                    const nextStartHour = parseInt(e.target.value) || 0;
-                    const maxMinutes = Math.max(15, (config.endHour - nextStartHour) * 60);
-                    const newConfigs = [...slotConfigs];
-                    newConfigs[idx] = {
-                      ...config,
-                      startHour: nextStartHour,
-                      availableMinutes: Math.min(config.availableMinutes, maxMinutes),
-                    };
-                    setSlotConfigs(newConfigs);
-                  }}
-                />
-                <span className="ds-slot-setting-sep">-</span>
-                <input
-                  type="number"
-                  className="ds-slot-setting-input"
-                  value={config.endHour}
-                  min={0}
-                  max={23}
-                  onChange={(e) => {
-                    const nextEndHour = parseInt(e.target.value) || 0;
-                    const maxMinutes = Math.max(15, (nextEndHour - config.startHour) * 60);
-                    const newConfigs = [...slotConfigs];
-                    newConfigs[idx] = {
-                      ...config,
-                      endHour: nextEndHour,
-                      availableMinutes: Math.min(config.availableMinutes, maxMinutes),
-                    };
-                    setSlotConfigs(newConfigs);
-                  }}
-                />
-                <span className="ds-slot-setting-unit">时</span>
-                <span className="ds-slot-setting-capacity-label">可规划</span>
-                <input
-                  type="number"
-                  className="ds-slot-setting-input ds-slot-setting-input--capacity"
-                  value={config.availableMinutes}
-                  min={15}
-                  max={Math.max(15, (config.endHour - config.startHour) * 60)}
-                  step={15}
-                  aria-label={`${config.label}可规划分钟数`}
-                  onChange={(e) => {
-                    const maxMinutes = Math.max(15, (config.endHour - config.startHour) * 60);
-                    const nextValue = Math.min(maxMinutes, Math.max(15, parseInt(e.target.value) || 15));
-                    const newConfigs = [...slotConfigs];
-                    newConfigs[idx] = { ...config, availableMinutes: nextValue };
-                    setSlotConfigs(newConfigs);
-                  }}
-                />
-                <span className="ds-slot-setting-unit">分钟</span>
+        {/* ── 时间段设置面板 ────────────────────────────── */}
+        {showSlotSettings && (
+          <section id="daily-time-settings" className="ds-slot-settings" aria-label="时间段与可规划时间设置">
+            <header className="ds-slot-settings-header">
+              <div>
+                <strong>时间段与可规划时间</strong>
+                <span>时间范围用于划分一天；可规划时间只参与负荷提醒，不会改变任务时长。</span>
               </div>
-            ))}
-          </div>
+              <div className="ds-slot-settings-actions">
+                <button
+                  type="button"
+                  className="ds-slot-settings-reset"
+                  disabled={slotSettingsAreDefault}
+                  onClick={() => setSlotConfigs(DEFAULT_TIME_SLOT_CONFIGS.map((config) => ({ ...config })))}
+                >
+                  <RotateCcw size={13} />恢复默认
+                </button>
+                <button type="button" className="ds-slot-settings-close" onClick={() => setShowSlotSettings(false)} aria-label="关闭时间设置">
+                  <X size={15} />
+                </button>
+              </div>
+            </header>
+            <div className="ds-slot-settings-grid">
+              {slotConfigs.map((config) => {
+                const maxMinutes = Math.max(15, (config.endHour - config.startHour) * 60);
+                const capacityRatio = Math.round(config.availableMinutes / maxMinutes * 100);
+                return (
+                  <article key={config.slot} className={`ds-slot-setting-card ds-slot-setting-card--${config.slot}`}>
+                    <header className="ds-slot-setting-card-header">
+                      <span className={`ds-slot-setting-icon ds-slot-icon--${config.slot}`}><TimeSlotIcon slot={config.slot} size={16} /></span>
+                      <div><strong>{config.label}</strong><span>{config.endHour - config.startHour} 小时时间范围</span></div>
+                    </header>
+                    <label className="ds-slot-setting-field">
+                      <span>时间范围</span>
+                      <span className="ds-slot-setting-range">
+                        <select
+                          className="ds-slot-setting-select"
+                          value={config.startHour}
+                          aria-label={`${config.label}开始时间`}
+                          onChange={(event) => {
+                            const startHour = Number(event.target.value);
+                            updateSlotConfig(config.slot, {
+                              startHour,
+                              endHour: Math.max(startHour + 1, config.endHour),
+                            });
+                          }}
+                        >
+                          {Array.from({ length: 23 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}
+                        </select>
+                        <span>至</span>
+                        <select
+                          className="ds-slot-setting-select"
+                          value={config.endHour}
+                          aria-label={`${config.label}结束时间`}
+                          onChange={(event) => updateSlotConfig(config.slot, { endHour: Number(event.target.value) })}
+                        >
+                          {Array.from({ length: 23 - config.startHour }, (_, index) => config.startHour + index + 1)
+                            .map((hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}
+                        </select>
+                      </span>
+                    </label>
+                    <label className="ds-slot-setting-field ds-slot-setting-field--capacity">
+                      <span>可规划时间 <strong>{formatPlanningMinutes(config.availableMinutes)}</strong></span>
+                      <select
+                        className="ds-slot-setting-select ds-slot-setting-select--capacity"
+                        value={config.availableMinutes}
+                        aria-label={`${config.label}可规划时间`}
+                        onChange={(event) => updateSlotConfig(config.slot, { availableMinutes: Number(event.target.value) })}
+                      >
+                        {Array.from({ length: Math.floor(maxMinutes / 15) }, (_, index) => (index + 1) * 15)
+                          .map((minutes) => <option key={minutes} value={minutes}>{formatPlanningMinutes(minutes)}</option>)}
+                      </select>
+                    </label>
+                    <div className="ds-slot-setting-capacity-summary">
+                      <span><i style={{ width: `${capacityRatio}%` }} /></span>
+                      <small>占该时段 {capacityRatio}% · 用于判断余量与超载</small>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <footer className="ds-slot-settings-footer">
+              <span>全天时间范围 {formatPlanningMinutes(totalNaturalMinutes)}</span>
+              <strong>可规划 {formatPlanningMinutes(totalAvailableMinutes)}</strong>
+              <small>修改后自动保存并随统一工作区同步</small>
+            </footer>
+          </section>
         )}
 
-        {/* ── 时段模式 ──────────────────────────────────── */}
-        {viewMode === 'slots' && (
+        {/* ── 时段安排 ──────────────────────────────────── */}
         <DragDropContext onDragStart={() => setPoolPreference('open')} onDragEnd={handleDragEnd}>
-          <div className={`ds-body ${poolOpen ? 'ds-body--pool-open' : 'ds-body--pool-collapsed'}`}>
+          <div className={`ds-body ui-workspace-content-stage ${poolOpen ? 'ds-body--pool-open' : 'ds-body--pool-collapsed'}`}>
             <div className="ds-left">
               {slotConfigs.map((config) => {
                 const slotItems = getSlotItems(config.slot);
@@ -1172,28 +1213,12 @@ const DailyScheduleView: React.FC = () => {
               onFilterChange={setFilterSource}
               onShowCompletedChange={setShowCompletedPool}
               onOpenProjectSource={openProjectTaskFromSource}
-              onScheduleItem={schedulePoolItemToSlot}
               onUndoCompleted={handleUndoCompletedPoolItem}
               onScheduleBacklog={scheduleBacklogToDate}
               onOpenBacklogTask={openBacklogTask}
             />
           </div>
         </DragDropContext>
-        )}
-
-        {/* ── 时间块模式 ────────────────────────────────── */}
-        {viewMode === 'blocks' && (
-          <BlockModeView
-            selectedDate={selectedDate}
-            poolItems={poolItems}
-            completedPoolItems={allCompletedPoolItems}
-            backlogItems={backlogTasks}
-            onScheduleBacklog={scheduleBacklogToDate}
-            onOpenBacklogTask={openBacklogTask}
-            onReviewToggleError={setOperationError}
-            onOpenQuantityProgress={(taskId, block) => setProgressTask({ taskId, block })}
-          />
-        )}
         {progressTask && (
           <QuantityProgressDialog
             taskId={progressTask.taskId}
@@ -1218,7 +1243,10 @@ const DailyScheduleView: React.FC = () => {
             settings={ebbSettingsData}
             onApply={(request) => {
               const result = applyDailyReviewPlan(request);
-              setDailyPlanFeedback(`已保存明日负荷：明日 ${result.keptCount} 轮，另有 ${result.deferredCount} 轮完成错峰`);
+              const deferredDates = [...new Set(Object.values(result.assignmentsByTaskId).filter((date) => date !== result.planDate))]
+                .sort()
+                .map((date) => formatDate(date, 'M月D日'));
+              setDailyPlanFeedback(`明天保留 ${result.keptCount} 轮；另外 ${result.deferredCount} 轮已调整${deferredDates.length > 0 ? `至 ${deferredDates.join('、')}` : ''}`);
               return result;
             }}
             onClose={() => setDailyPlanOpen(false)}

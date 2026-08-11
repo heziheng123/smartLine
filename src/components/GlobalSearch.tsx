@@ -4,6 +4,7 @@ import { useGraphStore } from '@/graph/store';
 import { useTimelineStore } from '@/store';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { MOTION_SPRING_GENTLE, MOTION_TRANSITION_STANDARD } from '@/motion/system';
 import { getValidGraphNodeIds } from '@/utils/blocks';
 import { requestConfirmation } from '@/services/confirmation';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
@@ -58,9 +59,10 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
           onClick={onClose}
         />
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          initial={{ opacity: 0, scale: 0.99, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          exit={{ opacity: 0, scale: 0.995, y: 4 }}
+          transition={MOTION_TRANSITION_STANDARD}
           className="relative w-full max-w-2xl bg-white/90 backdrop-blur-xl border border-white/50 shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
         >
           {/* Header */}
@@ -200,10 +202,10 @@ export const GlobalSearchModal = ({ isOpen, onClose }: { isOpen: boolean; onClos
             onClick={onClose}
           />
           <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            initial={{ opacity: 0, y: -8, scale: 0.99 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20, scale: 0.95 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            exit={{ opacity: 0, y: -4, scale: 0.995 }}
+            transition={MOTION_SPRING_GENTLE}
             className="relative w-full max-w-xl bg-white shadow-2xl rounded-2xl overflow-hidden border border-slate-200"
           >
             <div className="flex items-center px-4 py-3 border-b border-slate-100">
@@ -314,9 +316,10 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
             onClick={onClose}
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            initial={{ opacity: 0, scale: 0.99, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            exit={{ opacity: 0, scale: 0.995, y: 4 }}
+            transition={MOTION_TRANSITION_STANDARD}
             className="relative w-full max-w-4xl bg-white/90 backdrop-blur-xl border border-white/50 shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
           >
             <div className="shrink-0 px-6 py-5 border-b border-slate-200/50 flex items-center justify-between bg-white/50">

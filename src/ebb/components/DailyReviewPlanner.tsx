@@ -71,6 +71,10 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
   }), [assignments, baselineCounts, baselineMinutes, candidates, dates, settings.dailyReviewMinutes]);
   const tomorrow = daySummaries[0];
   const overflowMinutes = daySummaries.reduce((sum, day) => sum + Math.max(0, day.minutes - settings.dailyReviewMinutes), 0);
+  const deferredCount = candidates.filter((candidate) => assignments[candidate.taskId] !== planDate).length;
+  const deferredDateLabels = daySummaries.slice(1)
+    .filter((day) => day.assigned.length > 0)
+    .map((day) => formatDate(day.date, 'M月D日'));
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -164,7 +168,7 @@ const DailyReviewPlanner: React.FC<DailyReviewPlannerProps> = ({
           <div>
             {error ? <span className="eb-daily-plan-error"><AlertTriangle size={14} />{error}</span>
               : overflowMinutes > 0 ? <span className="eb-daily-plan-error"><AlertTriangle size={14} />未来3天仍超载 {overflowMinutes} 分钟，请增加容量或继续调整</span>
-                : <span>明日保留 {tomorrow?.assigned.length ?? 0} 轮；其余轮次已分配到具体日期</span>}
+                : <span>明日保留 {tomorrow?.assigned.length ?? 0} 轮，共 {tomorrow?.minutes ?? 0} 分钟；{deferredCount > 0 ? `另外 ${deferredCount} 轮已调整到 ${deferredDateLabels.join('、')}` : '没有轮次需要推迟'}</span>}
           </div>
           <div><button type="button" className="eb-btn eb-btn--ghost" onClick={onClose}>取消</button><button type="button" className="eb-btn eb-btn--primary" disabled={candidates.length === 0} onClick={handleApply}>保存负荷规划</button></div>
         </div>

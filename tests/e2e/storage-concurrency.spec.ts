@@ -55,19 +55,19 @@ test('simultaneous offline edits from two tabs preserve every changed workspace 
   await Promise.all([
     first.evaluate(async () => {
       const queue = await import('/src/services/workspaceSyncQueueCore.ts');
-      queue.queueWorkspaceFields(
+      await queue.queueWorkspaceFields(
         { tasks: [{ id: 'tab-a-task', name: 'tab-a-task' }] },
         { tasks: [] },
+        { bypassSuppression: true },
       );
-      await queue.readPendingWorkspaceSync();
     }),
     second.evaluate(async () => {
       const queue = await import('/src/services/workspaceSyncQueueCore.ts');
-      queue.queueWorkspaceFields(
+      await queue.queueWorkspaceFields(
         { nodes: [{ id: 'tab-b-node', title: 'tab-b-node' }] },
         { nodes: [] },
+        { bypassSuppression: true },
       );
-      await queue.readPendingWorkspaceSync();
     }),
   ]);
 

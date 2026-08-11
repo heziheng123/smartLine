@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, Settings2, FolderOpen, Tag } from 'lucide-react';
+import { MOTION_EASE_EXIT, MOTION_SPRING_GENTLE, MOTION_TRANSITION_EXIT } from '@/motion/system';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, Settings2, FolderOpen, Tag, LayoutGrid } from 'lucide-react';
 import type { Task, TaskGroup, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
@@ -24,6 +25,7 @@ import {
 import { requestConfirmation } from '@/services/confirmation';
 import { buildProjectDescriptorMap } from '@/domain/projectDescriptor';
 import SyncStatusIndicator from '@/components/SyncStatusIndicator';
+import WorkspaceHeader from '@/components/WorkspaceHeader';
 import {
   todayStr,
   addDays,
@@ -415,25 +417,35 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
 
   return (
     <div className="wmv-container">
-      <div className="wmv-nav">
-        <button
-          type="button"
-          className="wmv-nav-btn"
-          onClick={() => setCursor((current) => (mode === 'week' ? addDays(current, -7) : addMonths(current, -1)))}
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <span className="wmv-nav-label">{rangeLabel}</span>
-        <button
-          type="button"
-          className="wmv-nav-btn"
-          onClick={() => setCursor((current) => (mode === 'week' ? addDays(current, 7) : addMonths(current, 1)))}
-        >
-          <ChevronRight size={16} />
-        </button>
-        <button type="button" className="wmv-nav-btn" onClick={() => setCursor(todayStr())}>
-          今天
-        </button>
+      <WorkspaceHeader className="wmv-nav" aria-label="周矩阵工作区">
+        <div className="ui-workspace-header__identity">
+          <span className="ui-workspace-header__identity-icon"><LayoutGrid size={17} aria-hidden="true" /></span>
+          <div className="ui-workspace-header__identity-copy">
+            <h1>周矩阵</h1>
+            <p>{mode === 'week' ? '每周任务分布' : '月度任务分布'}</p>
+          </div>
+        </div>
+
+        <div className="wmv-date-navigation ui-workspace-header__context">
+          <button
+            type="button"
+            className="wmv-nav-btn"
+            onClick={() => setCursor((current) => (mode === 'week' ? addDays(current, -7) : addMonths(current, -1)))}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span className="wmv-nav-label">{rangeLabel}</span>
+          <button
+            type="button"
+            className="wmv-nav-btn"
+            onClick={() => setCursor((current) => (mode === 'week' ? addDays(current, 7) : addMonths(current, 1)))}
+          >
+            <ChevronRight size={16} />
+          </button>
+          <button type="button" className="wmv-nav-btn" onClick={() => setCursor(todayStr())}>
+            今天
+          </button>
+        </div>
 
         {draggingId && (
           <div className="wmv-drag-hint">
@@ -441,7 +453,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
           </div>
         )}
 
-        <div className="wmv-nav-right">
+        <div className="wmv-nav-right ui-workspace-header__actions">
           {hasOffRangeBlocks && (
             <div
               className="wmv-offrange-capsule"
@@ -594,9 +606,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
           </div>
           <SyncStatusIndicator />
         </div>
-      </div>
+      </WorkspaceHeader>
 
-      <div className="wmv-matrix">
+      <div className="wmv-matrix ui-workspace-content-stage">
         <div className="wmv-row wmv-row--header" style={{ display: 'grid', gridTemplateColumns: matrixColumnTemplate }}>
           <div className="wmv-cell wmv-cell--tag" />
           {dateRange.map((dateStr) => {
@@ -689,10 +701,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
                       return (
                         <motion.div
                           layout
-                          initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                          initial={{ opacity: 0, scale: 0.985, y: 4 }}
                           animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.8, y: 30, filter: 'blur(4px)' }}
-                          transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                          exit={{ opacity: 0, scale: 0.99, y: 2, transition: { ...MOTION_TRANSITION_EXIT, ease: MOTION_EASE_EXIT } }}
+                          transition={MOTION_SPRING_GENTLE}
                           key={`${block._taskId}::${block.id}`}
                           draggable
                           tabIndex={0}

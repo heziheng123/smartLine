@@ -8,9 +8,11 @@ import { useTimelineStore } from '@/store';
 import { diffDays, todayStr } from '@/utils/dateSafe';
 import { Plus, Trash2, Settings2, X, Info, Search, ChevronDown, Command, Zap, Archive, Network, Focus, MoveRight, Check, ListFilter } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { MOTION_SPRING_GENTLE, MOTION_TRANSITION_STANDARD } from '@/motion/system';
 import { createPortal } from 'react-dom';
 import { ArchiveLibraryModal, TimeCapsuleModal } from '@/components/GlobalSearch';
 import SyncStatusIndicator from '@/components/SyncStatusIndicator';
+import WorkspaceHeader from '@/components/WorkspaceHeader';
 import {
   getQuantityCompleted,
   getQuantityProgressPercent,
@@ -999,9 +1001,10 @@ export const KnowledgeGraphView: React.FC = () => {
         {!bindingSession.active && isMoveMode ? (
           <motion.div 
             key="move-hint"
-            initial={{ opacity: 0, y: -20 }}
+            initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={MOTION_TRANSITION_STANDARD}
             className="absolute top-20 left-1/2 -translate-x-1/2 bg-blue-500/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-lg text-[13px] font-medium z-20 flex items-center gap-2 border border-blue-400"
           >
             <MoveRight size={14} className="text-white" />
@@ -1011,9 +1014,10 @@ export const KnowledgeGraphView: React.FC = () => {
         ) : !bindingSession.active && showHint ? (
           <motion.div 
             key="normal-hint"
-            initial={{ opacity: 0, y: -20 }}
+            initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={MOTION_TRANSITION_STANDARD}
             className="absolute top-20 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md text-slate-600 px-5 py-2.5 rounded-full shadow-lg text-[13px] font-medium z-20 flex items-center gap-2 border border-slate-200/60"
           >
             <Info size={14} className="text-blue-500" />
@@ -1026,10 +1030,10 @@ export const KnowledgeGraphView: React.FC = () => {
       </AnimatePresence>
 
       {/* 页面级操作固定在知识大盘顶部，底部 Dock 只负责应用切换。 */}
-      {!bindingSession.active && <header className="kg-workspace-bar">
-        <div className="kg-workspace-heading">
-          <span className="kg-workspace-heading-icon"><Network size={18} /></span>
-          <div>
+      {!bindingSession.active && <WorkspaceHeader className="kg-workspace-bar" aria-label="知识大盘工作区">
+        <div className="kg-workspace-heading ui-workspace-header__identity">
+          <span className="kg-workspace-heading-icon ui-workspace-header__identity-icon"><Network size={18} /></span>
+          <div className="ui-workspace-header__identity-copy">
             <h1>知识大盘</h1>
             <p>{nodes.length} 个知识节点</p>
           </div>
@@ -1038,11 +1042,11 @@ export const KnowledgeGraphView: React.FC = () => {
           ref={dockControlsRef}
           layout
           key="knowledge-graph-actions"
-          initial={{ opacity: 0, x: -20 }}
+          initial={{ opacity: 0, x: -8 }}
           animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: 20 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-          className="kg-workspace-actions"
+          exit={{ opacity: 0, x: 6 }}
+          transition={MOTION_SPRING_GENTLE}
+          className="kg-workspace-actions ui-workspace-header__actions"
           data-testid="knowledge-graph-page-actions"
         >
           <div className="tl-dock-popover-wrap">
@@ -1060,7 +1064,7 @@ export const KnowledgeGraphView: React.FC = () => {
             {activeDockPanel === 'view' && createPortal(
               <div
                 ref={dockPanelRef}
-                className="tl-dock-popover p-3"
+                className="tl-dock-popover kg-control-popover p-3"
                 style={{ position: 'fixed', right: 16, top: 72, zIndex: 12000, width: 'min(300px, calc(100vw - 24px))' }}
                 role="dialog"
                 aria-label="知识大盘视图设置"
@@ -1133,7 +1137,7 @@ export const KnowledgeGraphView: React.FC = () => {
             {activeDockPanel === 'filter' && createPortal(
               <div
                 ref={dockPanelRef}
-                className="tl-dock-popover p-2"
+                className="tl-dock-popover kg-control-popover p-2"
                 style={{ position: 'fixed', right: 16, top: 72, zIndex: 12000, width: 'min(250px, calc(100vw - 24px))' }}
                 role="dialog"
                 aria-label="知识状态筛选菜单"
@@ -1141,7 +1145,8 @@ export const KnowledgeGraphView: React.FC = () => {
                 <div className="px-2 pb-2 pt-1 text-xs font-bold text-slate-800">知识状态</div>
                 <button
                   type="button"
-                  className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition ${statusFilter === 'all' ? 'bg-indigo-50 font-semibold text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                  className={`kg-filter-option flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition ${statusFilter === 'all' ? 'bg-indigo-50 font-semibold text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                  aria-pressed={statusFilter === 'all'}
                   onClick={() => { setStatusFilter('all'); setActiveDockPanel(null); }}
                 >
                   <span className="flex h-4 w-4 items-center justify-center">{statusFilter === 'all' && <Check size={13} />}</span>
@@ -1152,7 +1157,8 @@ export const KnowledgeGraphView: React.FC = () => {
                   <button
                     key={option.value}
                     type="button"
-                    className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition ${statusFilter === option.value ? 'bg-indigo-50 font-semibold text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                    className={`kg-filter-option flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition ${statusFilter === option.value ? 'bg-indigo-50 font-semibold text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                    aria-pressed={statusFilter === option.value}
                     onClick={() => { setStatusFilter(option.value); setActiveDockPanel(null); }}
                   >
                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${option.dotClass}`} />
@@ -1182,7 +1188,7 @@ export const KnowledgeGraphView: React.FC = () => {
             {activeDockPanel === 'search' && createPortal(
               <div
                 ref={dockPanelRef}
-                className="tl-dock-popover p-3"
+                className="tl-dock-popover kg-control-popover p-3"
                 style={{ position: 'fixed', right: 16, top: 72, zIndex: 12000, width: 'min(280px, calc(100vw - 24px))' }}
                 role="search"
                 aria-label="搜索知识节点"
@@ -1212,9 +1218,10 @@ export const KnowledgeGraphView: React.FC = () => {
           <AnimatePresence initial={false}>
             {isViewportShifted && (
               <motion.button
-                initial={{ opacity: 0, width: 0, scale: 0.8 }}
+                initial={{ opacity: 0, width: 0, scale: 0.94 }}
                 animate={{ opacity: 1, width: 36, scale: 1 }}
-                exit={{ opacity: 0, width: 0, scale: 0.8 }}
+                exit={{ opacity: 0, width: 0, scale: 0.94 }}
+                transition={MOTION_SPRING_GENTLE}
                 type="button"
                 onClick={zoomToFit}
                 className="tl-dock-btn overflow-hidden text-slate-500 hover:text-blue-600"
@@ -1236,7 +1243,7 @@ export const KnowledgeGraphView: React.FC = () => {
             <Archive size={17} />
           </button>
         </motion.div>
-      </header>}
+      </WorkspaceHeader>}
 
       {capsuleNodeId && <TimeCapsuleModal nodeId={capsuleNodeId} onClose={() => setCapsuleNodeId(null)} />}
       <ArchiveLibraryModal isOpen={isArchiveLibraryOpen} onClose={() => setIsArchiveLibraryOpen(false)} />
@@ -1244,7 +1251,7 @@ export const KnowledgeGraphView: React.FC = () => {
       {/* SVG Sunburst Canvas */}
       <svg
         ref={svgRef}
-        className="w-full h-full cursor-grab active:cursor-grabbing"
+        className="kg-canvas-stage ui-workspace-content-stage w-full h-full cursor-grab active:cursor-grabbing"
         style={{ touchAction: 'none' }}
         data-radius-mode={radiusMode}
         data-island-radius={islandsData.islands[0]?.radius ?? 0}

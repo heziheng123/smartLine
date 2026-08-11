@@ -44,6 +44,28 @@ const openEbbLibrary = async (page: Page) => {
   await page.getByRole('tab', { name: /复习计划/ }).click();
 };
 
+const openAdjustmentCenter = async (page: Page) => {
+  await openEbbMoreAction(page, '批量管理');
+  const dialog = page.getByRole('dialog', { name: '复习计划调整中心' });
+  await expect(dialog).toBeVisible();
+  return dialog;
+};
+
+const chooseAdvancedAction = async (dialog: ReturnType<Page['getByRole']>, actionName: string) => {
+  if (!(await dialog.getByRole('button', { name: /精确调整/ }).isVisible())) {
+    await dialog.getByRole('button', { name: /更多调整/ }).click();
+  }
+  await dialog.getByRole('button', { name: /精确调整/ }).click();
+  await dialog.locator('label.eb-batch-action').filter({ hasText: actionName }).click();
+};
+
+const openAdjustmentOptions = async (dialog: ReturnType<Page['getByRole']>) => {
+  const details = dialog.locator('details.eb-adjust-options');
+  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open))) {
+    await details.locator('summary').click();
+  }
+};
+
 const projectTask = {
   id: 'batch-project', name: '批量联动项目', start: today, end: today, color: '#6366f1', completed: false,
   blocks: [{
@@ -94,18 +116,39 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('quick adjustment keeps advanced tools folded and presets update the live rule summary', async ({ page }) => {
+  await openEbbLibrary(page);
+  const dialog = await openAdjustmentCenter(page);
+  await expect(dialog.getByRole('button', { name: /清理逾期与积压/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /平衡未来负荷/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /调整复习节奏/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /管理计划周期/ })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: /温和调整/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /均衡调整/ })).toContainText(/轮改期 · 超载 \d+→\d+/);
+  await expect(dialog.getByRole('button', { name: /快速清理/ })).toBeVisible();
+  await dialog.getByRole('button', { name: /快速清理/ }).click();
+  await expect(dialog.locator('details.eb-adjust-options > summary')).toContainText('规划 7 天');
+  await openAdjustmentOptions(dialog);
+  await expect(dialog.getByLabel('规划范围')).toHaveValue('7');
+  await expect(dialog.getByLabel('最大移动范围')).toHaveValue('30');
+  await dialog.getByRole('button', { name: /更多调整/ }).click();
+  await expect(dialog.getByRole('button', { name: /管理计划周期/ })).toBeVisible();
+  await expect(dialog.getByRole('status')).toContainText(/可以安全执行|可以执行，但请注意|当前设置不会改变/);
+});
+
 test('batch trim updates rounds, daily references and knowledge color without history-library records', async ({ page }) => {
   await openEbbLibrary(page);
   const totalCard = page.locator('.eb-stat-card').filter({ hasText: '总任务' });
   await expect(totalCard.locator('.eb-stat-value')).toHaveText('4');
 
-  await openEbbMoreAction(page, '批量管理');
-  const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole('radio', { name: /精简末尾轮次/ }).click();
-  await expect(dialog.getByLabel('批量调整预览统计')).toContainText('2 轮删除');
-  await dialog.getByRole('button', { name: /确认调整 1 个计划/ }).click();
+  const dialog = await openAdjustmentCenter(page);
+  await chooseAdvancedAction(dialog, '精简末尾轮次');
+  await openAdjustmentOptions(dialog);
+  await dialog.getByLabel('删除轮数').fill('2');
+  await expect(dialog.getByLabel('批量调整预览统计')).toContainText('2 轮移除');
+  await dialog.getByRole('button', { name: /执行调整 · 1 个计划/ }).click();
   await expect(totalCard.locator('.eb-stat-value')).toHaveText('2');
+  await expect(page.getByRole('button', { name: '撤销本次调整' })).toBeVisible();
 
   await page.getByTitle('知识大盘').click();
   const nodeLabel = page.locator('svg text[fill="#0f172a"]').filter({ hasText: '批量颜色联动知识' });
@@ -125,37 +168,63 @@ test('batch trim updates rounds, daily references and knowledge color without hi
 
 test('batch panel previews shift, append and future-template operations', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量管理');
-  const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
+  const dialog = await openAdjustmentCenter(page);
+  await expect(dialog.locator('details.eb-adjust-options')).not.toHaveAttribute('open', '');
+  await expect(dialog.locator('details.eb-adjust-disclosure').first()).not.toHaveAttribute('open', '');
+  const compactGoalHeights = await dialog.locator('.eb-adjust-goal-grid > button').evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
+  expect(Math.max(...compactGoalHeights)).toBeLessThanOrEqual(44);
+  await openAdjustmentOptions(dialog);
+  const fieldContainment = await dialog.locator('.eb-adjust-form-grid > label').evaluateAll((labels) => labels.map((label) => {
+    const field = label.getBoundingClientRect();
+    const control = label.querySelector('input,select')?.getBoundingClientRect();
+    return !control || (control.left >= field.left && control.right <= field.right && control.top >= field.top && control.bottom <= field.bottom);
+  }));
+  expect(fieldContainment.every(Boolean)).toBe(true);
+  await dialog.locator('details.eb-adjust-options > summary').click();
+  await chooseAdvancedAction(dialog, '整体提前或顺延');
   const summary = dialog.getByLabel('批量调整预览统计');
   const box = await dialog.boundingBox();
   const viewport = page.viewportSize();
   if (!box || !viewport) throw new Error('batch dialog has no measurable viewport');
   if (viewport.width > 900) {
-    expect(box.width).toBeLessThanOrEqual(962);
-    expect(box.height).toBeLessThanOrEqual(682);
+    expect(box.width).toBeLessThanOrEqual(1182);
+    expect(box.height).toBeLessThanOrEqual(592);
     expect(Math.abs((box.x + box.width / 2) - viewport.width / 2)).toBeLessThan(3);
     expect(Math.abs((box.y + box.height / 2) - viewport.height / 2)).toBeLessThan(3);
+    const goalBox = await dialog.locator('.eb-adjust-goals').boundingBox();
+    const scopeBox = await dialog.locator('.eb-adjust-scope').boundingBox();
+    const previewBox = await dialog.locator('.eb-adjust-preview').boundingBox();
+    if (!goalBox || !scopeBox || !previewBox) throw new Error('compact layout regions are not measurable');
+    expect(previewBox.x - (goalBox.x + goalBox.width)).toBeGreaterThanOrEqual(12);
+    expect(scopeBox.y - (goalBox.y + goalBox.height)).toBeGreaterThanOrEqual(8);
+    expect(scopeBox.y - (goalBox.y + goalBox.height)).toBeLessThanOrEqual(14);
   } else if (viewport.width > 720) {
     expect(Math.abs(box.x - 12)).toBeLessThan(2);
-    expect(Math.abs(box.y - 12)).toBeLessThan(2);
     expect(Math.abs(box.width - (viewport.width - 24))).toBeLessThan(2);
+    expect(box.height).toBeLessThanOrEqual(592);
+    expect(Math.abs((box.y + box.height / 2) - viewport.height / 2)).toBeLessThan(3);
   } else {
     expect(box.x).toBe(0);
     expect(box.y).toBe(0);
     expect(box.width).toBe(viewport.width);
   }
 
-  await dialog.getByRole('radio', { name: /整体改期/ }).click();
   await expect(summary).toContainText('2 轮改期');
 
-  await dialog.getByRole('radio', { name: /追加轮次/ }).click();
+  await chooseAdvancedAction(dialog, '追加轮次');
   await expect(summary).toContainText('1 轮新增');
 
-  await dialog.getByRole('radio', { name: /套用未来模板/ }).click();
-  await expect(summary).toContainText('2 轮删除');
-  await expect(summary).toContainText('5 轮新增');
-  await expect(dialog.locator('.eb-batch-preview-row').filter({ hasText: '批量颜色联动知识' })).toContainText('4 → 7');
+  await chooseAdvancedAction(dialog, '自定义未来节奏');
+  await expect(summary).toContainText('2 轮移除');
+  await expect(summary).toContainText('7 轮新增');
+  await dialog.locator('details.eb-adjust-preview-details summary').click();
+  await expect(dialog.locator('.eb-batch-preview-row').filter({ hasText: '批量颜色联动知识' })).toContainText('4 → 9');
+
+  const sectionLabels = await dialog.locator('.eb-adjust-section-title h4').allTextContents();
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.locator('.eb-adjust-section-title h4').allTextContents()).toEqual(sectionLabels);
+  await expect(dialog.locator('.eb-adjust-page')).toHaveCSS('overflow-x', 'hidden');
 });
 
 test('single plan can reanchor all remaining rounds from tomorrow while preserving gaps', async ({ page }) => {
@@ -180,10 +249,9 @@ test('single plan can reanchor all remaining rounds from tomorrow while preservi
 
 test('appended rounds preserve existing daily arrangements without creating a history entry', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量管理');
-  const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
-  await dialog.getByRole('radio', { name: /追加轮次/ }).click();
-  await dialog.getByRole('button', { name: /确认调整 1 个计划/ }).click();
+  const dialog = await openAdjustmentCenter(page);
+  await chooseAdvancedAction(dialog, '追加轮次');
+  await dialog.getByRole('button', { name: /执行调整 · 1 个计划/ }).click();
   await expect(page.locator('.eb-stat-card').filter({ hasText: '总任务' }).locator('.eb-stat-value')).toHaveText('5');
   await expect(page.getByTitle('最近操作与回收站')).toHaveCount(0);
 
@@ -194,12 +262,12 @@ test('appended rounds preserve existing daily arrangements without creating a hi
 
 test('shifted rounds survive refresh and stale daily items stay removed without persistent undo', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量管理');
-  const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
-  await dialog.getByRole('radio', { name: /整体改期/ }).click();
-  await dialog.locator('.eb-batch-field input[type="number"]').fill('-2');
+  const dialog = await openAdjustmentCenter(page);
+  await chooseAdvancedAction(dialog, '整体提前或顺延');
+  await openAdjustmentOptions(dialog);
+  await dialog.getByLabel('移动天数').fill('-2');
   await expect(dialog.getByLabel('批量调整预览统计')).toContainText('2 轮改期');
-  await dialog.getByRole('button', { name: /确认调整 1 个计划/ }).click();
+  await dialog.getByRole('button', { name: /执行调整 · 1 个计划/ }).click();
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{ reviewTasks?: Array<{ id: string; dueDate: string }> }>(page, 'ebb_data', 'smart-ebb-data') ?? {};
@@ -239,17 +307,17 @@ test('shifted rounds survive refresh and stale daily items stay removed without 
 
 test('future template rejects malformed intervals and preserves completed history when applied', async ({ page }) => {
   await openEbbLibrary(page);
-  await openEbbMoreAction(page, '批量管理');
-  const dialog = page.getByRole('dialog', { name: '批量调整复习计划' });
-  await dialog.getByRole('radio', { name: /套用未来模板/ }).click();
-  await dialog.locator('select').selectOption('custom');
-  const intervals = dialog.locator('.eb-batch-field--wide input');
+  const dialog = await openAdjustmentCenter(page);
+  await chooseAdvancedAction(dialog, '自定义未来节奏');
+  await openAdjustmentOptions(dialog);
+  await dialog.getByLabel('节奏模板').selectOption('custom');
+  const intervals = dialog.getByPlaceholder('1, 2, 4, 7, 15');
   await intervals.fill('1, 错误, 7');
-  await expect(dialog.getByRole('button', { name: '确认调整' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: /执行调整/ })).toBeDisabled();
 
   await intervals.fill('1, 2, 4, 7, 15');
   await expect(dialog.getByLabel('批量调整预览统计')).toContainText('5 轮新增');
-  await dialog.getByRole('button', { name: /确认调整 1 个计划/ }).click();
+  await dialog.getByRole('button', { name: /执行调整 · 1 个计划/ }).click();
 
   await expect.poll(async () => {
     const data = await readPersistedStore<{ reviewTasks?: Array<{ id: string; dueDate: string; isCompleted: boolean; roundOrder: number; graphNodeId?: string }> }>(page, 'ebb_data', 'smart-ebb-data') ?? {};

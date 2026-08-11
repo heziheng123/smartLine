@@ -40,7 +40,23 @@ interface MatrixViewProps {
 }
 
 type FilterStatus = 'all' | 'pending' | 'completed';
-type SortBy = 'date' | 'ratio';
+type SortBy = 'date' | 'ratio' | 'created-desc' | 'created-asc';
+
+const compareTopicNames = (a: TopicStat, b: TopicStat) => a.topicName.localeCompare(b.topicName, 'zh-CN');
+
+const formatCreatedAt = (value?: string): string => {
+  if (!value) return '生成时间未知';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '生成时间未知';
+  return `生成于 ${new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)}`;
+};
 
 const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, selectedDate }) => {
   const [filterTag, setFilterTag] = useState<string>('');
@@ -103,9 +119,22 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, s
       list = list.filter((t) => t.topicName.toLowerCase().includes(q) || (t.tag || '').toLowerCase().includes(q));
     }
     if (sortBy === 'date') {
-      list = [...list].sort((a, b) => (a.nextDueDate || '9999').localeCompare(b.nextDueDate || '9999'));
+      list = [...list].sort((a, b) =>
+        (a.nextDueDate || '9999').localeCompare(b.nextDueDate || '9999')
+        || compareTopicNames(a, b));
+    } else if (sortBy === 'ratio') {
+      list = [...list].sort((a, b) =>
+        a.ratio - b.ratio
+        || (a.nextDueDate || '9999').localeCompare(b.nextDueDate || '9999')
+        || compareTopicNames(a, b));
+    } else if (sortBy === 'created-desc') {
+      list = [...list].sort((a, b) =>
+        (b.createdAt || '').localeCompare(a.createdAt || '')
+        || compareTopicNames(a, b));
     } else {
-      list = [...list].sort((a, b) => a.ratio - b.ratio);
+      list = [...list].sort((a, b) =>
+        (a.createdAt || '9999').localeCompare(b.createdAt || '9999')
+        || compareTopicNames(a, b));
     }
     return list;
   }, [enhancedTasks, settings, filterTag, filterStatus, deferredQuery, sortBy]);
@@ -151,8 +180,10 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, s
           <option value="completed">已完成</option>
         </select>
         <select className="eb-filter-select" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
-          <option value="date">按日期排序</option>
+          <option value="date">按下次复习日期</option>
           <option value="ratio">按完成率排序</option>
+          <option value="created-desc">按生成时间（新→旧）</option>
+          <option value="created-asc">按生成时间（旧→新）</option>
         </select>
       </div>
 
@@ -204,6 +235,7 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, s
                 topicTasks={topicTasks}
                 taskActions={taskActions}
                 selectedDate={selectedDate}
+                showCreatedAt={sortBy === 'created-desc' || sortBy === 'created-asc'}
               />
             );
           })
@@ -225,9 +257,10 @@ interface TopicRowProps {
   topicTasks: ReviewTask[];
   taskActions: TaskActions;
   selectedDate?: string;
+  showCreatedAt?: boolean;
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, taskActions, selectedDate }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, taskActions, selectedDate, showCreatedAt }) => {
   const [expanded, setExpanded] = useState(false);
 
   const ratio = stat.ratio;
@@ -304,6 +337,11 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
             ) : null}
             {stat.totalPoints > 0 && (
               <span className="eb-topic-row-points">{stat.earnedPoints}/{stat.totalPoints}分</span>
+            )}
+            {showCreatedAt && (
+              <span className="eb-topic-row-created" title={stat.createdAt}>
+                <Clock3 size={12} />{formatCreatedAt(stat.createdAt)}
+              </span>
             )}
           </div>
         </div>

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
-import { BookOpenCheck, CalendarRange, Check, ChevronDown, Diamond, Eye, EyeOff, Focus, Layers3, LocateFixed, Pencil, Plus, Redo2, Search, Trash2, Undo2, X } from 'lucide-react';
+import { BookOpenCheck, CalendarRange, Check, ChevronDown, Diamond, Eye, EyeOff, Focus, Layers3, LocateFixed, Pencil, Plus, Redo2, Route, Search, Trash2, Undo2, X } from 'lucide-react';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
 import { getSmartTaskBlocks } from '@/utils/blocks';
 import { isValidCalendarDate } from '@/utils/dateSafe';
@@ -15,6 +15,7 @@ import { LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
 import type { LifeArea, LifeGoal, LifeMapPlanGroupId, LifeMapPlanGroupPreference, LifeSystem } from '@/lifeMap/types';
 import LifeMapCreateMenu from './LifeMapCreateMenu';
 import SyncStatusIndicator from '@/components/SyncStatusIndicator';
+import WorkspaceHeader from '@/components/WorkspaceHeader';
 import '@/styles/life-map.css';
 
 interface LifeMapViewProps {
@@ -1738,10 +1739,13 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     <main ref={mainRef} className={`life-line is-zoom-${zoom}`} aria-label="人生地图" aria-busy="false">
       <section className="life-line__frame" aria-label="人生时间线">
         <h2 className="life-line__sr-heading">人生时间线</h2>
-        <div className="life-line__toolbar">
-          <div className="life-line__brand"><CalendarRange size={16} /><h1>人生地图</h1><span>{centerLabel}</span></div>
-          <div className="life-line__toolbar-scope" onClickCapture={() => { setShowScaleMenu(false); setShowJumpMenu(false); setShowAddMenu(false); setShowViewMenu(false); }}>{toolbarScope}</div>
-          <div className="life-line__controls">
+        <WorkspaceHeader className="life-line__toolbar" aria-label="人生地图工作区">
+          <div className="life-line__brand ui-workspace-header__identity">
+            <span className="ui-workspace-header__identity-icon"><Route size={18} strokeWidth={1.8} /></span>
+            <div className="ui-workspace-header__identity-copy"><h1>人生地图</h1><p>{centerLabel}</p></div>
+          </div>
+          <div className="life-line__toolbar-scope ui-workspace-header__context" onClickCapture={() => { setShowScaleMenu(false); setShowJumpMenu(false); setShowAddMenu(false); setShowViewMenu(false); }}>{toolbarScope}</div>
+          <div className="life-line__controls ui-workspace-header__actions">
             <button
               type="button"
               className="life-line__next-milestone"
@@ -1847,8 +1851,8 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             </div>
             <SyncStatusIndicator />
           </div>
-        </div>
-        <div className="life-line__plan-filter" role="group" aria-label="人生计划泳道筛选" data-testid="life-map-plan-filter">
+        </WorkspaceHeader>
+        <div className="life-line__plan-filter ui-workspace-context-bar ui-workspace-context-bar--pills" role="group" aria-label="人生计划泳道筛选" data-testid="life-map-plan-filter">
           {(['all', 'learning', 'work', 'life'] as const).map((id) => <button
             type="button"
             key={id}
@@ -1859,7 +1863,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         </div>
         {canvasTool !== 'select' && <div className="life-line__hint"><span>{canvasTool === 'range' ? '时期重点' : canvasTool === 'note' ? '文字便签' : '关键日期'}</span>{canvasTool === 'range' ? '在画布上横向拖动选择时间范围' : '在画布对应日期单击放置'}<button type="button" onClick={() => setCanvasTool('select')}>退出</button></div>}
 
-        <div className="life-line__scroller" ref={scrollerRef} onScroll={handleScroll} onWheel={handleWheel} onPointerDown={startPinch} onPointerMove={movePinch} onPointerUp={endPinch} onPointerCancel={endPinch} tabIndex={0} aria-label={`人生规划${ZOOM_META[zoom].label}视图时间轴`}>
+        <div className="life-line__scroller ui-workspace-content-stage" ref={scrollerRef} onScroll={handleScroll} onWheel={handleWheel} onPointerDown={startPinch} onPointerMove={movePinch} onPointerUp={endPinch} onPointerCancel={endPinch} tabIndex={0} aria-label={`人生规划${ZOOM_META[zoom].label}视图时间轴`}>
           <div className="life-line__canvas" ref={canvasRef} style={{ width: canvasWidth, height: canvasHeight }} onDoubleClick={handleCanvasDoubleClick}>
             {focusRange && <div className="life-line__focus-lens" style={{ left: dateToX(focusRange.start), width: Math.max(8, dateToX(focusRange.end.add(1, 'day')) - dateToX(focusRange.start)) }}><span>{focusMode === 'week' ? '本周' : '本月'} · {focusRange.label}</span></div>}
             <div className="life-line__past-shade" style={{ width: dateToX(today) }} aria-hidden="true" />

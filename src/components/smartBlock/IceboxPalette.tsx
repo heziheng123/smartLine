@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { MOTION_SPRING_GENTLE } from '@/motion/system';
 import { ArchiveRestore, Inbox, X } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -98,10 +99,10 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
         {isExpanded && (
           <motion.section
             className={styles.panel}
-            initial={{ opacity: 0, scale: 0.96, y: 10 }}
+            initial={{ opacity: 0, scale: 0.985, y: 6 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 10 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            exit={{ opacity: 0, scale: 0.99, y: 4 }}
+            transition={MOTION_SPRING_GENTLE}
             aria-label="待排期任务箱"
           >
             <header className={styles.panelHeader}>
@@ -144,7 +145,7 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
         type="button"
         className={`${styles.capsule} ${isExpanded ? styles.capsuleActive : ''}`}
         onClick={() => setIsExpanded((value) => !value)}
-        whileTap={{ scale: 0.97 }}
+        whileTap={{ scale: 0.985 }}
         aria-expanded={isExpanded}
         aria-label={`待排期箱，${backlogTasks.length} 个任务`}
       >

@@ -42,6 +42,7 @@ import { requestCompletedBindingStrategy } from '@/graph/bindingDecision';
 import type { CompletedTaskBindingStrategy } from '@/domain/projectTaskEffects';
 import { useTimelineStore } from '@/store';
 import { motion, AnimatePresence } from 'framer-motion';
+import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
 import QuantityProgressDialog from '@/components/dailySchedule/QuantityProgressDialog';
 
 interface SmartTaskBlockCardProps {
@@ -371,16 +372,16 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
       <>
         <motion.div
           layout
-          initial={{ opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 4, scale: 0.995 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95 }}
-          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+          exit={{ opacity: 0, y: 2, scale: 0.995 }}
+          transition={MOTION_SPRING_GENTLE}
           className={`stb-card stb-card--compact ${header.isCompleted ? 'stb-card--done' : ''}`}
           style={{ borderLeftColor: leftBarColor }}
           onClick={() => setBodyExpanded(!bodyExpanded)}
         >
           <motion.button
-            whileTap={{ scale: 0.8 }}
+            whileTap={{ scale: 0.92 }}
             type="button"
             className={`stb-check ${isQuantity ? 'stb-check--quantity' : ''} ${header.isCompleted ? 'stb-check--done' : ''}`}
             onClick={(event: React.MouseEvent) => {
@@ -418,7 +419,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2, ease: "easeInOut" }}
+                transition={{ duration: MOTION_DURATION.standard, ease: MOTION_EASE_ENTER }}
                 style={{ overflow: 'hidden', width: '100%' }}
               >
                 {hasBody ? (
@@ -445,10 +446,10 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 4, scale: 0.995 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+      exit={{ opacity: 0, y: 2, scale: 0.995 }}
+      transition={MOTION_SPRING_GENTLE}
       className={`stb-card ${header.isCompleted ? 'stb-card--done' : ''}`}
       style={{ borderLeftColor: leftBarColor }}
     >
@@ -462,7 +463,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
       {/* ── 主容器：复选框 + 右侧内容 ── */}
       <div className="stb-header-main">
         <motion.button
-          whileTap={{ scale: 0.8 }}
+          whileTap={{ scale: 0.92 }}
           type="button"
           className={`stb-check ${isQuantity ? 'stb-check--quantity' : ''} ${header.isCompleted ? 'stb-check--done' : ''}`}
           onClick={isQuantity ? handleOpenQuantityProgress : handleToggle}
@@ -689,7 +690,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.25, ease: "easeInOut" }}
+                transition={{ duration: MOTION_DURATION.standard, ease: MOTION_EASE_ENTER }}
                 style={{ overflow: 'hidden' }}
               >
                 <div

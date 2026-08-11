@@ -47,6 +47,7 @@ import {
 } from '@/utils/timeline-utils';
 import MonthRow from './MonthRow';
 import SyncStatusIndicator from './SyncStatusIndicator';
+import WorkspaceHeader from './WorkspaceHeader';
 
 interface TimelinePreferences {
   density: TimelineDensity;
@@ -489,13 +490,16 @@ const TimelineView: React.FC<TimelineViewProps> = ({
   };
 
   const workspaceHeader = (
-    <header className="tl-workspace-bar">
-      <div className="tl-workspace-heading">
-        <CalendarDays size={17} aria-hidden="true" />
-        <h1>项目规划</h1>
+    <WorkspaceHeader className="tl-workspace-bar" aria-label="项目规划工作区">
+      <div className="tl-workspace-heading ui-workspace-header__identity">
+        <span className="ui-workspace-header__identity-icon"><CalendarDays size={17} aria-hidden="true" /></span>
+        <div className="ui-workspace-header__identity-copy">
+          <h1>项目规划</h1>
+          <p>年度项目时间线</p>
+        </div>
       </div>
 
-      <div className="tl-workspace-actions">
+      <div className="tl-workspace-actions ui-workspace-header__actions">
         <div className="tl-workspace-year" aria-label="时间线年份">
           <button type="button" onClick={() => onYearChange(displayYear - 1)} title="上一年"><ChevronLeft size={16} /></button>
           <span>{displayYear}</span>
@@ -535,7 +539,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
           )}
         </div>
       </div>
-    </header>
+    </WorkspaceHeader>
   );
 
   const projectDrawer = isProjectPanelOpen ? createPortal(
@@ -596,7 +600,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
       {workspaceHeader}
 
       {activeFilterCount > 0 && (
-        <div className="tl-filter-status">
+        <div className="tl-filter-status ui-workspace-context-bar ui-workspace-context-bar--status">
           {preferences.hideCompleted && <span>隐藏已完成</span>}
           {preferences.hiddenGroupIds.length > 0 && <span>隐藏{preferences.hiddenGroupIds.length}个项目</span>}
           {normalizedQuery && <span>搜索“{query.trim()}”</span>}
@@ -612,7 +616,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
           </button>
         </div>
       ) : (
-        <div className="tl-year-card">
+        <div className="tl-year-card ui-workspace-content-stage">
           {mergedMonthLayouts.map((monthLayout) => (
             <MonthRow
               key={monthLayout.month}

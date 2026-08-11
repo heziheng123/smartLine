@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import dayjs from 'dayjs';
 import {
   AlertTriangle,
@@ -29,7 +30,7 @@ import type { SmartTaskBlock, Task, TaskGroup } from '@/types';
 import { useTimelineStore } from '@/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import type { ScheduledItem, TimeBlock, TimeSlot } from '@/components/dailySchedule/types';
-import { DEFAULT_TIME_SLOT_CONFIGS } from '@/components/dailySchedule/types';
+import { normalizeTimeSlotConfigs } from '@/components/dailySchedule/types';
 import { durationMinutes, parseSourceId } from '@/components/dailySchedule/conversion';
 import { useEbbStore } from '@/ebb/store';
 import { getReviewRoundDuration } from '@/ebb/duration';
@@ -45,6 +46,7 @@ import { getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/util
 import { addDays, todayStr } from '@/utils/dateSafe';
 import { openProjectTaskCreate } from '@/components/smartBlock/projectTaskCreate';
 import '@/styles/phone.css';
+import { MOTION_DURATION, MOTION_EASE_ENTER } from '@/motion/system';
 
 interface PhoneWorkspaceProps {
   currentView: AppModule;
@@ -215,6 +217,8 @@ const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPr
   const updateTimeBlock = useDailyScheduleStore((state) => state.updateTimeBlock);
   const updateBlockHeader = useTimelineStore((state) => state.updateBlockHeader);
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const dailyTimeSlots = useEbbStore((state) => state.ebbSettings.dailyTimeSlots);
+  const slotConfigs = useMemo(() => normalizeTimeSlotConfigs(dailyTimeSlots), [dailyTimeSlots]);
   const allTasks = useMemo(() => tasks, [tasks]);
   const day = schedules[selectedDate] ?? { date: selectedDate, items: [], blocks: [] };
   const backlog = useMemo(() => collectBacklogTasks(allTasks, groups), [allTasks, groups]);
@@ -303,7 +307,7 @@ const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPr
         <button type="submit" disabled={!quickTitle.trim()}>添加</button>
       </form>
       <div className="phone-schedule">
-        {DEFAULT_TIME_SLOT_CONFIGS.map((slot) => {
+        {slotConfigs.map((slot) => {
           const slotEntries = entries.filter((entry) => entry.kind === 'item'
             ? entry.value.timeSlot === slot.slot
             : Number(entry.value.startTime.slice(0, 2)) < slot.endHour && Number(entry.value.startTime.slice(0, 2)) >= slot.startHour);
@@ -595,6 +599,7 @@ const PhoneKnowledgeView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenFullVi
 };
 
 const PhoneWorkspace: React.FC<PhoneWorkspaceProps> = (props) => {
+  const prefersReducedMotion = useReducedMotion();
   const content = props.currentView === 'timeline'
     ? <PhoneProjectView {...props} />
     : props.currentView === 'daily-schedule'
@@ -608,9 +613,18 @@ const PhoneWorkspace: React.FC<PhoneWorkspaceProps> = (props) => {
             : <PhoneKnowledgeView {...props} />;
 
   return (
-    <main id={`view-${props.currentView}`} role="tabpanel" className="phone-workspace" aria-label={`${VIEW_LABEL[props.currentView]}手机视图`}>
+    <motion.main
+      key={props.currentView}
+      id={`view-${props.currentView}`}
+      role="tabpanel"
+      className="phone-workspace"
+      aria-label={`${VIEW_LABEL[props.currentView]}手机视图`}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: prefersReducedMotion ? MOTION_DURATION.instant : MOTION_DURATION.standard, ease: MOTION_EASE_ENTER }}
+    >
       {content}
-    </main>
+    </motion.main>
   );
 };
 

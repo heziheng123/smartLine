@@ -1,8 +1,9 @@
-import { addDays } from '@/utils/dateSafe';
+import { addDays } from '../utils/dateSafe.ts';
 import type { EbbData, EbbSettings, InboxItem, ReviewTask, StudyOutlineNode } from './types';
-import { DEFAULT_EBB_SETTINGS, TAG_COLOR_PALETTE } from './constants';
-import { normalizeReviewRoundOrders } from './scheduler';
-import { normalizeOptionalEstimatedMinutes } from './duration';
+import { DEFAULT_EBB_SETTINGS, TAG_COLOR_PALETTE } from './constants.ts';
+import { normalizeReviewRoundOrders } from './scheduler.ts';
+import { normalizeOptionalEstimatedMinutes } from './duration.ts';
+import { normalizeTimeSlotConfigs } from '../components/dailySchedule/types.ts';
 
 export function buildAbsoluteScheduleDates(
   baseDate: string,
@@ -44,6 +45,43 @@ export function isValidEbbDate(value: unknown): value is string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function normalizeIsoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+}
+
+/**
+ * Restores review creation time without using the current clock, so old data
+ * receives the same value on every device. IDs produced by genId contain the
+ * original millisecond timestamp; older/custom IDs fall back to plan dates.
+ */
+export function normalizeReviewTaskCreatedAt(
+  task: Pick<ReviewTask, 'id' | 'dueDate' | 'originalDueDate' | 'scheduleCreatedDate' | 'createdAt'>,
+): string {
+  const explicit = normalizeIsoTimestamp(task.createdAt);
+  if (explicit) return explicit;
+
+  const encoded = /^[^-]+-([0-9a-z]+)-/i.exec(task.id)?.[1];
+  if (encoded) {
+    const milliseconds = Number.parseInt(encoded, 36);
+    const earliestSupported = Date.UTC(2000, 0, 1);
+    const latestSupported = Date.UTC(2100, 0, 1);
+    if (Number.isSafeInteger(milliseconds)
+      && milliseconds >= earliestSupported
+      && milliseconds < latestSupported) {
+      return new Date(milliseconds).toISOString();
+    }
+  }
+
+  const fallbackDate = isValidEbbDate(task.scheduleCreatedDate)
+    ? task.scheduleCreatedDate
+    : isValidEbbDate(task.originalDueDate)
+      ? task.originalDueDate
+      : task.dueDate;
+  return `${fallbackDate}T00:00:00.000Z`;
 }
 
 function isValidReviewTask(value: unknown): value is ReviewTask {
@@ -117,6 +155,7 @@ export function normalizeEbbData(value: unknown): EbbData {
   let reviewTasks = normalizeReviewRoundOrders(
     deduplicateById(rawTasks.filter(isValidReviewTask).map((task) => ({
       ...task,
+      createdAt: normalizeReviewTaskCreatedAt(task),
       originalDueDate: isValidEbbDate(task.originalDueDate) ? task.originalDueDate : task.dueDate,
       completedDate: isValidEbbDate(task.completedDate)
         ? task.completedDate
@@ -192,6 +231,7 @@ export function normalizeEbbData(value: unknown): EbbData {
     dailyReviewMinutes: Number.isFinite(incomingSettings?.dailyReviewMinutes)
       ? Math.min(480, Math.max(15, Math.trunc(incomingSettings!.dailyReviewMinutes!)))
       : DEFAULT_EBB_SETTINGS.dailyReviewMinutes,
+    dailyTimeSlots: normalizeTimeSlotConfigs(incomingSettings?.dailyTimeSlots),
   };
   return {
     reviewTasks,

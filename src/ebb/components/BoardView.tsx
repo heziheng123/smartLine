@@ -29,6 +29,7 @@ interface BoardViewProps {
   taskActions: TaskActions;
   selectedDate: string;
   onSelectDate: (date: string) => void;
+  toolbarActions?: ReactNode;
 }
 
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -49,7 +50,7 @@ const shiftMonth = (date: string, amount: number) => {
   return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 };
 
-const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, selectedDate, onSelectDate }) => {
+const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, selectedDate, onSelectDate, toolbarActions }) => {
   const [cursor, setCursor] = useState(selectedDate || todayStr());
   const [rangeMode, setRangeMode] = useState<'week' | 'month'>('week');
   const [query, setQuery] = useState('');
@@ -128,43 +129,47 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
 
   return <div className="eb-week-board">
     <div className="eb-week-board-toolbar">
-      <div className="eb-week-board-nav">
-        <button type="button" onClick={() => {
-          const nextDate = rangeMode === 'week' ? addDays(selectedDate, -7) : shiftMonth(selectedDate, -1);
-          setCursor(nextDate);
-          onSelectDate(nextDate);
-        }} aria-label={rangeMode === 'week' ? '上一周' : '上个月'}><ChevronLeft size={16} /></button>
-        <strong>{rangeMode === 'week' ? `${formatDate(weekStart, 'M月D日')}—${formatDate(addDays(weekStart, 6), 'M月D日')}` : formatDate(`${cursor.slice(0, 7)}-01`, 'YYYY年MM月')}</strong>
-        <button type="button" onClick={() => {
-          const nextDate = rangeMode === 'week' ? addDays(selectedDate, 7) : shiftMonth(selectedDate, 1);
-          setCursor(nextDate);
-          onSelectDate(nextDate);
-        }} aria-label={rangeMode === 'week' ? '下一周' : '下个月'}><ChevronRight size={16} /></button>
-        <button type="button" className="is-today" onClick={() => { setCursor(today); onSelectDate(today); }}>今天</button>
-        <div className="eb-week-board-range" role="group" aria-label="轮次排期时间范围">
-          <button type="button" className={rangeMode === 'week' ? 'is-active' : ''} onClick={() => setRangeMode('week')}>周</button>
-          <button type="button" className={rangeMode === 'month' ? 'is-active' : ''} onClick={() => setRangeMode('month')}>月</button>
+      <div className="eb-week-board-toolbar-main">
+        <div className="eb-week-board-nav">
+          <button type="button" onClick={() => {
+            const nextDate = rangeMode === 'week' ? addDays(selectedDate, -7) : shiftMonth(selectedDate, -1);
+            setCursor(nextDate);
+            onSelectDate(nextDate);
+          }} aria-label={rangeMode === 'week' ? '上一周' : '上个月'}><ChevronLeft size={16} /></button>
+          <strong>{rangeMode === 'week' ? `${formatDate(weekStart, 'M月D日')}—${formatDate(addDays(weekStart, 6), 'M月D日')}` : formatDate(`${cursor.slice(0, 7)}-01`, 'YYYY年MM月')}</strong>
+          <button type="button" onClick={() => {
+            const nextDate = rangeMode === 'week' ? addDays(selectedDate, 7) : shiftMonth(selectedDate, 1);
+            setCursor(nextDate);
+            onSelectDate(nextDate);
+          }} aria-label={rangeMode === 'week' ? '下一周' : '下个月'}><ChevronRight size={16} /></button>
+          <button type="button" className="is-today" onClick={() => { setCursor(today); onSelectDate(today); }}>今天</button>
+          <div className="eb-week-board-range" role="group" aria-label="轮次排期时间范围">
+            <button type="button" className={rangeMode === 'week' ? 'is-active' : ''} onClick={() => setRangeMode('week')}>周</button>
+            <button type="button" className={rangeMode === 'month' ? 'is-active' : ''} onClick={() => setRangeMode('month')}>月</button>
+          </div>
+        </div>
+        <div className="eb-week-board-summary" aria-live="polite">
+          <div>
+            <strong>{formatDate(selectedDate, 'M月D日')} · {WEEKDAY_LABELS[getDayOfWeek(selectedDate)]}</strong>
+            {selectedDate === today && <em>今天</em>}
+          </div>
+          <span>{selectedSummary.total} 轮 · {selectedSummary.totalMinutes} 分钟</span>
+          <span>完成 {selectedSummary.completed}/{selectedSummary.total}</span>
+          {selectedSummary.overdue > 0 && <span className="is-overdue">逾期 {selectedSummary.overdue}</span>}
+          <span>剩余 {selectedSummary.remainingMinutes} 分钟</span>
         </div>
       </div>
-      <div className="eb-week-board-filters">
-        <label className="eb-week-board-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索复习主题" /></label>
-        <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="筛选复习分类">
-          <option value="">全部分类</option>
-          {categories.map((category) => <option key={category} value={category}>{category}</option>)}
-        </select>
-        <button type="button" className={pendingOnly ? 'is-active' : ''} onClick={() => setPendingOnly((value) => !value)} aria-pressed={pendingOnly}>只看未完成</button>
+      <div className="eb-week-board-toolbar-end">
+        <div className="eb-week-board-filters">
+          <label className="eb-week-board-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索复习主题" /></label>
+          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="筛选复习分类">
+            <option value="">全部分类</option>
+            {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+          </select>
+          <button type="button" className={pendingOnly ? 'is-active' : ''} onClick={() => setPendingOnly((value) => !value)} aria-pressed={pendingOnly}>只看未完成</button>
+        </div>
+        {toolbarActions}
       </div>
-    </div>
-
-    <div className="eb-week-board-summary" aria-live="polite">
-      <div>
-        <strong>{formatDate(selectedDate, 'M月D日')} · {WEEKDAY_LABELS[getDayOfWeek(selectedDate)]}</strong>
-        {selectedDate === today && <em>今天</em>}
-      </div>
-      <span>{selectedSummary.total} 轮 · {selectedSummary.totalMinutes} 分钟</span>
-      <span>已完成 {selectedSummary.completed}/{selectedSummary.total}</span>
-      {selectedSummary.overdue > 0 && <span className="is-overdue">逾期 {selectedSummary.overdue}</span>}
-      <span>预计剩余 {selectedSummary.remainingMinutes} 分钟</span>
     </div>
 
     <div

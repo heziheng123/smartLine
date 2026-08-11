@@ -1,0 +1,333 @@
+/*
+ * SmartLine motion system
+ * -----------------------
+ * State transitions stay quiet and interruptible. Business components keep
+ * ownership of their data and gestures; this layer only standardizes visual
+ * feedback across workspaces.
+ */
+
+@keyframes ui-surface-enter {
+  from { opacity: 0; transform: translateY(var(--ui-motion-distance-standard)) scale(.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes ui-overlay-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ui-drawer-enter-right {
+  from { opacity: 0; transform: translateX(var(--ui-motion-distance-panel)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ui-sheet-enter {
+  from { opacity: 0; transform: translateY(var(--ui-motion-distance-panel)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ui-feedback-enter {
+  from { opacity: 0; transform: translateY(var(--ui-motion-distance-standard)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ui-target-confirm {
+  0% { box-shadow: 0 0 0 0 rgb(94 92 230 / 0%); }
+  45% { box-shadow: 0 0 0 4px rgb(94 92 230 / 12%); }
+  100% { box-shadow: 0 0 0 0 rgb(94 92 230 / 0%); }
+}
+
+@keyframes ui-drop-target {
+  from { box-shadow: inset 0 0 0 1px rgb(94 92 230 / 18%); }
+  to { box-shadow: inset 0 0 0 2px rgb(94 92 230 / 34%), 0 6px 18px rgb(94 92 230 / 8%); }
+}
+
+@keyframes ui-soft-skeleton {
+  0%, 100% { opacity: .48; }
+  50% { opacity: .82; }
+}
+
+/* View loading keeps the final workspace footprint stable. */
+.ui-view-loading {
+  width: min(560px, calc(100% - 32px));
+  display: grid;
+  gap: 12px;
+  padding: 28px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-card-radius);
+  background: var(--ui-surface);
+}
+
+.ui-view-loading__copy {
+  color: var(--ui-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ui-view-loading__line {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--ui-surface-muted), var(--ui-primary-soft));
+  animation: ui-soft-skeleton 1.35s ease-in-out infinite;
+}
+
+.ui-view-loading__line:nth-child(2) { width: 72%; animation-delay: 90ms; }
+.ui-view-loading__line:nth-child(3) { width: 92%; animation-delay: 180ms; }
+.ui-view-loading__line:nth-child(4) { width: 58%; animation-delay: 270ms; }
+
+/* Dialogs share one restrained entrance vocabulary. */
+:where(
+  .tl-dialog-overlay,
+  .ds-vocab-overlay,
+  .ptm-overlay,
+  .psd-overlay,
+  .tb-editor-overlay,
+  .eb-modal-overlay,
+  .eb-panel-overlay,
+  .eb-drag-reschedule-overlay,
+  .app-confirm-overlay,
+  .life-map-editor,
+  .life-map-planning-drawer__backdrop,
+  .phone-sheet-backdrop
+) {
+  animation: ui-overlay-enter var(--ui-motion-fast) ease-out both;
+}
+
+:where(
+  .tl-dialog,
+  .ds-vocab-dialog,
+  .ptm-dialog,
+  .psd-dialog,
+  .tb-editor,
+  .eb-modal,
+  .eb-drag-reschedule,
+  .app-confirm,
+  .life-map-editor__panel
+) {
+  transform-origin: 50% 24%;
+  animation: ui-surface-enter var(--ui-motion-standard-duration) var(--ui-ease-enter) both;
+}
+
+:where(.eb-panel, .life-map-planning-drawer) {
+  animation: ui-drawer-enter-right var(--ui-motion-panel) var(--ui-ease-enter) both;
+}
+
+.phone-sheet {
+  animation: ui-sheet-enter var(--ui-motion-panel) var(--ui-ease-enter) both;
+}
+
+/* Popovers should feel attached to their trigger, not like miniature modals. */
+:where(
+  .tl-dock-popover,
+  .tl-workspace-popover,
+  .tl-create-menu,
+  .life-line__command-menu,
+  .life-map-scope__menu,
+  .ds-item-menu > div,
+  .eb-more-menu-popover,
+  .wmv-offrange-popover,
+  .kg-control-popover
+) {
+  transform-origin: 50% 0;
+  animation: ui-popover-in var(--ui-motion-fast) var(--ui-ease-enter) both;
+}
+
+/* Short-lived feedback enters from the direction it will leave visually. */
+:where(
+  .ds-backlog-feedback,
+  .pdv-shift-feedback,
+  .wmv-toast,
+  .eb-toast,
+  .eb-undo-bar,
+  .eb-action-notice,
+  .ptm-backlog-notice,
+  .life-map-resilience-notice,
+  .life-map-shift-undo,
+  .tl-filter-status
+) {
+  animation: ui-feedback-enter var(--ui-motion-standard-duration) var(--ui-ease-enter) both;
+}
+
+/* Shared buttons respond immediately without a large playful bounce. */
+:where(
+  .ui-workspace-header,
+  .ui-workspace-context-bar,
+  .tl-dialog-footer,
+  .ds-vocab-form-actions,
+  .eb-modal-actions,
+  .phone-card__footer,
+  .phone-stepper
+) button:not(:disabled):active {
+  scale: .985;
+  transition-duration: var(--ui-motion-instant);
+}
+
+/* Timeline and planning cards keep hover, completion and drag feedback aligned. */
+:where(
+  .tl-seg,
+  .tl-note-pin,
+  .tl-note-range,
+  .tl-milestone,
+  .life-line__node,
+  .life-line__project-band,
+  .life-line__stage-band,
+  .ds-item,
+  .ds-pool-item,
+  .wmv-block-card,
+  .eb-task-card,
+  .phone-card,
+  .phone-task-list > article,
+  .phone-week-task
+) {
+  transition:
+    opacity var(--ui-motion-standard-duration) var(--ui-ease-enter),
+    border-color var(--ui-motion-fast) ease,
+    background-color var(--ui-motion-fast) ease,
+    box-shadow var(--ui-motion-fast) ease,
+    translate var(--ui-motion-fast) var(--ui-ease-enter),
+    scale var(--ui-motion-fast) var(--ui-ease-enter);
+}
+
+:where(
+  .tl-seg,
+  .life-line__node,
+  .life-line__project-band,
+  .ds-item,
+  .ds-pool-item,
+  .wmv-block-card,
+  .eb-task-card,
+  .phone-card
+):not(.ds-item--dragging):not(.ds-pool-item--dragging):not(.wmv-block-card--dragging):hover {
+  translate: 0 -1px;
+}
+
+:where(
+  .ds-item--dragging,
+  .ds-pool-item--dragging,
+  .wmv-block-card--dragging,
+  .eb-task-card--dragging-wrapper
+) {
+  scale: 1.012;
+  filter: saturate(1.03);
+  box-shadow: 0 14px 32px rgb(22 22 28 / 16%);
+}
+
+:where(
+  .ds-slot-dropzone--active,
+  .ds-right--drop-target,
+  .wmv-cell--drop-target,
+  .wmv-date-tasks--drag-over,
+  .eb-mini-cal-cell--drag-over,
+  .pdv-date-tasks--drag-over
+) {
+  animation: ui-drop-target 520ms ease-in-out infinite alternate;
+}
+
+/* Completion remains visible long enough to register before lists reflow. */
+:where(.ds-item-check, .wmv-check, .eb-task-card-check, .phone-check-button, .stb-check) {
+  transition:
+    color var(--ui-motion-instant) ease,
+    border-color var(--ui-motion-instant) ease,
+    background-color var(--ui-motion-instant) ease,
+    scale var(--ui-motion-instant) var(--ui-ease-enter);
+}
+
+:where(.ds-item-check, .wmv-check, .eb-task-card-check, .phone-check-button, .stb-check):active {
+  scale: .92;
+}
+
+:where(
+  .ds-item--completed,
+  .ds-pool-item--completed,
+  .wmv-block-card--done,
+  .eb-task-card--done,
+  .stb-card--done,
+  .phone-task-list > article.is-completed,
+  .phone-week-task.is-completed
+) {
+  transition:
+    opacity var(--ui-motion-emphasis) var(--ui-ease-enter),
+    background-color var(--ui-motion-standard-duration) ease,
+    border-color var(--ui-motion-standard-duration) ease;
+}
+
+/* Numeric progress feels connected across Daily, EBB, Week and phone views. */
+:where(
+  .ds-item-quantity-mini-progress > span,
+  .eb-day-summary-bar-fill,
+  .eb-task-card-progress-fill,
+  .eb-stats-progress-fill,
+  .wmv-load-track > span,
+  .phone-progress > i,
+  .life-line__project-progress > span
+) {
+  transform-origin: left center;
+  transition:
+    width var(--ui-motion-emphasis) var(--ui-ease-enter),
+    transform var(--ui-motion-emphasis) var(--ui-ease-enter),
+    background-color var(--ui-motion-standard-duration) ease;
+}
+
+/* Expand/collapse affordances rotate at the same speed everywhere. */
+:where(
+  .eb-task-group-caret,
+  .pdv-date-chevron,
+  .phone-node-row__expand svg,
+  .life-line__add-more-toggle svg,
+  summary svg
+) {
+  transition: rotate var(--ui-motion-fast) var(--ui-ease-enter), transform var(--ui-motion-fast) var(--ui-ease-enter);
+}
+
+/* One-shot confirmation for programmatic navigation targets. */
+:where(.life-line__task-pulse, .is-navigation-target, [data-motion-target='true']) {
+  animation: ui-target-confirm var(--ui-motion-emphasis) var(--ui-ease-enter) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(*, *::before, *::after) {
+    scroll-behavior: auto !important;
+  }
+
+  :where(
+    .ui-view-loading__line,
+    .tl-dialog-overlay,
+    .ds-vocab-overlay,
+    .ptm-overlay,
+    .psd-overlay,
+    .tb-editor-overlay,
+    .eb-modal-overlay,
+    .eb-panel-overlay,
+    .eb-drag-reschedule-overlay,
+    .app-confirm-overlay,
+    .life-map-editor,
+    .life-map-planning-drawer__backdrop,
+    .phone-sheet-backdrop,
+    .tl-dialog,
+    .ds-vocab-dialog,
+    .ptm-dialog,
+    .psd-dialog,
+    .tb-editor,
+    .eb-modal,
+    .eb-panel,
+    .eb-drag-reschedule,
+    .app-confirm,
+    .life-map-editor__panel,
+    .life-map-planning-drawer,
+    .phone-sheet
+  ) {
+    animation: none !important;
+  }
+
+  :where(
+    .ds-slot-dropzone--active,
+    .ds-right--drop-target,
+    .wmv-cell--drop-target,
+    .wmv-date-tasks--drag-over,
+    .eb-mini-cal-cell--drag-over,
+    .pdv-date-tasks--drag-over
+  ) {
+    animation: none !important;
+    box-shadow: inset 0 0 0 2px rgb(94 92 230 / 30%);
+  }
+}

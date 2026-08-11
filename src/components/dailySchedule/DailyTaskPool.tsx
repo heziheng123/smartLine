@@ -1,14 +1,13 @@
 import React from 'react';
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { ChevronDown, CircleDashed, Link as LinkIcon, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
-import type { TaskSource, TimeSlot } from './types';
+import type { TaskSource } from './types';
 import { DROPPABLE_POOL, DROPPABLE_POOL_CONTAINER, DROPPABLE_REVIEW_POOL } from './dndIds';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { projectBadgeStyle } from './projectAppearance';
 import { isQuantityTask } from '@/utils/blocks';
 import BacklogTaskList from '@/components/smartBlock/BacklogTaskList';
 import type { BacklogTask } from '@/domain/taskBacklog';
-import TimeSlotIcon from './TimeSlotIcon';
 
 export interface DailyPoolItem {
   id: string;
@@ -57,7 +56,6 @@ interface DailyTaskPoolProps {
   onFilterChange: (filter: PoolFilter) => void;
   onShowCompletedChange: (show: boolean) => void;
   onOpenProjectSource: (sourceId: string) => void;
-  onScheduleItem: (item: DailyPoolItem, slot: TimeSlot) => void;
   onUndoCompleted: (source: TaskSource, sourceId: string) => void;
   onScheduleBacklog: (task: BacklogTask, date: string) => boolean | Promise<boolean>;
   onOpenBacklogTask: (task: BacklogTask) => void;
@@ -71,7 +69,6 @@ interface PoolGroupProps {
   checkIsUnlinkedTask: (sourceId: string) => boolean;
   checkIsLinkedTask: (sourceId: string) => boolean;
   onOpenProjectSource: (sourceId: string) => void;
-  onScheduleItem: (item: DailyPoolItem, slot: TimeSlot) => void;
 }
 
 const PoolGroup: React.FC<PoolGroupProps> = ({
@@ -82,7 +79,6 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
   checkIsUnlinkedTask,
   checkIsLinkedTask,
   onOpenProjectSource,
-  onScheduleItem,
 }) => {
   if (items.length === 0) return null;
   return (
@@ -143,22 +139,6 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
                         {item.source === 'review' && <span className="ds-pool-item-tag ds-pool-item-tag--review">复习{item.detail ? ` · ${item.detail}` : ''}</span>}
                         {quantity && <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">数量</span>}
                       </div>
-                      <div className="ds-pool-quick-actions" role="group" aria-label={`安排“${item.name}”到时段`} onClick={(event) => event.stopPropagation()}>
-                        <span>安排到</span>
-                        {(['morning', 'afternoon', 'evening'] as const).map((slot) => (
-                          <button
-                            key={slot}
-                            type="button"
-                            className={`ds-pool-quick-slot ds-pool-quick-slot--${slot}`}
-                            aria-label={`安排“${item.name}”到${slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'}`}
-                            title={`安排到${slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'}`}
-                            onClick={() => onScheduleItem(item, slot)}
-                          >
-                            <TimeSlotIcon slot={slot} size={12} />
-                            {slot === 'morning' ? '上午' : slot === 'afternoon' ? '下午' : '晚上'}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                   );
                 }}
@@ -186,7 +166,6 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
   onFilterChange,
   onShowCompletedChange,
   onOpenProjectSource,
-  onScheduleItem,
   onUndoCompleted,
   onScheduleBacklog,
   onOpenBacklogTask,
@@ -265,8 +244,8 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
                   />
                 ) : (
                   <>
-                    <PoolGroup title="项目任务" dotClass="ds-pool-group-dot--project" droppableId={DROPPABLE_POOL} items={projectItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} onScheduleItem={onScheduleItem} />
-                    <PoolGroup title="复习任务" dotClass="ds-pool-group-dot--review" droppableId={DROPPABLE_REVIEW_POOL} items={reviewItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} onScheduleItem={onScheduleItem} />
+                    <PoolGroup title="项目任务" dotClass="ds-pool-group-dot--project" droppableId={DROPPABLE_POOL} items={projectItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
+                    <PoolGroup title="复习任务" dotClass="ds-pool-group-dot--review" droppableId={DROPPABLE_REVIEW_POOL} items={reviewItems} checkIsUnlinkedTask={checkIsUnlinkedTask} checkIsLinkedTask={checkIsLinkedTask} onOpenProjectSource={onOpenProjectSource} />
                     {visibleItems.length === 0 && (
                       <div className="ds-pool-empty">
                         <ListTodo size={22} />

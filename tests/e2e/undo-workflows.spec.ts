@@ -60,6 +60,22 @@ test('completion from daily schedule stays committed without creating a history-
   await expect(page.locator('.ds-item').filter({ hasText: 'E2E完成撤销任务' })).toHaveClass(/ds-item--completed/);
 });
 
+test('daily pool uses compact drag-only cards without schedule buttons', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  if ((page.viewportSize()?.width ?? 1200) <= 900) {
+    await page.locator('.ds-task-pool-trigger').click();
+    await expect(page.getByLabel('待安排任务池')).toHaveClass(/ds-right--open/);
+  }
+
+  const card = page.locator('.ds-pool-item').filter({ hasText: 'E2E复习撤销' });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole('button')).toHaveCount(0);
+  await expect(card.locator('.ds-pool-schedule-trigger, .ds-pool-quick-actions')).toHaveCount(0);
+
+  const cardHeight = await card.evaluate((element) => element.getBoundingClientRect().height);
+  expect(cardHeight).toBeLessThanOrEqual(68);
+});
+
 test('permanent task deletion requires confirmation and leaves no recycle entry', async ({ page }) => {
   const project = page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first();
   await expect(project).toBeVisible();
@@ -327,16 +343,6 @@ test('project quantity task suggests a daily target and keeps its daily duration
   await expect(poolCard).toContainText('剩余 800 题');
   await expect(poolCard).toContainText('今日目标 80 题');
   await expect(poolCard).toContainText('每日投入 30 分钟');
-
-  // The two daily presentations must consume the same projection. Continuous
-  // quantity tasks used to disappear entirely after switching to time blocks.
-  await page.getByRole('tab', { name: '时间块' }).click();
-  const timeBlockPoolCard = page.locator('.ds-pool-item').filter({ hasText: '考研数学题库' });
-  await expect(timeBlockPoolCard).toBeVisible();
-  await expect(timeBlockPoolCard).toContainText('今日 0/80 题');
-  await expect(timeBlockPoolCard).toContainText('总进度 200/1000 题');
-  await expect(timeBlockPoolCard).toContainText('每日投入 30 分钟');
-  await page.getByRole('tab', { name: '时段' }).click();
 
   const draggableId = await poolCard.evaluate((element) => {
     const attribute = [...element.attributes].find((candidate) => candidate.name.endsWith('draggable-id'));

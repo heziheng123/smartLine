@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
+import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
 
 export type AppModule = 'life-map' | 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
 
@@ -29,7 +30,10 @@ const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPrel
       aria-label="主导航"
       initial={{ opacity: 1, scale: 1, y: 0 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
-      transition={{ duration: prefersReducedMotion ? 0 : 0.14, ease: [0.22, 1, 0.36, 1] }}
+      transition={{
+        duration: prefersReducedMotion ? 0 : MOTION_DURATION.fast,
+        ease: MOTION_EASE_ENTER,
+      }}
     >
       {NAV_ITEMS.map((item) => {
         const active = currentView === item.module;
@@ -45,7 +49,6 @@ const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPrel
             onPointerEnter={() => onViewPreload?.(item.module)}
             onFocus={() => onViewPreload?.(item.module)}
             title={item.label}
-            whileTap={prefersReducedMotion ? undefined : { scale: 0.97 }}
           >
             {item.icon}
             <span className="tl-dock-phone-label">{item.phoneLabel}</span>
@@ -53,7 +56,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPrel
               <motion.span
                 layoutId="dock-active-indicator"
                 className="tl-dock-active-indicator"
-                transition={{ duration: prefersReducedMotion ? 0 : 0.14, ease: [0.22, 1, 0.36, 1] }}
+                transition={prefersReducedMotion ? { duration: 0 } : MOTION_SPRING_GENTLE}
               />
             )}
           </motion.button>

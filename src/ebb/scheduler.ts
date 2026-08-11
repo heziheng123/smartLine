@@ -184,6 +184,7 @@ export function buildNextRoundTask(
   return {
     id: genId('rt'),
     topicName: lastTask.topicName,
+    createdAt: new Date().toISOString(),
     dueDate,
     originalDueDate: dueDate,
     roundOrder: Math.max(0, ...activeTasks.map((task) => task.roundOrder ?? 0)) + 1,
@@ -236,6 +237,7 @@ export function generateTasks(
 
   let conflicts = 0;
   const tasks: ReviewTask[] = [];
+  const createdAt = new Date().toISOString();
 
   // 收集同主题已有日期集合
   const topicDates = new Set<string>();
@@ -265,6 +267,7 @@ export function generateTasks(
     tasks.push({
       id: genId('rt'),
       topicName: input.topicName,
+      createdAt,
       dueDate,
       originalDueDate: dueDate,
       roundOrder: Math.max(
@@ -459,6 +462,10 @@ export function computeTopicStats(
     const nextPending = group
       .filter((t) => !t.isCompleted)
       .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''))[0];
+    const createdAt = group
+      .map((task) => task.createdAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()[0];
 
     let earnedPoints = 0;
     let totalPoints = 0;
@@ -477,6 +484,7 @@ export function computeTopicStats(
     stats.push({
       topicKey,
       topicName,
+      createdAt,
       tag: firstTask?.tag,
       complexity: firstTask?.complexity,
       totalRounds,

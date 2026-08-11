@@ -80,9 +80,6 @@ export interface TimeBlock {
   detail?: string;
 }
 
-/** 视图模式 */
-export type ScheduleViewMode = 'slots' | 'blocks';
-
 /** 某日的安排数据 */
 export interface DaySchedule {
   /** 日期 YYYY-MM-DD */
@@ -99,3 +96,38 @@ export const DEFAULT_TIME_SLOT_CONFIGS: TimeSlotConfig[] = [
   { slot: 'afternoon', label: '下午', startHour: 12, endHour: 18, availableMinutes: 270 },
   { slot: 'evening', label: '晚上', startHour: 18, endHour: 23, availableMinutes: 180 },
 ];
+
+/**
+ * 规范化跨设备保存的时段设置。旧备份、缺失字段和越界值都会安全回退，
+ * 同时保证可规划时间不会超过该时段的自然跨度。
+ */
+export function normalizeTimeSlotConfigs(input: unknown): TimeSlotConfig[] {
+  const source = Array.isArray(input) ? input : [];
+  return DEFAULT_TIME_SLOT_CONFIGS.map((fallback) => {
+    const candidate = source.find((value) => (
+      value && typeof value === 'object' && (value as Partial<TimeSlotConfig>).slot === fallback.slot
+    )) as Partial<TimeSlotConfig> | undefined;
+    const rawStart = candidate?.startHour;
+    const startHour = Number.isInteger(rawStart) && rawStart! >= 0 && rawStart! <= 22
+      ? rawStart!
+      : fallback.startHour;
+    const rawEnd = candidate?.endHour;
+    const endHour = Number.isInteger(rawEnd) && rawEnd! > startHour && rawEnd! <= 23
+      ? rawEnd!
+      : fallback.endHour > startHour
+        ? fallback.endHour
+        : Math.min(23, startHour + 1);
+    const maxMinutes = Math.max(15, (endHour - startHour) * 60);
+    const rawAvailable = candidate?.availableMinutes;
+    const availableMinutes = Number.isFinite(rawAvailable)
+      ? Math.min(maxMinutes, Math.max(15, Math.round(rawAvailable! / 15) * 15))
+      : Math.min(maxMinutes, fallback.availableMinutes);
+    return {
+      slot: fallback.slot,
+      label: fallback.label,
+      startHour,
+      endHour,
+      availableMinutes,
+    };
+  });
+}
