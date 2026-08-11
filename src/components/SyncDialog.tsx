@@ -366,8 +366,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     if (!activationConflict || !isCurrentTabSyncLeader()) return;
     const keepCloud = resolution === 'cloud';
     const confirmed = await requestConfirmation(keepCloud
-      ? '确定以云端工作区为准吗？当前电脑的数据会先保存为本地快照，然后替换为云端数据。'
-      : '确定以当前电脑为准并覆盖云端吗？当前云端数据和本机数据都会先保存为本地快照。');
+      ? '确定以云端工作区为准吗？当前设备的数据会先保存为本地快照，然后替换为云端数据。'
+      : '确定以当前设备为准并覆盖云端吗？当前云端数据和本机数据都会先保存为本地快照。');
     if (!confirmed) return;
     setConnectionBusy(true);
     setRestoreMessage(keepCloud ? '正在保存双方恢复点并加载云端数据…' : '正在保存双方恢复点并上传本机数据…');
@@ -537,6 +537,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       setMigrationStatus('迁移成功：数量和 SHA-256 哈希均一致，旧房间未删除。');
       setRestoreMessage('统一工作区迁移完成，前后数量和哈希一致；迁移报告已下载，旧房间保持不变。');
     } catch (error) {
+      if (error instanceof UnifiedWorkspaceConflictError) {
+        setActivationConflict({ roomCode: activeCode, remoteSource: error.remoteSource });
+      }
       const message = error instanceof Error ? error.message : '统一工作区迁移失败，已返回旧房间。';
       setMigrationStatus(message);
       setRestoreMessage(message);
@@ -622,7 +625,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         )}
         {activationConflict && (
           <section className="tl-sync-conflict-fields" aria-label="首次连接数据冲突处理">
-            <strong>电脑与{activationConflict.remoteSource === 'legacy' ? '平板旧房间' : '云端'}都有不同数据，请明确选择一个当前版本。</strong>
+            <strong>当前设备与{activationConflict.remoteSource === 'legacy' ? '旧房间云端' : '统一云端工作区'}都有不同数据，请明确选择一个当前版本。</strong>
             <small>两边都会先保存到本机快照中；选择完成后才会覆盖并重新校验，不会再停在无法连接的状态。</small>
             <div className="tl-sync-backup-actions">
               <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => void handleResolveActivationConflict('cloud')} disabled={connectionBusy}><Download size={14} />以云端为准</button>

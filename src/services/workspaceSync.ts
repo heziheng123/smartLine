@@ -823,7 +823,7 @@ async function resolveUnifiedWorkspaceConflictInternal(
     return await resolveLegacyWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity);
   }
   reportWorkspaceConnectionProgress('正在重新读取双方数据并创建冲突恢复点…');
-  const local = createWorkspaceBackup();
+  const local = normalizeWorkspaceBackupForMigrationComparison(createWorkspaceBackup());
   const target = await inspectUnifiedWorkspaceTarget(roomCode, identity, historicalIdentity, local);
   if (!target.hasStorage) throw new Error('云端工作区为空，不需要执行冲突覆盖。请直接重新连接。');
   assertWorkspaceSchemaSupported(target.root, WORKSPACE_SCHEMA_VERSION);
@@ -1305,7 +1305,8 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
     const existingBackup = rootToBackup(existingRoot, source.backup);
     const existingHash = await hashWorkspaceBackup(existingBackup);
     if (existingHash !== source.hash) {
-      throw new Error('统一工作区已存在不同数据。为避免覆盖，迁移已停止；旧房间没有变化。');
+      recordPendingWorkspaceActivationConflict(roomCode, 'unified');
+      throw new UnifiedWorkspaceConflictError(source.summary, summaryOf(existingBackup), 'unified');
     }
   }
 
