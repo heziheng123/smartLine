@@ -379,15 +379,21 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               .map((block) => [block.id, block]),
           );
           const guardedBlocks = blocks.map((block) => {
-            if (block.type !== 'smart-task' || !isQuantityTask(block.header) || block.header.date) {
-              return block;
+            if (block.type !== 'smart-task') return block;
+            const previousHeader = oldSmartBlocks.get(block.id)?.header;
+            let nextHeader = block.header;
+            if (isQuantityTask(nextHeader) && !nextHeader.date) {
+              const recoveredDate = previousHeader?.date
+                ?? recoverRequiredTaskStartDate(nextHeader, oldTask.start);
+              if (recoveredDate) nextHeader = { ...nextHeader, date: recoveredDate };
             }
-            const previousDate = oldSmartBlocks.get(block.id)?.header.date;
-            const recoveredDate = previousDate
-              ?? recoverRequiredTaskStartDate(block.header, oldTask.start);
-            return recoveredDate
-              ? { ...block, header: { ...block.header, date: recoveredDate } }
-              : block;
+            // This action is only used by the project document's manual batch
+            // edit and cross-date drag flows. A changed date releases an
+            // overdue-recovery marker just like the single-task command does.
+            if (previousHeader && nextHeader.date !== previousHeader.date && nextHeader.frozenAt) {
+              nextHeader = { ...nextHeader, frozenAt: undefined };
+            }
+            return nextHeader === block.header ? block : { ...block, header: nextHeader };
           });
           const newSmartBlocks = new Map(
             guardedBlocks
@@ -625,6 +631,9 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           if (!isOperationRecordingSuppressed()) {
             const completionChanged = headerPatch.isCompleted !== undefined && headerPatch.isCompleted !== currentBlock.header.isCompleted;
             const dateChanged = datePatched && headerPatch.date !== currentBlock.header.date;
+            const recoveredMarkerChanged = datePatched
+              && Object.prototype.hasOwnProperty.call(headerPatch, 'frozenAt')
+              && headerPatch.frozenAt !== currentBlock.header.frozenAt;
             const progressKeys = [
               'vocabularyRecords',
               'vocabularyInitialCompletedWords',
@@ -638,7 +647,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               && !headerValueEquals(headerPatch[key], currentBlock.header[key]),
             );
             const progressChanged = changedProgressKeys.length > 0;
-            if (completionChanged || dateChanged || progressChanged) {
+            if (completionChanged || dateChanged || recoveredMarkerChanged || progressChanged) {
               const returnedToBacklog = dateChanged
                 && Boolean(currentBlock.header.date)
                 && !nextHeader.date;
@@ -653,10 +662,10 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               if (dateChanged) {
                 previousPatch.date = currentBlock.header.date;
                 expected.date = headerPatch.date;
-                if (Object.prototype.hasOwnProperty.call(headerPatch, 'frozenAt')) {
-                  previousPatch.frozenAt = currentBlock.header.frozenAt;
-                  expected.frozenAt = headerPatch.frozenAt;
-                }
+              }
+              if (recoveredMarkerChanged) {
+                previousPatch.frozenAt = currentBlock.header.frozenAt;
+                expected.frozenAt = headerPatch.frozenAt;
               }
               for (const key of changedProgressKeys) {
                 Object.assign(previousPatch, { [key]: currentBlock.header[key] });

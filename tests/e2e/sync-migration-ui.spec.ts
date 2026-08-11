@@ -29,7 +29,9 @@ test('legacy inspection reacts immediately and never looks like a dead button', 
 
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
-  await page.getByTitle(/同步中|云端同步/).click();
+  const syncButton = page.getByRole('button', { name: /打开同步与备份/ });
+  await expect(syncButton).toBeVisible();
+  await syncButton.click();
   const dialog = page.getByRole('dialog', { name: '云同步与完整备份' });
   await dialog.getByText('同步高级设置', { exact: true }).click();
   await expect(dialog.getByRole('button', { name: '迁移到统一工作区' })).toBeDisabled();

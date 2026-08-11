@@ -1308,6 +1308,11 @@ try {
     assert.equal(created.impact.operation, 'create');
     assert.ok(created.impact.affectedDomains.includes('daily-schedule'));
     assert.equal(getBlock('command-project', block.id).header.date, '2026-07-17');
+    useTimelineStore.getState().updateBlockHeader('command-project', block.id, {
+      frozenAt: '2026-07-20T00:00:00.000Z',
+    });
+    assert.equal(projectTaskCommands.updateProjectTask('command-project', block.id, { date: '2026-07-22' }).ok, true);
+    assert.equal(getBlock('command-project', block.id).header.frozenAt, undefined);
     assert.equal(projectTaskCommands.rescheduleProjectTask('command-project', block.id, '2026-07-23').ok, true);
     assert.equal(getBlock('command-project', block.id).header.date, '2026-07-23');
     assert.equal(projectTaskCommands.setProjectTaskCompletion('command-project', block.id, true, '2026-07-23').ok, true);

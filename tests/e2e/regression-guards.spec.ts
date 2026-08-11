@@ -142,3 +142,114 @@ test('overdue maintenance preserves archives and batches undo with daily restora
     dailyCount: 2,
   });
 });
+
+test('manual rescheduling releases recovered state and undo restores it', async ({ page }) => {
+  const changed = await page.evaluate(async () => {
+    const [{ useTimelineStore }, { normalizeManualProjectTaskPatch }, { collectBacklogTasks }, { useOperationHistory }] = await Promise.all([
+      import('/src/store/index.ts'),
+      import('/src/services/projectTaskCommands.ts'),
+      import('/src/domain/taskBacklog.ts'),
+      import('/src/services/operationHistory.ts'),
+    ]);
+    const frozenAt = '2026-08-10T00:00:00.000Z';
+    useTimelineStore.setState({
+      tasks: [{
+        id: 'recovered-project',
+        name: 'recovered-project',
+        start: '2026-01-01',
+        end: '2026-12-31',
+        blocks: [{
+          type: 'smart-task',
+          id: 'recovered-block',
+          header: {
+            title: 'recovered-task',
+            tag: 'test',
+            tagColor: '#000000',
+            date: '2026-01-01',
+            frozenAt,
+            duration: 30,
+            isCompleted: false,
+          },
+          body: '',
+        }],
+      }],
+      groups: [],
+    });
+    useOperationHistory.getState().clear();
+
+    const result = useTimelineStore.getState().updateBlockHeader(
+      'recovered-project',
+      'recovered-block',
+      normalizeManualProjectTaskPatch({ date: '2026-08-12' }),
+    );
+    const task = useTimelineStore.getState().tasks[0];
+    const header = task.blocks[0]?.type === 'smart-task' ? task.blocks[0].header : {};
+    const backlogCount = collectBacklogTasks(useTimelineStore.getState().tasks).length;
+    const historyCount = useOperationHistory.getState().entries.length;
+    const undone = await useOperationHistory.getState().undo();
+    const restoredBlock = useTimelineStore.getState().tasks[0].blocks[0];
+    const restored = restoredBlock?.type === 'smart-task' ? restoredBlock.header : {};
+    return { result, header, backlogCount, historyCount, undone, restored };
+  });
+
+  expect(changed.result.changed).toBe(true);
+  expect(changed.header.date).toBe('2026-08-12');
+  expect(changed.header.frozenAt).toBeUndefined();
+  expect(changed.backlogCount).toBe(0);
+  expect(changed.historyCount).toBe(1);
+  expect(changed.undone).toBe(true);
+  expect(changed.restored.date).toBe('2026-01-01');
+  expect(changed.restored.frozenAt).toBe('2026-08-10T00:00:00.000Z');
+});
+
+test('batch date edits and load normalization cannot retain an invalid recovered marker', async ({ page }) => {
+  const state = await page.evaluate(async () => {
+    const [{ useTimelineStore }, { normalizeTimelineTask }] = await Promise.all([
+      import('/src/store/index.ts'),
+      import('/src/store/timelineData.ts'),
+    ]);
+    const frozenAt = '2026-08-10T00:00:00.000Z';
+    const project = {
+      id: 'batch-project',
+      name: 'batch-project',
+      start: '2026-01-01',
+      end: '2026-12-31',
+      blocks: [{
+        type: 'smart-task' as const,
+        id: 'batch-block',
+        header: {
+          title: 'batch-task',
+          tag: 'test',
+          tagColor: '#000000',
+          date: '2026-01-01',
+          frozenAt,
+          duration: 30,
+          isCompleted: false,
+        },
+        body: '',
+      }],
+    };
+    useTimelineStore.setState({ tasks: [project], groups: [] });
+    useTimelineStore.getState().updateTaskBlocks('batch-project', [{
+      ...project.blocks[0],
+      header: { ...project.blocks[0].header, date: '2026-08-12' },
+    }]);
+    const batchBlock = useTimelineStore.getState().tasks[0].blocks[0];
+    const batchHeader = batchBlock?.type === 'smart-task' ? batchBlock.header : {};
+    const normalized = normalizeTimelineTask({
+      ...project,
+      blocks: [{
+        ...project.blocks[0],
+        header: { ...project.blocks[0].header, date: '2099-01-01' },
+      }],
+    });
+    const normalizedBlock = normalized.blocks[0];
+    const normalizedHeader = normalizedBlock?.type === 'smart-task' ? normalizedBlock.header : {};
+    return { batchHeader, normalizedHeader };
+  });
+
+  expect(state.batchHeader.date).toBe('2026-08-12');
+  expect(state.batchHeader.frozenAt).toBeUndefined();
+  expect(state.normalizedHeader.date).toBe('2099-01-01');
+  expect(state.normalizedHeader.frozenAt).toBeUndefined();
+});

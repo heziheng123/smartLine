@@ -5,8 +5,8 @@ import {
   recoverRequiredTaskStartDate,
   shouldAutoSyncEbb,
 } from '@/utils/blocks';
-import { todayStr } from '@/utils/dateSafe';
-import { isValidCalendarDate } from '@/utils/dateSafe';
+import { addDays, isValidCalendarDate, todayStr } from '@/utils/dateSafe';
+import { shouldClearStaleFrozenMarker } from '@/domain/icebox';
 
 export const headerValueEquals = (left: unknown, right: unknown): boolean =>
   typeof left === 'object' || typeof right === 'object'
@@ -15,6 +15,7 @@ export const headerValueEquals = (left: unknown, right: unknown): boolean =>
 
 export function normalizeTimelineTask(task: Task): Task {
   const fallbackDate = todayStr();
+  const overdueRecoveryThreshold = addDays(fallbackDate, -2);
   const validStart = typeof task.start === 'string' && isValidCalendarDate(task.start)
     ? task.start
     : undefined;
@@ -57,18 +58,20 @@ export function normalizeTimelineTask(task: Task): Task {
   return {
     ...normalizedTask,
     blocks: Array.isArray(normalizedTask.blocks)
-      ? normalizedTask.blocks.map((block) => (
-        block.type === 'smart-task'
-          ? {
-            ...block,
-            header: {
-              ...block.header,
-              date: recoverRequiredTaskStartDate(block.header, normalizedTask.start),
-              autoSyncEbb: shouldAutoSyncEbb(block.header),
-            },
-          }
-          : block
-      ))
+      ? normalizedTask.blocks.map((block) => {
+        if (block.type !== 'smart-task') return block;
+        const header = {
+          ...block.header,
+          date: recoverRequiredTaskStartDate(block.header, normalizedTask.start),
+          autoSyncEbb: shouldAutoSyncEbb(block.header),
+        };
+        return {
+          ...block,
+          header: shouldClearStaleFrozenMarker(header, overdueRecoveryThreshold)
+            ? { ...header, frozenAt: undefined }
+            : header,
+        };
+      })
       : [],
   };
 }

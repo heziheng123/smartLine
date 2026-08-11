@@ -1,10 +1,25 @@
-import type { Task } from '../types/index.ts';
+import type { SmartTaskHeader, Task } from '../types/index.ts';
 import { isContinuousTask } from './taskRules.ts';
 
 export interface OverdueFreezeTarget {
   taskId: string;
   blockId: string;
   expectedDate: string;
+}
+
+/**
+ * A recovered marker is only valid for a standard task whose retained plan
+ * date is older than the current recovery threshold. Newer dates can only be
+ * produced by legacy/manual edits that changed `date` without releasing the
+ * marker. Archived tasks use the same timestamp field for cold storage and
+ * are deliberately left untouched.
+ */
+export function shouldClearStaleFrozenMarker(
+  header: Partial<SmartTaskHeader>,
+  thresholdDate: string,
+): boolean {
+  if (!header.frozenAt || header.isArchived) return false;
+  return isContinuousTask(header) || !header.date || header.date >= thresholdDate;
 }
 
 /**

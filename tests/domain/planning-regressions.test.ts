@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { collectOverdueFreezeTargets } from '../../src/domain/icebox.ts';
+import { collectOverdueFreezeTargets, shouldClearStaleFrozenMarker } from '../../src/domain/icebox.ts';
 import { DEFAULT_EBB_SETTINGS } from '../../src/ebb/constants.ts';
 import { generateTasks } from '../../src/ebb/scheduler.ts';
 import { buildBalancedDailyReviewPlan, planDailyReviewSelection } from '../../src/ebb/dailyReviewPlanning.ts';
@@ -44,6 +44,18 @@ test('icebox maintenance freezes only active overdue one-day tasks', () => {
     blockId: 'active-overdue-block',
     expectedDate: '2026-01-01',
   }]);
+});
+
+test('stale recovered markers are repaired only when the retained date cannot be a frozen overdue date', () => {
+  const frozenAt = '2026-08-10T00:00:00.000Z';
+  const thresholdDate = '2026-08-09';
+
+  assert.equal(shouldClearStaleFrozenMarker({ date: '2026-08-08', frozenAt }, thresholdDate), false);
+  assert.equal(shouldClearStaleFrozenMarker({ date: '2026-08-09', frozenAt }, thresholdDate), true);
+  assert.equal(shouldClearStaleFrozenMarker({ date: '2026-08-12', frozenAt }, thresholdDate), true);
+  assert.equal(shouldClearStaleFrozenMarker({ frozenAt }, thresholdDate), true);
+  assert.equal(shouldClearStaleFrozenMarker({ date: '2026-08-12', frozenAt, taskKind: 'quantity' }, thresholdDate), true);
+  assert.equal(shouldClearStaleFrozenMarker({ date: '2026-08-12', frozenAt, isArchived: true }, thresholdDate), false);
 });
 
 test('review generation enforces the configured gap within the same batch', () => {

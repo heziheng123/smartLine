@@ -25,6 +25,15 @@ export type ProjectTaskCommandResult =
   | { ok: true; task: ProjectTaskRef; impact: OperationImpact }
   | { ok: false; error: string };
 
+export function normalizeManualProjectTaskPatch(
+  patch: Partial<SmartTaskHeader>,
+): Partial<SmartTaskHeader> {
+  return Object.prototype.hasOwnProperty.call(patch, 'date')
+    && !Object.prototype.hasOwnProperty.call(patch, 'frozenAt')
+    ? { ...patch, frozenAt: undefined }
+    : patch;
+}
+
 const PROJECT_TASK_DOMAINS = [
   'project',
   'daily-schedule',
@@ -106,16 +115,21 @@ export function updateProjectTask(
 ): ProjectTaskCommandResult {
   const current = resolveProjectTask(taskId, blockId);
   if (!current) return { ok: false, error: '任务已经不存在或不再是项目任务。' };
-  if (Object.prototype.hasOwnProperty.call(patch, 'date')
+  // `frozenAt` means the task was automatically recovered from an overdue
+  // date. Any explicit date submission is a manual planning decision and must
+  // release that marker. History/rollback callers can still restore a marker
+  // by including `frozenAt` explicitly in their patch.
+  const effectivePatch = normalizeManualProjectTaskPatch(patch);
+  if (Object.prototype.hasOwnProperty.call(effectivePatch, 'date')
     && requiresTaskStartDate(current.block.header)
-    && !patch.date) {
+    && !effectivePatch.date) {
     return { ok: false, error: '数量任务必须保留开始日期。' };
   }
-  const validationError = validateProjectTaskHeader({ ...current.block.header, ...patch });
+  const validationError = validateProjectTaskHeader({ ...current.block.header, ...effectivePatch });
   if (validationError) return { ok: false, error: validationError };
   let commit;
   try {
-    commit = useTimelineStore.getState().updateBlockHeader(taskId, blockId, patch);
+    commit = useTimelineStore.getState().updateBlockHeader(taskId, blockId, effectivePatch);
   } catch (error) {
     console.error('[smart-timeline] 项目任务联动失败：', error);
     return {
@@ -128,10 +142,10 @@ export function updateProjectTask(
   if (!updated) return { ok: false, error: '任务更新失败。' };
 
   const undoablePatch = (
-    patch.isCompleted !== undefined
-    || Object.prototype.hasOwnProperty.call(patch, 'date')
-    || patch.vocabularyRecords !== undefined
-    || patch.quantityRecords !== undefined
+    effectivePatch.isCompleted !== undefined
+    || Object.prototype.hasOwnProperty.call(effectivePatch, 'date')
+    || effectivePatch.vocabularyRecords !== undefined
+    || effectivePatch.quantityRecords !== undefined
   );
   const affectedDomains = new Set<AppDomain>(['project', ...commit.affectedDomains]);
   if (commit.changed && undoablePatch) affectedDomains.add('undo-history');
