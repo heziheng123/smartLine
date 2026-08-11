@@ -1,5 +1,5 @@
 import { createScopedStorage } from '@/utils/persistence';
-import { hashWorkspaceValue } from './workspaceSyncCore';
+import { hashWorkspaceValue, isWorkspaceRevisionSuperseded } from './workspaceSyncCore';
 
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones' | 'lifeStages'
@@ -93,9 +93,16 @@ function preserveEmergencyPending(pending: PendingWorkspaceSync): void {
   }));
 }
 
-function clearEmergencyPending(expected?: Pick<PendingWorkspaceSync, 'writeId' | 'updatedAt' | 'deviceId'>): void {
+function clearEmergencyPending(
+  expected?: Pick<PendingWorkspaceSync, 'writeId' | 'updatedAt' | 'deviceId'>,
+  superseded?: Pick<PendingWorkspaceSync, 'writeId' | 'updatedAt' | 'deviceId'>,
+): void {
   const emergency = volatilePending ?? readEmergencyPending();
-  if (emergency && expected && getPendingWorkspaceSyncToken(emergency) !== getPendingWorkspaceSyncToken(expected)) return;
+  if (emergency && expected && !isWorkspaceRevisionSuperseded(
+    getPendingWorkspaceSyncToken(emergency),
+    getPendingWorkspaceSyncToken(expected),
+    superseded ? getPendingWorkspaceSyncToken(superseded) : undefined,
+  )) return;
   volatilePending = null;
   try { localStorage.removeItem(EMERGENCY_QUEUE_KEY); } catch { /* optional emergency storage */ }
 }
@@ -122,12 +129,12 @@ export function queueWorkspaceFields(
   fields: Partial<Record<WorkspaceStorageField, unknown>>,
   baseFields: Partial<Record<WorkspaceStorageField, unknown>> = {},
   options: QueueWorkspaceFieldOptions = {},
-): void {
-  if (isWorkspaceQueueSuppressed() && !options.bypassSuppression) return;
-  if (Object.keys(fields).length === 0) return;
+): Promise<void> {
+  if (isWorkspaceQueueSuppressed() && !options.bypassSuppression) return Promise.resolve();
+  if (Object.keys(fields).length === 0) return Promise.resolve();
 
   let attemptedPending: PendingWorkspaceSync | null = null;
-  writeChain = writeChain.then(() => withQueueStorageLock(async () => {
+  const operation = writeChain.then(() => withQueueStorageLock(async () => {
     let durablePending: PendingWorkspaceSync | null = null;
     try {
       durablePending = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
@@ -157,7 +164,10 @@ export function queueWorkspaceFields(
     };
     attemptedPending = next;
     await queueStorage.setItem(QUEUE_KEY, next);
-    clearEmergencyPending(next);
+    // A successfully persisted revision supersedes the emergency snapshot it
+    // was built from. Matching only `next` leaves an older volatile revision
+    // permanently ahead of IndexedDB after a transient storage failure.
+    clearEmergencyPending(next, existing ?? undefined);
     workspaceQueueChannel?.postMessage({
       version: 1,
       type: 'fields',
@@ -170,10 +180,12 @@ export function queueWorkspaceFields(
       type: 'queue-ready',
       source: workspaceQueueTabId,
     });
-  })).catch((error) => {
+  }));
+  writeChain = operation.catch((error) => {
     if (attemptedPending) preserveEmergencyPending(attemptedPending);
     console.warn('[workspace-queue] 保存待同步变更失败：', error);
   });
+  return operation;
 }
 
 export async function readPendingWorkspaceSync(): Promise<PendingWorkspaceSync | null> {

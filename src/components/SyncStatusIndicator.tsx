@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Cloud, CloudOff, LoaderCircle, TriangleAlert } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
@@ -18,14 +18,24 @@ import {
 } from './syncStatusIndicatorState';
 
 export const OPEN_WORKSPACE_SYNC_EVENT = 'smartline:open-sync-settings';
+const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
 
 function readLastConnectedAt(): string | null {
   try {
-    const values = Object.values(JSON.parse(localStorage.getItem('smart-line-sync-last-connected') ?? '{}'))
+    const values = Object.values(JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}'))
       .filter((value): value is string => typeof value === 'string' && !Number.isNaN(Date.parse(value)));
     return values.sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null;
   } catch {
     return null;
+  }
+}
+
+function persistLastSynchronizedAt(value: string): void {
+  try {
+    const current = JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}') as Record<string, string>;
+    localStorage.setItem(LAST_CONNECTED_KEY, JSON.stringify({ ...current, workspace: value }));
+  } catch {
+    // The in-memory status remains accurate when optional localStorage fails.
   }
 }
 
@@ -49,7 +59,9 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   const [pendingCount, setPendingCount] = useState(0);
   const [conflictCount, setConflictCount] = useState(0);
   const [queueError, setQueueError] = useState(false);
+  const [queueLoaded, setQueueLoaded] = useState(false);
   const [lastConnectedAt, setLastConnectedAt] = useState<string | null>(readLastConnectedAt);
+  const wasFullySynchronized = useRef(false);
 
   const modules = useMemo<ModuleSyncState[]>(
     () => [timeline, ebb, daily, graph, lifeMap],
@@ -60,13 +72,19 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   const connectedCount = enabledModules.filter((module) => module.status === 'connected').length;
 
   const refreshQueueState = useCallback(async () => {
-    const [pending, conflicts] = await Promise.all([
-      readPendingWorkspaceSync(),
-      listWorkspaceConflicts(),
-    ]);
-    setPendingCount(pending ? Object.keys(pending.fields ?? {}).length : 0);
-    setConflictCount(conflicts.length);
-    if (!pending) setQueueError(false);
+    try {
+      const [pending, conflicts] = await Promise.all([
+        readPendingWorkspaceSync(),
+        listWorkspaceConflicts(),
+      ]);
+      setPendingCount(pending ? Object.keys(pending.fields ?? {}).length : 0);
+      setConflictCount(conflicts.length);
+      if (!pending) setQueueError(false);
+    } catch {
+      setQueueError(true);
+    } finally {
+      setQueueLoaded(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -95,10 +113,20 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   }, [refreshQueueState]);
 
   useEffect(() => {
-    if (enabledModules.length > 0 && connectedCount === enabledModules.length && pendingCount === 0) {
-      setLastConnectedAt(new Date().toISOString());
+    const fullySynchronized = queueLoaded
+      && online
+      && enabledModules.length > 0
+      && connectedCount === enabledModules.length
+      && pendingCount === 0
+      && conflictCount === 0
+      && !queueError;
+    if (fullySynchronized && !wasFullySynchronized.current) {
+      const now = new Date().toISOString();
+      setLastConnectedAt(now);
+      persistLastSynchronizedAt(now);
     }
-  }, [connectedCount, enabledModules.length, pendingCount]);
+    wasFullySynchronized.current = fullySynchronized;
+  }, [connectedCount, conflictCount, enabledModules.length, online, pendingCount, queueError, queueLoaded]);
 
   const indicatorState = deriveSyncIndicatorState({
     modules,
@@ -116,7 +144,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       : indicatorState === 'connected'
         ? `已同步 ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
         : indicatorState === 'pending'
-          ? `${online ? '等待上传' : '网络离线'}${pendingCount > 0 ? ` · ${pendingCount} 项变更待同步` : ''}`
+          ? `${online ? '等待上传' : '网络离线'}${pendingCount > 0 ? ` · ${pendingCount} 个数据字段待同步` : ''}`
           : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项需要处理` : ''}`;
 
   return (

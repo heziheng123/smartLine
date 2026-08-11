@@ -78,8 +78,7 @@ async function simulateConnectedStorageLoading(page: Page) {
   await expect.poll(async () => {
     try {
       await page.evaluate(async () => {
-        const storeModuleUrl = '/src/store/index.ts';
-        const { useTimelineStore } = await import(storeModuleUrl);
+        const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
         const current = useTimelineStore.getState();
         useTimelineStore.setState({
           liveblocks: {
@@ -100,8 +99,7 @@ async function simulateConnectedStorageLoading(page: Page) {
 
 async function simulateConnectedStorageReady(page: Page) {
   await page.evaluate(async () => {
-    const storeModuleUrl = '/src/store/index.ts';
-    const { useTimelineStore } = await import(storeModuleUrl);
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     const current = useTimelineStore.getState();
     useTimelineStore.setState({
       liveblocks: {
@@ -207,7 +205,7 @@ test('远端式人生阶段更新会落盘，并在统一工作区未就绪时�
   // calling addLifeStage, so this reproduces the path that relies on the store
   // persistence subscription and the offline fallback subscription.
   await page.evaluate(async (stage) => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     useTimelineStore.setState({ lifeStages: [stage] });
   }, remoteStage);
 
@@ -269,8 +267,7 @@ test('late storage hydration cannot overwrite an explicit pending completion', a
   }).toBe(true);
 
   await page.evaluate(async () => {
-    const storeModuleUrl = '/src/store/index.ts';
-    const { useTimelineStore } = await import(storeModuleUrl);
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     useTimelineStore.setState((state) => ({
       tasks: state.tasks.map((task) => ({
         ...task,

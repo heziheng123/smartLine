@@ -46,8 +46,8 @@ test('manual group dates reject missing and reversed ranges', async ({ page }) =
 test('overdue maintenance preserves archives and batches undo with daily restoration', async ({ page }) => {
   const frozen = await page.evaluate(async () => {
     const [{ useTimelineStore }, { useDailyScheduleStore }, { useOperationHistory }] = await Promise.all([
-      import('/src/store/index.ts'),
-      import('/src/components/dailySchedule/store.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
       import('/src/services/operationHistory.ts'),
     ]);
     const block = (id: string, date: string, isArchived = false) => ({
@@ -91,12 +91,17 @@ test('overdue maintenance preserves archives and batches undo with daily restora
       { taskId: 'freeze-b', blockId: 'block-b', expectedDate: '2026-01-02' },
       { taskId: 'archive-c', blockId: 'block-c', expectedDate: '2026-01-01' },
     ], '2026-08-09T00:00:00.000Z');
+    const duplicateCount = useTimelineStore.getState().freezeOverdueBlocks([
+      { taskId: 'freeze-a', blockId: 'block-a', expectedDate: '2026-01-01' },
+      { taskId: 'freeze-b', blockId: 'block-b', expectedDate: '2026-01-02' },
+    ], '2026-08-10T00:00:00.000Z');
     const headers = Object.fromEntries(useTimelineStore.getState().tasks.map((task) => [
       task.id,
       task.blocks[0]?.type === 'smart-task' ? task.blocks[0].header : {},
     ]));
     return {
       count,
+      duplicateCount,
       headers,
       updatedAt: Object.fromEntries(useTimelineStore.getState().tasks.map((task) => [task.id, task.blocksUpdatedAt])),
       historyCount: useOperationHistory.getState().entries.length,
@@ -106,6 +111,7 @@ test('overdue maintenance preserves archives and batches undo with daily restora
   });
 
   expect(frozen.count).toBe(2);
+  expect(frozen.duplicateCount).toBe(0);
   expect(frozen.headers['freeze-a'].date).toBe('2026-01-01');
   expect(frozen.headers['freeze-b'].date).toBe('2026-01-02');
   expect(frozen.headers['freeze-a'].frozenAt).toBe('2026-08-09T00:00:00.000Z');
@@ -117,8 +123,8 @@ test('overdue maintenance preserves archives and batches undo with daily restora
 
   const restored = await page.evaluate(async () => {
     const [{ useTimelineStore }, { useDailyScheduleStore }, { useOperationHistory }] = await Promise.all([
-      import('/src/store/index.ts'),
-      import('/src/components/dailySchedule/store.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
       import('/src/services/operationHistory.ts'),
     ]);
     const undone = await useOperationHistory.getState().undo();
@@ -143,10 +149,116 @@ test('overdue maintenance preserves archives and batches undo with daily restora
   });
 });
 
+test('stale backlog cards cannot schedule a task whose canonical state has changed', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const [
+      { useTimelineStore },
+      { useDailyScheduleStore },
+      { collectBacklogTasks },
+      { scheduleBacklogTaskToSlot },
+    ] = await Promise.all([
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/domain/taskBacklog.ts'),
+      import('/src/services/backlogCommands.ts'),
+    ]);
+    const task = {
+      id: 'stale-backlog-project',
+      name: 'stale-backlog-project',
+      start: '2026-08-01',
+      end: '2026-08-31',
+      blocks: [{
+        type: 'smart-task' as const,
+        id: 'stale-backlog-block',
+        header: {
+          title: 'stale backlog task',
+          tag: 'test',
+          tagColor: '#000000',
+          duration: 30,
+          isCompleted: false,
+        },
+        body: '',
+      }],
+    };
+    useTimelineStore.setState({ tasks: [task], groups: [] });
+    useDailyScheduleStore.setState({ isHydrated: true, schedules: {} });
+    const staleCard = collectBacklogTasks([task], [])[0];
+    useTimelineStore.setState({
+      tasks: [{
+        ...task,
+        blocks: task.blocks.map((block) => ({
+          ...block,
+          header: { ...block.header, isCompleted: true },
+        })),
+      }],
+      groups: [],
+    });
+    const command = scheduleBacklogTaskToSlot({
+      task: staleCard,
+      date: '2026-08-11',
+      slot: 'morning',
+    });
+    const current = useTimelineStore.getState().tasks[0].blocks[0];
+    return {
+      command,
+      date: current.type === 'smart-task' ? current.header.date ?? null : null,
+      dailyCount: Object.values(useDailyScheduleStore.getState().schedules)
+        .reduce((sum, day) => sum + day.items.length + day.blocks.length, 0),
+    };
+  });
+
+  expect(result.command).toEqual({ ok: false, error: '任务已经完成，请刷新待排期箱后重试。' });
+  expect(result.date).toBeNull();
+  expect(result.dailyCount).toBe(0);
+});
+
+test('the seven-day backlog filter contains exactly today through day six', async ({ page }) => {
+  const filtered = await page.evaluate(async () => {
+    const [{ filterAndSortBacklogTasks }, { addDays, todayStr }] = await Promise.all([
+      import('/src/domain/taskBacklog.ts'),
+      import('/src/utils/dateSafe.ts'),
+    ]);
+    const today = todayStr();
+    const makeTask = (id: string, deadline: string) => ({
+      id,
+      taskId: id,
+      blockId: `${id}-block`,
+      sourceId: `project-blk:${id}::${id}-block`,
+      title: id,
+      projectId: id,
+      projectName: id,
+      projectLabel: id,
+      tag: 'test',
+      tagColor: '#000000',
+      duration: 30,
+      deadline,
+      graphNodeCount: 0,
+      block: {},
+    });
+    const tasks = [
+      makeTask('today', today),
+      makeTask('day-six', addDays(today, 6)),
+      makeTask('day-seven', addDays(today, 7)),
+      makeTask('yesterday', addDays(today, -1)),
+    ];
+    return filterAndSortBacklogTasks(tasks as never[], {
+      query: '',
+      project: 'all',
+      tag: 'all',
+      origin: 'all',
+      deadline: 'week',
+      duration: 'all',
+      sort: 'deadline',
+    }).map((task) => task.id);
+  });
+
+  expect(filtered).toEqual(['today', 'day-six']);
+});
+
 test('manual rescheduling releases recovered state and undo restores it', async ({ page }) => {
   const changed = await page.evaluate(async () => {
     const [{ useTimelineStore }, { normalizeManualProjectTaskPatch }, { collectBacklogTasks }, { useOperationHistory }] = await Promise.all([
-      import('/src/store/index.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
       import('/src/services/projectTaskCommands.ts'),
       import('/src/domain/taskBacklog.ts'),
       import('/src/services/operationHistory.ts'),
@@ -205,7 +317,7 @@ test('manual rescheduling releases recovered state and undo restores it', async 
 test('batch date edits and load normalization cannot retain an invalid recovered marker', async ({ page }) => {
   const state = await page.evaluate(async () => {
     const [{ useTimelineStore }, { normalizeTimelineTask }] = await Promise.all([
-      import('/src/store/index.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
       import('/src/store/timelineData.ts'),
     ]);
     const frozenAt = '2026-08-10T00:00:00.000Z';

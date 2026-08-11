@@ -23,12 +23,17 @@ async function resolveIdentity({ env, request }: FunctionContext): Promise<Resol
   return session ? { userId: `gh_${session.githubUserId}`, login: session.login } : null;
 }
 
-function canAccessRoom(room: string, identity: ResolvedIdentity): boolean {
-  // Legacy four-room workspaces do not carry an owner prefix and remain
-  // temporarily accessible for the migration workflow. Every unified room is
-  // owner-scoped and must match either the stable GitHub id or the historical
-  // login-based identity.
-  if (!room.startsWith('workspace-')) return true;
+function canAccessRoom(room: string, identity: ResolvedIdentity, env: AuthEnv): boolean {
+  // Legacy rooms have no owner encoded in their name, so they cannot be safely
+  // authorized in a multi-user deployment. Restrict migration access to the
+  // explicitly configured deployment owner (or the localhost-only dev user).
+  if (!room.startsWith('workspace-')) {
+    const configuredOwner = sanitizeRoomIdentity(env.ALLOWED_GITHUB_LOGIN ?? '');
+    return (configuredOwner !== '' && configuredOwner === sanitizeRoomIdentity(identity.login))
+      || (env.AUTH_ALLOW_DEV_BYPASS === 'true' && identity.userId.startsWith('dev_'));
+  }
+  // Unified rooms are owner-scoped and accept both the stable GitHub id and
+  // the historical login identity during the room-id transition.
   const allowedPrefixes = [identity.userId, identity.login]
     .map(sanitizeRoomIdentity)
     .filter(Boolean)
@@ -61,7 +66,7 @@ export async function onRequestPost(context: FunctionContext): Promise<Response>
   if (!identity) return jsonResponse({ error: 'Authentication required.' }, 401);
   const room = await readRequestedRoom(context.request);
   if (!room) return jsonResponse({ error: 'A valid Liveblocks room is required.' }, 400);
-  if (!canAccessRoom(room, identity)) return jsonResponse({ error: 'The requested room does not belong to this user.' }, 403);
+  if (!canAccessRoom(room, identity, context.env)) return jsonResponse({ error: 'The requested room does not belong to this user.' }, 403);
 
   try {
     // Access tokens carry the exact room permission. This avoids issuing an ID

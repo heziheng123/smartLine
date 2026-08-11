@@ -1,7 +1,7 @@
 import type { ReviewTask } from '@/ebb/types';
 import type { DaySchedule } from '@/components/dailySchedule/types';
 import { getProjectBlockSourceId, getReviewSourceId } from '@/components/dailySchedule/sourceIds';
-import type { SmartTaskBlock, Task, TaskGroup } from '@/types';
+import type { SmartTaskBlock, SmartTaskHeader, Task, TaskGroup } from '@/types';
 import { getSmartTaskBlocks, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { getReviewRoundDuration } from '@/ebb/duration';
 import { addDays, getDayOfWeek, todayStr } from '@/utils/dateSafe';
@@ -56,6 +56,16 @@ export const DEFAULT_WORKLOAD_PREFERENCES: WorkloadPreferences = {
   showDuration: true,
 };
 
+/**
+ * The single source of truth for whether a project task belongs in the
+ * backlog. Recovered tasks deliberately retain their original date, so a date
+ * alone is not enough to decide that a task is scheduled.
+ */
+export function isBacklogTaskHeader(header: Partial<SmartTaskHeader>): boolean {
+  if (header.isCompleted || header.isArchived || isQuantityTask(header)) return false;
+  return !header.date || Boolean(header.frozenAt);
+}
+
 export function collectBacklogTasks(tasks: readonly Task[], groups: readonly TaskGroup[] = []): BacklogTask[] {
   const result: BacklogTask[] = [];
   const seen = new Set<string>();
@@ -67,8 +77,7 @@ export function collectBacklogTasks(tasks: readonly Task[], groups: readonly Tas
       if (seen.has(key)) continue;
       seen.add(key);
       const header = block.header;
-      if (header.isCompleted || header.isArchived || isQuantityTask(header)) continue;
-      if (header.date && !header.frozenAt) continue;
+      if (!isBacklogTaskHeader(header)) continue;
       const descriptor = projectDescriptors.get(task.id);
       result.push({
         id: `backlog:${key}`,
@@ -109,7 +118,8 @@ export function filterAndSortBacklogTasks(
 ): BacklogTask[] {
   const query = filters.query.trim().toLocaleLowerCase('zh-CN');
   const todayIso = todayStr();
-  const weekEndIso = addDays(todayIso, 7);
+  // Include exactly seven calendar dates: today and the following six days.
+  const weekEndIso = addDays(todayIso, 6);
   return tasks
     .filter((task) => {
       if (filters.project !== 'all' && task.projectId !== filters.project) return false;

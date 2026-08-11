@@ -5,6 +5,7 @@ export interface WorkspaceTabCoordinatorOptions {
 
 const LEADER_KEY = 'smart-line-sync-leader-v1';
 const LEASE_MS = 7_000;
+const CLAIM_SETTLE_MS = 75;
 const tabId = crypto.randomUUID();
 let currentLeader = false;
 
@@ -88,22 +89,49 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
   }
 
   let stopped = false;
+  let claimTimer: number | null = null;
+  const cancelClaim = () => {
+    if (claimTimer !== null) window.clearTimeout(claimTimer);
+    claimTimer = null;
+  };
+  const becomeFollower = () => {
+    cancelClaim();
+    if (!currentLeader) return;
+    currentLeader = false;
+    options.onFollower();
+  };
+  const confirmClaim = () => {
+    claimTimer = null;
+    if (stopped) return;
+    const lease = readLease();
+    if (lease?.tabId !== tabId || lease.expiresAt <= Date.now()) return;
+    if (!currentLeader) {
+      currentLeader = true;
+      options.onLeader();
+    }
+  };
   const evaluate = () => {
     if (stopped) return;
     const now = Date.now();
     const lease = readLease();
     const mayLead = !lease || lease.expiresAt <= now || lease.tabId === tabId;
-    if (mayLead) {
-      const next: LeaderLease = { tabId, expiresAt: now + LEASE_MS };
-      localStorage.setItem(LEADER_KEY, JSON.stringify(next));
-      if (!currentLeader) {
-        currentLeader = true;
-        options.onLeader();
-      }
-    } else if (currentLeader) {
-      currentLeader = false;
-      options.onFollower();
+    if (!mayLead) {
+      becomeFollower();
+      return;
     }
+    if (currentLeader) {
+      const next: LeaderLease = { tabId, expiresAt: now + LEASE_MS };
+      try { localStorage.setItem(LEADER_KEY, JSON.stringify(next)); }
+      catch { becomeFollower(); }
+      return;
+    }
+    if (claimTimer !== null) return;
+    const next: LeaderLease = { tabId, expiresAt: now + LEASE_MS };
+    try { localStorage.setItem(LEADER_KEY, JSON.stringify(next)); }
+    catch { options.onFollower(); return; }
+    // localStorage has no compare-and-set. Delay leadership until every tab
+    // has observed the competing claims and only the final lease owner remains.
+    claimTimer = window.setTimeout(confirmClaim, CLAIM_SETTLE_MS);
   };
   const handleStorage = (event: StorageEvent) => { if (event.key === LEADER_KEY) evaluate(); };
   const release = () => {
@@ -115,6 +143,7 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
   window.addEventListener('beforeunload', release);
   return () => {
     stopped = true;
+    cancelClaim();
     window.clearInterval(timer);
     window.removeEventListener('storage', handleStorage);
     window.removeEventListener('beforeunload', release);

@@ -728,6 +728,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               if (!target
                 || block.header.isArchived
                 || block.header.isCompleted
+                || block.header.frozenAt
                 || block.header.taskKind === 'quantity'
                 || block.header.taskKind === 'vocabulary'
                 || block.header.date !== target.expectedDate) continue;

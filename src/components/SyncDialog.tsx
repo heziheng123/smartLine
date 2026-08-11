@@ -228,7 +228,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     try {
       if (architecture.architecture === 'unified') {
         if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
-          const result = await activateUnifiedWorkspaceSafely(fallbackCode, auth.userId || auth.login || 'owner');
+          const result = await activateUnifiedWorkspaceSafely(
+            fallbackCode,
+            auth.userId || auth.login || 'owner',
+            auth.login || undefined,
+          );
           setArchitecture(readWorkspaceSyncSettings());
           setRestoreMessage(result.source === 'cloud'
             ? '本机没有规划内容，已安全连接并完成云端数据加载。'
@@ -246,7 +250,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
       if (enabledCount === 0 && liveblocksAuthMode === 'authenticated') {
         setRestoreMessage('正在检查本机与云端数据，连接前会先创建本地快照…');
-        const result = await activateUnifiedWorkspaceSafely(fallbackCode, auth.userId || auth.login || 'owner');
+      const result = await activateUnifiedWorkspaceSafely(
+        fallbackCode,
+        auth.userId || auth.login || 'owner',
+        auth.login || undefined,
+      );
         setArchitecture(readWorkspaceSyncSettings());
         setRestoreMessage(result.source === 'cloud'
           ? '本机没有规划内容，已安全连接并完成云端数据加载。'

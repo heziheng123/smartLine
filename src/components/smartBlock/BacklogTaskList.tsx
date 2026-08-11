@@ -219,7 +219,7 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
         <select value={deadline} onChange={(event) => setDeadline(event.target.value as BacklogDeadlineFilter)} aria-label="按截止状态筛选">
           <option value="all">全部截止状态</option>
           <option value="overdue">已经逾期</option>
-          <option value="week">未来 7 天</option>
+          <option value="week">今天起 7 天</option>
           <option value="none">无截止日期</option>
         </select>
         <select value={duration} onChange={(event) => setDuration(event.target.value as BacklogDurationFilter)} aria-label="按预计时长筛选">
@@ -239,7 +239,7 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
         <div className={styles.empty}>
           <CalendarPlus size={26} />
           <strong>{emptyMessage}</strong>
-          <span>普通、未完成、未归档且没有排期日期的任务会显示在这里。</span>
+          <span>未排期任务，以及保留原计划日期的逾期回收任务会显示在这里。</span>
         </div>
       )}
     </div>

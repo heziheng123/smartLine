@@ -4,7 +4,7 @@ import {
   type DailySourceSnapshot,
 } from '@/components/dailySchedule/store';
 import type { TimeSlot } from '@/components/dailySchedule/types';
-import type { BacklogTask } from '@/domain/taskBacklog';
+import { isBacklogTaskHeader, type BacklogTask } from '@/domain/taskBacklog';
 import {
   recordOperation,
   registerUndoExecutor,
@@ -15,6 +15,7 @@ import {
   rescheduleProjectTask,
   resolveProjectTask,
   updateProjectTask,
+  type ProjectTaskRef,
   type ProjectTaskCommandResult,
 } from '@/services/projectTaskCommands';
 import type { SmartTaskHeader } from '@/types';
@@ -106,15 +107,47 @@ function restoreBacklogDailyOperation(payload: BacklogDailyUndoPayload): void | 
 registerUndoExecutor('backlog-daily-schedule', (raw) =>
   restoreBacklogDailyOperation(raw as BacklogDailyUndoPayload));
 
+function resolveSchedulableBacklogTask(
+  taskId: string,
+  blockId: string,
+): { current: ProjectTaskRef } | { error: string } {
+  const current = resolveProjectTask(taskId, blockId);
+  if (!current) return { error: '任务已经不存在或不再是项目任务。' };
+  const { header } = current.block;
+  if (header.isArchived) return { error: '任务已经归档，请刷新待排期箱后重试。' };
+  if (header.isCompleted) return { error: '任务已经完成，请刷新待排期箱后重试。' };
+  if (isQuantityTask(header)) return { error: '数量任务不能从待排期箱安排。' };
+  if (!isBacklogTaskHeader(header)) return { error: '任务已经被安排，请刷新待排期箱后重试。' };
+  return { current };
+}
+
+/** Schedules only when the canonical task still belongs to the backlog. */
+export function scheduleBacklogTaskToDate(
+  task: Pick<BacklogTask, 'taskId' | 'blockId'>,
+  date: string,
+): ProjectTaskCommandResult {
+  const resolved = resolveSchedulableBacklogTask(task.taskId, task.blockId);
+  if ('error' in resolved) return { ok: false, error: resolved.error };
+  return rescheduleProjectTask(task.taskId, task.blockId, date);
+}
+
 function scheduleCanonicalTask(task: BacklogTask, date: string): {
   result: ProjectTaskCommandResult;
   previousHeader: Pick<SmartTaskHeader, 'date' | 'frozenAt'>;
   previousDailySnapshots: DailySourceSnapshot[];
 } {
-  const current = resolveProjectTask(task.taskId, task.blockId);
+  const resolved = resolveSchedulableBacklogTask(task.taskId, task.blockId);
+  if ('error' in resolved) {
+    return {
+      result: { ok: false, error: resolved.error },
+      previousHeader: {},
+      previousDailySnapshots: [],
+    };
+  }
+  const { current } = resolved;
   const previousHeader = {
-    date: current?.block.header.date,
-    frozenAt: current?.block.header.frozenAt,
+    date: current.block.header.date,
+    frozenAt: current.block.header.frozenAt,
   };
   const previousDailySnapshots = captureDailySourceSnapshots(
     useDailyScheduleStore.getState().schedules,

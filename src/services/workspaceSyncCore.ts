@@ -134,6 +134,17 @@ export function buildUnifiedRoomId(roomCode: string, identity = 'owner'): string
   return `workspace-${safeIdentity}-${safeCode}`;
 }
 
+export function buildUnifiedRoomCandidates(
+  roomCode: string,
+  primaryIdentity: string,
+  historicalIdentity?: string,
+): string[] {
+  return [...new Set([
+    buildUnifiedRoomId(roomCode, primaryIdentity),
+    ...(historicalIdentity ? [buildUnifiedRoomId(roomCode, historicalIdentity)] : []),
+  ])];
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === 'object') {
@@ -144,8 +155,25 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
-function workspaceValuesEqual(left: unknown, right: unknown): boolean {
+export function workspaceValuesEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+}
+
+export function hasWorkspaceFieldSnapshotChanged(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  fieldNames: readonly string[],
+): boolean {
+  return fieldNames.some((fieldName) => !workspaceValuesEqual(before[fieldName], after[fieldName]));
+}
+
+export function isWorkspaceRevisionSuperseded(
+  emergencyToken: string,
+  durableToken: string,
+  sourceToken?: string,
+): boolean {
+  return emergencyToken === durableToken
+    || (sourceToken !== undefined && emergencyToken === sourceToken);
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

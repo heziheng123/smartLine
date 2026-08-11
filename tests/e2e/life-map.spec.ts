@@ -215,7 +215,7 @@ test('life map keeps historical result goals hidden while unified projects tasks
 
 test('month and week views keep systems visible while month uses a compact rail', async ({ page }) => {
   await page.evaluate(async () => {
-    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+      const { useLifeMapStore } = await import('/src/testing/workspaceStoreAccess.ts');
     const synced = { createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', revision: 1 };
     useLifeMapStore.setState({
       lifeMapGoals: [{ id: 'compact-plan', areaId: 'learning', name: '下方可见主计划', kind: 'plan', start: '2026-08-01', targetDate: '2026-12-31', status: 'active', progress: 10, placement: 'below', ...synced }],
@@ -737,7 +737,7 @@ test('life map scrolls without per-frame canvas mutations and keeps the life per
 test('life map virtualizes distant planning bands and restores them after command navigation', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   await page.evaluate(async () => {
-    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+      const { useLifeMapStore } = await import('/src/testing/workspaceStoreAccess.ts');
     const formatDate = (date: Date) => date.toISOString().slice(0, 10);
     const base = new Date('2022-01-03T12:00:00.000Z');
     const synced = { createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', revision: 1 };
@@ -766,7 +766,7 @@ test('life map virtualizes distant planning bands and restores them after comman
   await expect.poll(() => page.locator('.life-line__project-band.is-life-plan').count()).toBeGreaterThan(0);
   await expect.poll(() => page.locator('.life-line__project-band.is-life-plan').count()).toBeLessThan(60);
   await expect.poll(() => page.evaluate(async () => {
-    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+      const { useLifeMapStore } = await import('/src/testing/workspaceStoreAccess.ts');
     return useLifeMapStore.getState().lifeMapGoals.length;
   })).toBe(180);
 
@@ -854,7 +854,7 @@ test('life map keeps the 128px project label rail fixed on desktop and mobile', 
 
 test('plan swimlanes render full capsules and keep key dates outside every group section', async ({ page }) => {
   await page.evaluate(async () => {
-    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+      const { useLifeMapStore } = await import('/src/testing/workspaceStoreAccess.ts');
     const synced = { createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z', revision: 1 };
     const state = useLifeMapStore.getState();
     useLifeMapStore.setState({
@@ -924,7 +924,7 @@ test('planning structure adds a second-level category directly under its fixed g
   await editor.getByRole('button', { name: '保存', exact: true }).click();
 
   await expect.poll(() => page.evaluate(async () => {
-    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+      const { useLifeMapStore } = await import('/src/testing/workspaceStoreAccess.ts');
     return useLifeMapStore.getState().lifeMapAreas.find((area) => area.name === '副业探索')?.planGroupId;
   })).toBe('work');
 

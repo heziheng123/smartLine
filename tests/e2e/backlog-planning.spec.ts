@@ -245,6 +245,7 @@ test('week matrix shows de-duplicated workload and the filtered backlog count', 
   await expect(backlog.getByText('待排期整理错题', { exact: true })).toBeVisible();
   await backlog.getByLabel('按截止状态筛选').selectOption('none');
   await expect(backlog.getByText('待排期整理错题', { exact: true })).toHaveCount(0);
+  await expect(backlog.getByRole('option', { name: '今天起 7 天' })).toBeAttached();
 });
 
 test('week matrix groups by real project identity without changing workload and remembers the view', async ({ page }) => {
@@ -317,6 +318,101 @@ test('docked backlog leaves Saturday reachable and supports dropping on the date
 
   await expect(page.locator(`[data-project-id="backlog-project"][data-date="${saturday}"]`).filter({ hasText: '待排期整理错题' })).toBeVisible();
   await expect(panel.locator('[data-backlog-task-id="backlog:backlog-project::backlog-block"]')).toHaveCount(0);
+});
+
+test('recovered backlog tasks still confirm a missed deadline when dropped into the week matrix', async ({ page }) => {
+  await page.evaluate(async ({ sourceDate, deadline }) => {
+      const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    useTimelineStore.getState().appendBlock('backlog-project', {
+        type: 'smart-task',
+        id: 'recovered-deadline-block',
+        header: {
+          title: '逾期回收截止提醒',
+          tag: '学习',
+          tagColor: '#2563eb',
+          date: sourceDate,
+          deadline,
+          frozenAt: '2026-08-10T00:00:00.000Z',
+          duration: 30,
+          isCompleted: false,
+        },
+        body: '',
+    });
+  }, { sourceDate: addIsoDays(today, -10), deadline: addIsoDays(today, -1) });
+
+  await page.getByTitle('周矩阵').click();
+  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await page.getByRole('button', { name: /待排期箱，\d+ 个任务/ }).click();
+  const panel = page.getByRole('region', { name: '待排期任务箱' });
+  await expect(panel.getByText('逾期回收截止提醒', { exact: true })).toBeVisible();
+
+  const target = page.locator(`.wmv-row--header [data-date="${today}"]`);
+  const dataTransfer = await page.evaluateHandle((payload) => {
+    const transfer = new DataTransfer();
+    transfer.setData('application/json', JSON.stringify(payload));
+    transfer.effectAllowed = 'move';
+    return transfer;
+  }, {
+    type: 'smart-block',
+    source: 'icebox',
+    taskId: 'backlog-project',
+    blockId: 'recovered-deadline-block',
+    tag: '学习',
+    title: '逾期回收截止提醒',
+    fromDate: '',
+  });
+  await target.dispatchEvent('dragover', { dataTransfer });
+  await target.dispatchEvent('drop', { dataTransfer });
+
+  const confirmation = page.getByRole('alertdialog');
+  await expect(confirmation).toContainText('排期晚于截止日期');
+  await confirmation.getByRole('button', { name: '仍然安排' }).click();
+  await expect(page.locator(`[data-project-id="backlog-project"][data-date="${today}"]`).filter({ hasText: '逾期回收截止提醒' })).toBeVisible();
+  await expect(panel.getByText('逾期回收截止提醒', { exact: true })).toHaveCount(0);
+});
+
+test('phone project and week views consistently treat recovered tasks as backlog work', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect.poll(() => page.evaluate(async () => {
+      const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    return useTimelineStore.getState().isHydrated;
+  })).toBe(true);
+  await page.evaluate(async ({ date }) => {
+      const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    useTimelineStore.setState({
+        tasks: [{
+          id: 'phone-recovered-project',
+          name: '手机回收任务项目',
+          start: date,
+          end: date,
+          blocks: [{
+            type: 'smart-task',
+            id: 'phone-recovered-block',
+            header: {
+              title: '手机端逾期回收任务',
+              tag: '学习',
+              tagColor: '#2563eb',
+              date,
+              frozenAt: '2026-08-10T00:00:00.000Z',
+              duration: 30,
+              isCompleted: false,
+            },
+            body: '',
+          }],
+        }],
+        groups: [],
+    });
+  }, { date: today });
+
+  await page.getByTitle('项目规划').click();
+  const projectCard = page.locator('.phone-project-card').filter({ hasText: '手机回收任务项目' });
+  await expect(projectCard.locator('.phone-card__next')).toHaveText('下一步：待安排');
+  await expect(projectCard.locator('.phone-card__footer')).toContainText('1 项待安排');
+
+  await page.getByTitle('周矩阵').click();
+  await expect(page.locator('.phone-week-task').filter({ hasText: '手机端逾期回收任务' })).toHaveCount(0);
+  await expect(page.locator('.phone-backlog-card')).toContainText('1 项待安排');
 });
 
 test('project grouping rejects a drop onto another project row without changing ownership or date', async ({ page }) => {

@@ -39,7 +39,7 @@ test('expanded radius recomputes a longer visible node title instead of only sca
 
 test('reading and expanded modes automatically focus one disk from the multi-disk overview', async ({ page }) => {
   await page.evaluate(async () => {
-    const { useGraphStore } = await import('/src/graph/store.ts');
+      const { useGraphStore } = await import('/src/testing/workspaceStoreAccess.ts');
     useGraphStore.setState({
       nodes: [
         ...useGraphStore.getState().nodes,

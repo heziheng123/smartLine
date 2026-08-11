@@ -28,8 +28,8 @@ test('人生地图创建人生计划只写入人生地图数据源', async ({ pa
 
   await expect.poll(() => page.evaluate(async () => {
     const [{ useTimelineStore }, { useLifeMapStore }] = await Promise.all([
-      import('/src/store/index.ts'),
-      import('/src/lifeMap/store.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
     ]);
     return {
       lifePlan: useLifeMapStore.getState().lifeMapGoals.some((item) => item.name === '健康重启计划'),
@@ -68,8 +68,8 @@ test('人生地图创建人生计划只写入人生地图数据源', async ({ pa
 test('旧版关联字段不会让项目规划任务隐式投影到人生地图', async ({ page }) => {
   await page.evaluate(async () => {
     const [{ useTimelineStore }, { useLifeMapStore }] = await Promise.all([
-      import('/src/store/index.ts'),
-      import('/src/lifeMap/store.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
     ]);
     useTimelineStore.getState().addTask({
       id: 'timeline-only', name: '仅项目规划可见', start: '2026-08-01', end: '2026-10-31', blocks: [],
@@ -84,7 +84,7 @@ test('旧版关联字段不会让项目规划任务隐式投影到人生地图',
   await expect(lifeMap.locator('.life-line__project-band.is-life-plan').filter({ hasText: '仅人生地图可见' })).toBeVisible();
   await expect(lifeMap.locator('.life-line__project-band').filter({ hasText: '仅项目规划可见' })).toHaveCount(0);
   await expect.poll(() => page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     const task = useTimelineStore.getState().tasks.find((item) => item.id === 'timeline-only') as Record<string, unknown> | undefined;
     return task ? ['planningAreaId' in task, 'lifeMapSource' in task] : null;
   })).toEqual([false, false]);
@@ -92,7 +92,7 @@ test('旧版关联字段不会让项目规划任务隐式投影到人生地图',
 
 test('项目规划任务可显式投影到指定人生类别，并保持项目为唯一数据源', async ({ page }) => {
   await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     useTimelineStore.getState().addTask({
       id: 'projected-task',
       name: '健康类别中的项目投影',
@@ -109,7 +109,7 @@ test('项目规划任务可显式投影到指定人生类别，并保持项目�
   await projectionEditor.getByRole('checkbox', { name: /投影到人生地图/ }).check();
   await projectionEditor.getByRole('combobox', { name: '人生类别' }).selectOption('health');
   await expect.poll(() => page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     return useTimelineStore.getState().tasks.find((item) => item.id === 'projected-task')?.lifeMapProjection;
   })).toEqual({ enabled: true, areaId: 'health', placement: 'above' });
   await page.getByRole('button', { name: '关闭项目文档' }).click();
@@ -127,13 +127,13 @@ test('项目规划任务可显式投影到指定人生类别，并保持项目�
   await expect(focusCard.getByRole('button', { name: '打开项目' })).toBeVisible();
 
   await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     const task = useTimelineStore.getState().tasks.find((item) => item.id === 'projected-task');
     if (task) useTimelineStore.getState().updateTask({ ...task, name: '原项目改名后同步' });
   });
   await expect(lifeMap.locator('.life-line__project-band.is-life-plan').filter({ hasText: '原项目改名后同步' })).toBeVisible();
   await expect.poll(() => page.evaluate(async () => {
-    const { useLifeMapStore } = await import('/src/lifeMap/store.ts');
+    const { useLifeMapStore } = await import('/src/testing/workspaceStoreAccess.ts');
     return useLifeMapStore.getState().lifeMapGoals.some((item) => item.name === '原项目改名后同步');
   })).toBe(false);
 
@@ -145,8 +145,8 @@ test('项目规划任务可显式投影到指定人生类别，并保持项目�
 test('同名数据的编辑和删除互不影响', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const [{ useTimelineStore }, { useLifeMapStore }] = await Promise.all([
-      import('/src/store/index.ts'),
-      import('/src/lifeMap/store.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
     ]);
     useTimelineStore.getState().addTask({ id: 'task-same', name: '同名内容', start: '2026-08-01', end: '2026-08-31', blocks: [] });
     useLifeMapStore.getState().addGoal({ id: 'plan-same', areaId: 'learning', name: '同名内容', start: '2026-08-01', targetDate: '2026-12-31', kind: 'plan', status: 'active', progress: 0 });
@@ -164,8 +164,8 @@ test('同名数据的编辑和删除互不影响', async ({ page }) => {
 test('人生地图和项目规划持久化到两个独立 IndexedDB 数据库', async ({ page }) => {
   await page.evaluate(async () => {
     const [{ useTimelineStore }, { useLifeMapStore }] = await Promise.all([
-      import('/src/store/index.ts'),
-      import('/src/lifeMap/store.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
+      import('/src/testing/workspaceStoreAccess.ts'),
     ]);
     useTimelineStore.getState().addTask({ id: 'db-task', name: '数据库任务', start: '2026-08-01', end: '2026-08-01', blocks: [] });
     useLifeMapStore.getState().addGoal({ id: 'db-plan', areaId: 'learning', name: '数据库人生计划', start: '2026-08-01', targetDate: '2026-08-01', kind: 'plan', status: 'active', progress: 0 });

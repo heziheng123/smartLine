@@ -57,8 +57,8 @@ import {
   resolveProjectAppearance,
 } from './projectAppearance';
 import { recordOperation, useOperationHistory } from '@/services/operationHistory';
-import { recordQuantityProgress, removeQuantityProgress, rescheduleProjectTask, setProjectTaskCompletion } from '@/services/projectTaskCommands';
-import { returnProjectTaskToBacklog, scheduleBacklogTaskToSlot } from '@/services/backlogCommands';
+import { recordQuantityProgress, removeQuantityProgress, setProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { returnProjectTaskToBacklog, scheduleBacklogTaskToDate, scheduleBacklogTaskToSlot } from '@/services/backlogCommands';
 import { collectBacklogTasks, type BacklogTask } from '@/domain/taskBacklog';
 import { requestConfirmation } from '@/services/confirmation';
 import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
@@ -217,7 +217,7 @@ const DailyScheduleView: React.FC = () => {
   );
 
   const scheduleBacklogToDate = useCallback((task: BacklogTask, date: string): boolean => {
-    const result = rescheduleProjectTask(task.taskId, task.blockId, date);
+    const result = scheduleBacklogTaskToDate(task, date);
     if ('error' in result) {
       setOperationError(result.error);
       return false;

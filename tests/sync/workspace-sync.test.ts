@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   assertWorkspaceQueueDrained,
   assertWorkspaceSchemaSupported,
+  buildUnifiedRoomCandidates,
   buildUnifiedRoomId,
   collectWorkspaceFieldChanges,
   commitWorkspaceQueueRevisionSafely,
@@ -10,7 +11,9 @@ import {
   findWorkspaceFieldConflicts,
   hashWorkspaceBackup,
   hashWorkspaceValue,
+  hasWorkspaceFieldSnapshotChanged,
   isWorkspaceStoreStorageReady,
+  isWorkspaceRevisionSuperseded,
   mergeWorkspaceFieldChanges,
   shouldBackfillLegacyLifeMapSync,
   withTimeout,
@@ -76,6 +79,37 @@ test('unified room names are stable and contain only safe characters', () => {
     'workspace-github-user-my_room-01',
   );
   assert.throws(() => buildUnifiedRoomId('***', 'owner'));
+});
+
+test('new devices probe both stable-id and historical-login unified rooms', () => {
+  assert.deepEqual(
+    buildUnifiedRoomCandidates('study', 'gh_12345', 'Old.Owner'),
+    ['workspace-gh_12345-study', 'workspace-old-owner-study'],
+  );
+  assert.deepEqual(
+    buildUnifiedRoomCandidates('study', 'owner', 'owner'),
+    ['workspace-owner-study'],
+  );
+});
+
+test('queue flush detects a remote field change after its initial snapshot', () => {
+  const before = { tasks: [{ id: 'task-1', name: 'before' }], notes: [], metadata: { deviceId: 'a' } };
+  assert.equal(hasWorkspaceFieldSnapshotChanged(before, { ...before }, ['tasks', 'metadata']), false);
+  assert.equal(hasWorkspaceFieldSnapshotChanged(
+    before,
+    { ...before, tasks: [{ id: 'task-1', name: 'remote-newer' }] },
+    ['tasks', 'metadata'],
+  ), true);
+  assert.equal(hasWorkspaceFieldSnapshotChanged(
+    before,
+    { ...before, notes: [{ id: 'note-1' }] },
+    ['tasks', 'metadata'],
+  ), false);
+});
+
+test('a durable queue revision discards the older emergency revision it superseded', () => {
+  assert.equal(isWorkspaceRevisionSuperseded('revision-1', 'revision-2', 'revision-1'), true);
+  assert.equal(isWorkspaceRevisionSuperseded('revision-3', 'revision-2', 'revision-1'), false);
 });
 
 test('workspace hashes ignore object key insertion order but detect data changes', async () => {

@@ -155,7 +155,7 @@ export async function restoreWorkspaceConflict(id: string): Promise<void> {
     setWorkspaceQueueSuppressed(false);
   }
 
-  queueWorkspaceFields(conflict.pending.fields);
+  await queueWorkspaceFields(conflict.pending.fields);
   await removeWorkspaceConflict(id);
 }
 
@@ -178,7 +178,7 @@ export async function restoreWorkspaceConflictFields(
   } finally {
     setWorkspaceQueueSuppressed(false);
   }
-  queueWorkspaceFields(pickedFields, pickedBase, { bypassSuppression: true });
+  await queueWorkspaceFields(pickedFields, pickedBase, { bypassSuppression: true });
 
   const remainingFields = Object.fromEntries(Object.entries(conflict.pending.fields).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
   const remainingBaseFields = Object.fromEntries(Object.entries(conflict.pending.baseFields ?? {}).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;

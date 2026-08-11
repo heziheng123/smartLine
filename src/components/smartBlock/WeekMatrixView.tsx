@@ -7,7 +7,8 @@ import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { isTaskOverdueOnDate } from '@/domain/taskRules';
-import { rescheduleProjectTask, setProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { resolveProjectTask, rescheduleProjectTask, setProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { scheduleBacklogTaskToDate } from '@/services/backlogCommands';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import {
@@ -374,10 +375,12 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
       const current = allBlocks.find(
         (block) => block._taskId === draggedData.taskId && block.id === draggedData.blockId,
       );
-      if (current?.header.deadline && targetDate > current.header.deadline) {
+      const canonicalHeader = resolveProjectTask(draggedData.taskId, draggedData.blockId)?.block.header;
+      const deadline = current?.header.deadline ?? canonicalHeader?.deadline;
+      if (deadline && targetDate > deadline) {
         const confirmed = await requestConfirmation({
           title: '排期晚于截止日期',
-          message: `“${draggedData.title}”的截止日期是 ${current.header.deadline}，目标日期是 ${targetDate}。是否仍然安排？`,
+          message: `“${draggedData.title}”的截止日期是 ${deadline}，目标日期是 ${targetDate}。是否仍然安排？`,
           confirmLabel: '仍然安排',
           cancelLabel: '返回修改',
           tone: 'warning',
@@ -387,7 +390,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
           return;
         }
       }
-      const result = rescheduleProjectTask(draggedData.taskId, draggedData.blockId, targetDate);
+      const result = draggedData.source === 'icebox' || draggedData.source === 'backlog_river'
+        ? scheduleBacklogTaskToDate(draggedData, targetDate)
+        : rescheduleProjectTask(draggedData.taskId, draggedData.blockId, targetDate);
       showToast('error' in result ? result.error : `已将“${draggedData.title}”改期到 ${targetDate}`);
       clearDragState();
     },

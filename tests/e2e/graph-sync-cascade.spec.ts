@@ -24,17 +24,19 @@ test.beforeEach(async ({ page }) => {
   }, { nodes: [rootNode, childNode] });
   await page.goto('/');
   await expect.poll(async () => page.evaluate(async () => {
-    const { useGraphStore } = await import('/src/graph/store.ts');
+    const { useGraphStore } = await import('/src/testing/workspaceStoreAccess.ts');
     return useGraphStore.getState().isHydrated && useGraphStore.getState().nodes.length;
   })).toBe(2);
 });
 
 test('remote graph hydration does not cascade, while explicit deletion still cleans references', async ({ page }) => {
   const result = await page.evaluate(async ({ root, child }) => {
-    const { useGraphStore } = await import('/src/graph/store.ts');
-    const { useTimelineStore } = await import('/src/store/index.ts');
-    const { useEbbStore } = await import('/src/ebb/store.ts');
-    const { useDailyScheduleStore } = await import('/src/components/dailySchedule/store.ts');
+      const {
+        useGraphStore,
+        useTimelineStore,
+        useEbbStore,
+        useDailyScheduleStore,
+      } = await import('/src/testing/workspaceStoreAccess.ts');
     const {
       setWorkspaceQueueSuppressed,
     } = await import('/src/services/workspaceSyncQueueCore.ts');

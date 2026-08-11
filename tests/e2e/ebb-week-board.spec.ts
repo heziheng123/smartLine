@@ -123,8 +123,7 @@ test('dragging a round asks for scope and can shift following rounds atomically'
   await dialog.getByRole('button', { name: /R2 及后续一起移动/ }).click();
 
   const state = await page.evaluate(async () => {
-    const { useEbbStore } = await import('/src/ebb/store.ts');
-    const { useDailyScheduleStore } = await import('/src/components/dailySchedule/store.ts');
+      const { useEbbStore, useDailyScheduleStore } = await import('/src/testing/workspaceStoreAccess.ts');
     return {
       dates: Object.fromEntries(useEbbStore.getState().reviewTasks.map((task) => [task.id, task.dueDate])),
       mondaySources: useDailyScheduleStore.getState().schedules[Object.keys(useDailyScheduleStore.getState().schedules)[0]]?.items.map((item) => item.sourceId) ?? [],
@@ -143,7 +142,7 @@ test('dragging a round can change only that round without moving later rounds', 
   await dialog.getByRole('button', { name: /仅调整 R2/ }).click();
 
   const dates = await page.evaluate(async () => {
-    const { useEbbStore } = await import('/src/ebb/store.ts');
+      const { useEbbStore } = await import('/src/testing/workspaceStoreAccess.ts');
     return Object.fromEntries(useEbbStore.getState().reviewTasks.map((task) => [task.id, task.dueDate]));
   });
   expect(dates['matrix-r2']).toBe(movedDate);

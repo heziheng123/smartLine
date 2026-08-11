@@ -43,7 +43,7 @@ test('timeline fills the workspace on the initial load before lazy views are ope
 test('project details use a landscape split and a portrait right-side drawer', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 1024 });
   await page.evaluate(async () => {
-    const { useTimelineStore } = await import('/src/store/index.ts');
+      const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
     useTimelineStore.getState().addTask({
       id: 'tablet-drawer-task', name: '平板详情测试', start: '2026-08-01', end: '2026-08-31', blocks: [],
     });

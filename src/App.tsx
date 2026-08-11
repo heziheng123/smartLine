@@ -441,7 +441,6 @@ const App: React.FC = () => {
   const hasAlignedDisplayYear = React.useRef(false);
   const hasAttemptedAutoReconnect = React.useRef(false);
   const hasStartedHydration = React.useRef(false);
-  const previousLiveStatuses = React.useRef<Record<string, string | undefined>>({});
 
   // 异步加载 IndexedDB 数据
   React.useEffect(() => {
@@ -594,29 +593,6 @@ const App: React.FC = () => {
   React.useEffect(() => {
     if (lifeMapLiveStatus) useLifeMapStore.getState().setSyncStatus(mapLiveblocksStatus(lifeMapLiveStatus));
   }, [lifeMapLiveStatus]);
-
-  React.useEffect(() => {
-    const statuses = {
-      timeline: timelineLiveStatus,
-      ebb: ebbLiveStatus,
-      daily: dailyLiveStatus,
-      graph: graphLiveStatus,
-      lifeMap: lifeMapLiveStatus,
-    };
-    let current: Record<string, string> = {};
-    try { current = JSON.parse(localStorage.getItem('smart-line-sync-last-connected') ?? '{}') as Record<string, string>; }
-    catch { current = {}; }
-    const now = new Date().toISOString();
-    let changed = false;
-    for (const [key, status] of Object.entries(statuses)) {
-      if (status === 'connected' && previousLiveStatuses.current[key] !== 'connected') {
-        current[key] = now;
-        changed = true;
-      }
-      previousLiveStatuses.current[key] = status;
-    }
-    if (changed) localStorage.setItem('smart-line-sync-last-connected', JSON.stringify(current));
-  }, [timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus, lifeMapLiveStatus]);
 
   // 全局漫游导航监听
   React.useEffect(() => {

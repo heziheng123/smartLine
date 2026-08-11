@@ -6,8 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { collectBacklogTasks, type BacklogTask } from '@/domain/taskBacklog';
 import { openProjectTaskModal } from './projectTaskModal';
 import BacklogTaskList from './BacklogTaskList';
-import { rescheduleProjectTask } from '@/services/projectTaskCommands';
-import { returnProjectTaskToBacklog } from '@/services/backlogCommands';
+import { returnProjectTaskToBacklog, scheduleBacklogTaskToDate } from '@/services/backlogCommands';
 import { useOperationHistory } from '@/services/operationHistory';
 import type { SmartBlockDragPayload } from '@/types';
 import styles from './IceboxPalette.module.css';
@@ -37,7 +36,7 @@ export const IceboxPalette: React.FC<IceboxPaletteProps> = ({ layout = 'overlay'
   const backlogTasks = useMemo(() => collectBacklogTasks(allTasks, groups), [allTasks, groups]);
 
   const scheduleTask = async (task: BacklogTask, date: string): Promise<boolean> => {
-    const result = rescheduleProjectTask(task.taskId, task.blockId, date);
+    const result = scheduleBacklogTaskToDate(task, date);
     if ('error' in result) {
       setMessage({ text: result.error });
       return false;

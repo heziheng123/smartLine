@@ -40,7 +40,7 @@ import { useLifeMapStore } from '@/lifeMap/store';
 import { activeLifeMapItems } from '@/lifeMap/data';
 import { currentSystemStats } from '@/lifeMap/metrics';
 import { useGraphStore } from '@/graph/store';
-import { collectBacklogTasks } from '@/domain/taskBacklog';
+import { collectBacklogTasks, isBacklogTaskHeader } from '@/domain/taskBacklog';
 import { getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { addDays, todayStr } from '@/utils/dateSafe';
 import { openProjectTaskCreate } from '@/components/smartBlock/projectTaskCreate';
@@ -172,9 +172,10 @@ const PhoneProjectView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onAddP
       <div className="phone-card-list">
         {rows.map((task) => {
           const blocks = getSmartTaskBlocks(task.blocks ?? []).filter((block) => !block.header.isArchived);
-          const next = blocks.filter((block) => !block.header.isCompleted).sort((a, b) => (a.header.date ?? '9999').localeCompare(b.header.date ?? '9999'))[0];
+          const activeBlocks = blocks.filter((block) => !block.header.isCompleted);
+          const next = activeBlocks.filter((block) => !isBacklogTaskHeader(block.header)).sort((a, b) => (a.header.date ?? '9999').localeCompare(b.header.date ?? '9999'))[0];
           const overdue = !task.completed && task.end < today;
-          const unscheduled = blocks.filter((block) => !block.header.isCompleted && !block.header.date).length;
+          const unscheduled = activeBlocks.filter((block) => isBacklogTaskHeader(block.header)).length;
           const progress = projectProgress(task);
           return (
             <article key={task.id} className={`phone-card phone-project-card ${overdue ? 'is-warning' : ''}`}>
@@ -186,7 +187,7 @@ const PhoneProjectView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onAddP
                 </span>
                 <span className="phone-card__meta">{groupByTaskId.get(task.id) ?? '未分组'} · {task.start}—{task.end}</span>
                 <span className="phone-progress"><i style={{ width: `${progress}%` }} /></span>
-                <span className="phone-card__next">{next ? `下一步：${next.header.title}` : task.completed ? '项目已完成' : '尚未添加智能任务'}</span>
+                <span className="phone-card__next">{next ? `下一步：${next.header.title}` : task.completed ? '项目已完成' : unscheduled ? '下一步：待安排' : '尚未添加智能任务'}</span>
               </button>
               <div className="phone-card__footer">
                 <span>{overdue ? '已逾期' : `${blocks.length} 项任务`}{unscheduled ? ` · ${unscheduled} 项待安排` : ''}{task.lifeMapProjection?.enabled ? ' · 已投影到人生地图' : ''}</span>
@@ -346,7 +347,7 @@ const PhoneWeekView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPro
   const updateBlockHeader = useTimelineStore((state) => state.updateBlockHeader);
   const backlog = useMemo(() => collectBacklogTasks(tasks, groups), [groups, tasks]);
   const scheduled = useMemo(() => tasks.flatMap((task) => getSmartTaskBlocks(task.blocks ?? [])
-    .filter((block) => !block.header.isArchived && Boolean(block.header.date))
+    .filter((block) => !block.header.isArchived && !block.header.frozenAt && Boolean(block.header.date))
     .map((block) => ({ task, block }))), [tasks]);
   const selected = scheduled.filter(({ block }) => block.header.date === selectedDate)
     .sort((left, right) => Number(Boolean(left.block.header.isCompleted)) - Number(Boolean(right.block.header.isCompleted)));

@@ -137,6 +137,36 @@ test('Liveblocks endpoint requires a session and uses a stable GitHub identity',
   assert.equal(otherWorkspace.status, 403);
   assert.equal(requests.length, 1);
 
+  const ownerLegacyRoom = await authenticateLiveblocks({
+    env,
+    request: new Request('https://smartline.example/api/liveblocks-auth', {
+      method: 'POST',
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${sessionValue}`,
+        Origin: 'https://smartline.example',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ room: 'ebb-private-study' }),
+    }),
+  });
+  assert.equal(ownerLegacyRoom.status, 200);
+  assert.equal(requests.length, 2);
+
+  const unownedLegacyRoom = await authenticateLiveblocks({
+    env: { ...env, ALLOWED_GITHUB_LOGIN: undefined },
+    request: new Request('https://smartline.example/api/liveblocks-auth', {
+      method: 'POST',
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${sessionValue}`,
+        Origin: 'https://smartline.example',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ room: 'ebb-private-study' }),
+    }),
+  });
+  assert.equal(unownedLegacyRoom.status, 403);
+  assert.equal(requests.length, 2);
+
   const crossOrigin = await authenticateLiveblocks({
     env,
     request: new Request('https://smartline.example/api/liveblocks-auth', {

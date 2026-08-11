@@ -25,10 +25,26 @@ import {
   setWorkspaceQueueSuppressed,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
-import { assertWorkspaceQueueDrained, assertWorkspaceSchemaSupported, buildUnifiedRoomId, commitWorkspaceQueueRevisionSafely, decideUnifiedWorkspaceActivation, findWorkspaceFieldConflicts, hashWorkspaceBackup, mergeWorkspaceFieldChanges, shouldBackfillLegacyLifeMapSync, withTimeout } from './workspaceSyncCore';
+import {
+  assertWorkspaceQueueDrained,
+  assertWorkspaceSchemaSupported,
+  buildUnifiedRoomCandidates,
+  buildUnifiedRoomId,
+  commitWorkspaceQueueRevisionSafely,
+  decideUnifiedWorkspaceActivation,
+  findWorkspaceFieldConflicts,
+  hasWorkspaceFieldSnapshotChanged,
+  hashWorkspaceBackup,
+  mergeWorkspaceFieldChanges,
+  shouldBackfillLegacyLifeMapSync,
+  withTimeout,
+  workspaceValuesEqual,
+} from './workspaceSyncCore';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 
 export type SyncArchitecture = 'legacy' | 'unified';
+
+const MAX_QUEUE_FLUSH_RESTARTS = 8;
 
 export interface WorkspaceSyncSettings {
   architecture: SyncArchitecture;
@@ -252,11 +268,33 @@ async function inspectRoom(roomId: string, label: string): Promise<Record<string
 export async function activateUnifiedWorkspaceSafely(
   roomCode: string,
   identity: string,
+  historicalIdentity?: string,
 ): Promise<UnifiedWorkspaceActivationResult> {
-  const targetRoomId = buildUnifiedRoomId(roomCode, identity);
   const local = createWorkspaceBackup();
   await createLocalSnapshot('首次连接统一工作区前');
-  const remoteRoot = await inspectRoom(targetRoomId, '统一工作区');
+  const candidates = buildUnifiedRoomCandidates(roomCode, identity, historicalIdentity);
+  const candidateRoots = await Promise.all(candidates.map((roomId, index) =>
+    inspectRoom(roomId, index === 0 ? '统一工作区' : '历史统一工作区'),
+  ));
+  const candidateHasStorage = candidateRoots.map((root) => EXPECTED_KEYS.some((key) => root[key] !== undefined));
+  let selectedIndex = candidateHasStorage[0] ? 0 : candidateHasStorage.findIndex(Boolean);
+  if (selectedIndex < 0) selectedIndex = 0;
+
+  const populatedIndexes = candidateHasStorage
+    .map((hasStorage, index) => hasStorage ? index : -1)
+    .filter((index) => index >= 0);
+  if (populatedIndexes.length > 1) {
+    const hashes = await Promise.all(populatedIndexes.map((index) =>
+      hashWorkspaceBackup(rootToBackup(candidateRoots[index], local)),
+    ));
+    if (new Set(hashes).size > 1) {
+      throw new Error('检测到 GitHub ID 房间和历史用户名房间同时存在不同数据，已阻止自动连接。请先导出两端备份后再合并。');
+    }
+    selectedIndex = 0;
+  }
+
+  const targetRoomId = candidates[selectedIndex];
+  const remoteRoot = candidateRoots[selectedIndex];
   assertWorkspaceSchemaSupported(remoteRoot, WORKSPACE_SCHEMA_VERSION);
   const hasRemoteStorage = EXPECTED_KEYS.some((key) => remoteRoot[key] !== undefined);
 
@@ -268,7 +306,8 @@ export async function activateUnifiedWorkspaceSafely(
   const [localSummary, remoteSummary] = [summaryOf(local), summaryOf(remote)];
   const decision = decideUnifiedWorkspaceActivation(hasRemoteStorage, localHash, remoteHash, localSummary, remoteSummary);
   if (decision !== 'conflict') {
-    const connected = await activateUnifiedWorkspace(roomCode, identity);
+    writeWorkspaceSyncSettings({ architecture: 'unified', roomCode, unifiedRoomId: targetRoomId });
+    const connected = await connectUnifiedWorkspace(roomCode, targetRoomId);
     return { roomId: connected.roomId, source: decision, applied: connected.applied };
   }
 
@@ -359,13 +398,14 @@ export function flushWorkspaceQueue(): Promise<{ applied: number; conflict: bool
   return operation;
 }
 
-async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflict: boolean }> {
+async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied: number; conflict: boolean }> {
   const pending = await readPendingWorkspaceSync();
   if (!pending) return { applied: 0, conflict: false };
   const room = useTimelineStore.getState().liveblocks?.room;
   if (!room || room.getStatus() !== 'connected') return { applied: 0, conflict: false };
   const { root } = await room.getStorage();
   const rootJson = root.toJSON() as Record<string, unknown>;
+  const pendingKeys = Object.keys(pending.fields) as WorkspaceStorageField[];
   const metadata = rootJson.metadata && typeof rootJson.metadata === 'object'
     ? rootJson.metadata as Record<string, unknown>
     : {};
@@ -402,11 +442,21 @@ async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflic
   const latest = await readPendingWorkspaceSync();
   if (!latest) return { applied: 0, conflict: false };
   if (getPendingWorkspaceSyncToken(latest) !== getPendingWorkspaceSyncToken(pending)) {
-    return flushWorkspaceQueueInternal();
+    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) throw new Error('本机同步队列持续变化，请稍后重试。');
+    return flushWorkspaceQueueInternal(restartCount + 1);
+  }
+
+  // Hashing and conflict analysis above are asynchronous. A remote Liveblocks
+  // update can land during that interval, so compare the live root again before
+  // entering the synchronous batch. Never write a merge produced from a stale
+  // remote snapshot.
+  const latestRootJson = root.toJSON() as Record<string, unknown>;
+  if (hasWorkspaceFieldSnapshotChanged(rootJson, latestRootJson, [...pendingKeys, 'metadata'])) {
+    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) throw new Error('云端工作区持续变化，请等待其他设备完成同步后重试。');
+    return flushWorkspaceQueueInternal(restartCount + 1);
   }
 
   if (fieldConflicts.length > 0 || metadataConflict) {
-    const pendingKeys = Object.keys(pending.fields) as WorkspaceStorageField[];
     const remoteFields = Object.fromEntries(pendingKeys.map((key) => [key, rootJson[key]])) as Partial<Record<WorkspaceStorageField, unknown>>;
     const conflictingFields = [...new Set(fieldConflicts.map((path) => path.split(/[.[]/, 1)[0] as WorkspaceStorageField))];
     await preserveWorkspaceConflict(pending, remoteUpdatedAt, remoteFields, metadataConflict ? pendingKeys : conflictingFields);
@@ -417,6 +467,7 @@ async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflic
 
   setWorkspaceQueueSuppressed(true);
   try {
+    const queueRevision = getPendingWorkspaceSyncToken(pending);
     // The local queue is the last durable copy of offline edits. Keep it until
     // Liveblocks confirms that the batch reached the cloud; a disconnect or
     // timeout must leave the queue intact so the next reconnect can retry.
@@ -428,9 +479,20 @@ async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflic
           schemaVersion: WORKSPACE_SCHEMA_VERSION,
           updatedAt: pending.updatedAt,
           deviceId: pending.deviceId,
+          queueRevision,
         } as Json);
       }),
-      confirm: () => waitForRoomStorageSynchronized(room),
+      confirm: async () => {
+        await waitForRoomStorageSynchronized(room);
+        const confirmed = root.toJSON() as Record<string, unknown>;
+        const confirmedMetadata = confirmed.metadata && typeof confirmed.metadata === 'object'
+          ? confirmed.metadata as Record<string, unknown>
+          : {};
+        const fieldsConfirmed = pendingKeys.every((key) => workspaceValuesEqual(confirmed[key], merged.fields[key]));
+        if (!fieldsConfirmed || confirmedMetadata.queueRevision !== queueRevision) {
+          throw new Error('云端在本次提交期间发生变化，已保留本机队列并停止清除，请重试同步。');
+        }
+      },
       // Keep tracking suppressed until the exact queue revision applied above
       // is durably removed. Releasing suppression first lets the Liveblocks
       // echo recreate an identical pending record while IndexedDB is clearing.
@@ -446,7 +508,8 @@ async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflic
       remaining = await readPendingWorkspaceSync();
     }
     if (remaining) {
-      return flushWorkspaceQueueInternal();
+      if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) throw new Error('本机仍有新的修改等待同步，请稍后重试。');
+      return flushWorkspaceQueueInternal(restartCount + 1);
     }
   } finally {
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
