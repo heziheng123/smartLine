@@ -1019,6 +1019,7 @@ function recordWorkspaceVerification(roomId: string, repairedFields: string[]): 
     localStorage.setItem('smart-line-sync-last-connected', JSON.stringify({
       ...current,
       workspace: verifiedAt,
+      workspaceRoomId: roomId,
     }));
   } catch {
     // Verification remains valid when optional localStorage is unavailable.

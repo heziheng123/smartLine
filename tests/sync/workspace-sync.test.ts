@@ -16,6 +16,7 @@ import {
   hashWorkspaceBackup,
   hashWorkspaceValue,
   isBundledDemoWorkspace,
+  isWorkspaceConflictHistorical,
   hasWorkspaceFieldSnapshotChanged,
   isWorkspaceStoreStorageReady,
   isWorkspaceRevisionSuperseded,
@@ -298,6 +299,19 @@ test('an absent cloud field initializes from local data instead of creating a fa
 
   assert.deepEqual(result.conflicts, []);
   assert.deepEqual(result.fields.tasks, localTasks);
+});
+
+test('a later successful convergence verification demotes an old conflict to a recovery copy', () => {
+  assert.equal(
+    isWorkspaceConflictHistorical('2026-08-12T11:26:05.000Z', '2026-08-12T14:58:23.000Z'),
+    true,
+  );
+  assert.equal(
+    isWorkspaceConflictHistorical('2026-08-12T15:00:00.000Z', '2026-08-12T14:58:23.000Z'),
+    false,
+  );
+  assert.equal(isWorkspaceConflictHistorical('invalid', '2026-08-12T14:58:23.000Z'), false);
+  assert.equal(isWorkspaceConflictHistorical('2026-08-12T11:26:05.000Z'), false);
 });
 
 test('schema 6 project and key-date relationships participate in entity-level merges', () => {

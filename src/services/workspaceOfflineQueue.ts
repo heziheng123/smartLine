@@ -11,6 +11,7 @@ import { normalizeTimelineData } from '@/store/timelineData';
 import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
+import { createLocalSnapshot } from './workspaceBackup';
 import {
   broadcastWorkspaceFields,
   isWorkspaceConnectionMutationCaptureActive,
@@ -176,6 +177,10 @@ export async function restoreWorkspaceConflictFields(
   if (!conflict) throw new Error('冲突副本不存在。');
   const pickedFields = Object.fromEntries(Object.entries(conflict.pending.fields).filter(([key]) => selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
   if (Object.keys(pickedFields).length === 0) throw new Error('所选字段已不在冲突副本中。');
+  // A conflict record is an old recovery snapshot, not the current local
+  // workspace. Preserve the current complete workspace before replacing any
+  // field so an accidental recovery can always be undone locally.
+  await createLocalSnapshot(`恢复冲突副本前 · ${conflict.detectedAt}`);
   setWorkspaceQueueSuppressed(true);
   try {
     applyWorkspaceFields(pickedFields);
@@ -198,6 +203,15 @@ export async function restoreWorkspaceConflictFields(
     forceFields: conflict.pending.forceFields?.filter((field) => !selectedSet.has(field)),
     updatedAt: new Date().toISOString(),
   } : null);
+}
+
+/** Removes a saved recovery copy without changing the current local workspace,
+ * cloud storage, or pending upload queue. */
+export async function discardWorkspaceConflict(id: string): Promise<void> {
+  const conflicts = await listWorkspaceConflicts();
+  if (!conflicts.some((item) => item.id === id)) return;
+  await removeWorkspaceConflict(id);
+  window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
 }
 
 function readUnifiedWorkspaceRoomId(): string | null {

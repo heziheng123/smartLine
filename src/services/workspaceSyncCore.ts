@@ -212,6 +212,19 @@ export function workspaceValuesEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
 }
 
+/** A later successful full-workspace verification turns an unresolved conflict
+ * into a recovery copy. It may still contain useful old local edits, but it no
+ * longer describes the current local/cloud synchronization state. */
+export function isWorkspaceConflictHistorical(
+  detectedAt: string,
+  lastVerifiedAt?: string,
+): boolean {
+  if (!lastVerifiedAt) return false;
+  const detected = Date.parse(detectedAt);
+  const verified = Date.parse(lastVerifiedAt);
+  return Number.isFinite(detected) && Number.isFinite(verified) && verified > detected;
+}
+
 export function hasWorkspaceFieldSnapshotChanged(
   before: Record<string, unknown>,
   after: Record<string, unknown>,

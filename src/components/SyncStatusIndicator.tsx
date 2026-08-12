@@ -13,6 +13,7 @@ import {
   WORKSPACE_QUEUE_EVENT,
 } from '@/services/workspaceOfflineQueue';
 import { readWorkspaceSyncSettings, WORKSPACE_VERIFIED_EVENT } from '@/services/workspaceSync';
+import { isWorkspaceConflictHistorical } from '@/services/workspaceSyncCore';
 import { liveblocksAuthMode } from '@/auth/config';
 import {
   deriveSyncIndicatorState,
@@ -28,6 +29,18 @@ function readLastConnectedAt(): string | null {
     return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
   } catch {
     return null;
+  }
+}
+
+function readLastVerifiedWorkspace(): { at: string | null; roomId: string | null } {
+  try {
+    const value = JSON.parse(localStorage.getItem(LAST_CONNECTED_KEY) ?? '{}') as Record<string, unknown>;
+    return {
+      at: typeof value.workspace === 'string' && !Number.isNaN(Date.parse(value.workspace)) ? value.workspace : null,
+      roomId: typeof value.workspaceRoomId === 'string' ? value.workspaceRoomId : null,
+    };
+  } catch {
+    return { at: null, roomId: null };
   }
 }
 
@@ -71,8 +84,13 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
         readPendingWorkspaceSync(),
         listWorkspaceConflicts(),
       ]);
+      const verification = readLastVerifiedWorkspace();
+      const currentRoomId = readWorkspaceSyncSettings().unifiedRoomId ?? null;
+      const verificationMatchesRoom = !verification.roomId || verification.roomId === currentRoomId;
       setPendingCount(pending ? Object.keys(pending.fields ?? {}).length : 0);
-      setConflictCount(conflicts.length);
+      setConflictCount(conflicts.filter((conflict) => !verificationMatchesRoom
+        || !isWorkspaceConflictHistorical(conflict.detectedAt, verification.at ?? undefined)).length);
+      setLastConnectedAt(verification.at);
       if (!pending) setQueueError(false);
     } catch {
       setQueueError(true);
@@ -96,6 +114,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     const handleVerified = () => {
       setLastConnectedAt(readLastConnectedAt());
       setUnifiedArchitecture(readWorkspaceSyncSettings().architecture === 'unified');
+      void refreshQueueState();
     };
     const interval = window.setInterval(() => void refreshQueueState(), 15_000);
     window.addEventListener('online', handleOnline);

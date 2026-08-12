@@ -41,7 +41,8 @@ import {
   UnifiedWorkspaceConflictError,
   type WorkspaceMigrationReport,
 } from '@/services/workspaceSync';
-import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
+import { discardWorkspaceConflict, listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
+import { isWorkspaceConflictHistorical } from '@/services/workspaceSyncCore';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
 import { useShallow } from 'zustand/react/shallow';
@@ -49,7 +50,7 @@ import { useShallow } from 'zustand/react/shallow';
 interface SyncDialogProps { onClose: () => void }
 type ModuleKey = 'timeline' | 'ebb' | 'daily' | 'graph' | 'lifeMap';
 type DisplayStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
-type LastConnectedRecord = Partial<Record<ModuleKey | 'workspace', string>>;
+type LastConnectedRecord = Partial<Record<ModuleKey | 'workspace', string>> & { workspaceRoomId?: string };
 
 const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
 const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
@@ -143,6 +144,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     remoteSource: 'unified' | 'legacy';
   } | null>(initialActivationConflict);
   const [selectedConflictFields, setSelectedConflictFields] = useState<WorkspaceStorageField[]>([]);
+  const [showConflictRecovery, setShowConflictRecovery] = useState(false);
   const [archivePeriod, setArchivePeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [dataPanelOpen, setDataPanelOpen] = useState(false);
 
@@ -169,10 +171,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       readPendingWorkspaceSync().then((pending) => setPendingFieldCount(Object.keys(pending?.fields ?? {}).length)).catch(() => setPendingFieldCount(null));
       listWorkspaceConflicts().then((items) => {
         setSyncConflicts(items);
-        if (items[0]) setSelectedConflictFields((current) => {
-          const available = Object.keys(items[0].pending.fields) as WorkspaceStorageField[];
-          const retained = current.filter((field) => available.includes(field));
-          return retained.length ? retained : available;
+        setSelectedConflictFields((current) => {
+          const available = Object.keys(items[0]?.pending.fields ?? {}) as WorkspaceStorageField[];
+          return current.filter((field) => available.includes(field));
         });
       }).catch(() => setSyncConflicts([]));
     };
@@ -243,10 +244,19 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const enabledCount = modules.filter((module) => module.enabled).length;
   const connectedCount = modules.filter((module) => module.enabled && module.status === 'connected').length;
   const allConnected = enabledCount === 5 && connectedCount === 5;
+  const verificationMatchesRoom = !lastConnected.workspaceRoomId
+    || lastConnected.workspaceRoomId === architecture.unifiedRoomId;
+  const activeConflicts = syncConflicts.filter((conflict) => !verificationMatchesRoom
+    || !isWorkspaceConflictHistorical(conflict.detectedAt, lastConnected.workspace));
+  const historicalConflicts = syncConflicts.filter((conflict) => verificationMatchesRoom
+    && isWorkspaceConflictHistorical(conflict.detectedAt, lastConnected.workspace));
+  const latestConflict = activeConflicts[0] ?? historicalConflicts[0];
+  const historicalConflict = Boolean(latestConflict && historicalConflicts.some((item) => item.id === latestConflict.id));
+  const activeConflictCount = activeConflicts.length;
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && architecture.architecture !== 'unified';
   const fullySynchronized = allConnected
     && pendingFieldCount === 0
-    && syncConflicts.length === 0
+    && activeConflictCount === 0
     && !requiresUnifiedMigration;
 
   const connectModule = useCallback((key: ModuleKey, code: string) => {
@@ -597,8 +607,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             ? (architecture.architecture === 'unified' ? '统一工作区已同步' : '旧房间同步 5/5')
             : allConnected && requiresUnifiedMigration
               ? '旧架构已连接，尚未进入统一工作区'
-            : allConnected && syncConflicts.length > 0
-              ? `已连接，存在 ${syncConflicts.length} 个冲突副本`
+            : allConnected && activeConflictCount > 0
+              ? `已连接，存在 ${activeConflictCount} 个待处理冲突`
               : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
                 ? `已连接，等待补传 ${pendingFieldCount} 个字段`
                 : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}</strong>
@@ -607,7 +617,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           认证方式：{liveblocksAuthMode === 'authenticated' ? '用户身份认证' : '公钥兼容模式'}
           {auth.login ? ` · GitHub：${auth.login}` : ''}
         </p>
-        <p className="tl-dialog-hint">待补传字段：{pendingFieldCount ?? '检查中'} · 冲突副本：{syncConflicts.length}</p>
+        <p className="tl-dialog-hint">待补传字段：{pendingFieldCount ?? '检查中'} · 当前冲突：{activeConflictCount}{historicalConflicts.length > 0 ? ` · 历史恢复副本：${historicalConflicts.length}` : ''}</p>
         <p className="tl-dialog-hint">
           本机最近完成云端内容校验：{formatTime(lastConnected.workspace)}
           {requiresUnifiedMigration ? ' · 当前仅连接旧模块房间，请在高级设置中迁移后再比较两台设备。' : ''}
@@ -634,16 +644,35 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           </section>
         )}
         {restoreMessage && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{restoreMessage}</p>}
-        {syncConflicts[0] && <section className="tl-sync-conflict-fields" aria-label="选择冲突数据">
-          <strong>最近冲突 · {formatTime(syncConflicts[0].detectedAt)}</strong>
-          <small>仅勾选你确认要用本机版本覆盖云端的部分；未选择的字段会继续保留在冲突副本中。</small>
-          <div>{(Object.keys(syncConflicts[0].pending.fields) as WorkspaceStorageField[]).map((field) => <label key={field}><input type="checkbox" checked={selectedConflictFields.includes(field)} onChange={(event) => setSelectedConflictFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))} /><span><b>{WORKSPACE_FIELD_LABELS[field] ?? field}{syncConflicts[0].conflictingFields?.includes(field) ? ' · 同字段冲突' : ''}</b><small>本机 {summarizeConflictValue(syncConflicts[0].pending.fields[field])} · 云端 {summarizeConflictValue(syncConflicts[0].remoteFields?.[field])}</small></span></label>)}</div>
-          <button type="button" className="tl-sync-backup-btn" disabled={selectedConflictFields.length === 0} onClick={async () => {
-            if (!await requestConfirmation(`用本机版本覆盖云端已选择的 ${selectedConflictFields.length} 个数据字段吗？未选择字段仍保留在冲突副本中。`)) return;
-            void restoreWorkspaceConflictFields(syncConflicts[0].id, selectedConflictFields)
-              .then(() => { setRestoreMessage('所选字段已按你的确认进入强制补传队列；云端确认后会自动清除。'); setSelectedConflictFields([]); })
-              .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '冲突恢复失败。'));
-          }}><RefreshCw size={14} />用本机版本覆盖所选字段</button>
+        {latestConflict && <section className="tl-sync-conflict-fields" aria-label={historicalConflict ? '历史恢复副本' : '当前同步冲突'}>
+          <strong>{historicalConflict ? '历史恢复副本' : '当前同步冲突'} · {formatTime(latestConflict.detectedAt)}</strong>
+          <small>{historicalConflict
+            ? `此副本早于 ${formatTime(lastConnected.workspace)} 的成功云端校验，不代表当前仍有同步故障。若两台设备现在内容正常，直接删除即可；删除不会修改本机或云端数据。`
+            : '这是尚未解决的当前冲突。保持未选择不会上传任何旧数据；只有确认确实需要找回的字段才应手动恢复。'}</small>
+          {!showConflictRecovery && <div className="tl-sync-backup-actions">
+            <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={async () => {
+              if (!await requestConfirmation(historicalConflict
+                ? '仅删除这份历史恢复副本吗？当前本机数据、云端数据和待上传队列都不会改变。'
+                : '保留当前已经加载的本机/云端版本，并放弃这份冲突副本吗？不会上传副本中的旧字段。')) return;
+              void discardWorkspaceConflict(latestConflict.id)
+                .then(() => { setRestoreMessage('冲突副本已删除；当前本机和云端数据均未修改。'); setSelectedConflictFields([]); })
+                .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '删除历史恢复副本失败。'));
+            }}><Check size={14} />{historicalConflict ? '当前内容正常，删除此副本' : '保留当前版本，不恢复副本'}</button>
+            <button type="button" className="tl-sync-backup-btn" onClick={() => setShowConflictRecovery(true)}><RefreshCw size={14} />需要从旧副本找回数据</button>
+          </div>}
+          {showConflictRecovery && <>
+            <small>以下“副本”是冲突发生时保存的旧数据，不是当前本机数据。默认不选择。恢复前系统会自动保存当前完整快照。</small>
+            <div>{(Object.keys(latestConflict.pending.fields) as WorkspaceStorageField[]).map((field) => <label key={field}><input type="checkbox" checked={selectedConflictFields.includes(field)} onChange={(event) => setSelectedConflictFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))} /><span><b>{WORKSPACE_FIELD_LABELS[field] ?? field}{latestConflict.conflictingFields?.includes(field) ? ' · 同字段冲突' : ''}</b><small>旧副本 {summarizeConflictValue(latestConflict.pending.fields[field])} · 冲突时云端 {summarizeConflictValue(latestConflict.remoteFields?.[field])}</small></span></label>)}</div>
+            <div className="tl-sync-backup-actions">
+              <button type="button" className="tl-sync-backup-btn" onClick={() => { setShowConflictRecovery(false); setSelectedConflictFields([]); }}>取消找回</button>
+              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" disabled={selectedConflictFields.length === 0} onClick={async () => {
+                if (!await requestConfirmation(`确定从旧副本恢复已选择的 ${selectedConflictFields.length} 个数据字段吗？系统会先保存当前完整快照，再将旧副本写入本机和云端。`)) return;
+                void restoreWorkspaceConflictFields(latestConflict.id, selectedConflictFields)
+                  .then(() => { setRestoreMessage('已保存恢复前快照；所选旧字段已进入强制补传队列，云端确认后会自动清除。'); setSelectedConflictFields([]); setShowConflictRecovery(false); })
+                  .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '冲突恢复失败。'));
+              }}><RefreshCw size={14} />恢复所选旧字段</button>
+            </div>
+          </>}
         </section>}
         {auth.enabled && auth.login && (
           <button type="button" className="tl-sync-backup-btn" onClick={() => void handleLogout()} style={{ marginBottom: 12 }}>

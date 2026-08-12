@@ -1,6 +1,6 @@
 const CACHE_PREFIX = 'smartline-shell-';
 const META_CACHE = 'smartline-shell-meta-v1';
-const WORKER_VERSION = '2026-08-12-sync-resilience-1';
+const WORKER_VERSION = '2026-08-12-conflict-recovery-2';
 const ACTIVE_CACHE_KEY = '/__smartline_active_cache__';
 const RELOAD_CLIENTS_KEY = '/__smartline_reload_clients__';
 const APP_SHELL_URL = '/';
