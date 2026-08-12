@@ -287,6 +287,19 @@ test('offline collections merge disjoint entity edits and report only same-prope
   assert.deepEqual(conflicting.conflicts, ['tasks[one].title']);
 });
 
+test('an absent cloud field initializes from local data instead of creating a false deletion conflict', () => {
+  const baseTasks = [{ id: 'one', title: 'before' }];
+  const localTasks = [{ id: 'one', title: 'offline edit' }];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: localTasks },
+    { tasks: baseTasks },
+    { metadata: { schemaVersion: WORKSPACE_SCHEMA_VERSION } },
+  );
+
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.fields.tasks, localTasks);
+});
+
 test('schema 6 project and key-date relationships participate in entity-level merges', () => {
   const baseGoal = { id: 'plan-1', name: '项目', progress: 0 };
   const mergedGoals = mergeWorkspaceFieldChanges(

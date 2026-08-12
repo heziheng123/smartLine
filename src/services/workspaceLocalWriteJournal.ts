@@ -3,6 +3,7 @@ import {
   type WorkspaceStoreReadiness,
 } from './workspaceSyncCore';
 import {
+  isWorkspaceConnectionMutationCaptureActive,
   isWorkspaceSystemMutationSuppressed,
   queueWorkspaceFields,
   type WorkspaceStorageField,
@@ -52,7 +53,7 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
     // previously verified snapshot. They are system mutations, not new local
     // edits, and must not recreate the queue that the operation is resolving.
     if (isWorkspaceSystemMutationSuppressed()) return;
-    if (!isUnifiedWorkspaceConfigured()) return;
+    if (!isUnifiedWorkspaceConfigured() && !isWorkspaceConnectionMutationCaptureActive()) return;
     const { fields, baseFields } = collectWorkspaceFieldChanges(
       before as Record<string, unknown>,
       after as Record<string, unknown>,

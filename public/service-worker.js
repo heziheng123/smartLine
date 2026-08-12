@@ -1,5 +1,6 @@
 const CACHE_PREFIX = 'smartline-shell-';
 const META_CACHE = 'smartline-shell-meta-v1';
+const WORKER_VERSION = '2026-08-12-sync-resilience-1';
 const ACTIVE_CACHE_KEY = '/__smartline_active_cache__';
 const RELOAD_CLIENTS_KEY = '/__smartline_reload_clients__';
 const APP_SHELL_URL = '/';
@@ -71,7 +72,7 @@ async function writeCacheState(state) {
   const cache = await caches.open(META_CACHE);
   await cache.put(
     ACTIVE_CACHE_KEY,
-    new Response(JSON.stringify(state), {
+    new Response(JSON.stringify({ ...state, workerVersion: WORKER_VERSION }), {
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
     }),
   );

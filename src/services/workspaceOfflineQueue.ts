@@ -12,6 +12,8 @@ import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
 import {
+  broadcastWorkspaceFields,
+  isWorkspaceConnectionMutationCaptureActive,
   isWorkspaceQueueSuppressed,
   listWorkspaceConflicts,
   queueWorkspaceFields,
@@ -155,7 +157,11 @@ export async function restoreWorkspaceConflict(id: string): Promise<void> {
     setWorkspaceQueueSuppressed(false);
   }
 
-  await queueWorkspaceFields(conflict.pending.fields);
+  const fields = Object.keys(conflict.pending.fields) as WorkspaceStorageField[];
+  await queueWorkspaceFields(conflict.pending.fields, {}, {
+    bypassSuppression: true,
+    forceFields: fields,
+  });
   await removeWorkspaceConflict(id);
 }
 
@@ -170,15 +176,16 @@ export async function restoreWorkspaceConflictFields(
   if (!conflict) throw new Error('冲突副本不存在。');
   const pickedFields = Object.fromEntries(Object.entries(conflict.pending.fields).filter(([key]) => selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
   if (Object.keys(pickedFields).length === 0) throw new Error('所选字段已不在冲突副本中。');
-  const pickedBase = Object.fromEntries(Object.entries(conflict.pending.baseFields ?? {}).filter(([key]) => selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
-
   setWorkspaceQueueSuppressed(true);
   try {
     applyWorkspaceFields(pickedFields);
   } finally {
     setWorkspaceQueueSuppressed(false);
   }
-  await queueWorkspaceFields(pickedFields, pickedBase, { bypassSuppression: true });
+  await queueWorkspaceFields(pickedFields, {}, {
+    bypassSuppression: true,
+    forceFields: [...selectedSet],
+  });
 
   const remainingFields = Object.fromEntries(Object.entries(conflict.pending.fields).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
   const remainingBaseFields = Object.fromEntries(Object.entries(conflict.pending.baseFields ?? {}).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
@@ -188,6 +195,7 @@ export async function restoreWorkspaceConflictFields(
     fields: remainingFields,
     baseFields: remainingBaseFields,
     baseHashes: remainingBaseHashes,
+    forceFields: conflict.pending.forceFields?.filter((field) => !selectedSet.has(field)),
     updatedAt: new Date().toISOString(),
   } : null);
 }
@@ -236,9 +244,12 @@ export function startWorkspaceQueueTracking(): () => void {
   let lifeMap = useLifeMapStore.getState();
 
   const shouldQueue = () => (
-    isUnifiedWorkspaceConfigured()
+    (isUnifiedWorkspaceConfigured() || isWorkspaceConnectionMutationCaptureActive())
     && !isWorkspaceStorageReady()
   );
+  const broadcastHydratedFields = (fields: Partial<Record<WorkspaceStorageField, unknown>>) => {
+    if (!isWorkspaceQueueSuppressed() && !shouldQueue()) broadcastWorkspaceFields(fields);
+  };
 
   const unsubscribers = [
     useTimelineStore.subscribe((state) => {
@@ -272,6 +283,7 @@ export function startWorkspaceQueueTracking(): () => void {
       ) {
         queueWorkspaceFields(changed, base, { preservePendingFields: true });
       }
+      if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),
     useEbbStore.subscribe((state) => {
       const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
@@ -300,6 +312,7 @@ export function startWorkspaceQueueTracking(): () => void {
       ) {
         queueWorkspaceFields(changed, base, { preservePendingFields: true });
       }
+      if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),
     useDailyScheduleStore.subscribe((state) => {
       const previous = daily;
@@ -325,6 +338,7 @@ export function startWorkspaceQueueTracking(): () => void {
           { preservePendingFields: true },
         );
       }
+      if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),
     useGraphStore.subscribe((state) => {
       const previous = graph;
@@ -340,6 +354,7 @@ export function startWorkspaceQueueTracking(): () => void {
           { preservePendingFields: true },
         );
       }
+      if (state.nodes !== previous.nodes) broadcastHydratedFields({ nodes: state.nodes });
     }),
     useLifeMapStore.subscribe((state) => {
       const previous = lifeMap;
@@ -355,6 +370,7 @@ export function startWorkspaceQueueTracking(): () => void {
       if (!isWorkspaceQueueSuppressed() && shouldQueue() && Object.keys(changed).length) {
         queueWorkspaceFields(changed, base, { preservePendingFields: true });
       }
+      if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),
   ];
 

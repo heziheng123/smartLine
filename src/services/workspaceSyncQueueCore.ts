@@ -20,6 +20,8 @@ export interface PendingWorkspaceSync {
   baseHashes?: Partial<Record<WorkspaceStorageField, string>>;
   /** Baseline snapshots used for entity/property-level three-way merging. */
   baseFields?: Partial<Record<WorkspaceStorageField, unknown>>;
+  /** Fields the user explicitly confirmed should replace the cloud version. */
+  forceFields?: WorkspaceStorageField[];
 }
 
 export interface WorkspaceConflictRecord {
@@ -43,6 +45,8 @@ export interface QueueWorkspaceFieldOptions {
    * explicit local action that is already pending.
    */
   preservePendingFields?: boolean;
+  /** Bypasses conflict comparison only for explicitly confirmed fields. */
+  forceFields?: WorkspaceStorageField[];
 }
 
 const queueStorage = createScopedStorage('workspace_sync_queue');
@@ -51,6 +55,9 @@ const CONFLICTS_KEY = 'conflicts-v1';
 const DEVICE_KEY = 'smart-line-device-id';
 const EMERGENCY_QUEUE_KEY = 'smart-line-workspace-sync-emergency-v1';
 const QUEUE_LOCK_NAME = 'smart-line-workspace-sync-queue-v1';
+const QUEUE_FALLBACK_LOCK_KEY = 'smart-line-workspace-sync-queue-lock-v1';
+const QUEUE_FALLBACK_LEASE_MS = 15_000;
+const QUEUE_FALLBACK_SETTLE_MS = 32;
 export const WORKSPACE_QUEUE_EVENT = 'smartline:workspace-queue';
 export const WORKSPACE_QUEUE_ERROR_EVENT = 'smartline:workspace-queue-error';
 export const workspaceQueueTabId = crypto.randomUUID();
@@ -65,11 +72,85 @@ export const workspaceQueueChannel = !isBrowserRuntime
 let writeChain = Promise.resolve();
 let trackingSuppressionDepth = 0;
 let systemMutationSuppressionDepth = 0;
+let connectionMutationCaptureDepth = 0;
 let volatilePending: PendingWorkspaceSync | null = null;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+interface QueueFallbackLease {
+  token: string;
+  expiresAt: number;
+}
+
+function readFallbackLease(): QueueFallbackLease | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(QUEUE_FALLBACK_LOCK_KEY) ?? 'null') as QueueFallbackLease | null;
+    return value && typeof value.token === 'string' && typeof value.expiresAt === 'number' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Safari versions without the Web Locks API still need one shared critical
+ * section for the read-merge-write queue transaction. A short localStorage
+ * lease is used only as that compatibility mutex; the queue itself remains
+ * durably stored in IndexedDB.
+ */
+async function withFallbackQueueStorageLock<T>(operation: () => Promise<T>): Promise<T> {
+  const token = crypto.randomUUID();
+  const deadline = Date.now() + QUEUE_FALLBACK_LEASE_MS;
+
+  while (Date.now() < deadline) {
+    const lease = readFallbackLease();
+    if (!lease || lease.expiresAt <= Date.now()) {
+      try {
+        localStorage.setItem(QUEUE_FALLBACK_LOCK_KEY, JSON.stringify({
+          token,
+          expiresAt: Date.now() + QUEUE_FALLBACK_LEASE_MS,
+        } satisfies QueueFallbackLease));
+      } catch {
+        // Private/restricted browser modes can deny localStorage entirely. The
+        // queue's existing emergency journal still protects local edits, but
+        // the cross-tab serialization guarantee cannot be provided there.
+        return await operation();
+      }
+
+      // localStorage has no compare-and-set. Let simultaneous contenders write
+      // their claims, then only the last lease owner may enter the transaction.
+      await delay(QUEUE_FALLBACK_SETTLE_MS);
+      if (readFallbackLease()?.token === token) {
+        const renewal = window.setInterval(() => {
+          try {
+            if (readFallbackLease()?.token === token) {
+              localStorage.setItem(QUEUE_FALLBACK_LOCK_KEY, JSON.stringify({
+                token,
+                expiresAt: Date.now() + QUEUE_FALLBACK_LEASE_MS,
+              } satisfies QueueFallbackLease));
+            }
+          } catch { /* compatibility lock only */ }
+        }, Math.floor(QUEUE_FALLBACK_LEASE_MS / 3));
+        try {
+          return await operation();
+        } finally {
+          window.clearInterval(renewal);
+          try {
+            if (readFallbackLease()?.token === token) localStorage.removeItem(QUEUE_FALLBACK_LOCK_KEY);
+          } catch { /* compatibility lock only */ }
+        }
+      }
+    }
+    await delay(QUEUE_FALLBACK_SETTLE_MS);
+  }
+
+  throw new Error('等待其他标签页完成同步队列写入超时，请保持页面开启后重试。');
+}
 
 async function withQueueStorageLock<T>(operation: () => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
-  if (!locks?.request) return operation();
+  if (!locks?.request) return await withFallbackQueueStorageLock(operation);
   return locks.request(QUEUE_LOCK_NAME, { mode: 'exclusive' }, operation);
 }
 
@@ -128,6 +209,22 @@ export function isWorkspaceSystemMutationSuppressed(): boolean {
   return systemMutationSuppressionDepth > 0;
 }
 
+/**
+ * First-time room discovery can take several network round trips. Keep local
+ * edits made during that window in the durable workspace queue even before a
+ * unified-room setting has been committed, so later hydration cannot replace
+ * an edit that happened after the safety snapshot.
+ */
+export function setWorkspaceConnectionMutationCapture(value: boolean): void {
+  connectionMutationCaptureDepth = value
+    ? connectionMutationCaptureDepth + 1
+    : Math.max(0, connectionMutationCaptureDepth - 1);
+}
+
+export function isWorkspaceConnectionMutationCaptureActive(): boolean {
+  return connectionMutationCaptureDepth > 0;
+}
+
 function deviceId(): string {
   const existing = localStorage.getItem(DEVICE_KEY);
   if (existing) return existing;
@@ -172,6 +269,10 @@ export function queueWorkspaceFields(
         : { ...(existing?.fields ?? {}), ...fields },
       baseHashes,
       baseFields: initialBaseFields,
+      forceFields: [...new Set([
+        ...(existing?.forceFields ?? []),
+        ...(options.forceFields ?? []),
+      ])],
     };
     attemptedPending = next;
     await queueStorage.setItem(QUEUE_KEY, next);
@@ -197,6 +298,20 @@ export function queueWorkspaceFields(
     console.warn('[workspace-queue] 保存待同步变更失败：', error);
   });
   return operation;
+}
+
+/** Broadcasts a leader's hydrated cloud changes to tabs that deliberately do
+ * not keep their own Liveblocks connection open. */
+export function broadcastWorkspaceFields(
+  fields: Partial<Record<WorkspaceStorageField, unknown>>,
+): void {
+  if (Object.keys(fields).length === 0) return;
+  workspaceQueueChannel?.postMessage({
+    version: 1,
+    type: 'fields',
+    source: workspaceQueueTabId,
+    fields,
+  });
 }
 
 export async function readPendingWorkspaceSync(): Promise<PendingWorkspaceSync | null> {

@@ -326,6 +326,15 @@ export function mergeWorkspaceFieldChanges(
   const mergedFields: Record<string, unknown> = {};
   const conflicts: string[] = [];
   for (const [key, localValue] of Object.entries(fields)) {
+    // Unified storage only ever appends or replaces mapped fields; it never
+    // deletes them. An absent cloud field therefore means this is a newly
+    // introduced field or an empty workspace, not a competing deletion. Treat
+    // it as a safe backfill so an established local workspace can seed a new
+    // room instead of being trapped in a false "same-field conflict".
+    if (!Object.prototype.hasOwnProperty.call(remote, key)) {
+      mergedFields[key] = localValue;
+      continue;
+    }
     if (!Object.prototype.hasOwnProperty.call(baseFields, key)) {
       mergedFields[key] = localValue;
       continue;

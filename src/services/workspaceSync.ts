@@ -26,6 +26,7 @@ import {
   getPendingWorkspaceSyncToken,
   preserveWorkspaceConflict,
   readPendingWorkspaceSync,
+  setWorkspaceConnectionMutationCapture,
   setWorkspaceQueueSuppressed,
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
@@ -217,6 +218,15 @@ function runWorkspaceConnectionOperation<T>(operation: () => Promise<T>): Promis
   return current;
 }
 
+async function captureWorkspaceMutationsDuring<T>(operation: () => Promise<T>): Promise<T> {
+  setWorkspaceConnectionMutationCapture(true);
+  try {
+    return await operation();
+  } finally {
+    setWorkspaceConnectionMutationCapture(false);
+  }
+}
+
 export function readWorkspaceSyncSettings(): WorkspaceSyncSettings {
   try {
     const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<WorkspaceSyncSettings> | null;
@@ -387,7 +397,9 @@ export function reconnectConfiguredWorkspace(
   identity?: string,
   historicalIdentity?: string,
 ): Promise<UnifiedWorkspaceConnectionResult | null> {
-  return runWorkspaceConnectionOperation(() => reconnectConfiguredWorkspaceInternal(identity, historicalIdentity));
+  return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
+    () => reconnectConfiguredWorkspaceInternal(identity, historicalIdentity),
+  ));
 }
 
 function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): WorkspaceBackup {
@@ -664,8 +676,8 @@ export function activateUnifiedWorkspaceSafely(
   identity: string,
   historicalIdentity?: string,
 ): Promise<UnifiedWorkspaceActivationResult> {
-  return runWorkspaceConnectionOperation(() => (
-    activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity)
+  return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
+    () => activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity),
   ));
 }
 
@@ -735,8 +747,8 @@ export function activateWorkspaceWithLegacyDiscovery(
   identity: string,
   historicalIdentity?: string,
 ): Promise<UnifiedWorkspaceActivationResult> {
-  return runWorkspaceConnectionOperation(() => (
-    activateWorkspaceWithLegacyDiscoveryInternal(roomCode, identity, historicalIdentity)
+  return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
+    () => activateWorkspaceWithLegacyDiscoveryInternal(roomCode, identity, historicalIdentity),
   ));
 }
 
@@ -870,8 +882,8 @@ export function resolveUnifiedWorkspaceConflict(
   historicalIdentity?: string,
   remoteSource: 'unified' | 'legacy' = 'unified',
 ): Promise<UnifiedWorkspaceConnectionResult> {
-  return runWorkspaceConnectionOperation(() => (
-    resolveUnifiedWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity, remoteSource)
+  return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
+    () => resolveUnifiedWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity, remoteSource),
   ));
 }
 
@@ -1153,6 +1165,8 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
   const { root } = await room.getStorage();
   const rootJson = root.toJSON() as Record<string, unknown>;
   const pendingKeys = Object.keys(pending.fields) as WorkspaceStorageField[];
+  const forcedKeys = new Set(pending.forceFields ?? []);
+  const protectedKeys = pendingKeys.filter((key) => !forcedKeys.has(key));
   const metadata = rootJson.metadata && typeof rootJson.metadata === 'object'
     ? rootJson.metadata as Record<string, unknown>
     : {};
@@ -1176,8 +1190,8 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
     pending.baseHashes ?? {},
     rootJson,
     ),
-  ];
-  const fieldsWithoutBaseline = Object.keys(pending.fields).filter((key) => !pending.baseHashes?.[key as keyof typeof pending.baseHashes]);
+  ].filter((path) => !forcedKeys.has(path.split(/[.[]/, 1)[0] as WorkspaceStorageField));
+  const fieldsWithoutBaseline = protectedKeys.filter((key) => !pending.baseHashes?.[key]);
   const metadataConflict = fieldsWithoutBaseline.length > 0
     && remoteUpdatedAt > pending.updatedAt
     && remoteDeviceId
@@ -1206,7 +1220,7 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
   if (fieldConflicts.length > 0 || metadataConflict) {
     const remoteFields = Object.fromEntries(pendingKeys.map((key) => [key, rootJson[key]])) as Partial<Record<WorkspaceStorageField, unknown>>;
     const conflictingFields = [...new Set(fieldConflicts.map((path) => path.split(/[.[]/, 1)[0] as WorkspaceStorageField))];
-    await preserveWorkspaceConflict(pending, remoteUpdatedAt, remoteFields, metadataConflict ? pendingKeys : conflictingFields);
+    await preserveWorkspaceConflict(pending, remoteUpdatedAt, remoteFields, metadataConflict ? protectedKeys : conflictingFields);
     window.dispatchEvent(new CustomEvent(WORKSPACE_CONFLICT_EVENT));
     window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
     return { applied: 0, conflict: true };
@@ -1358,7 +1372,9 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
 }
 
 export function migrateLegacyWorkspace(roomCode: string, identity: string): Promise<WorkspaceMigrationReport> {
-  return runWorkspaceConnectionOperation(() => migrateLegacyWorkspaceInternal(roomCode, identity));
+  return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
+    () => migrateLegacyWorkspaceInternal(roomCode, identity),
+  ));
 }
 
 export function downloadMigrationReport(report: WorkspaceMigrationReport): void {

@@ -639,11 +639,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           <small>仅勾选你确认要用本机版本覆盖云端的部分；未选择的字段会继续保留在冲突副本中。</small>
           <div>{(Object.keys(syncConflicts[0].pending.fields) as WorkspaceStorageField[]).map((field) => <label key={field}><input type="checkbox" checked={selectedConflictFields.includes(field)} onChange={(event) => setSelectedConflictFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))} /><span><b>{WORKSPACE_FIELD_LABELS[field] ?? field}{syncConflicts[0].conflictingFields?.includes(field) ? ' · 同字段冲突' : ''}</b><small>本机 {summarizeConflictValue(syncConflicts[0].pending.fields[field])} · 云端 {summarizeConflictValue(syncConflicts[0].remoteFields?.[field])}</small></span></label>)}</div>
           <button type="button" className="tl-sync-backup-btn" disabled={selectedConflictFields.length === 0} onClick={async () => {
-            if (!await requestConfirmation(`恢复已选择的 ${selectedConflictFields.length} 个数据字段吗？这些内容会重新进入待同步队列。`)) return;
+            if (!await requestConfirmation(`用本机版本覆盖云端已选择的 ${selectedConflictFields.length} 个数据字段吗？未选择字段仍保留在冲突副本中。`)) return;
             void restoreWorkspaceConflictFields(syncConflicts[0].id, selectedConflictFields)
-              .then(() => { setRestoreMessage('所选冲突字段已恢复并进入待同步队列。'); setSelectedConflictFields([]); })
+              .then(() => { setRestoreMessage('所选字段已按你的确认进入强制补传队列；云端确认后会自动清除。'); setSelectedConflictFields([]); })
               .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '冲突恢复失败。'));
-          }}><RefreshCw size={14} />恢复所选字段</button>
+          }}><RefreshCw size={14} />用本机版本覆盖所选字段</button>
         </section>}
         {auth.enabled && auth.login && (
           <button type="button" className="tl-sync-backup-btn" onClick={() => void handleLogout()} style={{ marginBottom: 12 }}>
