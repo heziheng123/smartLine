@@ -460,6 +460,10 @@ const App: React.FC = () => {
   const hasAlignedDisplayYear = React.useRef(false);
   const hasAttemptedAutoReconnect = React.useRef(false);
   const hasStartedHydration = React.useRef(false);
+  const handleViewChangeRef = React.useRef(handleViewChange);
+  React.useEffect(() => {
+    handleViewChangeRef.current = handleViewChange;
+  }, [handleViewChange]);
 
   // 异步加载 IndexedDB 数据
   React.useEffect(() => {
@@ -619,7 +623,7 @@ const App: React.FC = () => {
       const e = event as CustomEvent<TimelineNavigateDetail>;
       const detail = e.detail;
       if (detail?.view) {
-        handleViewChange(detail.view);
+        handleViewChangeRef.current(detail.view);
       }
       if (detail?.taskId) {
         setDrawerTaskId(detail.taskId);
@@ -881,7 +885,7 @@ const App: React.FC = () => {
 
   const handleOpenSync = useCallback(() => {
     setDialogType('sync');
-  }, [handleViewChange]);
+  }, []);
 
   React.useEffect(() => {
     window.addEventListener(OPEN_WORKSPACE_SYNC_EVENT, handleOpenSync);
