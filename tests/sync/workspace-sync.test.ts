@@ -425,6 +425,93 @@ test('legacy workspaces automatically include Life Map after the module is intro
   assert.equal(shouldBackfillLegacyLifeMapSync(false, false), false);
 });
 
+test('an entity added by only one device while the other device has no base is preserved in the merge', () => {
+  const base: unknown[] = [];
+  const local = [{ id: 'task-new', title: 'only on device A' }];
+  const remote: unknown[] = [];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: local },
+    { tasks: base },
+    { tasks: remote },
+  );
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.fields.tasks, [{ id: 'task-new', title: 'only on device A' }]);
+});
+
+test('a deletion by one device while the other is unchanged is preserved without conflict', () => {
+  const base = [{ id: 'task-1', title: 'original' }, { id: 'task-2', title: 'keep' }];
+  const local = [{ id: 'task-2', title: 'keep' }];
+  const remote = [{ id: 'task-1', title: 'original' }, { id: 'task-2', title: 'keep' }];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: local },
+    { tasks: base },
+    { tasks: remote },
+  );
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.fields.tasks, [{ id: 'task-2', title: 'keep' }]);
+});
+
+test('a deletion by device A conflicts with a concurrent modification by device B', () => {
+  const base = [{ id: 'task-1', title: 'original' }];
+  const local = [{ id: 'task-1', title: 'original' }];
+  const remote = ([] as unknown[]);
+  const deleteWins = mergeWorkspaceFieldChanges(
+    { tasks: remote },
+    { tasks: base },
+    { tasks: local },
+  );
+  assert.deepEqual(deleteWins.conflicts, []);
+  assert.deepEqual(deleteWins.fields.tasks, []);
+
+  const modifyAndDelete = mergeWorkspaceFieldChanges(
+    { tasks: [{ id: 'task-1', title: 'offline edit' }] },
+    { tasks: base },
+    { tasks: remote },
+  );
+  assert.ok(modifyAndDelete.conflicts.length > 0, 'modify-vs-delete should produce a conflict');
+});
+
+test('both devices independently adding the same entity id with different content raises a conflict', () => {
+  const base: unknown[] = [];
+  const local = [{ id: 'task-x', title: 'device A name' }];
+  const remote = [{ id: 'task-x', title: 'device B name' }];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: local },
+    { tasks: base },
+    { tasks: remote },
+  );
+  assert.ok(result.conflicts.length > 0, 'same-id concurrent add should conflict');
+});
+
+test('three-way entity merge preserves ordering from remote when no local ordering change', () => {
+  const base = [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }];
+  const local = [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }];
+  const remote = [{ id: 'b', title: 'B' }, { id: 'a', title: 'A' }, { id: 'c', title: 'C' }];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: local },
+    { tasks: base },
+    { tasks: remote },
+  );
+  assert.deepEqual(result.conflicts, []);
+  const ids = (result.fields.tasks as Array<{ id: string }>).map((t) => t.id);
+  assert.deepEqual(ids, ['b', 'a', 'c']);
+});
+
+test('deeply nested object fields are merged independently without full-object conflict', () => {
+  const base = [{ id: 'task-1', header: { title: 'T', date: '2026-01-01', status: 'active' } }];
+  const local = [{ id: 'task-1', header: { title: 'T', date: '2026-02-01', status: 'active' } }];
+  const remote = [{ id: 'task-1', header: { title: 'T', date: '2026-01-01', status: 'done' } }];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: local },
+    { tasks: base },
+    { tasks: remote },
+  );
+  assert.deepEqual(result.conflicts, []);
+  const merged = (result.fields.tasks as Array<{ id: string; header: Record<string, unknown> }>)[0];
+  assert.equal(merged.header.date, '2026-02-01');
+  assert.equal(merged.header.status, 'done');
+});
+
 test('local write journal captures only changed mapped fields and their baseline', () => {
   const tasksBefore = [{ id: 'task', isCompleted: true }];
   const tasksAfter = [{ id: 'task', isCompleted: false }];
