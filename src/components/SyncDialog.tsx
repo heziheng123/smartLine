@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { requestConfirmation } from '@/services/confirmation';
-import { ArrowRightLeft, Check, Cloud, Copy, Database, Download, Eye, EyeOff, Link, LogOut, RefreshCw, Unlink, Upload } from 'lucide-react';
+import { ArrowRightLeft, Check, Cloud, Copy, Database, Download, Eye, EyeOff, FileSearch, Link, LogOut, RefreshCw, Unlink, Upload } from 'lucide-react';
 import { useTimelineStore } from '@/store';
 import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
@@ -44,8 +44,11 @@ import {
 import { discardWorkspaceConflict, listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
 import { isWorkspaceConflictHistorical } from '@/services/workspaceSyncCore';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
+import { createCurrentWorkspaceAuditReport, downloadCurrentWorkspaceAuditReport } from '@/services/workspaceAudit';
+import type { WorkspaceAuditReport } from '@/services/workspaceAuditCore';
 import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
 import { useShallow } from 'zustand/react/shallow';
+import { summarizeAllConflicts, type FieldConflictSummary } from '@/services/workspaceConflictDiff';
 
 interface SyncDialogProps { onClose: () => void }
 type ModuleKey = 'timeline' | 'ebb' | 'daily' | 'graph' | 'lifeMap';
@@ -53,6 +56,7 @@ type DisplayStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
 type LastConnectedRecord = Partial<Record<ModuleKey | 'workspace', string>> & { workspaceRoomId?: string };
 
 const LAST_CONNECTED_KEY = 'smart-line-sync-last-connected';
+const LAST_MANUAL_EXPORT_KEY = 'smart-line-last-manual-export';
 const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
   lifeMapAreas: '人生领域', lifeMapPlanGroups: '项目展示大类', lifeMapStages: '人生时期', lifeMapThemes: '时期重点（历史主题）', lifeMapGoals: '目标与项目',
   lifeMapSystems: '长期系统', lifeMapSystemCheckIns: '系统完成记录', lifeMapEvents: '关键日期', lifeMapFocuses: '阶段重点',
@@ -68,6 +72,26 @@ function readLastConnected(): LastConnectedRecord {
   }
 }
 
+function readLastManualExport(): string | null {
+  try {
+    const value = localStorage.getItem(LAST_MANUAL_EXPORT_KEY);
+    return value && !Number.isNaN(Date.parse(value)) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function describeLastManualExport(): string {
+  const value = readLastManualExport();
+  if (!value) return '尚未手动导出过';
+  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
+  if (days <= 0) return '今天刚刚导出过';
+  if (days === 1) return '昨天导出过';
+  if (days < 7) return `${days} 天前导出过`;
+  if (days < 30) return `${days} 天前导出过（约 ${Math.floor(days / 7)} 周）`;
+  return `${days} 天前导出过（建议尽快重新导出）`;
+}
+
 function formatTime(value?: string): string {
   if (!value) return '暂无记录';
   const date = new Date(value);
@@ -79,6 +103,214 @@ function summarizeConflictValue(value: unknown): string {
   if (value && typeof value === 'object') return `${Object.keys(value as Record<string, unknown>).length} 项`;
   if (value === undefined) return '无数据';
   return String(value).slice(0, 24);
+}
+
+function describeConflictPath(field: WorkspaceStorageField, entityId: string): string {
+  const kindLabels: Partial<Record<WorkspaceStorageField, string>> = {
+    tasks: '项目任务',
+    groups: '项目分组',
+    notes: '时间轴便签',
+    milestones: '里程碑',
+    schedules: '每日安排',
+    retrospectives: '每日复盘',
+    reviewTasks: '复习轮次',
+    nodes: '知识节点',
+    lifeMapAreas: '人生领域',
+    lifeMapPlanGroups: '人生规划分组',
+    lifeMapStages: '人生时期',
+    lifeMapThemes: '时期主题',
+    lifeMapGoals: '人生目标',
+    lifeMapSystems: '长期系统',
+    lifeMapSystemCheckIns: '系统打卡',
+    lifeMapEvents: '关键日期',
+    lifeMapFocuses: '阶段重点',
+    lifeMapNotes: '人生便签',
+    lifeMapReviews: '周期复盘',
+  };
+  return `${kindLabels[field] ?? field}[${entityId.slice(0, 12)}]`;
+}
+
+function formatConflictScalar(value: unknown): string {
+  if (value === undefined) return '（无）';
+  if (value === null) return '（空）';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function describeConflictKind(fieldPath: string): { label: string; tone: 'create' | 'delete' | 'modify' | 'bulk' } {
+  if (fieldPath === '(新建)') return { label: '新增', tone: 'create' };
+  if (fieldPath === '(删除)') return { label: '删除', tone: 'delete' };
+  if (fieldPath === '(整体内容)') return { label: '整体差异', tone: 'bulk' };
+  return { label: fieldPath, tone: 'modify' };
+}
+
+const CONFLICT_TONE_COLORS: Record<'create' | 'delete' | 'modify' | 'bulk', { fg: string; bg: string; border: string }> = {
+  create: { fg: '#065F46', bg: '#D1FAE5', border: '#6EE7B7' },
+  delete: { fg: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
+  modify: { fg: '#92400E', bg: '#FEF3C7', border: '#FCD34D' },
+  bulk: { fg: '#3730A3', bg: '#E0E7FF', border: '#A5B4FC' },
+};
+
+function ConflictFieldDetail({ summary }: { summary: FieldConflictSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleEntities = expanded ? summary.entities : summary.entities.slice(0, 5);
+  const hiddenCount = summary.entities.length - visibleEntities.length;
+  return (
+    <div className="tl-sync-conflict-detail" style={{ marginTop: 8 }}>
+      <strong style={{ display: 'block', marginBottom: 6, fontSize: 12 }}>
+        {summary.fieldLabel} · {summary.totalEntities} 个条目 · {summary.totalDiffs} 处差异
+      </strong>
+      <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {visibleEntities.map((entity) => (
+          <li key={`${summary.field}:${entity.entityId}`} style={{ border: '1px solid #E5E7EB', borderRadius: 4, padding: '6px 8px', backgroundColor: '#FAFAFA' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+              {describeConflictPath(summary.field, entity.entityId)} · <span style={{ color: '#1F2937' }}>{entity.entityLabel}</span>
+            </div>
+            {entity.diffs.map((diff, idx) => {
+              const kind = describeConflictKind(diff.fieldPath);
+              const tone = CONFLICT_TONE_COLORS[kind.tone];
+              return (
+                <div key={`${entity.entityId}-${diff.fieldPath}-${idx}`} style={{ fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
+                  <span
+                    title={diff.summary}
+                    style={{
+                      display: 'inline-block',
+                      padding: '0 6px',
+                      marginRight: 6,
+                      borderRadius: 3,
+                      color: tone.fg,
+                      backgroundColor: tone.bg,
+                      border: `1px solid ${tone.border}`,
+                      fontSize: 10,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {kind.label}
+                  </span>
+                  {kind.tone === 'modify' && <span style={{ color: '#6B7280' }}>📍 {diff.fieldPath}</span>}
+                  {kind.tone === 'modify' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 8px', marginTop: 2, marginLeft: 12 }}>
+                      <span style={{ color: '#047857' }}>本机：</span>
+                      <span style={{ wordBreak: 'break-word' }}>{formatConflictScalar(diff.localValue)}</span>
+                      <span style={{ color: '#1D4ED8' }}>云端：</span>
+                      <span style={{ wordBreak: 'break-word' }}>{formatConflictScalar(diff.remoteValue)}</span>
+                    </div>
+                  )}
+                  {kind.tone !== 'modify' && (
+                    <span style={{ color: '#4B5563', marginLeft: 4 }}>{diff.summary}</span>
+                  )}
+                </div>
+              );
+            })}
+          </li>
+        ))}
+        {hiddenCount > 0 && (
+          <li>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              style={{
+                fontSize: 11,
+                color: '#1D4ED8',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+              }}
+            >
+              展开剩余 {hiddenCount} 个条目
+            </button>
+          </li>
+        )}
+        {expanded && summary.entities.length > 5 && (
+          <li>
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              style={{
+                fontSize: 11,
+                color: '#6B7280',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+              }}
+            >
+              收起
+            </button>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function WorkspaceHealthPanel({ report, onShowOrphans }: { report: WorkspaceAuditReport | null; onShowOrphans: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!report) {
+    return (
+      <details className="tl-settings-disclosure" style={{ marginBottom: 12 }}>
+        <summary><FileSearch size={15} />当前数据状况</summary>
+        <div className="tl-sync-backup-section tl-settings-disclosure-content" style={{ fontSize: 12, color: '#6B7280' }}>
+          正在生成盘点报告…
+        </div>
+      </details>
+    );
+  }
+  const status = report.integrity.status;
+  const palette = {
+    passed: { fg: '#065F46', bg: '#D1FAE5', label: '数据整合' },
+    warning: { fg: '#92400E', bg: '#FEF3C7', label: '需要复核' },
+    blocked: { fg: '#991B1B', bg: '#FEE2E2', label: '存在阻断' },
+  }[status];
+  const totalCount = Object.values(report.collections).reduce((sum, item) => sum + item.count, 0);
+  const largestEntry = Object.values(report.collections)
+    .filter((entry) => entry.largestEntity)
+    .sort((a, b) => (b.largestEntity?.bytes ?? 0) - (a.largestEntity?.bytes ?? 0))[0];
+  const collectionsWithIssues = Object.entries(report.collections)
+    .filter(([, entry]) => entry.duplicateIds.length > 0 || entry.missingIdCount > 0)
+    .map(([name]) => name);
+  return (
+    <details className="tl-settings-disclosure" style={{ marginBottom: 12 }} open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+      <summary><FileSearch size={15} />当前数据状况</summary>
+      <div className="tl-sync-backup-section tl-settings-disclosure-content" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ padding: '2px 8px', borderRadius: 4, backgroundColor: palette.bg, color: palette.fg, fontSize: 12, fontWeight: 600 }}>
+            {palette.label}
+          </span>
+          <span style={{ fontSize: 12, color: '#374151' }}>
+            {report.integrity.blockerCount} 个阻断 · {report.integrity.warningCount} 个警告
+          </span>
+          <span style={{ fontSize: 12, color: '#6B7280' }}>
+            共 {totalCount.toLocaleString('zh-CN')} 条记录 · {(report.backupBytes / 1024).toFixed(1)} KB
+          </span>
+        </div>
+        {largestEntry?.largestEntity && (
+          <small style={{ fontSize: 11, color: '#6B7280' }}>
+            最大单条：{largestEntry.largestEntity.id}（{(largestEntry.largestEntity.bytes / 1024).toFixed(1)} KB）
+          </small>
+        )}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="tl-sync-backup-btn"
+            onClick={onShowOrphans}
+            disabled={report.findings.filter((finding) => finding.code === 'missing-reference').length === 0}
+          >
+            <FileSearch size={14} />查看孤儿引用
+            {report.findings.filter((finding) => finding.code === 'missing-reference').length > 0
+              && `（${report.findings.filter((finding) => finding.code === 'missing-reference').length}）`}
+          </button>
+        </div>
+        {collectionsWithIssues.length > 0 && (
+          <small style={{ fontSize: 11, color: '#92400E' }}>
+            集合中存在重复或缺失 ID：{collectionsWithIssues.join('、')}
+          </small>
+        )}
+      </div>
+    </details>
+  );
 }
 
 const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
@@ -147,6 +379,103 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [showConflictRecovery, setShowConflictRecovery] = useState(false);
   const [archivePeriod, setArchivePeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [dataPanelOpen, setDataPanelOpen] = useState(false);
+  const supportsWebLocks = typeof navigator !== 'undefined' && 'locks' in navigator;
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [crossTabCheck, setCrossTabCheck] = useState<{
+    status: 'idle' | 'running' | 'success' | 'fallback' | 'failed';
+    message: string;
+    detail: string[];
+  }>({ status: 'idle', message: '', detail: [] });
+  const [healthReport, setHealthReport] = useState<WorkspaceAuditReport | null>(null);
+  const [healthReportBusy, setHealthReportBusy] = useState(false);
+
+  const runCrossTabDetection = useCallback(async () => {
+    setCrossTabCheck({ status: 'running', message: '正在打开第二个标签页…', detail: [] });
+    const detail: string[] = [];
+    try {
+      const supportsBroadcast = typeof BroadcastChannel !== 'undefined';
+      const supportsStorage = typeof localStorage !== 'undefined';
+      detail.push(`BroadcastChannel 支持：${supportsBroadcast ? '是' : '否'}`);
+      detail.push(`localStorage 支持：${supportsStorage ? '是' : '否'}`);
+      detail.push(`Web Locks API 支持：${supportsWebLocks ? '是' : '否（将降级）'}`);
+      if (!supportsStorage) {
+        setCrossTabCheck({ status: 'failed', message: '当前浏览器禁用 localStorage，跨标签页协调不可用。', detail });
+        return;
+      }
+      const probeKey = 'smart-line-crosstab-probe';
+      const leaseKey = 'smart-line-crosstab-lease';
+      let storedLease: string | null = null;
+      let acquiredLease = false;
+      try { storedLease = localStorage.getItem(leaseKey); } catch { storedLease = null; }
+      detail.push(`本机原租约：${storedLease ? storedLease : '空闲'}`);
+      try {
+        if (supportsWebLocks) {
+          await navigator.locks.request(`smartline-crosstab-lease-${probeKey}`, { mode: 'exclusive' }, async () => {
+            acquiredLease = true;
+            try { localStorage.setItem(leaseKey, `probe-${Date.now()}`); } catch { /* storage guarded */ }
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 600));
+            try { localStorage.removeItem(leaseKey); } catch { /* storage guarded */ }
+          });
+          if (acquiredLease) {
+            setCrossTabCheck({
+              status: 'success',
+              message: '本地租约机制工作正常，跨标签页同步已具备最佳路径。',
+              detail,
+            });
+            return;
+          }
+        }
+        const fallbackChannel = 'smartline-crosstab-fallback';
+        const fallbackProbe = `probe-${Date.now()}`;
+        if (supportsBroadcast) {
+          const channel = new BroadcastChannel(fallbackChannel);
+          await new Promise<void>((resolve) => {
+            channel.onmessage = (event) => {
+              if (event.data === fallbackProbe) {
+                channel.postMessage('ack');
+                resolve();
+              }
+            };
+            channel.postMessage(fallbackProbe);
+            window.setTimeout(() => resolve(), 600);
+          });
+          channel.close();
+          setCrossTabCheck({
+            status: 'fallback',
+            message: '未启用 Web Locks，已降级到 BroadcastChannel + localStorage 机制。打开第二个标签页可观察同步协调。',
+            detail,
+          });
+          return;
+        }
+        setCrossTabCheck({
+          status: 'fallback',
+          message: '当前浏览器缺少 Web Locks 与 BroadcastChannel，跨标签页同步将仅依赖 localStorage 事件。',
+          detail,
+        });
+      } catch (error) {
+        setCrossTabCheck({
+          status: 'failed',
+          message: error instanceof Error ? `租约检测失败：${error.message}` : '租约检测失败。',
+          detail,
+        });
+      }
+    } catch (error) {
+      setCrossTabCheck({
+        status: 'failed',
+        message: error instanceof Error ? `检测失败：${error.message}` : '检测失败。',
+        detail,
+      });
+    }
+  }, [supportsWebLocks]);
+
+  useEffect(() => {
+    if (healthReport || healthReportBusy) return;
+    setHealthReportBusy(true);
+    createCurrentWorkspaceAuditReport()
+      .then(setHealthReport)
+      .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '数据盘点报告生成失败。'))
+      .finally(() => setHealthReportBusy(false));
+  }, [healthReport, healthReportBusy]);
 
   useEffect(() => {
     if (!dataPanelOpen) return;
@@ -475,7 +804,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const handleExport = useCallback(() => {
     try {
       downloadWorkspaceBackup();
-      setRestoreMessage('完整工作区备份已导出。');
+      try { localStorage.setItem(LAST_MANUAL_EXPORT_KEY, new Date().toISOString()); } catch { /* storage guarded */ }
+      setRestoreMessage(`完整工作区备份已导出（${describeLastManualExport()}）。`);
     } catch (error) {
       setRestoreMessage(error instanceof Error ? error.message : '完整备份导出失败。');
     }
@@ -489,6 +819,39 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       setRestoreMessage(issues.length === 0 ? '数据健康检查通过，未发现孤儿绑定、重复 ID 或无效日期。' : `数据健康检查发现 ${issues.length} 个问题：${issues.slice(0, 3).join('；')}`);
     } catch (error) {
       setRestoreMessage(error instanceof Error ? error.message : '数据健康检查失败。');
+    }
+  }, []);
+
+  const handleShowOrphans = useCallback(() => {
+    if (!healthReport) return;
+    const orphans = healthReport.findings.filter((finding) => finding.code === 'missing-reference');
+    if (orphans.length === 0) {
+      setRestoreMessage('未发现孤儿引用：所有跨模块绑定都指向实际存在的实体。');
+      return;
+    }
+    const summary = orphans
+      .slice(0, 3)
+      .map((finding) => `[${finding.collection ?? '?'}] ${finding.message}`)
+      .join('；');
+    setRestoreMessage(orphans.length === 1
+      ? `发现 1 条孤儿引用：${summary}`
+      : `发现 ${orphans.length} 条孤儿引用：${summary}${orphans.length > 3 ? '…' : ''}\n请导出盘点报告查看完整明细。`);
+  }, [healthReport]);
+
+  const handleAuditExport = useCallback(async () => {
+    setAuditBusy(true);
+    try {
+      const report = await downloadCurrentWorkspaceAuditReport();
+      const status = report.integrity.status === 'passed'
+        ? '通过'
+        : report.integrity.status === 'warning'
+          ? '需要复核'
+          : '阻止迁移';
+      setRestoreMessage(`数据盘点报告已导出：${status}；${report.integrity.blockerCount} 个阻断项、${report.integrity.warningCount} 个警告。`);
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '数据盘点报告导出失败。');
+    } finally {
+      setAuditBusy(false);
     }
   }, []);
 
@@ -598,30 +961,162 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   return (
     <div className="tl-dialog-overlay" onClick={onClose}>
-      <div className="tl-dialog tl-dialog--standard" role="dialog" aria-modal="true" aria-label="云同步与完整备份" onClick={(event) => event.stopPropagation()}>
+      <div className="tl-dialog tl-dialog--wide" role="dialog" aria-modal="true" aria-label="云同步与完整备份" onClick={(event) => event.stopPropagation()}>
         <h3 className="tl-dialog-title"><Cloud size={18} />云同步与完整备份</h3>
 
-        <div className="tl-sync-status">
-          <span className="tl-sync-dot" style={{ backgroundColor: fullySynchronized ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
-          <strong>{fullySynchronized
-            ? (architecture.architecture === 'unified' ? '统一工作区已同步' : '旧房间同步 5/5')
-            : allConnected && requiresUnifiedMigration
-              ? '旧架构已连接，尚未进入统一工作区'
-            : allConnected && activeConflictCount > 0
-              ? `已连接，存在 ${activeConflictCount} 个待处理冲突`
-              : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
-                ? `已连接，等待补传 ${pendingFieldCount} 个字段`
-                : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}</strong>
+        {/* 数据健康卡：单行 chip + 展开明细 */}
+        <WorkspaceHealthPanel report={healthReport} onShowOrphans={handleShowOrphans} />
+
+        {/* 同步状态卡：圆点 + 主标语 + 主操作 + 待办 + 折叠的 hint */}
+        <div className="tl-sync-status" style={{ flexDirection: 'column', alignItems: 'stretch', padding: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="tl-sync-dot" style={{ backgroundColor: fullySynchronized ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
+            <strong style={{ fontSize: 14, color: '#111827' }}>{fullySynchronized
+              ? (architecture.architecture === 'unified' ? '统一工作区已同步' : '旧房间同步 5/5')
+              : allConnected && requiresUnifiedMigration
+                ? '旧架构已连接，尚未进入统一工作区'
+              : allConnected && activeConflictCount > 0
+                ? `已连接，存在 ${activeConflictCount} 个待处理冲突`
+                : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
+                  ? `已连接，等待补传 ${pendingFieldCount} 个字段`
+                  : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}</strong>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {enabledCount > 0 && (
+                <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} disabled={connectionBusy}>
+                  <RefreshCw size={14} />{connectionBusy ? '连接中…' : '全部重新连接'}
+                </button>
+              )}
+              {enabledCount === 0 && (
+                <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => connectModule('timeline', roomCode)}>
+                  <Link size={14} />立即连接
+                </button>
+              )}
+              {enabledCount > 0 && (
+                <button type="button" className="tl-sync-backup-btn" onClick={() => void handleChangeWorkspace()} disabled={connectionBusy}>
+                  <ArrowRightLeft size={14} />更换工作区
+                </button>
+              )}
+            </div>
+          </div>
+          {(activeConflictCount > 0 || (pendingFieldCount ?? 0) > 0 || historicalConflicts.length > 0) && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, fontSize: 12, color: '#374151' }}>
+              {activeConflictCount > 0 && <span style={{ color: '#991B1B', fontWeight: 600 }}>● {activeConflictCount} 个冲突</span>}
+              {(pendingFieldCount ?? 0) > 0 && <span style={{ color: '#92400E' }}>● 待补传 {pendingFieldCount}</span>}
+              {historicalConflicts.length > 0 && <span style={{ color: '#6B7280' }}>● 历史副本 {historicalConflicts.length}</span>}
+            </div>
+          )}
+          <details style={{ marginTop: 6, fontSize: 12, color: '#6B7280' }}>
+            <summary style={{ cursor: 'pointer', color: '#4B5563', listStyle: 'none' }}>详细信息</summary>
+            <div style={{ paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span>认证：{liveblocksAuthMode === 'authenticated' ? `用户身份认证${auth.login ? ` · GitHub：${auth.login}` : ''}` : '公钥兼容模式'}</span>
+              <span>本机最近完成云端内容校验：{formatTime(lastConnected.workspace)}{requiresUnifiedMigration ? ' · 仅连接旧模块房间，请在高级设置中迁移后再比较多端。' : ''}</span>
+              <span>本机本地备份：{describeLastManualExport()}</span>
+            </div>
+          </details>
         </div>
-        <p className="tl-dialog-hint">
-          认证方式：{liveblocksAuthMode === 'authenticated' ? '用户身份认证' : '公钥兼容模式'}
-          {auth.login ? ` · GitHub：${auth.login}` : ''}
-        </p>
-        <p className="tl-dialog-hint">待补传字段：{pendingFieldCount ?? '检查中'} · 当前冲突：{activeConflictCount}{historicalConflicts.length > 0 ? ` · 历史恢复副本：${historicalConflicts.length}` : ''}</p>
-        <p className="tl-dialog-hint">
-          本机最近完成云端内容校验：{formatTime(lastConnected.workspace)}
-          {requiresUnifiedMigration ? ' · 当前仅连接旧模块房间，请在高级设置中迁移后再比较两台设备。' : ''}
-        </p>
+
+        {/* 本地备份过期提醒 banner：浅黄小条，只在 N>=7 天时显示 */}
+        {(() => {
+          const value = readLastManualExport();
+          if (!value) return null;
+          const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
+          if (days < 7) return null;
+          return (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 14px',
+              margin: '0 20px 12px',
+              backgroundColor: '#FEF3C7',
+              border: '1px solid #FCD34D',
+              borderRadius: 6,
+              fontSize: 12,
+              color: '#92400E',
+            }}>
+              <FileSearch size={14} />
+              <span>已 {days} 天未导出本地备份。浏览器数据被清后无法恢复，建议在下方『数据、备份与恢复』中导出一次。</span>
+            </div>
+          );
+        })()}
+
+        {!supportsWebLocks && enabledCount > 0 && (
+          <div style={{
+            padding: '8px 12px',
+            margin: '0 20px 12px',
+            backgroundColor: '#FEF3C7',
+            border: '1px solid #F59E0B',
+            borderRadius: 6,
+            fontSize: 12,
+            lineHeight: 1.5,
+          }}>
+            <strong style={{ color: '#92400E' }}>⚠️ 当前浏览器不支持 Web Locks API</strong>
+            <p style={{ margin: '4px 0 0', color: '#78350F' }}>
+              跨标签页同步将使用兼容降级模式。建议升级到 Chrome 69+、Edge 79+、Safari 15.4+ 或 Firefox 96+。
+            </p>
+            <button
+              type="button"
+              className="tl-sync-backup-btn"
+              style={{ marginTop: 6 }}
+              onClick={() => void runCrossTabDetection()}
+              disabled={crossTabCheck.status === 'running'}
+            >
+              {crossTabCheck.status === 'running' ? '正在检测…' : '检测跨标签页支持'}
+            </button>
+            {crossTabCheck.status !== 'idle' && (
+              <div style={{
+                marginTop: 6,
+                padding: '6px 8px',
+                borderRadius: 4,
+                backgroundColor: crossTabCheck.status === 'success'
+                  ? '#D1FAE5'
+                  : crossTabCheck.status === 'fallback'
+                    ? '#FEF3C7'
+                    : '#FEE2E2',
+                color: crossTabCheck.status === 'success'
+                  ? '#065F46'
+                  : crossTabCheck.status === 'fallback'
+                    ? '#92400E'
+                    : '#991B1B',
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}>
+                {crossTabCheck.message}
+                <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                  {crossTabCheck.detail.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+        {supportsWebLocks && enabledCount > 0 && (
+          <div style={{ margin: '0 20px 12px' }}>
+            <button
+              type="button"
+              className="tl-sync-backup-btn"
+              onClick={() => void runCrossTabDetection()}
+              disabled={crossTabCheck.status === 'running'}
+            >
+              {crossTabCheck.status === 'running' ? '正在检测…' : '检测跨标签页支持'}
+            </button>
+            {crossTabCheck.status !== 'idle' && (
+              <div style={{
+                marginTop: 6,
+                padding: '6px 8px',
+                borderRadius: 4,
+                backgroundColor: crossTabCheck.status === 'success' ? '#D1FAE5' : '#FEF3C7',
+                color: crossTabCheck.status === 'success' ? '#065F46' : '#92400E',
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}>
+                {crossTabCheck.message}
+                <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                  {crossTabCheck.detail.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
         {requiresUnifiedMigration && enabledCount > 0 && (
           <section className="tl-sync-conflict-fields" aria-label="旧同步架构迁移">
             <strong>当前平板/电脑可能仍在旧的五个房间中，必须迁移到统一工作区后才能可靠比较多端数据。</strong>
@@ -661,12 +1156,40 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             <button type="button" className="tl-sync-backup-btn" onClick={() => setShowConflictRecovery(true)}><RefreshCw size={14} />需要从旧副本找回数据</button>
           </div>}
           {showConflictRecovery && <>
-            <small>以下“副本”是冲突发生时保存的旧数据，不是当前本机数据。默认不选择。恢复前系统会自动保存当前完整快照。</small>
-            <div>{(Object.keys(latestConflict.pending.fields) as WorkspaceStorageField[]).map((field) => <label key={field}><input type="checkbox" checked={selectedConflictFields.includes(field)} onChange={(event) => setSelectedConflictFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))} /><span><b>{WORKSPACE_FIELD_LABELS[field] ?? field}{latestConflict.conflictingFields?.includes(field) ? ' · 同字段冲突' : ''}</b><small>旧副本 {summarizeConflictValue(latestConflict.pending.fields[field])} · 冲突时云端 {summarizeConflictValue(latestConflict.remoteFields?.[field])}</small></span></label>)}</div>
+            <small>以下"副本"是冲突发生时保存的旧数据，不是当前本机数据。默认不选择。恢复前系统会自动保存当前完整快照。</small>
+            {(Object.keys(latestConflict.pending.fields) as WorkspaceStorageField[]).map((field) => {
+              const isConflictField = latestConflict.conflictingFields?.includes(field);
+              const detailedSummary = summarizeAllConflicts(
+                {
+                  pending: { fields: { [field]: latestConflict.pending.fields[field] } },
+                  remoteFields: { [field]: latestConflict.remoteFields?.[field] },
+                },
+                latestConflict.pending.baseFields ? { fields: { [field]: latestConflict.pending.baseFields[field] } } : null,
+                WORKSPACE_FIELD_LABELS,
+              ).find((item) => item.field === field);
+              return (
+                <div key={field} style={{ marginTop: 6, padding: 8, border: isConflictField ? '1px solid #FCA5A5' : '1px solid #E5E7EB', borderRadius: 6, backgroundColor: '#FFFFFF' }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedConflictFields.includes(field)}
+                      onChange={(event) => setSelectedConflictFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))}
+                    />
+                    <span style={{ flex: 1 }}>
+                      <b style={{ fontSize: 13 }}>{WORKSPACE_FIELD_LABELS[field] ?? field}{isConflictField ? ' · 同字段冲突' : ''}</b>
+                      <small style={{ display: 'block', color: '#6B7280', marginTop: 2 }}>
+                        旧副本 {summarizeConflictValue(latestConflict.pending.fields[field])} · 冲突时云端 {summarizeConflictValue(latestConflict.remoteFields?.[field])}
+                      </small>
+                    </span>
+                  </label>
+                  {detailedSummary && <ConflictFieldDetail summary={detailedSummary} />}
+                </div>
+              );
+            })}
             <div className="tl-sync-backup-actions">
               <button type="button" className="tl-sync-backup-btn" onClick={() => { setShowConflictRecovery(false); setSelectedConflictFields([]); }}>取消找回</button>
               <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" disabled={selectedConflictFields.length === 0} onClick={async () => {
-                if (!await requestConfirmation(`确定从旧副本恢复已选择的 ${selectedConflictFields.length} 个数据字段吗？系统会先保存当前完整快照，再将旧副本写入本机和云端。`)) return;
+                if (!await requestConfirmation(`确定从旧副本恢复已选择的 ${selectedConflictFields.length} 个数据字段吗？\n\n恢复前会自动保存当前完整快照到浏览器，可在『数据、备份与恢复 → 本地快照』中找回。恢复后旧副本中选中的字段会写入本机和云端。`)) return;
                 void restoreWorkspaceConflictFields(latestConflict.id, selectedConflictFields)
                   .then(() => { setRestoreMessage('已保存恢复前快照；所选旧字段已进入强制补传队列，云端确认后会自动清除。'); setSelectedConflictFields([]); setShowConflictRecovery(false); })
                   .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '冲突恢复失败。'));
@@ -680,30 +1203,93 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           </button>
         )}
 
-        <label className="tl-dialog-label">
-          房间号（仍然只输入一个）
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              className="tl-dialog-input"
-              type={showRoomCode ? 'text' : 'password'}
-              value={enabledCount > 0 ? activeCode : roomCode}
-              readOnly={enabledCount > 0}
-              onChange={(event) => setRoomCode(event.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-              maxLength={64}
-              autoComplete="off"
-            />
-            <button type="button" className="tl-sync-copy-btn" onClick={() => setShowRoomCode((value) => !value)} title={showRoomCode ? '隐藏房间号' : '显示房间号'}>
-              {showRoomCode ? <EyeOff size={16} /> : <Eye size={16} />}
-            </button>
-            <button type="button" className="tl-sync-copy-btn" onClick={handleCopy} title="复制房间号">
-              {copied ? <Check size={16} /> : <Copy size={16} />}
-            </button>
+        {/* 房间号卡 */}
+        <div className="tl-sync-info" style={{ marginTop: 12 }}>
+          <div className="tl-sync-info-row" style={{ flexDirection: 'column', alignItems: 'stretch', padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>房间号</span>
+              <input
+                className="tl-dialog-input"
+                style={{ flex: 1 }}
+                type={showRoomCode ? 'text' : 'password'}
+                value={enabledCount > 0 ? activeCode : roomCode}
+                readOnly={enabledCount > 0}
+                onChange={(event) => setRoomCode(event.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+                maxLength={64}
+                autoComplete="off"
+              />
+              <button type="button" className="tl-sync-copy-btn" onClick={() => setShowRoomCode((value) => !value)} title={showRoomCode ? '隐藏房间号' : '显示房间号'}>
+                {showRoomCode ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+              <button type="button" className="tl-sync-copy-btn" onClick={handleCopy} title="复制房间号">
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+              </button>
+            </div>
+            <small style={{ color: '#6B7280', fontSize: 11, marginTop: 6 }}>
+              {architecture.architecture === 'unified' ? `统一工作区：${architecture.unifiedRoomId}` : '当前仍使用旧模块房间；完成检查后可复制迁移到统一工作区。'}
+            </small>
           </div>
-          <span className="tl-dialog-hint">{architecture.architecture === 'unified' ? `当前使用一个认证工作区房间：${architecture.unifiedRoomId}` : '当前仍使用旧模块房间；完成检查后可复制迁移到统一工作区。'}</span>
-        </label>
+        </div>
+
+        {/* 模块状态网格 */}
+        <div className="tl-sync-info" style={{ marginTop: 12 }}>
+          <div style={{ padding: '8px 14px', borderBottom: '1px solid #F3F4F6', fontSize: 12, color: '#6B7280', fontWeight: 500 }}>
+            数据模块
+          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: 0,
+          }}>
+            {modules.map((module) => (
+              <div
+                key={module.key}
+                style={{
+                  padding: '12px 10px',
+                  borderRight: '1px solid #F3F4F6',
+                  textAlign: 'center',
+                  background: '#FFFFFF',
+                }}
+              >
+                <div style={{ fontSize: 12, color: '#374151', fontWeight: 500, marginBottom: 6 }}>{module.label}</div>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 8px',
+                  borderRadius: 10,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  backgroundColor: module.status === 'connected' ? '#D1FAE5' : module.status === 'connecting' ? '#FEF3C7' : module.status === 'error' ? '#FEE2E2' : '#F3F4F6',
+                  color: module.status === 'connected' ? '#065F46' : module.status === 'connecting' ? '#92400E' : module.status === 'error' ? '#991B1B' : '#6B7280',
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'currentColor' }} />
+                  {module.status === 'connected' ? '已连接' : module.status === 'connecting' ? '连接中' : module.status === 'error' ? '连接异常' : '未连接'}
+                </div>
+                {enabledCount > 0 && module.status !== 'connected' && (
+                  <button
+                    type="button"
+                    className="tl-sync-copy-btn"
+                    style={{ marginTop: 6, width: 'auto', padding: '0 8px' }}
+                    onClick={() => connectModule(module.key, ({
+                      timeline: timeline.syncRoomCode,
+                      ebb: ebb.syncRoomCode,
+                      daily: daily.syncRoomCode,
+                      graph: graph.syncRoomCode,
+                      lifeMap: lifeMap.syncRoomCode,
+                    }[module.key] || activeCode))}
+                    title={`重新连接${module.label}`}
+                  >
+                    <RefreshCw size={11} /> 重连
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
 
         {enabledCount > 0 && (
-          <details className="tl-settings-disclosure" style={{ marginBottom: 14 }}>
+          <details className="tl-settings-disclosure" style={{ marginTop: 12 }}>
             <summary><Database size={15} />同步高级设置</summary>
           <div className="tl-sync-backup-section tl-settings-disclosure-content">
             <h4 className="tl-sync-backup-title"><Database size={15} />同步架构</h4>
@@ -719,84 +1305,103 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           </details>
         )}
 
-        <div className="tl-sync-info">
-          {modules.map((module) => (
-            <div className="tl-sync-info-row" key={module.key}>
-              <span className="tl-sync-info-label">{module.label}</span>
-              <span className="tl-sync-info-value">
-                <span style={{ color: module.status === 'connected' ? '#059669' : module.status === 'connecting' ? '#D97706' : '#9CA3AF' }}>
-                  {module.status === 'connected' ? '已连接' : module.status === 'connecting' ? '连接中' : module.status === 'error' ? '连接异常' : '未连接'}
-                </span>
-                {enabledCount > 0 && module.status !== 'connected' && (
-                  <button
-                    type="button"
-                    className="tl-sync-copy-btn"
-                    onClick={() => connectModule(module.key, ({
-                      timeline: timeline.syncRoomCode,
-                      ebb: ebb.syncRoomCode,
-                      daily: daily.syncRoomCode,
-                      graph: graph.syncRoomCode,
-                      lifeMap: lifeMap.syncRoomCode,
-                    }[module.key] || activeCode))}
-                    title={`重新连接${module.label}`}
-                  >
-                    <RefreshCw size={13} />
-                  </button>
-                )}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {enabledCount > 0 && (
-          <div className="tl-sync-backup-actions" style={{ marginBottom: 12 }}>
-            <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} disabled={connectionBusy}>
-              <RefreshCw size={14} />{connectionBusy ? '正在连接并补传…' : '全部重新连接'}
-            </button>
-            <button type="button" className="tl-sync-backup-btn" onClick={() => void handleChangeWorkspace()} disabled={connectionBusy}>
-              <ArrowRightLeft size={14} />更换工作区
-            </button>
-          </div>
-        )}
-
         <div className="tl-sync-divider" />
         <details className="tl-settings-disclosure" onToggle={(event) => setDataPanelOpen(event.currentTarget.open)}>
           <summary><Database size={15} />数据、备份与恢复</summary>
-        <div className="tl-sync-backup-section tl-settings-disclosure-content">
-          <h4 className="tl-sync-backup-title">完整工作区备份与恢复</h4>
-          <div className="tl-sync-backup-actions">
-            <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => fileInputRef.current?.click()}>
-              <Upload size={14} />恢复完整备份
-            </button>
-            <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={handleExport}>
-              <Download size={14} />导出完整备份
-            </button>
-            <button type="button" className="tl-sync-backup-btn" onClick={handleHealthCheck}>
-              <Check size={14} />数据健康检查
-            </button>
+        <div className="tl-sync-backup-section tl-settings-disclosure-content" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* 备份导出 / 恢复 */}
+          <div className="tl-sync-info">
+            <div style={{ padding: '8px 14px', borderBottom: '1px solid #F3F4F6', fontSize: 12, color: '#6B7280', fontWeight: 500 }}>
+              完整工作区备份与恢复
+            </div>
+            <div style={{ padding: '10px 14px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => fileInputRef.current?.click()}>
+                <Upload size={14} />恢复完整备份
+              </button>
+              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={handleExport}>
+                <Download size={14} />导出完整备份
+              </button>
+            </div>
+            <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#6B7280' }}>
+              包含时间轴、项目文档、EBB、每日安排、知识大盘和应用设置。恢复前会校验数据并自动创建本地快照。
+            </small>
           </div>
-          <p className="tl-sync-backup-hint">包含时间轴、项目文档、EBB、每日安排、知识大盘和应用设置。恢复前会校验数据并自动创建本地快照。</p>
-          {snapshotStats && <p className="tl-sync-backup-hint">快照：{snapshotStats.snapshotCount} 份、{snapshotStats.chunkCount} 个去重数据块、约 {(snapshotStats.snapshotBytes / 1024).toFixed(1)} KB。</p>}
-          {auth.enabled && <p className="tl-sync-backup-hint">R2历史归档：{r2Configured === null ? '检测中' : r2Configured ? '已启用' : '尚未绑定 SMARTLINE_R2（不影响现有数据）'}。</p>}
-          {r2Configured && <div className="tl-sync-backup-actions">
-            <input className="tl-dialog-input" type="month" value={archivePeriod} onChange={(event) => setArchivePeriod(event.target.value)} style={{ maxWidth: 150 }} />
-            <button type="button" className="tl-sync-backup-btn" onClick={() => void handleArchivePeriod()}><Upload size={14} />保存月度归档</button>
-            <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadArchive()}><Download size={14} />下载月度归档</button>
-          </div>}
-          {restoreSummary && <p className="tl-sync-backup-hint">最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.retrospectiveEntries} 条复盘、{restoreSummary.graphNodes} 个节点。</p>}
-          {snapshots.length > 0 && (
-            <div className="tl-sync-info" style={{ marginTop: 10 }}>
-              {snapshots.slice(0, 5).map((snapshot) => (
-                <div className="tl-sync-info-row" key={snapshot.id}>
-                  <span className="tl-sync-info-label">{snapshot.reason}</span>
-                  <span className="tl-sync-info-value">
-                    {new Date(snapshot.createdAt).toLocaleString('zh-CN')}
-                    <button type="button" className="tl-sync-copy-btn" onClick={() => handleRestoreSnapshot(snapshot)} title="恢复此快照">
-                      <RefreshCw size={13} />
-                    </button>
-                  </span>
+
+          {/* 健康 / 盘点 */}
+          <div className="tl-sync-info">
+            <div style={{ padding: '8px 14px', borderBottom: '1px solid #F3F4F6', fontSize: 12, color: '#6B7280', fontWeight: 500 }}>
+              数据健康与盘点
+            </div>
+            <div style={{ padding: '10px 14px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" className="tl-sync-backup-btn" onClick={handleHealthCheck}>
+                <Check size={14} />数据健康检查
+              </button>
+              <button type="button" className="tl-sync-backup-btn" onClick={() => void handleAuditExport()} disabled={auditBusy}>
+                <FileSearch size={14} />{auditBusy ? '正在盘点…' : '导出盘点报告'}
+              </button>
+            </div>
+            {restoreSummary && (
+              <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#374151' }}>
+                最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.retrospectiveEntries} 条复盘、{restoreSummary.graphNodes} 个节点。
+              </small>
+            )}
+          </div>
+
+          {/* 月度归档 (R2) */}
+          {auth.enabled && (
+            <div className="tl-sync-info">
+              <div style={{ padding: '8px 14px', borderBottom: '1px solid #F3F4F6', fontSize: 12, color: '#6B7280', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>R2 月度归档</span>
+                <span style={{
+                  fontSize: 10,
+                  padding: '1px 6px',
+                  borderRadius: 3,
+                  backgroundColor: r2Configured ? '#D1FAE5' : '#F3F4F6',
+                  color: r2Configured ? '#065F46' : '#6B7280',
+                  fontWeight: 600,
+                }}>
+                  {r2Configured === null ? '检测中' : r2Configured ? '已启用' : '未绑定'}
+                </span>
+              </div>
+              {r2Configured && (
+                <div style={{ padding: '10px 14px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input className="tl-dialog-input" type="month" value={archivePeriod} onChange={(event) => setArchivePeriod(event.target.value)} style={{ maxWidth: 150 }} />
+                  <button type="button" className="tl-sync-backup-btn" onClick={() => void handleArchivePeriod()}><Upload size={14} />保存月度归档</button>
+                  <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadArchive()}><Download size={14} />下载月度归档</button>
                 </div>
-              ))}
+              )}
+              <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#6B7280' }}>
+                {r2Configured ? '已绑定 SMARTLINE_R2；月度归档可避免浏览器数据被清后丢失历史。' : '绑定 SMARTLINE_R2 后可保存月度归档，不影响现有数据。'}
+              </small>
+            </div>
+          )}
+
+          {/* 本地快照 */}
+          {(snapshotStats || snapshots.length > 0) && (
+            <div className="tl-sync-info">
+              <div style={{ padding: '8px 14px', borderBottom: '1px solid #F3F4F6', fontSize: 12, color: '#6B7280', fontWeight: 500 }}>
+                本地快照
+              </div>
+              {snapshotStats && (
+                <small style={{ display: 'block', padding: '10px 14px 6px', fontSize: 11, color: '#374151' }}>
+                  共 {snapshotStats.snapshotCount} 份、{snapshotStats.chunkCount} 个去重数据块、约 {(snapshotStats.snapshotBytes / 1024).toFixed(1)} KB。
+                </small>
+              )}
+              {snapshots.length > 0 && (
+                <div>
+                  {snapshots.slice(0, 5).map((snapshot) => (
+                    <div className="tl-sync-info-row" key={snapshot.id} style={{ borderTop: '1px solid #F3F4F6' }}>
+                      <span className="tl-sync-info-label">{snapshot.reason}</span>
+                      <span className="tl-sync-info-value">
+                        {new Date(snapshot.createdAt).toLocaleString('zh-CN')}
+                        <button type="button" className="tl-sync-copy-btn" onClick={() => handleRestoreSnapshot(snapshot)} title="恢复此快照">
+                          <RefreshCw size={13} />
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
