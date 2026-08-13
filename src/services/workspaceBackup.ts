@@ -787,7 +787,8 @@ export function downloadWorkspaceBackup(): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `smart-line-workspace-${backup.exportedAt.slice(0, 10)}.json`;
+  const timestamp = backup.exportedAt.replace(/[:.]/g, '-');
+  anchor.download = `smart-line-workspace-${backup.deviceId.slice(0, 8)}-${timestamp}.json`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

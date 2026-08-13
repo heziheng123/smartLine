@@ -497,8 +497,8 @@ const EbbView: React.FC = () => {
               <div className="eb-stat-card"><span className="eb-stat-icon"><ListChecks size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.total}</span><span className="eb-stat-label">总任务</span></div>
               <div className={`eb-stat-card ${stats.todayDue > 0 ? 'eb-stat-card--warn' : ''}`}><span className="eb-stat-icon"><AlarmClock size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayDue}</span><span className="eb-stat-label">今日到期</span></div>
               <div className={`eb-stat-card ${stats.overdue > 0 ? 'eb-stat-card--danger' : ''}`}><span className="eb-stat-icon"><TriangleAlert size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.overdue}</span><span className="eb-stat-label">逾期</span></div>
-              <div className="eb-stat-card eb-stat-card--secondary"><span className="eb-stat-icon"><Target size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayPoints}</span><span className="eb-stat-label">今日积分</span></div>
-              <div className="eb-stat-card eb-stat-card--secondary"><span className="eb-stat-icon"><ChartNoAxesColumn size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.weekPoints}</span><span className="eb-stat-label">本周积分</span></div>
+              <div className="eb-stat-card eb-stat-card--secondary" style={{ display: 'none' }}><span className="eb-stat-icon"><Target size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.todayPoints}</span><span className="eb-stat-label">今日积分</span></div>
+              <div className="eb-stat-card eb-stat-card--secondary" style={{ display: 'none' }}><span className="eb-stat-icon"><ChartNoAxesColumn size={15} aria-hidden="true" /></span><span className="eb-stat-value">{stats.weekPoints}</span><span className="eb-stat-label">本周积分</span></div>
             </div>
             <div className="eb-stats-progress">
               <div className="eb-stats-progress-info"><span>完成率</span><span className="eb-stats-progress-num">{stats.completed}/{stats.total} · {Math.round(stats.ratio * 100)}%</span></div>
