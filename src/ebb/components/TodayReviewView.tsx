@@ -271,11 +271,9 @@ const TodayReviewView: React.FC<TodayReviewViewProps> = ({
 
       <section className="eb-today-summary" aria-label="今日复习状态">
         <div className="eb-today-summary-main">
-          <span className="eb-today-eyebrow">今日复习</span>
-          <strong>{selectedDate === today ? '今天' : selectedDate}</strong>
-          <span className="eb-today-summary-sub">{dueTasks.length + dueCompleted} 轮 · 计划 {scheduledTasks.length} 轮</span>
+          <strong className="eb-today-summary-today">{selectedDate === today ? '今天' : selectedDate}</strong>
+          <span className="eb-today-summary-sub">完成 {dueCompleted}/{dueTasks.length + dueCompleted} · 计划 {scheduledTasks.length} 轮</span>
         </div>
-        <div className="eb-today-summary-metric"><span>今日完成</span><strong>{dueCompleted}/{dueTasks.length + dueCompleted}</strong></div>
         <div className="eb-today-summary-metric"><span>剩余时长</span><strong>{remainingDueMinutes} 分钟</strong></div>
         <div className="eb-today-summary-metric"><span>逾期</span><strong className={poolTasks.some(isOverdue) ? 'is-danger' : ''}>{poolTasks.filter(isOverdue).length}</strong></div>
         <div className="eb-today-summary-metric"><span>容量</span><strong>{totalScheduledMinutes}/{totalCapacity} 分钟</strong></div>
