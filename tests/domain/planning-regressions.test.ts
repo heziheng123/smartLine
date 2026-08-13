@@ -165,19 +165,19 @@ test('explicit workload dates cascade through later unfinished rounds and remain
 
 test('batch reanchor preserves completed history and each plan remaining intervals', () => {
   const tasks = [
-    review('a1', 'topic-a', '2026-08-01', 1, { isCompleted: true, completedDate: '2026-08-01' }),
-    review('a2', 'topic-a', '2026-08-10', 2),
-    review('a3', 'topic-a', '2026-08-14', 3),
+    review('a1', 'topic-a', '2099-01-01', 1, { isCompleted: true, completedDate: '2099-01-01' }),
+    review('a2', 'topic-a', '2099-01-10', 2),
+    review('a3', 'topic-a', '2099-01-14', 3),
   ];
   const plan = planBatchReviewAdjustment(tasks, DEFAULT_EBB_SETTINGS, {
     topicKeys: ['topic:topic-a'],
-    action: { kind: 'reanchor', startDate: '2026-08-11' },
+    action: { kind: 'reanchor', startDate: '2099-01-11' },
   });
   assert.equal(plan.affectedTopics, 1);
   assert.deepEqual(plan.nextTasks.map((item) => [item.id, item.dueDate]), [
-    ['a1', '2026-08-01'],
-    ['a2', '2026-08-11'],
-    ['a3', '2026-08-15'],
+    ['a1', '2099-01-01'],
+    ['a2', '2099-01-11'],
+    ['a3', '2099-01-15'],
   ]);
 });
 

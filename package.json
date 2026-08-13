@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test:auth": "node --experimental-strip-types --test tests/auth/github-auth.test.ts tests/auth/storage-auth.test.ts",
-    "test:sync": "node --experimental-strip-types --test tests/sync/workspace-sync.test.ts tests/sync/service-worker-policy.test.ts",
+    "test:sync": "node --experimental-strip-types --test tests/sync/workspace-sync.test.ts tests/sync/workspace-audit.test.ts tests/sync/service-worker-policy.test.ts",
     "test:duration": "node --experimental-strip-types --test tests/domain/duration.test.ts",
     "test:life-map": "node --experimental-strip-types --test tests/domain/life-map.test.ts tests/domain/life-map-plan-layout.test.ts tests/domain/life-map-creation.test.ts",
     "test:project-shift": "node --experimental-strip-types --test tests/domain/project-shift.test.ts",

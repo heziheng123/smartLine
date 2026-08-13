@@ -112,17 +112,21 @@ flowchart TD
 
 ## 7. 统一工作区同步
 
-当前 schema 为 `6`。统一房间 ID 形如 `workspace-{identity}-{roomCode}`，五个 store 进入同一 room 并映射到不同 storage 字段。schema 5 引入固定项目大类；schema 6 支持全局关键日期及项目—目标、关键日期—项目可选关系。
+当前 schema 为 `7`。统一房间 ID 形如 `workspace-{identity}-{roomCode}`，五个 store 进入同一 room 并映射到不同 storage 字段。
 
-- **首次连接保护**：比较远端与本地完整内容 hash 和摘要；双方非空且不同则拒绝连接。
-- **版本门禁**：远端 schema 高于本地支持版本时拒绝连接。
-- **写入日志**：本地字段变化都保存变化值和 base 值，不依赖 Liveblocks 是否 ready。
-- **离线队列**：队列保存在 IndexedDB，并有 localStorage 紧急副本；重连后由主标签页刷新。
-- **三方合并**：base/local/remote 逐字段合并；带 `id` 的实体数组继续按实体和属性递归合并。
-- **冲突副本**：无法安全合并的字段保存成可恢复副本，不静默覆盖。
-- **跨标签页协调**：BroadcastChannel 同步字段，localStorage 租约选出队列主写者。
+schema 演进：schema 5 引入固定项目大类；schema 6 支持全局关键日期及项目—目标、关键日期—项目可选关系；schema 7 为项目增加可选 `planningAreaId`，支持项目与人生地图二级分类关联。
 
-旧架构使用 Timeline、EBB、Daily、Graph、Life Map 五个房间。迁移读取所有旧房间、生成完整备份并比较摘要和 SHA-256；验证一致后才切换统一房间，且不删除源房间。
+支持的 schema 版本：1–7。远端 schema 高于 7 时拒绝连接。
+
+- **首次连接保护**：比较远端与本地完整内容 hash 和摘要；双方非空且不同则拒绝连接，需用户显式选择以哪端为准。
+- **版本门禁**：远端 schema 高于本地支持版本时立即拒绝连接，防止旧客户端覆盖更新格式的数据。
+- **写入日志**（`workspaceLocalWriteJournal.ts`）：`createWorkspaceTrackedSet` 包装每个 store 的 `setState`，在 hydration 完成后捕获本地写入并送入离线队列，远端 Liveblocks 推送绕过此路径，不被误记为本地操作。
+- **离线队列**（`workspaceSyncQueueCore.ts`）：队列保存在 IndexedDB，并有 localStorage 紧急副本；每次写入生成唯一 `writeId`，清除时比对 token 防止旧 flush 误删新数据。重连后由主标签页（`workspaceTabCoordinator.ts`）执行 flush。
+- **三方合并**（`workspaceSyncCore.ts` `mergeWorkspaceValue`）：base/local/remote 三方递归合并。带 `id` 的实体数组**按实体 ID 独立合并**，设备 A 修改 task-1 与设备 B 修改 task-2 不会互相覆盖。叶节点冲突（两端都相对 base 做了不同修改且无法自动合并）记录冲突路径，整字段只有在同一叶节点真正冲突时才被标记，不会因数组中存在其他无关修改而误报。
+- **冲突副本**：无法安全合并的字段及对应的远端快照保存成 `WorkspaceConflictRecord`，用户可在 SyncDialog 中查看字段详情并选择保留哪端，不静默覆盖。
+- **跨标签页协调**：`BroadcastChannel('smartline-workspace-v1')` 实时广播字段变更；写队列临界区优先使用 Web Locks API，Safari 等不支持的浏览器回退到 localStorage 租约（15s 过期 + 32ms 竞争窗口）。
+
+旧架构使用 Timeline、EBB、Daily、Graph、Life Map 五个房间。迁移读取所有旧房间、生成完整备份并比较摘要和 SHA-256；验证一致后才切换统一房间，且不删除源房间。已迁移设备的 `localStorage` 中 `smart-line-sync-architecture-v1` 为 `{"architecture":"unified"}`。
 
 ## 8. 备份、快照和归档
 
@@ -130,7 +134,7 @@ flowchart TD
 
 ```text
 kind: smart-line-workspace
-schemaVersion: 6
+schemaVersion: 7
 revision / exportedAt / deviceId
 timeline / lifeMap / ebb / graph / daily / settings
 ```
