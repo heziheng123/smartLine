@@ -10,7 +10,7 @@ import type { WithLiveblocks } from '@liveblocks/zustand';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
 import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
 
-import { todayStr, addDays } from '@/utils/dateSafe';
+import { todayStr, addDays, diffDays } from '@/utils/dateSafe';
 import type {
   ReviewTask,
   InboxItem,
@@ -611,7 +611,6 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         },
 
         rescheduleOverdue: (taskIds) => {
-          const _today = todayStr();
           const idSet = new Set(taskIds);
           const state = get();
           const selected = state.reviewTasks.filter((task) => idSet.has(task.id) && !task.isCompleted && !task.isArchived);
@@ -625,7 +624,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           });
           const updates: Array<{ id: string; dueDate: string }> = [];
           firstByTopic.forEach((first, topicKey) => {
-            const delta = Math.round((new Date(`${_today}T12:00:00`).getTime() - new Date(`${first.dueDate}T12:00:00`).getTime()) / 86_400_000);
+            const delta = diffDays(todayStr(), first.dueDate);
             const firstOrder = first.roundOrder ?? 0;
             state.reviewTasks
               .filter((task) => !task.isArchived && !task.isCompleted && getReviewTopicKey(task) === topicKey && (task.roundOrder ?? 0) >= firstOrder)

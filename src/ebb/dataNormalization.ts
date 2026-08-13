@@ -5,6 +5,11 @@ import { normalizeReviewRoundOrders } from './scheduler.ts';
 import { normalizeOptionalEstimatedMinutes } from './duration.ts';
 import { normalizeTimeSlotConfigs } from '../components/dailySchedule/types.ts';
 
+/**
+ * Generates absolute due dates from a base date and interval array.
+ * For indices beyond the array length, overflow adds incremental days to the last interval.
+ * A minimum gap of 2 days is enforced between consecutive overflow dates to avoid back-to-back scheduling.
+ */
 export function buildAbsoluteScheduleDates(
   baseDate: string,
   intervals: number[],
@@ -12,10 +17,20 @@ export function buildAbsoluteScheduleDates(
 ): string[] {
   if (intervals.length === 0 || count <= 0) return [];
   const lastIndex = intervals.length - 1;
+  const lastInterval = intervals[lastIndex];
+  let prevDate = addDays(baseDate, lastInterval);
+
   return Array.from({ length: count }, (_, index) => {
+    if (index <= lastIndex) {
+      return addDays(baseDate, intervals[index]);
+    }
+    // Overflow: enforce minimum 2-day gap between consecutive overflow dates
     const overflowDays = Math.max(0, index - lastIndex);
-    const interval = intervals[Math.min(index, lastIndex)] + overflowDays;
-    return addDays(baseDate, interval);
+    const interval = lastInterval + Math.max(overflowDays * 2, overflowDays);
+    const candidate = addDays(baseDate, interval);
+    const safeDate = candidate > prevDate ? candidate : addDays(prevDate, 2);
+    prevDate = safeDate;
+    return safeDate;
   });
 }
 

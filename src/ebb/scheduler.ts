@@ -99,10 +99,14 @@ export function computeRounds(tasks: ReviewTask[]): {
   roundMap: Map<string, number>;
   totalRoundsMap: Map<string, number>;
 } {
-  // 直接用原文字符串作 cache key，避免哈希碰撞导致返回错误轮次缓存
+  // Cache key includes isArchived to invalidate when archive state changes.
+  // Also includes roundOrder for change detection.
   const activeTasks = tasks.filter((task) => !task.isArchived);
   const key = activeTasks
       .map((t) => `${t.id}|${getReviewTopicKey(t)}|${t.roundOrder ?? 0}`)
+      .sort()
+      .join(';') + '|' + tasks
+      .map((t) => `${t.id}|${t.isArchived}`)
       .sort()
       .join(';');
 
@@ -177,8 +181,15 @@ export function buildNextRoundTask(
   const baseDate = isAfterDay(lastTask.dueDate, today) ? lastTask.dueDate : today;
   let dueDate = addDays(baseDate, nextInterval);
   const occupiedDates = new Set(sortedTasks.map((task) => task.dueDate));
-  while (occupiedDates.has(dueDate)) {
-    dueDate = addDays(dueDate, 1);
+
+  // Use smartSpreadDate to avoid conflicts and load limits
+  if (settings) {
+    dueDate = smartSpreadDate(dueDate, sortedTasks, lastTask.topicName, settings, occupiedDates);
+  } else {
+    // Simple collision avoidance without load balancing
+    while (occupiedDates.has(dueDate)) {
+      dueDate = addDays(dueDate, 1);
+    }
   }
 
   return {
@@ -319,8 +330,14 @@ export function validateInput(input: GenerateTasksInput): string[] {
 }
 
 /**
- * smartSpread：若某日负载超限，向后顺延到满足负载的日期。
- * 最多顺延 maxSpreadDays 天，保证同主题间隔 ≥ minTopicGapDays。
+ * Spreads a task date to avoid overload days and enforce topic gap constraints.
+ *
+ * Time complexity: O(maxSpreadDays × n) where n is existingTasks.length.
+ * Each candidate offset scans all existing tasks for gap and load checks.
+ * Worst case O(n × maxSpreadDays) per call; O(n²) when called n times (e.g., bulk task generation).
+ *
+ * Falls back to initialDate if no valid date is found within maxSpreadDays.
+ * Note: The fallback date may violate minTopicGapDays or daily load limits.
  */
 export function smartSpreadDate(
   initialDate: string,

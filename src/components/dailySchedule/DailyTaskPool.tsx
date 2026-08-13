@@ -19,6 +19,12 @@ export interface DailyPoolItem {
   duration?: number;
   sourceId: string;
   taskKind?: 'standard' | 'vocabulary' | 'quantity';
+  /** 复习任务专用：当前轮次 */
+  round?: number;
+  /** 复习任务专用：总轮次数 */
+  totalRounds?: number;
+  /** 复习任务专用：分类标签 */
+  categoryLabel?: string;
   quantityActual?: number;
   quantityTarget?: number;
   quantityTotal?: number;
@@ -108,12 +114,24 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
                       <div className="ds-pool-item-main">
                         <div className="ds-pool-item-accent" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).accentColor }} />
                         <div className="ds-pool-item-content">
-                          <span className="ds-pool-item-name" title={item.name}>
-                            {item.name}
-                            {item.source === 'project' && (unlinked
-                              ? <span title="未绑定节点" className="ml-1 inline-flex items-center"><CircleDashed size={12} className="opacity-40" /></span>
-                              : checkIsLinkedTask(item.sourceId) && <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500"><LinkIcon size={12} className="opacity-60" /></span>)}
-                          </span>
+                          <div className="ds-pool-item-title-row">
+                            <span className="ds-pool-item-name" title={item.name}>
+                              {item.name}
+                              {item.source === 'project' && (unlinked
+                                ? <span title="未绑定节点" className="ml-1 inline-flex items-center"><CircleDashed size={12} className="opacity-40" /></span>
+                                : checkIsLinkedTask(item.sourceId) && <span title="已绑定节点" className="ml-1 inline-flex items-center text-blue-500"><LinkIcon size={12} className="opacity-60" /></span>)}
+                            </span>
+                            {item.source === 'review' && item.round !== undefined && item.totalRounds !== undefined && (
+                              <span className="ds-review-round-badge" title={`第 ${item.round} / ${item.totalRounds} 轮`}>
+                                {item.round}/{item.totalRounds}
+                              </span>
+                            )}
+                          </div>
+                          {item.source === 'review' && item.categoryLabel && (
+                            <span className="ds-pool-category-label" style={{ color: item.categoryColor }}>
+                              {item.categoryLabel}
+                            </span>
+                          )}
                           {quantity && (
                             <span className="ds-pool-quantity-summary">
                               <span>总进度 <strong>{item.quantityCompleted}/{item.quantityTotal} {item.quantityUnit}</strong></span>
@@ -125,8 +143,8 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
                           )}
                           {!quantity && ((item.source !== 'project' && item.detail) || item.duration !== undefined || item.timingLabel) && (
                             <span className="ds-pool-item-meta">
-                              {item.source !== 'project' && item.detail && <span>{item.detail}</span>}
-                              {item.source !== 'project' && item.detail && (item.duration !== undefined || item.timingLabel) && <i>·</i>}
+                              {item.source === 'project' && item.detail && <span>{item.detail}</span>}
+                              {item.source === 'project' && item.detail && (item.duration !== undefined || item.timingLabel) && <i>·</i>}
                               {item.duration !== undefined && <span>预计 {item.duration} 分钟</span>}
                               {item.duration !== undefined && item.timingLabel && <i>·</i>}
                               {item.timingLabel && <span className={`ds-pool-timing ds-pool-timing--${item.urgency ?? 'normal'}`}>{item.timingLabel}</span>}
@@ -136,7 +154,7 @@ const PoolGroup: React.FC<PoolGroupProps> = ({
                         {item.source === 'project' && !quantity && (
                           <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>
                         )}
-                        {item.source === 'review' && <span className="ds-pool-item-tag ds-pool-item-tag--review">复习{item.detail ? ` · ${item.detail}` : ''}</span>}
+                        {item.source === 'review' && <span className="ds-pool-item-tag ds-pool-item-tag--review">复习</span>}
                         {quantity && <span className="ds-pool-item-tag ds-pool-item-tag--vocabulary">数量</span>}
                       </div>
                     </div>

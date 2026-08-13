@@ -525,22 +525,21 @@ const DailyScheduleView: React.FC = () => {
       if (scheduledSourceIds.has(getReviewSourceId(task.id))) continue;
       const round = roundMap.get(task.id) ?? 1;
       const total = totalRoundsMap.get(getReviewTopicKey(task)) ?? 1;
+      const category = resolveReviewCategory(task, ebbRootByNodeId);
+      const categoryColor = getReviewCategoryColor(category, ebbSettingsData.tagColors);
       items.push({
         id: `pool-review-${task.id}`,
         name: task.topicName,
         source: 'review',
-        color: getReviewCategoryColor(
-          resolveReviewCategory(task, ebbRootByNodeId),
-          ebbSettingsData.tagColors,
-        ) ?? '#8B9DC3',
-        categoryColor: getReviewCategoryColor(
-          resolveReviewCategory(task, ebbRootByNodeId),
-          ebbSettingsData.tagColors,
-        ),
+        color: categoryColor ?? '#8B9DC3',
+        categoryColor,
+        categoryLabel: category?.label,
         detail: `第${round}/${total}轮`,
+        round,
+        totalRounds: total,
         sourceId: getReviewSourceId(task.id),
         duration: getReviewRoundDuration(task, round),
-        timingLabel: task.dueDate < selectedDate ? '复习逾期' : '今日复习',
+        timingLabel: task.dueDate < selectedDate ? '复习逾期' : undefined,
         urgency: task.dueDate < selectedDate ? 'overdue' : 'due',
       });
     }

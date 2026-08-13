@@ -504,7 +504,9 @@ function planCapacityAdjustment(
 
     let best: { delta: number; score: number; dates: string[] } | null = null;
     for (const delta of candidateDeltas) {
-      if (delta !== 0 && pending.some((task) => protectedIds.has(task.id))) continue;
+      // Skip non-zero deltas if they would move any protected task.
+      // Allow delta=0 so topics with protected tasks can still optimize other constraints.
+      if (delta !== 0 && pending.some((task) => !task.isCompleted && protectedIds.has(task.id))) continue;
       const dates = pending.map((task) => addDays(task.dueDate, delta));
       if (!isStrictlyOrdered(dates) || new Set(dates).size !== dates.length) continue;
       if (dates[0] < safeStartDate || dates[0] < minimumDate) continue;
@@ -529,8 +531,8 @@ function planCapacityAdjustment(
     if (!best) {
       pending.forEach((task) => addOccupancy(task, task.dueDate));
       nextByTopic.set(topicKey, rounds);
-      const reason = pending.some((task) => protectedIds.has(task.id))
-        ? '已安排到每日计划的轮次受到保护，当前约束下无法移动'
+      const reason = pending.some((task) => !task.isCompleted && protectedIds.has(task.id))
+        ? '受保护的轮次无法移动，其他轮次已在当前约束下优化'
         : deadline
           ? `无法在截止日期 ${deadline} 前保持合法轮次顺序`
           : '当前容量与日期约束下没有安全方案';

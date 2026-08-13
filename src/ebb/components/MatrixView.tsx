@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useState, useMemo, memo, useDeferredValue, useEffect, useRef } from 'react';
-import { Search, ChevronRight, CircleDashed, Clock3, CalendarRange, Plus, RotateCcw } from 'lucide-react';
+import { Search, ChevronRight, CircleDashed, Clock3, CalendarRange, Plus, RotateCcw, SlidersHorizontal, ChevronDown } from 'lucide-react';
 import type { ReviewTask, EbbSettings, TopicStat } from '../types';
 import {
   computeTopicStats,
@@ -168,26 +168,49 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, s
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <select className="eb-filter-select" value={filterTag} onChange={(e) => setFilterTag(e.target.value)}>
-          <option value="">全部标签</option>
-          {tagStats.filter((t) => t.tag).map((t) => (
-            <option key={t.tag} value={t.tag}>{t.tag} ({t.total})</option>
-          ))}
-        </select>
-        <select className="eb-filter-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as FilterStatus)}>
-          <option value="all">全部状态</option>
-          <option value="pending">待复习</option>
-          <option value="completed">已完成</option>
-        </select>
-        <select className="eb-filter-select" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
-          <option value="date">按下次复习日期</option>
-          <option value="ratio">按完成率排序</option>
-          <option value="created-desc">按生成时间（新→旧）</option>
-          <option value="created-asc">按生成时间（旧→新）</option>
-        </select>
+        <div className="eb-filter-chips">
+          <details className="eb-filter-popover-wrap">
+            <summary className={`eb-filter-chip ${filterTag ? 'is-active' : ''}`}>
+              <SlidersHorizontal size={12} />
+              {filterTag || '全部标签'}
+              <ChevronDown size={11} />
+            </summary>
+            <div className="eb-filter-popover">
+              <button type="button" className={filterTag === '' ? 'is-active' : ''} onClick={() => { setFilterTag(''); }}>全部标签</button>
+              {tagStats.filter((t) => t.tag).map((t) => (
+                <button type="button" key={t.tag} className={filterTag === t.tag ? 'is-active' : ''} onClick={() => setFilterTag(t.tag)}>{t.tag} ({t.total})</button>
+              ))}
+            </div>
+          </details>
+          <details className="eb-filter-popover-wrap">
+            <summary className={`eb-filter-chip ${filterStatus !== 'all' ? 'is-active' : ''}`}>
+              <SlidersHorizontal size={12} />
+              {filterStatus === 'all' ? '全部状态' : filterStatus === 'pending' ? '待复习' : '已完成'}
+              <ChevronDown size={11} />
+            </summary>
+            <div className="eb-filter-popover">
+              <button type="button" className={filterStatus === 'all' ? 'is-active' : ''} onClick={() => setFilterStatus('all')}>全部状态</button>
+              <button type="button" className={filterStatus === 'pending' ? 'is-active' : ''} onClick={() => setFilterStatus('pending')}>待复习</button>
+              <button type="button" className={filterStatus === 'completed' ? 'is-active' : ''} onClick={() => setFilterStatus('completed')}>已完成</button>
+            </div>
+          </details>
+          <details className="eb-filter-popover-wrap">
+            <summary className="eb-filter-chip">
+              <SlidersHorizontal size={12} />
+              {sortBy === 'date' ? '按下次复习日期' : sortBy === 'ratio' ? '按完成率排序' : '按生成时间'}
+              <ChevronDown size={11} />
+            </summary>
+            <div className="eb-filter-popover">
+              <button type="button" className={sortBy === 'date' ? 'is-active' : ''} onClick={() => setSortBy('date')}>按下次复习日期</button>
+              <button type="button" className={sortBy === 'ratio' ? 'is-active' : ''} onClick={() => setSortBy('ratio')}>按完成率排序</button>
+              <button type="button" className={sortBy === 'created-desc' ? 'is-active' : ''} onClick={() => setSortBy('created-desc')}>按生成时间（新→旧）</button>
+              <button type="button" className={sortBy === 'created-asc' ? 'is-active' : ''} onClick={() => setSortBy('created-asc')}>按生成时间（旧→新）</button>
+            </div>
+          </details>
+        </div>
       </div>
 
-      {/* 标签统计卡片 */}
+      {/* 标签统计（紧凑横排） */}
       {tagStats.length > 0 && (
         <div className="eb-tag-stats">
           {tagStats.map((ts) => {
@@ -200,14 +223,12 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, s
                 type="button"
                 className={`eb-tag-stat ${filterTag === (ts.tag || '') ? 'eb-tag-stat--active' : ''}`}
                 onClick={() => setFilterTag(filterTag === (ts.tag || '') ? '' : (ts.tag || ''))}
+                title={`${ts.tag || '无标签'}：${ts.completed}/${ts.total} 完成，${ts.pending} 待复习`}
               >
-                <span className="eb-tag-stat-color" style={{ backgroundColor: color }} />
+                <span className="eb-tag-stat-dot" style={{ backgroundColor: color }} />
                 <span className="eb-tag-stat-name">{ts.tag || '无标签'}</span>
-                <span className="eb-tag-stat-ratio">{ts.completed}/{ts.total}</span>
-                <div className="eb-tag-stat-bar">
-                  <div className="eb-tag-stat-fill" style={{ width: `${ts.ratio * 100}%`, backgroundColor: color }} />
-                </div>
-                <span className="eb-tag-stat-pending">{ts.pending}待复习</span>
+                <span className="eb-tag-stat-count">{ts.completed}/{ts.total}</span>
+                {ts.pending > 0 && <span className="eb-tag-stat-pending">{ts.pending}</span>}
               </button>
             );
           })}

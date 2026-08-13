@@ -29,7 +29,7 @@ interface BoardViewProps {
   taskActions: TaskActions;
   selectedDate: string;
   onSelectDate: (date: string) => void;
-  toolbarActions?: ReactNode;
+  toolbarActions?: never;
 }
 
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -50,7 +50,7 @@ const shiftMonth = (date: string, amount: number) => {
   return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 };
 
-const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, selectedDate, onSelectDate, toolbarActions }) => {
+const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, selectedDate, onSelectDate }) => {
   const [cursor, setCursor] = useState(selectedDate || todayStr());
   const [rangeMode, setRangeMode] = useState<'week' | 'month'>('week');
   const [query, setQuery] = useState('');
@@ -168,7 +168,6 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
           </select>
           <button type="button" className={pendingOnly ? 'is-active' : ''} onClick={() => setPendingOnly((value) => !value)} aria-pressed={pendingOnly}>只看未完成</button>
         </div>
-        {toolbarActions}
       </div>
     </div>
 
