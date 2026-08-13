@@ -5,6 +5,8 @@ import {
   CalendarClock,
   CalendarRange,
   Check,
+  CheckCircle,
+  ChevronRight,
   Gauge,
   ListChecks,
   PauseCircle,
@@ -371,7 +373,7 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
           {(
             <section className="eb-adjust-section eb-adjust-scope" aria-labelledby="adjust-step-scope">
               <div className="eb-adjust-section-title">
-                <div><ListChecks size={18} /><div><h4 id="adjust-step-scope">调整范围</h4><p>默认选中符合当前范围的全部计划，也可继续精确勾选。</p></div></div>
+                <div><ListChecks size={18} /><div><h4 id="adjust-step-scope">调整范围</h4><p>默认选中符合当前范围的全部计划。</p></div></div>
                 <button type="button" className="eb-batch-link" onClick={toggleVisible}>{allVisibleSelected ? '取消当前全选' : '全选当前结果'}</button>
               </div>
               <div className="eb-adjust-scope-presets" aria-label="快速选择计划范围">
@@ -379,20 +381,22 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                 <button type="button" className={scopeFilter === 'overdue' ? 'is-active' : ''} onClick={() => selectScope('overdue')}>仅逾期</button>
                 <button type="button" className={scopeFilter === 'upcoming' ? 'is-active' : ''} onClick={() => selectScope('upcoming')}>未来 14 天</button>
               </div>
-              <details className="eb-adjust-disclosure">
-                <summary>精确选择计划 <span>已选 {selectedKeys.size} 个</span></summary>
-                <div className="eb-adjust-disclosure-body">
+              <div className="eb-adjust-scope-summary">
+                <div className="eb-adjust-scope-counter">
+                  <strong>{selectedKeys.size}</strong>
+                  <span>个计划 · {selectedPending} 个未完成轮次 · {selectedMinutes} 分钟</span>
+                </div>
+                {selectedOverdue > 0 && <div className="eb-adjust-scope-overdue">{selectedOverdue} 逾期</div>}
+              </div>
+              <div className="eb-adjust-scope-actions">
+                <button type="button" className="eb-batch-link" onClick={toggleVisible}>{allVisibleSelected ? '取消当前全选' : '全选当前结果'}</button>
+              </div>
+              <div className="eb-adjust-picker">
                   <div className="eb-adjust-filters">
                     <label className="eb-batch-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索复习主题" aria-label="搜索复习主题" /></label>
-                    <select value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value as ScopeFilter)} aria-label="计划范围">
-                      <option value="all">全部计划</option><option value="overdue">仅逾期计划</option><option value="upcoming">未来14天</option><option value="pending">有未完成轮次</option>
-                    </select>
                     <select value={complexityFilter} onChange={(event) => setComplexityFilter(event.target.value as ComplexityFilter)} aria-label="难度筛选">
                       <option value="all">全部难度</option><option value="easy">简单</option><option value="normal">普通</option><option value="hard">困难</option><option value="custom">自定义</option>
                     </select>
-                  </div>
-                  <div className="eb-adjust-selection-summary" aria-label="已选计划摘要">
-                    <span><strong>{selectedKeys.size}</strong> 个计划</span><span><strong>{selectedPending}</strong> 个未完成轮次</span><span className={selectedOverdue > 0 ? 'is-danger' : ''}><strong>{selectedOverdue}</strong> 个逾期</span><span><strong>{selectedMinutes}</strong> 分钟总量</span>
                   </div>
                   <div className="eb-adjust-topic-grid">
                     {visibleTopics.map((topic) => (
@@ -407,9 +411,8 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                       </label>
                     ))}
                     {visibleTopics.length === 0 && <div className="eb-batch-empty"><ListChecks size={18} />没有匹配的复习计划</div>}
-                  </div>
                 </div>
-              </details>
+              </div>
             </section>
           )}
 
@@ -417,27 +420,61 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
             <section className="eb-adjust-section eb-adjust-goals" aria-labelledby="adjust-step-goal">
               <div className="eb-adjust-section-title"><div><Sparkles size={18} /><div><h4 id="adjust-step-goal">调整方式</h4><p>点击目标后下方参数与右侧结果会立即更新。</p></div></div></div>
               {selectedOverdue > 0 && <div className="eb-adjust-recommendation"><Sparkles size={16} /><span><strong>推荐：清理逾期与积压</strong>已选择计划中有 {selectedOverdue} 个逾期轮次，可优先消化并联动后续安排。</span></div>}
-              <div className="eb-adjust-goal-grid">
+              <div className="eb-adjust-goal-grid" role="radiogroup" aria-label="调整方式">
                 {GOALS.filter((goal) => QUICK_GOAL_KINDS.includes(goal.kind) || showMoreGoals).map((goal) => (
-                  <button key={goal.kind} type="button" className={goalKind === goal.kind ? 'is-active' : ''} onClick={() => setGoalKind(goal.kind)}>
-                    <span className="eb-adjust-goal-icon">{goal.icon}</span><span><strong>{goal.label}</strong><small>{goal.description}</small></span>{goalKind === goal.kind && <Check size={16} />}
+                  <button
+                    key={goal.kind}
+                    type="button"
+                    role="radio"
+                    aria-checked={goalKind === goal.kind}
+                    className={goalKind === goal.kind ? 'is-active' : ''}
+                    onClick={() => setGoalKind(goal.kind)}
+                  >
+                    <span className="eb-adjust-goal-icon">{goal.icon}</span>
+                    <span><strong>{goal.label}</strong><small>{goal.description}</small></span>
+                    {goalKind === goal.kind && <Check size={16} className="eb-adjust-goal-check" aria-hidden="true" />}
                   </button>
                 ))}
-                <button type="button" className={`eb-adjust-more-goals ${showMoreGoals ? 'is-active' : ''}`} aria-expanded={showMoreGoals} onClick={() => {
-                  const next = !showMoreGoals;
-                  setShowMoreGoals(next);
-                  if (!next && !QUICK_GOAL_KINDS.includes(goalKind)) setGoalKind('balance');
-                }}><span className="eb-adjust-goal-icon"><SlidersHorizontal size={14} /></span><span><strong>{showMoreGoals ? '收起更多' : '更多调整'}</strong><small>计划维护与精确工具</small></span></button>
+                <button
+                  type="button"
+                  className={`eb-adjust-more-goals ${showMoreGoals ? 'is-active' : ''}`}
+                  aria-expanded={showMoreGoals}
+                  onClick={() => {
+                    const next = !showMoreGoals;
+                    setShowMoreGoals(next);
+                    if (!next && !QUICK_GOAL_KINDS.includes(goalKind)) setGoalKind('balance');
+                  }}
+                >
+                  <span className="eb-adjust-goal-icon"><SlidersHorizontal size={14} /></span>
+                  <span><strong>{showMoreGoals ? '收起更多' : '更多调整'}</strong><small>计划维护与精确工具</small></span>
+                  <ChevronRight size={14} style={{ transform: showMoreGoals ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} aria-hidden="true" />
+                </button>
               </div>
-              {(goalKind === 'backlog' || goalKind === 'balance') && <div className="eb-adjust-preset-row" aria-label="规划预设">
-                {PLANNING_PRESETS.map((preset) => {
-                  const impact = presetImpacts[preset.kind];
-                  return <button key={preset.kind} type="button" title={preset.description} className={planningPreset === preset.kind ? 'is-active' : ''} onClick={() => applyPlanningPreset(preset.kind)}><strong>{preset.label}</strong><small>{impact ? `${impact.moved} 轮改期 · 超载 ${impact.overloadBefore}→${impact.overloadAfter}` : preset.description}</small></button>;
-                })}
-              </div>}
+              {(goalKind === 'backlog' || goalKind === 'balance') && (
+                <div className="eb-adjust-preset-sublist" aria-label="规划预设">
+                  <small className="eb-adjust-preset-hint">{goalKind === 'backlog' ? '选择温和 / 均衡 / 快速清理会影响改期强度' : '选择温和 / 均衡 / 快速清理会影响未来负荷分布'}</small>
+                  <div className="eb-adjust-preset-row" role="group" aria-label="规划预设">
+                    {PLANNING_PRESETS.map((preset) => {
+                      const impact = presetImpacts[preset.kind];
+                      return (
+                        <button
+                          key={preset.kind}
+                          type="button"
+                          title={preset.description}
+                          className={planningPreset === preset.kind ? 'is-active' : ''}
+                          onClick={() => applyPlanningPreset(preset.kind)}
+                        >
+                          <strong>{preset.label}</strong>
+                          <small>{impact ? `${impact.moved} 轮改期 · 超载 ${impact.overloadBefore}→${impact.overloadAfter}` : preset.description}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {goalKind === 'advanced' && (
-                <div className="eb-adjust-advanced">
-                  <h5>精确操作</h5>
+                <div className="eb-adjust-preset-sublist">
+                  <small className="eb-adjust-preset-hint">选择一个精确操作</small>
                   <div className="eb-batch-actions">
                     {ADVANCED_ACTIONS.map((action) => (
                       <label key={action.kind} className={`eb-batch-action ${advancedKind === action.kind ? 'is-active' : ''}`}>
@@ -452,8 +489,8 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
           )}
 
           {(
-            <details className="eb-adjust-section eb-adjust-options" aria-labelledby="adjust-step-constraints">
-              <summary><span><SlidersHorizontal size={16} /><span><strong id="adjust-step-constraints">参数与保护规则</strong><small>{ruleSummary}</small></span></span><em>按需修改</em></summary>
+            <details className="eb-adjust-section eb-adjust-options" aria-labelledby="adjust-step-constraints" open>
+              <summary><span><SlidersHorizontal size={16} /><span><strong id="adjust-step-constraints">参数与保护规则</strong><small>{ruleSummary}</small></span></span><em>点击收起</em></summary>
 
               {(goalKind === 'backlog' || goalKind === 'balance') && (
                 <div className="eb-adjust-form-grid">
@@ -502,14 +539,17 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
           {(
             <section className="eb-adjust-section eb-adjust-preview" aria-labelledby="adjust-step-preview">
               <div className="eb-adjust-section-title"><div><Gauge size={18} /><div><h4 id="adjust-step-preview">实时影响</h4><p>每次选择都会自动重算，无需进入下一步或手动生成预览。</p></div></div></div>
-              <div className={`eb-adjust-verdict is-${verdictKind}`} role="status">{verdictKind === 'safe' ? <Check size={15} /> : verdictKind === 'blocked' ? <X size={15} /> : <AlertTriangle size={15} />}<span>{verdictText}</span></div>
+              <div className={`eb-adjust-verdict is-${verdictKind}`} role="status">
+                {verdictKind === 'safe' ? <CheckCircle size={18} /> : verdictKind === 'blocked' ? <X size={18} /> : <AlertTriangle size={18} />}
+                <span><strong>{verdictKind === 'safe' ? '可以执行' : verdictKind === 'blocked' ? '需要先解决' : '请注意'}</strong>{verdictText}</span>
+              </div>
               <div className="eb-adjust-impact-grid" aria-label="批量调整预览统计">
-                <span><strong>{preview.affectedTopics}</strong><small> 个计划会修改</small></span>
-                <span><strong>{preview.rescheduledRounds}</strong><small> 轮改期</small></span>
-                <span><strong>{preview.removedRounds}</strong><small> 轮移除</small></span>
-                <span><strong>{preview.addedRounds}</strong><small> 轮新增</small></span>
-                <span className={impactedDailyCount > 0 ? 'is-warn' : ''}><strong>{impactedDailyCount}</strong><small> 个每日安排受影响</small></span>
-                <span className={overloadAfter > 0 ? 'is-danger' : 'is-good'}><strong>{overloadBefore} → {overloadAfter}</strong><small>超载日期</small></span>
+                <span><small>会修改计划</small><strong>{preview.affectedTopics}</strong><em>{preview.affectedTopics === 0 ? '无需任何修改' : `共 ${preview.affectedTopics} 个主题`}</em></span>
+                <span className={preview.rescheduledRounds > 0 ? 'is-warn' : ''}><small>轮次改期</small><strong>{preview.rescheduledRounds}</strong><em>已移到新日期</em></span>
+                <span className={preview.removedRounds > 0 ? 'is-danger' : ''}><small>轮次移除</small><strong>{preview.removedRounds}</strong><em>删除的多余轮次</em></span>
+                <span><small>轮次新增</small><strong>{preview.addedRounds}</strong><em>补齐的规划</em></span>
+                <span className={impactedDailyCount > 0 ? 'is-warn' : 'is-good'}><small>每日安排</small><strong>{impactedDailyCount}</strong><em>个引用被清理</em></span>
+                <span className={overloadAfter > 0 ? 'is-danger' : overloadAfter < overloadBefore ? 'is-good' : ''}><small>超载日期</small><strong>{overloadBefore} → {overloadAfter}</strong><em>{overloadAfter === 0 ? '已全部消化' : '仍需关注'}</em></span>
               </div>
 
               {(preview.warnings?.length ?? 0) > 0 && <div className="eb-adjust-warnings">{preview.warnings!.map((warning) => <p key={warning}><AlertTriangle size={14} />{warning}</p>)}</div>}
@@ -517,8 +557,7 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
 
               <details className="eb-adjust-disclosure eb-adjust-preview-details" open={initialPreviewExpanded || undefined}>
                 <summary>查看负荷图与逐计划明细 <span>{preview.results.length} 项</span></summary>
-                <div className="eb-adjust-disclosure-body">
-                  <div className="eb-adjust-preview-block">
+                <div className="eb-adjust-preview-block">
                     <div className="eb-adjust-preview-heading"><strong>未来负荷对比</strong><span>灰色为调整前，紫色为调整后；虚线代表每日容量。</span></div>
                     <div className="eb-adjust-load-chart" aria-label="调整前后每日负荷">
                       {(preview.dayLoads ?? []).map((day) => {
@@ -547,7 +586,6 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                   </div>
 
                   <div className="eb-adjust-safety-note"><Check size={15} /><span><strong>执行保障</strong>已完成历史不会改变；日期变化会同步清理失效的每日安排引用；本次调整支持立即撤销并通过统一工作区同步到其他设备。</span></div>
-                </div>
               </details>
             </section>
           )}
