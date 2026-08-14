@@ -1,5 +1,6 @@
 // ============================================================
 // Smart Timeline - 任务片段条
+// P1 a11y：键盘可达性 + role="button" + Enter/Space 触发
 // ============================================================
 
 import { type FC } from 'react';
@@ -30,6 +31,31 @@ const SegmentBar: FC<{
   const taskBorderColor = getTaskBorderColor(color);
   const arrowColor = `${taskBorderColor}80`;
 
+  const a11yLabel = [
+    taskName,
+    `${segment.month + 1}月${startDay}日至${endDay}日`,
+    isMain ? '主线任务' : '',
+    completed ? '已完成' : '',
+    '按 Enter 打开详情，按 Shift+F10 打开右键菜单',
+  ].filter(Boolean).join('，');
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick?.();
+    } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      e.preventDefault();
+      e.stopPropagation();
+      // 触发与右键相同的处理
+      const fakeEvent = {
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      } as unknown as React.MouseEvent;
+      onContextMenu?.(fakeEvent);
+    }
+  };
+
   return (
     <div
       className={`tl-seg ${!isStart ? 'tl-seg--continued' : ''} ${!isEnd ? 'tl-seg--continues' : ''} ${isMain ? 'tl-seg--main' : ''} ${completed ? 'tl-seg--completed' : ''}`}
@@ -42,14 +68,16 @@ const SegmentBar: FC<{
         borderRadius: `${radiusL}px ${radiusR}px ${radiusR}px ${radiusL}px`,
         color: textColor,
         cursor: 'pointer',
-        // 方案 B：左右 1px 同色系深色细边框，为相邻同色任务提供兜底视觉边界
-        // box-sizing 已为 border-box，不会撑大元素；圆角处边框自然贴合
         borderLeft: `1px solid ${taskBorderColor}`,
         borderRight: `1px solid ${taskBorderColor}`,
       }}
       title={`${taskName}\n${segment.month + 1}月${startDay}日 ~ ${endDay}日${isMain ? '\n[主线任务]' : ''}${completed ? '\n[已完成]' : ''}\n单击查看详情`}
+      role="button"
+      tabIndex={0}
+      aria-label={a11yLabel}
       onClick={(e) => { e.stopPropagation(); onClick?.(); }}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e); }}
+      onKeyDown={handleKeyDown}
     >
       <span className="tl-seg-label">
         {completed ? <s>{taskName}</s> : taskName}

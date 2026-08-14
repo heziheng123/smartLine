@@ -1,8 +1,9 @@
 // ============================================================
 // Smart Timeline - 里程碑新增 / 编辑对话框（已标准化）
+// P0 防护：脏态检测 → 关闭/取消前询问
 // ============================================================
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Milestone } from '@/types';
 import { Dialog, DialogField, ColorPicker } from '@/design/dialogs';
 import { normalizeHex } from '@/design/color';
@@ -10,7 +11,7 @@ import { normalizeHex } from '@/design/color';
 interface MilestoneDialogProps {
   milestone?: Milestone;
   onSave: (milestone: Milestone) => void;
-  onDelete?: (milestoneId: string) => void;
+  onDelete?: (milestoneId: string) => void | Promise<void>;
   onCancel: () => void;
 }
 
@@ -19,6 +20,16 @@ const IMPORTANCE_OPTIONS: Array<[NonNullable<Milestone['importance']>, string]> 
   ['important', '重要节点'],
   ['core', '核心事件'],
 ];
+
+function snapshotOf(milestone: Milestone | undefined): string {
+  if (!milestone) return '__new__';
+  return JSON.stringify({
+    name: milestone.name ?? '',
+    date: milestone.date ?? '',
+    color: milestone.color ?? '',
+    importance: milestone.importance ?? 'important',
+  });
+}
 
 const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
   milestone,
@@ -34,6 +45,13 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
   const [importance, setImportance] = useState<NonNullable<Milestone['importance']>>(
     milestone?.importance ?? 'important',
   );
+
+  const initialSnapshotRef = useRef<string>(snapshotOf(milestone));
+
+  const isDirty = useMemo(() => {
+    const current = JSON.stringify({ name, date, color, importance });
+    return current !== initialSnapshotRef.current;
+  }, [name, date, color, importance]);
 
   const errors = useMemo(() => {
     const out: string[] = [];
@@ -69,10 +87,16 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
       submitLabel={isEdit ? '保存' : '创建'}
       sideAction={
         isEdit && onDelete
-          ? { label: '删除', onClick: () => onDelete(milestone!.id), danger: true }
+          ? {
+              label: '删除',
+              onClick: () => onDelete(milestone!.id),
+              danger: true,
+            }
           : undefined
       }
       errors={errors}
+      isDirty={isDirty}
+      discardConfirmMessage={`里程碑"${name.trim() || milestone?.name || '未命名'}"有未保存的修改，确定放弃？`}
     >
       <DialogField label="里程碑名称" fieldId="milestone-name">
         <input
@@ -82,6 +106,7 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
           onChange={(e) => setName(e.target.value)}
           placeholder="例如：V1.0 上线"
           autoFocus
+          maxLength={120}
         />
       </DialogField>
 

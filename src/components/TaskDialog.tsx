@@ -1,8 +1,9 @@
 // ============================================================
 // Smart Timeline - 任务新增 / 编辑对话框（已标准化）
+// P0 防护：脏态检测 → 关闭/取消前询问
 // ============================================================
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { Task } from '@/types';
 import { Dialog, DialogField, ColorPicker } from '@/design/dialogs';
 import { normalizeHex } from '@/design/color';
@@ -10,8 +11,24 @@ import { normalizeHex } from '@/design/color';
 interface TaskDialogProps {
   task?: Task;
   onSave: (task: Task) => void;
-  onDelete?: (taskId: string) => void;
+  onDelete?: (taskId: string) => void | Promise<void>;
   onCancel: () => void;
+}
+
+/**
+ * 计算"未修改"的 JSON 快照。比较两个快照是否相等，判断是否脏态。
+ */
+function snapshotOf(task?: Task): string {
+  if (!task) return '__new__';
+  return JSON.stringify({
+    name: task.name ?? '',
+    start: task.start ?? '',
+    end: task.end ?? '',
+    color: task.color ?? '',
+    isMain: task.isMain ?? false,
+    completed: task.completed ?? false,
+    notePath: task.notePath ?? '',
+  });
 }
 
 const TaskDialog: React.FC<TaskDialogProps> = ({
@@ -29,6 +46,14 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
   const [isMain, setIsMain] = useState(task?.isMain ?? false);
   const [completed, setCompleted] = useState(task?.completed ?? false);
   const [notePath, setNotePath] = useState(task?.notePath ?? '');
+
+  // 初始快照（仅在挂载时计算一次）
+  const initialSnapshotRef = useRef<string>(snapshotOf(task));
+
+  const isDirty = useMemo(() => {
+    const current = JSON.stringify({ name, start, end, color, isMain, completed, notePath });
+    return current !== initialSnapshotRef.current;
+  }, [name, start, end, color, isMain, completed, notePath]);
 
   // 派生校验与错误（替代散落的 "如果不对就 disabled"）
   const errors = useMemo(() => {
@@ -73,10 +98,16 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
       submitLabel={isEdit ? '保存' : '创建'}
       sideAction={
         isEdit && onDelete
-          ? { label: '删除', onClick: () => onDelete(task!.id), danger: true }
+          ? {
+              label: '删除',
+              onClick: () => onDelete(task!.id),
+              danger: true,
+            }
           : undefined
       }
       errors={errors}
+      isDirty={isDirty}
+      discardConfirmMessage={`任务"${name.trim() || task?.name || '未命名'}"有未保存的修改，确定放弃？`}
     >
       <DialogField label="任务名称" fieldId="task-name">
         <input
@@ -86,6 +117,7 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
           onChange={(e) => setName(e.target.value)}
           placeholder="例如：政治第一轮"
           autoFocus
+          maxLength={200}
         />
       </DialogField>
 
@@ -142,6 +174,7 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
           value={notePath}
           onChange={(e) => setNotePath(e.target.value)}
           placeholder="URL 或备注内容"
+          maxLength={500}
         />
       </DialogField>
     </Dialog>

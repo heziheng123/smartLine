@@ -1,8 +1,9 @@
 // ============================================================
 // Smart Timeline - 便签新增 / 编辑对话框（已标准化）
+// P0 防护：脏态检测 → 关闭/取消前询问
 // ============================================================
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Note } from '@/types';
 import { Dialog, DialogField, ColorPicker } from '@/design/dialogs';
 import { normalizeHex } from '@/design/color';
@@ -10,8 +11,20 @@ import { normalizeHex } from '@/design/color';
 interface NoteDialogProps {
   note?: Note;
   onSave: (note: Note) => void;
-  onDelete?: (noteId: string) => void;
+  onDelete?: (noteId: string) => void | Promise<void>;
   onCancel: () => void;
+}
+
+function snapshotOf(note: Note | undefined): string {
+  if (!note) return '__new__';
+  return JSON.stringify({
+    name: note.name ?? '',
+    date: note.date ?? '',
+    endDate: note.endDate ?? '',
+    type: note.type ?? 'pin',
+    color: note.color ?? '',
+    notePath: note.notePath ?? '',
+  });
 }
 
 const NoteDialog: React.FC<NoteDialogProps> = ({
@@ -28,6 +41,13 @@ const NoteDialog: React.FC<NoteDialogProps> = ({
   const [type, setType] = useState<'pin' | 'range'>(note?.type ?? 'pin');
   const [color, setColor] = useState(note?.color ?? '');
   const [notePath, setNotePath] = useState(note?.notePath ?? '');
+
+  const initialSnapshotRef = useRef<string>(snapshotOf(note));
+
+  const isDirty = useMemo(() => {
+    const current = JSON.stringify({ name, date, endDate, type, color, notePath });
+    return current !== initialSnapshotRef.current;
+  }, [name, date, endDate, type, color, notePath]);
 
   const errors = useMemo(() => {
     const out: string[] = [];
@@ -68,10 +88,16 @@ const NoteDialog: React.FC<NoteDialogProps> = ({
       submitLabel={isEdit ? '保存' : '创建'}
       sideAction={
         isEdit && onDelete
-          ? { label: '删除', onClick: () => onDelete(note!.id), danger: true }
+          ? {
+              label: '删除',
+              onClick: () => onDelete(note!.id),
+              danger: true,
+            }
           : undefined
       }
       errors={errors}
+      isDirty={isDirty}
+      discardConfirmMessage={`便签"${name.trim() || note?.name || '未命名'}"有未保存的修改，确定放弃？`}
     >
       <DialogField label="便签内容" fieldId="note-name">
         <input
@@ -81,6 +107,7 @@ const NoteDialog: React.FC<NoteDialogProps> = ({
           onChange={(e) => setName(e.target.value)}
           placeholder="例如：四六级报名"
           autoFocus
+          maxLength={200}
         />
       </DialogField>
 
@@ -130,6 +157,7 @@ const NoteDialog: React.FC<NoteDialogProps> = ({
           value={notePath}
           onChange={(e) => setNotePath(e.target.value)}
           placeholder="URL 或备注内容"
+          maxLength={500}
         />
       </DialogField>
     </Dialog>

@@ -584,14 +584,25 @@ const EbbView: React.FC = () => {
         )}
 
         {/* ── 统计区 ──────────────────────────────────────── */}
-        {/* ── 撤销条 ──────────────────────────────────────── */}
-        {hasUndo && lastUndo && (
-          <div className="eb-undo-bar">
+        {/* ── 撤销条（统一：优先 Ebb undoStack，其次 OperationHistory） ──── */}
+        {(hasUndo && lastUndo) || latestOperation ? (
+          <div className="eb-undo-bar" role="status" aria-live="polite">
             <RotateCcw size={14} />
-            <span>可撤销：{lastUndo.description}</span>
-            <button type="button" className="eb-undo-btn" onClick={handleUndo}>撤销</button>
+            {hasUndo && lastUndo ? (
+              <>
+                <span>可撤销（艾宾浩斯）：{lastUndo.description}</span>
+                <button type="button" className="eb-undo-btn" onClick={handleUndo}>撤销</button>
+              </>
+            ) : latestOperation ? (
+              <>
+                <span>可撤销（全局）：{latestOperation.label}</span>
+                {latestOperation.canUndo && (
+                  <button type="button" className="eb-undo-btn" onClick={() => void handleUndoLatestOperation()}>撤销</button>
+                )}
+              </>
+            ) : null}
           </div>
-        )}
+        ) : null}
 
         {/* ── 全宽视图内容 ─────────────────────────────── */}
         <div className="eb-main-wrap ui-workspace-content-stage">

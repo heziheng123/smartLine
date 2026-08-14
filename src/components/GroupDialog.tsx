@@ -1,8 +1,9 @@
 // ============================================================
 // Smart Timeline - 分组新增 / 编辑对话框（已标准化）
+// P0 防护：脏态检测 → 关闭/取消前询问
 // ============================================================
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { WandSparkles } from 'lucide-react';
 import type { Task, TaskGroup } from '@/types';
 import {
@@ -21,8 +22,20 @@ interface GroupDialogProps {
   /** 所有分组列表（用于显示任务当前所属分组） */
   groups: TaskGroup[];
   onSave: (group: TaskGroup) => void;
-  onDelete?: (groupId: string) => void;
+  onDelete?: (groupId: string) => void | Promise<void>;
   onCancel: () => void;
+}
+
+function snapshotOf(group: TaskGroup | undefined, selectedTaskIds: Set<string>): string {
+  if (!group) return `__new__|${[...selectedTaskIds].sort().join(',')}`;
+  return JSON.stringify({
+    name: group.name ?? '',
+    start: group.start ?? '',
+    end: group.end ?? '',
+    color: group.color ?? '',
+    autoDate: group.autoDate ?? true,
+    childIds: (group.children ?? []).map((c) => c.id).sort().join(','),
+  });
 }
 
 const GroupDialog: React.FC<GroupDialogProps> = ({
@@ -57,6 +70,21 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
       return next;
     });
   };
+
+  // 初始快照
+  const initialSnapshotRef = useRef<string>(snapshotOf(group, selectedTaskIds));
+
+  const isDirty = useMemo(() => {
+    const current = JSON.stringify({
+      name,
+      start,
+      end,
+      color,
+      autoDate,
+      childIds: [...selectedTaskIds].sort().join(','),
+    });
+    return current !== initialSnapshotRef.current;
+  }, [name, start, end, color, autoDate, selectedTaskIds]);
 
   const manualDateError = useMemo(() => {
     if (autoDate) return null;
@@ -103,10 +131,16 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
       submitLabel={isEdit ? '保存' : '创建'}
       sideAction={
         isEdit && onDelete
-          ? { label: '删除', onClick: () => onDelete(group!.id), danger: true }
+          ? {
+              label: '删除',
+              onClick: () => onDelete(group!.id),
+              danger: true,
+            }
           : undefined
       }
       errors={errors}
+      isDirty={isDirty}
+      discardConfirmMessage={`分组"${name.trim() || group?.name || '未命名'}"有未保存的修改，确定放弃？`}
     >
       <DialogField label="分组名称" fieldId="group-name">
         <input
@@ -116,6 +150,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
           onChange={(e) => setName(e.target.value)}
           placeholder="例如：产品研发"
           autoFocus
+          maxLength={120}
         />
       </DialogField>
 
@@ -191,6 +226,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
             value={color}
             onChange={(e) => setColor(e.target.value)}
             placeholder="#自定义"
+            maxLength={9}
           />
         </div>
       </DialogField>

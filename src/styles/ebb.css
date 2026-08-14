@@ -8133,11 +8133,12 @@
 /* Sidebar (Topic List) */
 .ebb-new-sidebar {
   width: 260px;
+  flex: 0 0 260px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: #fff;
   border-left: 1px solid #F1F5F9;
-  flex-shrink: 0;
 }
 
 .ebb-new-sidebar-header {

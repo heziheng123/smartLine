@@ -20,7 +20,15 @@ const ContextMenu: FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
     const firstBtn = menuRef.current?.querySelector<HTMLButtonElement>('[data-menu-idx]');
     firstBtn?.focus();
 
-    const handleClickOutside = (e: MouseEvent) => {
+    // P3 D-6：pointerdown 比 mousedown 更早一步，支持触摸/笔设备
+    const handleClickOutside = (e: MouseEvent | TouchEvent | PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+
+    // P3 D-6：mouseup 作为兜底，避免某些浏览器 mousedown 与 dragstart 事件交错时不触发关闭
+    const handleMouseUp = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose();
       }
@@ -30,11 +38,20 @@ const ContextMenu: FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
       if (e.key === 'Escape') onClose();
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
+    // resize/scroll 时关闭菜单（防止菜单位置与触发元素错位）
+    const handleResizeOrScroll = () => onClose();
+
+    document.addEventListener('pointerdown', handleClickOutside);
+    document.addEventListener('mouseup', handleMouseUp);
     document.addEventListener('keydown', handleEscape);
+    window.addEventListener('resize', handleResizeOrScroll);
+    window.addEventListener('scroll', handleResizeOrScroll, true);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('pointerdown', handleClickOutside);
+      document.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('resize', handleResizeOrScroll);
+      window.removeEventListener('scroll', handleResizeOrScroll, true);
     };
   }, [onClose]);
 
@@ -52,14 +69,19 @@ const ContextMenu: FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
       let newTop = y;
       let newLeft = x;
 
+      // 视口边界 clamp：避免菜单跑出视口
+      const padding = 8;
       if (x + rect.width > viewportW) {
-        newLeft = x - rect.width;
+        newLeft = Math.max(padding, x - rect.width);
         newOriginX = 'right';
       }
       if (y + rect.height > viewportH) {
-        newTop = y - rect.height;
+        newTop = Math.max(padding, y - rect.height);
         newOriginY = 'bottom';
       }
+      // 左/上溢出兜底
+      newLeft = Math.max(padding, Math.min(newLeft, viewportW - rect.width - padding));
+      newTop = Math.max(padding, Math.min(newTop, viewportH - rect.height - padding));
 
       setPosition({ top: newTop, left: newLeft });
       setOrigin(`${newOriginY} ${newOriginX}`);

@@ -6,7 +6,7 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import '@/styles/daily-schedule.css';
-import { formatDate, todayStr } from '@/utils/dateSafe';
+import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { projectTasksForDate, reviewTasksForDate } from '@/domain/dailyTaskProjection';
 import {
   DragDropContext,
@@ -151,6 +151,31 @@ const DailyScheduleView: React.FC = () => {
     };
     window.addEventListener('tl-navigate', handleNavigation);
     return () => window.removeEventListener('tl-navigate', handleNavigation);
+  }, []);
+
+  // P1 D-8/D-9：键盘快捷键 — J/K 切日期，T 回到今天，[ / ] 前后一天
+  useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+    };
+    const handler = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isTypingTarget(event.target)) return;
+      if (event.key === 'j' || event.key === 'J' || event.key === ']' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        setSelectedDate((current) => addDays(current, 1));
+      } else if (event.key === 'k' || event.key === 'K' || event.key === '[' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        setSelectedDate((current) => addDays(current, -1));
+      } else if (event.key === 't' || event.key === 'T') {
+        event.preventDefault();
+        setSelectedDate(todayStr());
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
 
   const openProjectTaskFromSource = useCallback((sourceId: string) => {
@@ -1000,6 +1025,8 @@ const DailyScheduleView: React.FC = () => {
               className="ds-date-input"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
+              title="选择日期（键盘快捷键：J 下一日 / K 上一日 / T 今日）"
+              aria-label="选择日期，按 J 下一日、K 上一日、T 回到今日"
             />
             <div className="ds-day-overview" aria-label="今日安排概览">
               <span><strong>{dailyOverview.scheduled}</strong> 项已安排</span>

@@ -695,11 +695,17 @@ const App: React.FC = () => {
     setEditingTask(undefined);
   }, [dialogMode, store]);
 
-  const handleDeleteTask = useCallback((taskId: string) => {
-    handleDeleteTaskFromDrawer(taskId);
-    setDialogType(null);
-    setEditingTask(undefined);
-  }, [handleDeleteTaskFromDrawer]);
+  const handleDeleteTask = useCallback(async (taskId: string) => {
+    // P0 D-2: 等待"任务删除确认"对话框返回；用户取消时保留任务对话框，
+    // 避免误删整条主线任务。
+    await handleDeleteTaskFromDrawer(taskId);
+    // 仅在确实执行了删除（drawer 已关闭）后才关闭当前对话框
+    if (!store.tasks.some((t) => t.id === taskId)
+      && !store.groups.some((g) => g.children.some((c) => c.id === taskId))) {
+      setDialogType(null);
+      setEditingTask(undefined);
+    }
+  }, [handleDeleteTaskFromDrawer, store]);
 
   // ── 分组操作 ──────────────────────────────────────────────
 
@@ -725,7 +731,17 @@ const App: React.FC = () => {
     setEditingGroup(undefined);
   }, [dialogMode, store]);
 
-  const handleDeleteGroup = useCallback((groupId: string) => {
+  const handleDeleteGroup = useCallback(async (groupId: string) => {
+    // P0 D-2: 二次确认 — 误删分组会导致其下所有任务失去归属
+    const target = store.groups.find((g) => g.id === groupId);
+    const confirmed = await requestConfirmation({
+      title: '永久删除分组',
+      message: `确定永久删除分组"${target?.name ?? '未命名'}"吗？分组下的所有任务关联将被清除，删除后无法恢复。`,
+      confirmLabel: '永久删除',
+      cancelLabel: '取消',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     store.deleteGroup(groupId);
     setDialogType(null);
     setEditingGroup(undefined);
@@ -755,7 +771,17 @@ const App: React.FC = () => {
     setEditingNote(undefined);
   }, [dialogMode, store]);
 
-  const handleDeleteNote = useCallback((noteId: string) => {
+  const handleDeleteNote = useCallback(async (noteId: string) => {
+    // P0 D-2: 二次确认 — 便签含外部链接/备注
+    const target = store.notes.find((n) => n.id === noteId);
+    const confirmed = await requestConfirmation({
+      title: '永久删除便签',
+      message: `确定永久删除便签"${target?.name ?? '未命名'}"吗？便签的关联备注和日期范围会一起清除，删除后无法恢复。`,
+      confirmLabel: '永久删除',
+      cancelLabel: '取消',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     store.deleteNote(noteId);
     setDialogType(null);
     setEditingNote(undefined);
@@ -785,7 +811,17 @@ const App: React.FC = () => {
     setEditingMilestone(undefined);
   }, [dialogMode, store]);
 
-  const handleDeleteMilestone = useCallback((milestoneId: string) => {
+  const handleDeleteMilestone = useCallback(async (milestoneId: string) => {
+    // P0 D-2: 二次确认 — 里程碑是关键日期节点
+    const target = store.milestones.find((m) => m.id === milestoneId);
+    const confirmed = await requestConfirmation({
+      title: '永久删除里程碑',
+      message: `确定永久删除里程碑"${target?.name ?? '未命名'}"吗？这是关键日期节点，删除后无法恢复。`,
+      confirmLabel: '永久删除',
+      cancelLabel: '取消',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
     store.deleteMilestone(milestoneId);
     setDialogType(null);
     setEditingMilestone(undefined);

@@ -376,6 +376,7 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
             handleDragUpdate(update.draggableId, targetDate);
           }
         }} onDragEnd={handleDragEnd}>
+          <div className="ebb-new-main">
           {/* Calendar Area */}
           <section className="ebb-new-calendar">
             {/* Calendar Nav */}
@@ -548,6 +549,7 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
               )}
             </Droppable>
           </aside>
+          </div>
         </DragDropContext>
 
         {/* Footer Progress */}

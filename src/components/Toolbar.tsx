@@ -43,6 +43,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPrel
             role="tab"
             aria-selected={active}
             aria-controls={`view-${item.module}`}
+            aria-label={item.label}
             type="button"
             className={`tl-dock-btn ${active ? 'tl-dock-btn--active' : ''}`}
             onClick={() => onViewChange(item.module)}
