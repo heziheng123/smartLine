@@ -24,12 +24,23 @@ import { resolveTaskTheme } from '@/utils/timeline-utils';
  */
 export function useSmartTaskTodos(tasks: Task[], groups: TaskGroup[] = []): AggregatedTodo[] {
   return useMemo(() => {
-    const all: AggregatedTodo[] = [];
+    // Build lookup maps so each task/group association is O(1) instead of O(n×m).
+    const groupById = new Map<string, TaskGroup>();
+    const groupByChildId = new Map<string, TaskGroup>();
+    for (const g of groups) {
+      groupById.set(g.id, g);
+      for (const child of g.children ?? []) {
+        groupByChildId.set(child.id, g);
+      }
+    }
 
+    const all: AggregatedTodo[] = [];
     for (const task of tasks) {
-      const group = groups.find((item) =>
-        item.id === task.groupId || item.children.some((child) => child.id === task.id),
-      );
+      // Task.groupId is optional; only consult the primary map when defined to
+      // avoid a TS error on passing undefined into Map<string, ...>.get().
+      const group = (task.groupId !== undefined ? groupById.get(task.groupId) : undefined)
+        ?? groupByChildId.get(task.id)
+        ?? undefined;
       const projectTheme = resolveTaskTheme(task, group?.color);
       const blocks = task.blocks ?? [];
       const smartBlocks = getSmartTaskBlocks(blocks);

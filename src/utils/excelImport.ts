@@ -6,7 +6,7 @@
 
 import type { SmartTaskBlock, SmartTaskHeader, Task } from '@/types';
 import { genBlockId, getTagColor, getValidGraphNodeIds, isQuantityTask } from './blocks';
-import { isValidCalendarDate, makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
+import { addDays, isValidCalendarDate, makeLocalDayjs, todayStr, formatDateLocal } from './dateSafe';
 
 import { useGraphStore } from '@/graph/store';
 
@@ -210,12 +210,16 @@ function readCell(row: unknown[], colIndex: number): string {
 
 function parseExcelDateCode(serial: number) {
   if (serial <= 0) return null;
-  let step = Math.floor(serial);
-  if (step === 60) return { y: 1900, m: 2, d: 29 };
-  if (step > 60) step -= 1;
-  const d = new Date(1900, 0, 1);
-  d.setDate(d.getDate() + step - 1);
-  return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+  // Excel incorrectly treats 1900 as a leap year (Lotus 1-2-3 bug).
+  if (serial === 60) return { y: 1900, m: 2, d: 29 };
+  // For serials > 60: subtract 1 to account for the phantom Feb 29 1900.
+  // Use UTC arithmetic throughout to be DST-safe: constructing at UTC midnight
+  // (00:00 UTC) and adding days avoids local-timezone DST transitions.
+  const days = serial > 60 ? serial - 2 : serial - 1;
+  // days=0 → Jan 1 1900; days=1 → Jan 2 1900; ...
+  const base = new Date(Date.UTC(1900, 0, 1));
+  base.setUTCDate(base.getUTCDate() + days);
+  return { y: base.getUTCFullYear(), m: base.getUTCMonth() + 1, d: base.getUTCDate() };
 }
 
 /**
@@ -385,9 +389,9 @@ export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfi
     if (r._error && r._error !== '任务名称为空（已忽略）') return r;
     if (!r.title) return r;
 
-    // 跳过周末（cursor 基于 makeLocalDayjs，.day() 安全取本地分量）
+    // 跳过周末（makeLocalDayjs 和 .day() 是本地时间，安全取分量）
     while (config.skipWeekend && (cursor.day() === 0 || cursor.day() === 6)) {
-      cursor = cursor.add(1, 'day');
+      cursor = makeLocalDayjs(addDays(cursor.format('YYYY-MM-DD'), 1));
     }
 
     const taskDuration = r.duration || 30;
@@ -406,9 +410,9 @@ export function applyBatchSchedule(rows: ParsedRow[], config: BatchScheduleConfi
     }
 
     if (needNextDay) {
-      cursor = cursor.add(1, 'day');
+      cursor = makeLocalDayjs(addDays(cursor.format('YYYY-MM-DD'), 1));
       while (config.skipWeekend && (cursor.day() === 0 || cursor.day() === 6)) {
-        cursor = cursor.add(1, 'day');
+        cursor = makeLocalDayjs(addDays(cursor.format('YYYY-MM-DD'), 1));
       }
       currentDayCount = 0;
       currentDayDuration = 0;

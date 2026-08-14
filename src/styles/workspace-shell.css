@@ -19,6 +19,68 @@
   color: var(--ui-text);
   background: var(--ui-surface);
   box-shadow: none;
+  /* 全局可见焦点环 —— Apple 风格的 4px soft ring */
+}
+
+.ui-workspace-header :focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring);
+  border-radius: inherit;
+}
+
+/* ── 中央通用组件（新增，对应 Card / IconButton / Tag） ── */
+.tl-card {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg, 16px);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-subtle);
+  box-sizing: border-box;
+}
+
+.tl-card--bare { padding: 0; }
+.tl-card--warning { border-color: #FED7AA; background: linear-gradient(180deg, #fff, #FFF7ED); }
+.tl-card--danger  { border-color: #FECACA; background: var(--ui-danger-soft, #FEF2F2); }
+
+.tl-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md, 12px);
+  background: var(--ui-surface);
+  color: var(--ui-text-muted);
+  cursor: pointer;
+  transition: background-color var(--ui-motion-fast) var(--ui-ease-enter),
+    border-color var(--ui-motion-fast) var(--ui-ease-enter),
+    transform var(--ui-motion-instant) var(--ui-ease-enter);
+}
+
+.tl-icon-btn:active { transform: scale(0.97); }
+
+.tl-icon-btn--sm { width: 32px; height: 32px; min-width: 32px; }
+.tl-icon-btn--md { width: 36px; height: 36px; min-width: 36px; }
+.tl-icon-btn--lg { width: 44px; height: 44px; min-width: 44px; }
+.tl-icon-btn--primary { color: #fff; background: var(--ui-primary); border-color: transparent; }
+.tl-icon-btn--danger  { color: #fff; background: var(--ui-danger); border-color: transparent; }
+
+.tl-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tl-tag--primary { background: var(--ui-primary-soft); color: var(--ui-primary); }
+.tl-tag--success { background: #ECFDF5; color: #047857; }
+.tl-tag--warning { background: #FFF7ED; color: #B45309; }
+.tl-tag--danger  { background: var(--ui-danger-soft); color: var(--ui-danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-icon-btn { transition-duration: 0.01ms; }
 }
 
 .ui-workspace-header__identity,

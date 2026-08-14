@@ -1193,8 +1193,16 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
     ),
   ].filter((path) => !forcedKeys.has(path.split(/[.[]/, 1)[0] as WorkspaceStorageField));
   const fieldsWithoutBaseline = protectedKeys.filter((key) => !pending.baseHashes?.[key]);
+  // A clock-based metadataConflict is unreliable: device clocks can be skewed,
+  // and "remoteUpdatedAt > pending.updatedAt" can be false even when the remote
+  // legitimately wrote a new field. Instead, conflict if the remote already has
+  // a value for a no-baseline field: the user made the same edit independently
+  // on two devices and both wrote it without a common ancestor.
+  const remoteHasNoBaselineField = fieldsWithoutBaseline.some((key) =>
+    Object.prototype.hasOwnProperty.call(rootJson, key),
+  );
   const metadataConflict = fieldsWithoutBaseline.length > 0
-    && remoteUpdatedAt > pending.updatedAt
+    && remoteHasNoBaselineField
     && remoteDeviceId
     && remoteDeviceId !== pending.deviceId;
   // Conflict hashing awaits Web Crypto and gives newer user actions time to
@@ -1311,6 +1319,11 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
   if (localHash !== source.hash) {
     throw new Error('本机规范化后的数据与旧房间仍不一致。请保持联网，等待五个模块全部连接后重新检查。');
   }
+  // During the network read above, captureWorkspaceMutationsDuring has journaled any
+  // local edits into the queue targeting the legacy room. Flush those to the legacy
+  // room before switching so they survive into the unified room. Otherwise, clearing
+  // the queue here would discard all edits made during the migration window.
+  await flushWorkspaceQueueInternal();
   await clearPendingWorkspaceSync();
   await createLocalSnapshot('统一工作区迁移前');
   const targetRoomId = buildUnifiedRoomId(roomCode, identity);

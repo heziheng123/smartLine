@@ -1,10 +1,11 @@
 // ============================================================
-// Smart Timeline - 任务新增 / 编辑对话框
+// Smart Timeline - 任务新增 / 编辑对话框（已标准化）
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Task } from '@/types';
-import { TASK_BG_PRESET } from '@/utils/timeline-utils';
+import { Dialog, DialogField, ColorPicker } from '@/design/dialogs';
+import { normalizeHex } from '@/design/color';
 
 interface TaskDialogProps {
   task?: Task;
@@ -12,9 +13,6 @@ interface TaskDialogProps {
   onDelete?: (taskId: string) => void;
   onCancel: () => void;
 }
-
-// 任务色板：24 套标准主题的浅背景色（与所属分组同色系绑定）
-const PRESET_COLORS = TASK_BG_PRESET;
 
 const TaskDialog: React.FC<TaskDialogProps> = ({
   task,
@@ -32,30 +30,32 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
   const [completed, setCompleted] = useState(task?.completed ?? false);
   const [notePath, setNotePath] = useState(task?.notePath ?? '');
 
-  const handleSave = () => {
+  // 派生校验与错误（替代散落的 "如果不对就 disabled"）
+  const errors = useMemo(() => {
+    const out: string[] = [];
     const trimmed = name.trim();
-    if (!trimmed || !start || !end) return;
-    if (end < start) return;
-
-    let finalColor: string | undefined;
-    const colorTrimmed = color.trim();
-    if (colorTrimmed) {
-      let c = colorTrimmed.replace(/^#/, '');
-      if (/^[0-9a-fA-F]{3}$/.test(c)) {
-        c = c.split('').map(x => x + x).join('');
-      }
-      if (/^[0-9a-fA-F]{6}$/.test(c)) {
-        finalColor = `#${c.toUpperCase()}`;
-      }
+    if (!trimmed) out.push('请填写任务名称');
+    if (!start) out.push('请选择开始日期');
+    if (start && !end) out.push('请选择结束日期');
+    if (start && end && end < start) out.push('结束日期不能早于开始日期');
+    if (color && color.trim() && !normalizeHex(color)) {
+      out.push('颜色格式无效（例：#5E5CE6）');
     }
+    return out;
+  }, [name, start, end, color]);
 
+  const canSubmit = errors.length === 0;
+
+  const handleSave = () => {
+    if (!canSubmit) return;
+    const trimmed = name.trim();
     onSave({
       ...(task ?? {}),
       id: task?.id ?? crypto.randomUUID(),
       name: trimmed,
       start,
       end,
-      color: finalColor,
+      color: normalizeHex(color),
       isMain,
       completed,
       notePath: notePath.trim() || undefined,
@@ -64,145 +64,87 @@ const TaskDialog: React.FC<TaskDialogProps> = ({
     });
   };
 
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onCancel();
-  };
-
-  const isValid = name.trim() && start && end && end >= start;
-
   return (
-    <div className="tl-dialog-overlay" onClick={handleOverlayClick}>
-      <div className="tl-dialog">
-        <div className="tl-dialog-header">
-          <h3>{isEdit ? '编辑任务' : '新建任务'}</h3>
-        </div>
+    <Dialog
+      title={isEdit ? '编辑任务' : '新建任务'}
+      onCancel={onCancel}
+      onSubmit={handleSave}
+      canSubmit={canSubmit}
+      submitLabel={isEdit ? '保存' : '创建'}
+      sideAction={
+        isEdit && onDelete
+          ? { label: '删除', onClick: () => onDelete(task!.id), danger: true }
+          : undefined
+      }
+      errors={errors}
+    >
+      <DialogField label="任务名称" fieldId="task-name">
+        <input
+          className="tl-dialog-input"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="例如：政治第一轮"
+          autoFocus
+        />
+      </DialogField>
 
-        <div className="tl-dialog-body">
-          <label className="tl-dialog-field">
-            <span className="tl-dialog-label">任务名称</span>
-            <input
-              className="tl-dialog-input"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例如：政治第一轮"
-              autoFocus
-            />
-          </label>
-
-          <div className="tl-dialog-row">
-            <label className="tl-dialog-field">
-              <span className="tl-dialog-label">开始日期</span>
-              <input
-                className="tl-dialog-input"
-                type="date"
-                value={start}
-                onChange={(e) => setStart(e.target.value)}
-              />
-            </label>
-            <label className="tl-dialog-field">
-              <span className="tl-dialog-label">结束日期</span>
-              <input
-                className="tl-dialog-input"
-                type="date"
-                value={end}
-                onChange={(e) => setEnd(e.target.value)}
-              />
-            </label>
-          </div>
-
-          {start && end && end < start && (
-            <div className="tl-dialog-error">结束日期必须晚于或等于开始日期</div>
-          )}
-
-          <label className="tl-dialog-field">
-            <span className="tl-dialog-label">方块颜色</span>
-            <div className="tl-dialog-color-row">
-              <div className="tl-dialog-color-grid">
-                {PRESET_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    className={`tl-dialog-color-btn ${color.toLowerCase() === c.toLowerCase() ? 'tl-dialog-color-btn--active' : ''}`}
-                    style={{ background: c }}
-                    onClick={() => setColor(c)}
-                    type="button"
-                    title={c}
-                    aria-label={`选择颜色 ${c}`}
-                  />
-                ))}
-              </div>
-              <input
-                className="tl-dialog-input tl-dialog-color-input"
-                type="text"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                placeholder="#自定义"
-              />
-            </div>
-          </label>
-
-          <div className="tl-dialog-row">
-            <label className="tl-dialog-checkbox">
-              <input
-                type="checkbox"
-                checked={isMain}
-                onChange={(e) => setIsMain(e.target.checked)}
-              />
-              <span>主线任务</span>
-            </label>
-            <label className="tl-dialog-checkbox">
-              <input
-                type="checkbox"
-                checked={completed}
-                onChange={(e) => setCompleted(e.target.checked)}
-              />
-              <span>已完成</span>
-            </label>
-          </div>
-
-          <label className="tl-dialog-field">
-            <span className="tl-dialog-label">关联备注</span>
-            <input
-              className="tl-dialog-input"
-              type="text"
-              value={notePath}
-              onChange={(e) => setNotePath(e.target.value)}
-              placeholder="URL 或备注内容"
-            />
-          </label>
-
-        </div>
-
-        <div className="tl-dialog-footer">
-          {isEdit && onDelete && (
-            <button
-              className="tl-dialog-btn tl-dialog-btn--danger"
-              onClick={() => onDelete(task!.id)}
-              type="button"
-            >
-              删除
-            </button>
-          )}
-          <div className="tl-dialog-footer-right">
-            <button
-              className="tl-dialog-btn tl-dialog-btn--secondary"
-              onClick={onCancel}
-              type="button"
-            >
-              取消
-            </button>
-            <button
-              className="tl-dialog-btn tl-dialog-btn--primary"
-              onClick={handleSave}
-              disabled={!isValid}
-              type="button"
-            >
-              {isEdit ? '保存' : '创建'}
-            </button>
-          </div>
-        </div>
+      <div className="tl-dialog-row">
+        <DialogField label="开始日期" fieldId="task-start">
+          <input
+            className="tl-dialog-input"
+            type="date"
+            value={start}
+            onChange={(e) => setStart(e.target.value)}
+          />
+        </DialogField>
+        <DialogField label="结束日期" fieldId="task-end">
+          <input
+            className="tl-dialog-input"
+            type="date"
+            value={end}
+            onChange={(e) => setEnd(e.target.value)}
+          />
+        </DialogField>
       </div>
-    </div>
+
+      <DialogField label="方块颜色" fieldId="task-color" hint="12 个预设 + 自定义 hex；无效值会在底部聚合提示">
+        <ColorPicker
+          value={color || undefined}
+          onChange={(c) => setColor(c ?? '')}
+          variant="task"
+        />
+      </DialogField>
+
+      <div className="tl-dialog-row">
+        <label className="tl-dialog-checkbox">
+          <input
+            type="checkbox"
+            checked={isMain}
+            onChange={(e) => setIsMain(e.target.checked)}
+          />
+          <span>主线任务</span>
+        </label>
+        <label className="tl-dialog-checkbox">
+          <input
+            type="checkbox"
+            checked={completed}
+            onChange={(e) => setCompleted(e.target.checked)}
+          />
+          <span>已完成</span>
+        </label>
+      </div>
+
+      <DialogField label="关联备注" fieldId="task-note">
+        <input
+          className="tl-dialog-input"
+          type="text"
+          value={notePath}
+          onChange={(e) => setNotePath(e.target.value)}
+          placeholder="URL 或备注内容"
+        />
+      </DialogField>
+    </Dialog>
   );
 };
 

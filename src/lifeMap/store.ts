@@ -281,12 +281,14 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
         updateSystem: (id, updates) => updateCollection('lifeMapSystems', id, updates),
         deleteSystem: (id) => deleteFromCollection('lifeMapSystems', id),
         addSystemCheckIn: (systemId, date = new Date().toISOString().slice(0, 10), count = 1) => {
+          const safeCount = Math.max(0, count);
           const existing = get().lifeMapSystemCheckIns.find((item) => !item.deletedAt && item.systemId === systemId && item.date === date);
           if (existing) {
-            updateCollection('lifeMapSystemCheckIns', existing.id, { count: existing.count + Math.max(1, count) });
-            return { ...existing, count: existing.count + Math.max(1, count) };
+            const newCount = Math.max(0, existing.count + safeCount);
+            updateCollection('lifeMapSystemCheckIns', existing.id, { count: newCount });
+            return { ...existing, count: newCount };
           }
-          const item = stamp({ id: genId('checkin'), systemId, date, count: Math.max(1, count) });
+          const item = stamp({ id: genId('checkin'), systemId, date, count: safeCount });
           set((state) => ({ lifeMapSystemCheckIns: [...state.lifeMapSystemCheckIns, item] }));
           return item;
         },

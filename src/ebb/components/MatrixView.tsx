@@ -37,6 +37,11 @@ interface MatrixViewProps {
   taskActions: TaskActions;
   selectedDate?: string;
   isUnlinkedTask?: (sourceId: string) => boolean;
+  selection?: {
+    selectedKeys: Set<string>;
+    onToggle: (topicKey: string) => void;
+  };
+  stats?: { todayDue: number; total: number; overdue: number; ratio: number };
 }
 
 type FilterStatus = 'all' | 'pending' | 'completed';
@@ -58,7 +63,7 @@ const formatCreatedAt = (value?: string): string => {
   }).format(date)}`;
 };
 
-const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, selectedDate }) => {
+const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, selectedDate, selection, stats }) => {
   const [filterTag, setFilterTag] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('date');
@@ -208,6 +213,15 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, s
             </div>
           </details>
         </div>
+        {/* 汇总统计 */}
+        {stats && (
+          <div className="eb-filter-stats">
+            <span className={stats.todayDue > 0 ? 'is-warn' : ''}>{stats.todayDue} 今日</span>
+            <span>{stats.total} 总</span>
+            {stats.overdue > 0 && <span className="is-danger">{stats.overdue} 逾期</span>}
+            <span>{Math.round(stats.ratio * 100)}%</span>
+          </div>
+        )}
       </div>
 
       {/* 标签统计（紧凑横排） */}
@@ -257,6 +271,11 @@ const MatrixView: React.FC<MatrixViewProps> = ({ tasks, settings, taskActions, s
                 taskActions={taskActions}
                 selectedDate={selectedDate}
                 showCreatedAt={sortBy === 'created-desc' || sortBy === 'created-asc'}
+                selection={selection ? {
+                  isSelected: selection.selectedKeys.has(stat.topicKey),
+                  disabled: stat.pendingRounds === 0,
+                  onToggle: () => selection.onToggle(stat.topicKey),
+                } : undefined}
               />
             );
           })
@@ -279,9 +298,14 @@ interface TopicRowProps {
   taskActions: TaskActions;
   selectedDate?: string;
   showCreatedAt?: boolean;
+  selection?: {
+    isSelected: boolean;
+    disabled: boolean;
+    onToggle: () => void;
+  };
 }
 
-const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, taskActions, selectedDate, showCreatedAt }) => {
+const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, taskActions, selectedDate, showCreatedAt, selection }) => {
   const [expanded, setExpanded] = useState(false);
 
   const ratio = stat.ratio;
@@ -310,8 +334,22 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
     )[0];
 
   return (
-    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''} ${hasSelectedDate ? 'is-date-match' : ''}`} style={{ '--accent': accentColor, contentVisibility: 'auto', containIntrinsicSize: '92px' } as React.CSSProperties}>
+    <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''} ${hasSelectedDate ? 'is-date-match' : ''} ${selection?.isSelected ? 'is-selected' : ''}`} style={{ '--accent': accentColor, contentVisibility: 'auto', containIntrinsicSize: '92px' } as React.CSSProperties}>
       <div className="eb-topic-row-main" onClick={() => setExpanded(!expanded)}>
+        {selection && (
+          <label
+            className="eb-topic-row-checkbox"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              checked={selection.isSelected}
+              disabled={selection.disabled}
+              onChange={selection.onToggle}
+              aria-label={`选择${stat.topicName}`}
+            />
+          </label>
+        )}
         {/* 圆形进度环 */}
         <div className="eb-progress-ring" style={{ '--ring-color': ringColor } as React.CSSProperties}>
           <svg viewBox="0 0 36 36">

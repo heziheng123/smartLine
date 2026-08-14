@@ -31,3 +31,10 @@ dist-ssr
 *.sw?
 playwright-report/
 test-results/
+
+# Debug / temporary files
+.dbg/
+*.patch
+*.ndjson
+temp_diff.patch
+daily-schedule-click-bug.env

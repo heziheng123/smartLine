@@ -734,17 +734,24 @@ const DailyScheduleView: React.FC = () => {
 
         if (srcSlot === destSlot) {
           const normalItems = srcItems.filter(i => !i.id.startsWith('virtual-block-'));
+          // source.index 是包含虚拟块的列表中的位置；normalItems 已过滤虚拟块，
+          // 需要将索引映射到 normalItems 的坐标系（减去排在它前面的虚拟块数量）
+          const normalIndex = source.index - srcItems.slice(0, source.index).filter(i => i.id.startsWith('virtual-block-')).length;
           const newOrder = normalItems.map((i) => i.id);
-          const [removed] = newOrder.splice(source.index, 1);
+          const [removed] = newOrder.splice(normalIndex, 1);
           // 限制插入位置，防止拖拽到虚拟块的下方导致乱序
-          newOrder.splice(Math.min(destIndex, newOrder.length), 0, removed);
+          const destVirtualCount = srcItems.slice(0, destIndex).filter(i => i.id.startsWith('virtual-block-')).length;
+          const destNormalIndex = destIndex - destVirtualCount;
+          newOrder.splice(Math.min(destNormalIndex, newOrder.length), 0, removed);
           reorderScheduledItems(selectedDate, srcSlot, newOrder);
           recordOperation({ label: `调整“${draggedItem.name}”顺序`, detail: '已在当前时段内移动位置', modules: ['每日安排'], undoSpec: { kind: 'daily-move', payload: { date: selectedDate, itemId: draggedItem.id, targetSlot: srcSlot, targetIndex: source.index, expectedSlot: destSlot } } },
             () => { const latest = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => item.id === draggedItem.id); if (!latest || latest.timeSlot !== destSlot) return '任务位置已经发生变化'; useDailyScheduleStore.getState().moveScheduledItem(selectedDate, draggedItem.id, srcSlot, source.index); });
         } else {
           const destItems = getSlotItems(destSlot);
           const normalDestItems = destItems.filter(i => !i.id.startsWith('virtual-block-'));
-          const clampedIndex = Math.min(destIndex, normalDestItems.length);
+          // destIndex 包含虚拟块的序号，需要映射到 normalDestItems 的坐标系
+          const destVirtualCount = destItems.slice(0, destIndex).filter(i => i.id.startsWith('virtual-block-')).length;
+          const clampedIndex = Math.min(destIndex - destVirtualCount, normalDestItems.length);
           moveScheduledItem(selectedDate, draggedItem.id, destSlot, clampedIndex);
           recordOperation({ label: `移动“${draggedItem.name}”`, detail: `已从${srcSlot}移动到${destSlot}`, modules: ['每日安排'], undoSpec: { kind: 'daily-move', payload: { date: selectedDate, itemId: draggedItem.id, targetSlot: srcSlot, targetIndex: source.index, expectedSlot: destSlot } } },
             () => { const latest = useDailyScheduleStore.getState().schedules[selectedDate]?.items.find((item) => item.id === draggedItem.id); if (!latest || latest.timeSlot !== destSlot) return '任务位置已经发生变化'; useDailyScheduleStore.getState().moveScheduledItem(selectedDate, draggedItem.id, srcSlot, source.index); });

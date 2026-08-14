@@ -1,13 +1,13 @@
-import React from 'react';
+import { type FC, type FormEvent, type ReactNode } from 'react';
 
 interface LifeMapEntityEditorProps {
   kind: string;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onDismiss: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
-const LifeMapEntityEditor: React.FC<LifeMapEntityEditorProps> = ({ kind, onSubmit, onDismiss, children }) => (
+const LifeMapEntityEditor: FC<LifeMapEntityEditorProps> = ({ kind, onSubmit, onDismiss, children }) => (
   <div className="life-map-editor" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onDismiss(); }}>
     <form className={`life-map-editor__panel life-map-editor__panel--${kind}`} onSubmit={onSubmit}>
       {children}

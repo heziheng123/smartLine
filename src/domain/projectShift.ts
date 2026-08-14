@@ -58,7 +58,10 @@ const slotForTime = (time: string): TimeSlot => {
 const durationBetween = (startTime: string, endTime: string): number => {
   const [startHour, startMinute] = startTime.split(':').map(Number);
   const [endHour, endMinute] = endTime.split(':').map(Number);
-  return Math.max(5, (endHour * 60 + endMinute) - (startHour * 60 + startMinute));
+  let diff = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
+  // Handle overnight blocks (e.g., 23:00 → 01:00): negative diff means midnight crossover.
+  if (diff < 0) diff += 24 * 60;
+  return Math.max(5, diff);
 };
 
 const overlaps = (candidate: TimeBlock, existing: TimeBlock[]): boolean => existing.some((block) =>

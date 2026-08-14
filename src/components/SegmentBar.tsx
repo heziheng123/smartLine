@@ -2,12 +2,12 @@
 // Smart Timeline - 任务片段条
 // ============================================================
 
-import React from 'react';
+import { type FC } from 'react';
 import type { TaskSegment } from '@/types';
 import type { TimelineMetrics } from '@/utils/timeline-utils';
 import { getTaskTextColor, getTaskBorderColor } from '@/utils/timeline-utils';
 
-const SegmentBar: React.FC<{
+const SegmentBar: FC<{
   segment: TaskSegment;
   daysInMonth: number;
   metrics: TimelineMetrics;

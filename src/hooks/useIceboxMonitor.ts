@@ -17,24 +17,28 @@ export function useIceboxMonitor() {
   const freezeOverdueBlocks = useTimelineStore(state => state.freezeOverdueBlocks);
 
   useEffect(() => {
+    let frozenTimer: ReturnType<typeof setTimeout> | null = null;
     const checkAndFreeze = () => {
       const today = todayStr();
       const thresholdDate = subtractDays(today, 2); // T-2
-      
+
       const targets = collectOverdueFreezeTargets(getUniqueTasks(tasks, groups), thresholdDate);
       if (targets.length > 0) {
         // Defer the single transaction until after React finishes the effect.
-        setTimeout(() => {
+        frozenTimer = setTimeout(() => {
           freezeOverdueBlocks(targets, new Date().toISOString());
         }, 0);
       }
     };
 
     checkAndFreeze();
-    
+
     // 设置一个定时器，每天凌晨或跨天时也能自动触发扫描
     // 这里简单设置每小时检查一次，应对不刷新网页一直挂着的情况
     const timer = setInterval(checkAndFreeze, 1000 * 60 * 60);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (frozenTimer !== null) clearTimeout(frozenTimer);
+    };
   }, [tasks, groups, freezeOverdueBlocks]);
 }

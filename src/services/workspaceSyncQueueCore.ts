@@ -133,6 +133,13 @@ async function withFallbackQueueStorageLock<T>(operation: () => Promise<T>): Pro
           } catch { /* compatibility lock only */ }
         }, Math.floor(QUEUE_FALLBACK_LEASE_MS / 3));
         try {
+          // Re-verify the lease immediately before the operation. This closes the
+          // race window where Tab B writes its token between our settle-check
+          // (line 124) and the actual operation start, which would otherwise allow
+          // both tabs to enter the critical section.
+          if (readFallbackLease()?.token !== token) {
+            throw new Error('同步队列锁已被其他标签页接管，本次写入被中止以避免冲突。请稍后重试。');
+          }
           return await operation();
         } finally {
           window.clearInterval(renewal);
@@ -398,8 +405,10 @@ export async function preserveWorkspaceConflict(
       conflictingFields,
     };
     // Unresolved edits are user data. Never silently evict an older conflict
-    // merely because more conflicts were detected later.
-    await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts]);
+    // merely because more conflicts were detected later. Cap at 50 to prevent
+    // unbounded IndexedDB growth from long-running sessions with many conflicts.
+    const MAX_CONFLICT_RECORDS = 50;
+    await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts].slice(0, MAX_CONFLICT_RECORDS));
   });
   await clearPendingWorkspaceSync(pending);
 }

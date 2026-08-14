@@ -1662,6 +1662,47 @@ html, body, #root {
   font-weight: 500;
 }
 
+.tl-dialog-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  border: 1px solid #FECACA;
+  border-radius: var(--ui-radius-sm, 8px);
+  background: var(--ui-danger-soft, #FEF2F2);
+}
+
+.tl-dialog-error--inline {
+  display: block;
+  margin-top: 4px;
+}
+
+.tl-dialog-input[data-invalid="true"],
+.tl-dialog-input[aria-invalid="true"] {
+  border-color: #EF4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.tl-dialog-field--inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tl-dialog-field--inline > .tl-dialog-label {
+  margin: 0;
+}
+
+.tl-dialog-hint {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ui-text-tertiary, #9a9aa0);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 .tl-dialog-color-row {
   display: flex;
   align-items: center;

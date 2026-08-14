@@ -202,7 +202,10 @@ function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
+      // Use locale-invariant comparison so the canonical form is identical regardless
+      // of the host system locale (e.g. en-US vs de-DE). This is required so
+      // hashWorkspaceValue() produces the same digest on all devices.
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       .map(([key, item]) => [key, canonicalize(item)]));
   }
   return value;

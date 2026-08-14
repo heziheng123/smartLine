@@ -2,7 +2,7 @@
 // Smart Timeline - 右键上下文菜单
 // ============================================================
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { type FC, Fragment, useEffect, useRef, useState } from 'react';
 import type { ContextMenuItem } from '@/types';
 
 interface ContextMenuProps {
@@ -12,10 +12,14 @@ interface ContextMenuProps {
   onClose: () => void;
 }
 
-const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
+const ContextMenu: FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Focus the first menuitem on open so keyboard navigation works immediately
+    const firstBtn = menuRef.current?.querySelector<HTMLButtonElement>('[data-menu-idx]');
+    firstBtn?.focus();
+
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose();
@@ -34,9 +38,6 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
     };
   }, [onClose]);
 
-  // 计算 transform-origin
-  // 如果菜单在鼠标右下角展开，origin 是 top left
-  // 根据视口边缘自适应（如靠近右侧则改为右展开）
   const [origin, setOrigin] = useState('top left');
   const [position, setPosition] = useState({ top: y, left: x });
 
@@ -45,7 +46,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
       const rect = menuRef.current.getBoundingClientRect();
       const viewportW = window.innerWidth;
       const viewportH = window.innerHeight;
-      
+
       let newOriginY = 'top';
       let newOriginX = 'left';
       let newTop = y;
@@ -59,37 +60,59 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
         newTop = y - rect.height;
         newOriginY = 'bottom';
       }
-      
+
       setPosition({ top: newTop, left: newLeft });
       setOrigin(`${newOriginY} ${newOriginX}`);
     }
   }, [x, y]);
 
+  const handleMenuKeyDown = (e: React.KeyboardEvent) => {
+    const btns = menuRef.current?.querySelectorAll<HTMLButtonElement>('[data-menu-idx]') ?? [];
+    const currentIdx = Array.from(btns).indexOf(e.currentTarget as HTMLButtonElement);
+    if (currentIdx < 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      btns[(currentIdx + 1) % btns.length]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      btns[(currentIdx - 1 + btns.length) % btns.length]?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      btns[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      btns[btns.length - 1]?.focus();
+    }
+  };
+
   return (
     <div
       ref={menuRef}
+      role="menu"
+      aria-label="上下文菜单"
+      tabIndex={-1}
       className="tl-context-menu"
       style={{ left: position.left, top: position.top, transformOrigin: origin }}
     >
       {items.map((item, idx) => {
-        // 纯分隔线项：只渲染分割线，不渲染按钮
         if (item.divider && !item.label) {
-          return <div key={idx} className="tl-context-menu-divider" />;
+          return <div key={`div|${idx}`} role="separator" className="tl-context-menu-divider" />;
         }
+        if (!item.label) return null;
         return (
-          <React.Fragment key={idx}>
-            {item.divider && <div className="tl-context-menu-divider" />}
+          <Fragment key={`item|${idx}`}>
+            {item.divider && <div role="separator" className="tl-context-menu-divider" />}
             <button
+              role="menuitem"
+              data-menu-idx={idx}
               className={`tl-context-menu-item ${item.danger ? 'tl-context-menu-item--danger' : ''}`}
-              onClick={() => {
-                item.action();
-                onClose();
-              }}
+              onClick={() => { item.action(); onClose(); }}
               type="button"
+              onKeyDown={handleMenuKeyDown}
             >
               {item.label}
             </button>
-          </React.Fragment>
+          </Fragment>
         );
       })}
     </div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import { type ReactNode } from 'react';
 import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
@@ -11,7 +11,7 @@ interface ToolbarProps {
   onViewPreload?: (view: AppModule) => void;
 }
 
-const NAV_ITEMS: { module: AppModule; label: string; phoneLabel: string; icon: React.ReactNode }[] = [
+const NAV_ITEMS: { module: AppModule; label: string; phoneLabel: string; icon: ReactNode }[] = [
   { module: 'life-map', label: '人生地图', phoneLabel: '地图', icon: <Map size={18} /> },
   { module: 'timeline', label: '项目规划', phoneLabel: '项目', icon: <CalendarDays size={18} /> },
   { module: 'daily-schedule', label: '每日安排', phoneLabel: '今日', icon: <CalendarClock size={18} /> },

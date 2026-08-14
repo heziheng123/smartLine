@@ -2,14 +2,14 @@
 // Slash 命令菜单（/ 触发）
 // ============================================================
 
-import React, { useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 import { ListTodo, Type } from 'lucide-react';
 
 interface SlashMenuItem {
   key: string;
   label: string;
   description: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }
 
 const MENU_ITEMS: SlashMenuItem[] = [

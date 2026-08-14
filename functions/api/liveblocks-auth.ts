@@ -3,9 +3,10 @@ import { isSameOriginRequest, jsonResponse, readSession, type AuthEnv } from '..
 interface FunctionContext { env: AuthEnv; request: Request }
 const LIVEBLOCKS_AUTHORIZE_URL = 'https://api.liveblocks.io/v2/authorize-user';
 
-function isLocalRequest(request: Request): boolean {
-  const hostname = new URL(request.url).hostname;
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+function isLocalRequest(): boolean {
+  // Check NODE_ENV instead of request hostname to prevent Host-header spoofing attacks.
+  // AUTH_ALLOW_DEV_BYPASS=true should only be set in non-production environments.
+  return process.env.NODE_ENV !== 'production';
 }
 
 interface ResolvedIdentity { userId: string; login: string }
@@ -15,7 +16,7 @@ function sanitizeRoomIdentity(value: string): string {
 }
 
 async function resolveIdentity({ env, request }: FunctionContext): Promise<ResolvedIdentity | null> {
-  if (env.AUTH_ALLOW_DEV_BYPASS === 'true' && isLocalRequest(request)) {
+  if (env.AUTH_ALLOW_DEV_BYPASS === 'true' && isLocalRequest()) {
     const localId = env.DEV_AUTH_USER_ID?.trim();
     return localId ? { userId: `dev_${localId}`, login: localId } : null;
   }

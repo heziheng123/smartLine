@@ -29,6 +29,7 @@ interface BoardViewProps {
   taskActions: TaskActions;
   selectedDate: string;
   onSelectDate: (date: string) => void;
+  hideNav?: boolean;
   toolbarActions?: never;
 }
 
@@ -50,7 +51,7 @@ const shiftMonth = (date: string, amount: number) => {
   return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
 };
 
-const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, selectedDate, onSelectDate }) => {
+const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, selectedDate, onSelectDate, hideNav }) => {
   const [cursor, setCursor] = useState(selectedDate || todayStr());
   const [rangeMode, setRangeMode] = useState<'week' | 'month'>('week');
   const [query, setQuery] = useState('');
@@ -130,6 +131,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
   return <div className="eb-week-board">
     <div className="eb-week-board-toolbar">
       <div className="eb-week-board-toolbar-main">
+        {!hideNav && (
         <div className="eb-week-board-nav">
           <button type="button" onClick={() => {
             const nextDate = rangeMode === 'week' ? addDays(selectedDate, -7) : shiftMonth(selectedDate, -1);
@@ -148,6 +150,7 @@ const BoardView: React.FC<BoardViewProps> = ({ tasks, settings, taskActions, sel
             <button type="button" className={rangeMode === 'month' ? 'is-active' : ''} onClick={() => setRangeMode('month')}>月</button>
           </div>
         </div>
+        )}
         <div className="eb-week-board-summary" aria-live="polite">
           <div>
             <strong>{formatDate(selectedDate, 'M月D日')} · {WEEKDAY_LABELS[getDayOfWeek(selectedDate)]}</strong>

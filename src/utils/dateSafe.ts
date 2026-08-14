@@ -54,8 +54,11 @@ export function isValidCalendarDate(dateStr: string): boolean {
  * 加天数后仍是 UTC 午夜，.format() 输出本地时间。取本地分量可消除偏移。
  */
 export function addDays(dateStr: string, days: number): string {
-  const d = dayjs(dateStr).add(days, 'day');
-  return `${d.year()}-${String(d.month() + 1).padStart(2, '0')}-${String(d.date()).padStart(2, '0')}`;
+  if (!isValidCalendarDate(dateStr)) return dateStr;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const base = new Date(y, m - 1, d);
+  base.setDate(base.getDate() + days);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
 }
 
 /**

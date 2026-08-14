@@ -20,7 +20,7 @@ const PURIFY_CONFIG = {
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
   SANITIZE_NAMED_PROPS: true,
-  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|\/(?!\/)|#)/i,
+  ALLOWED_URI_REGEXP: /^(?:(?:https):|mailto:|\/(?!\/)|#)/i,
 };
 
 /**

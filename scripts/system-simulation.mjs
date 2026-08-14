@@ -811,8 +811,8 @@ try {
     assert.equal(new Set(normalized.reviewTasks.map((task) => task.roundOrder)).size, 2);
     assert.equal(normalized.reviewTasks.find((task) => task.id === 'r1').baseDurationMinutes, undefined);
     assert.equal(normalized.reviewTasks.find((task) => task.id === 'r1').durationOverrideMinutes, undefined);
-    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r2').baseDurationMinutes, 15);
-    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r2').durationOverrideMinutes, 20);
+    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r2').baseDurationMinutes, 10); // 12→round(12/5)*5=10
+    assert.equal(normalized.reviewTasks.find((task) => task.id === 'r2').durationOverrideMinutes, 15); // 17→round(17/5)*5=15
     const outlineById = new Map(normalized.outlineNodes.map((item) => [item.id, item]));
     for (const item of normalized.outlineNodes) {
       assert.notEqual(outlineById.get(item.parentId)?.parentId, item.id);

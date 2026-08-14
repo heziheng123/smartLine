@@ -318,24 +318,22 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const state = get();
           const taskToDelete = state.tasks.find((t) => t.id === taskId)
             ?? state.groups.flatMap((group) => group.children).find((task) => task.id === taskId);
-          if (taskToDelete) {
-            const taskBlocks = Array.isArray(taskToDelete.blocks) ? taskToDelete.blocks : [];
-            for (const block of taskBlocks) {
-              if (block.type === 'smart-task' && block.header.isCompleted) {
-                get().updateBlockHeader(taskId, block.id, {
-                  isCompleted: false,
-                  completedDate: undefined,
-                });
-              }
-            }
-            const sourceIds = taskBlocks
-              .filter((b) => b.type === 'smart-task')
-              .map((b) => getProjectBlockSourceId(taskId, b.id));
-            if (sourceIds.length > 0) {
-              setTimeout(() => {
-                useDailyScheduleStore.getState().removeBySourceIds(sourceIds);
-              }, 0);
-            }
+          const taskBlocks = Array.isArray(taskToDelete?.blocks) ? taskToDelete.blocks : [];
+          // 收集已完成 block IDs，用于清理 Daily Schedule sourceIds
+          const completedBlockIds = taskBlocks
+            .filter((block): block is Extract<typeof block, { type: 'smart-task' }> =>
+              block.type === 'smart-task' && block.header.isCompleted)
+            .map((block) => block.id);
+          const sourceIds = taskBlocks
+            .filter((b) => b.type === 'smart-task')
+            .map((b) => getProjectBlockSourceId(taskId, b.id));
+
+          // 在删除任务前触发 Side Effect（updateBlockHeader 需要能读取到任务数据）
+          for (const blockId of completedBlockIds) {
+            get().updateBlockHeader(taskId, blockId, {
+              isCompleted: false,
+              completedDate: undefined,
+            });
           }
 
           set((state) => {
@@ -348,6 +346,12 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             saveData(newData);
             return newData;
           });
+
+          if (sourceIds.length > 0) {
+            setTimeout(() => {
+              useDailyScheduleStore.getState().removeBySourceIds(sourceIds);
+            }, 0);
+          }
         },
 
         toggleTaskComplete: (taskId) => {

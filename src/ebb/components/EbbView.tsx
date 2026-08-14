@@ -31,8 +31,10 @@ import {
   MoreHorizontal,
   CalendarCheck2,
   Calendar,
+  CalendarArrowDown,
   CalendarRange,
   Inbox,
+  ListChecks,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -53,6 +55,7 @@ import MatrixView from './MatrixView';
 import BoardView from './BoardView';
 import InboxPanel from './InboxPanel';
 import BatchAdjustPanel from './BatchAdjustPanel';
+import BatchRescheduleBoard from './BatchRescheduleBoard';
 import DailyReviewPlanner from './DailyReviewPlanner';
 import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import WorkspaceHeader from '@/components/WorkspaceHeader';
@@ -181,6 +184,24 @@ const EbbView: React.FC = () => {
   const [batchAdjustOpen, setBatchAdjustOpen] = useState(false);
   const [adjustmentPreset, setAdjustmentPreset] = useState<'default' | 'backlog'>('default');
   const [adjustmentPreviewExpanded, setAdjustmentPreviewExpanded] = useState(false);
+  const [batchRescheduleOpen, setBatchRescheduleOpen] = useState(false);
+  const [batchRescheduleKeys, setBatchRescheduleKeys] = useState<string[]>([]);
+  const [selectedTopicKeys, setSelectedTopicKeys] = useState<Set<string>>(() => new Set());
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const toggleTopicSelection = useCallback((topicKey: string) => {
+    setSelectedTopicKeys((current) => {
+      const next = new Set(current);
+      if (next.has(topicKey)) next.delete(topicKey);
+      else next.add(topicKey);
+      return next;
+    });
+  }, []);
+  const multiSelectSelection = useMemo(
+    () => (multiSelectMode
+      ? { selectedKeys: selectedTopicKeys, onToggle: toggleTopicSelection }
+      : undefined),
+    [multiSelectMode, selectedTopicKeys, toggleTopicSelection],
+  );
   const [dailyPlanOpen, setDailyPlanOpen] = useState(false);
   const [pendingDragReschedule, setPendingDragReschedule] = useState<{ taskId: string; targetDate: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
@@ -224,6 +245,16 @@ const EbbView: React.FC = () => {
       // Session storage is optional; direct in-module navigation remains available.
     }
   }, [openAdjustmentDetails]);
+
+  // Clean up any pending toast timer when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current !== null) {
+        window.clearTimeout(toastTimer.current);
+        toastTimer.current = null;
+      }
+    };
+  }, []);
 
   const handleUndoLatestOperation = useCallback(async () => {
     if (!latestOperation) return;
@@ -581,23 +612,68 @@ const EbbView: React.FC = () => {
                   ease: MOTION_EASE_ENTER,
                 }}
               >
-                {planViewMode === 'list' && (
-                  <PlanCommands
-                    tasks={store.reviewTasks}
-                    selectedDate={selectedDate}
-                    onSelectDate={setSelectedDate}
-                    planViewMode={planViewMode}
-                    onViewModeChange={setPlanViewMode}
-                    onBatchAdjust={() => { setAdjustmentPreset('default'); setAdjustmentPreviewExpanded(false); setBatchAdjustOpen(true); }}
-                    safeMode={safeMode}
-                    highLoadMode={highLoadMode}
-                    stats={stats}
-                  />
-                )}
+                <PlanCommands
+                  tasks={store.reviewTasks}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
+                  planViewMode={planViewMode}
+                  onViewModeChange={setPlanViewMode}
+                  onBatchAdjust={() => { setAdjustmentPreset('default'); setAdjustmentPreviewExpanded(false); setBatchAdjustOpen(true); }}
+                  onBatchReschedule={() => {
+                    // 进入多选模式（如果还没开），并打开批量改期面板
+                    if (!multiSelectMode) {
+                      setMultiSelectMode(true);
+                    }
+                    // 钩选集合以"已选 > 所有未完成主题"为先后顺序；
+                    // 首次使用 fallback 预选所有未完成主题，方便用户直接拖
+                    const initialKeys = selectedTopicKeys.size > 0
+                      ? [...selectedTopicKeys]
+                      : [...collectAllPendingTopicKeys(store.reviewTasks)];
+                    if (selectedTopicKeys.size === 0) {
+                      setSelectedTopicKeys(new Set(initialKeys));
+                    }
+                    setBatchRescheduleKeys(initialKeys);
+                    setBatchRescheduleOpen(true);
+                  }}
+                  onBatchReschedulePanel={() => {
+                    setBatchRescheduleKeys([...selectedTopicKeys]);
+                    setBatchRescheduleOpen(true);
+                  }}
+                  onSelectAll={() => {
+                    setSelectedTopicKeys(collectAllPendingTopicKeys(store.reviewTasks));
+                  }}
+                  onClearSelection={() => setSelectedTopicKeys(new Set())}
+                  onToggleMultiSelect={() => {
+                    setMultiSelectMode((current) => {
+                      if (current) setSelectedTopicKeys(new Set());
+                      return !current;
+                    });
+                  }}
+                  safeMode={safeMode}
+                  highLoadMode={highLoadMode}
+                  selectedTopicCount={selectedTopicKeys.size}
+                  multiSelectMode={multiSelectMode}
+                />
                 <div className={`eb-matrix-panel-content ${planViewMode === 'calendar' ? 'is-calendar' : ''}`}>
-                  {planViewMode === 'list' ? <MatrixView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} />
-                    : <BoardView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} onSelectDate={setSelectedDate} />}
+                  {planViewMode === 'list' ? (
+                    <MatrixView
+                      tasks={store.reviewTasks}
+                      settings={store.ebbSettings}
+                      taskActions={taskActions}
+                      selectedDate={selectedDate}
+                      selection={multiSelectSelection}
+                      stats={stats}
+                    />
+                  ) : (
+                    <BoardView tasks={store.reviewTasks} settings={store.ebbSettings} taskActions={taskActions} selectedDate={selectedDate} onSelectDate={setSelectedDate} hideNav />
+                  )}
                 </div>
+                {multiSelectMode && planViewMode === 'list' && (
+                  <div className="eb-plan-multi-banner" role="status">
+                    <span>多选模式已开启，勾选需要的复习主题后点击"批量改期"。</span>
+                    <button type="button" onClick={() => setMultiSelectMode(false)} aria-label="退出多选模式">退出</button>
+                  </div>
+                )}
               </motion.div>
             )}
             </AnimatePresence>
@@ -638,6 +714,23 @@ const EbbView: React.FC = () => {
               return result;
             }}
             onClose={() => setDailyPlanOpen(false)}
+          />
+        )}
+
+        {batchRescheduleOpen && (
+          <BatchRescheduleBoard
+            reviewTasks={reviewTasks}
+            settings={store.ebbSettings}
+            initialTopicKeys={batchRescheduleKeys}
+            onClose={() => {
+              setBatchRescheduleOpen(false);
+              setBatchRescheduleKeys([]);
+            }}
+            onCommitted={() => {
+              setMultiSelectMode(false);
+              setSelectedTopicKeys(new Set());
+              showToast('已批量改期');
+            }}
           />
         )}
 
@@ -715,7 +808,25 @@ const EbbView: React.FC = () => {
 };
 
 // ── 当日任务列表（左侧栏用） ────────────────────────────────
-const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
+
+const collectAllPendingTopicKeys = (tasks: ReviewTask[]): Set<string> => {
+  const earliestByTopic = new Map<string, string>();
+  tasks
+    .filter((task) => !task.isArchived && !task.isCompleted)
+    .forEach((task) => {
+      const key = getReviewTopicKey(task);
+      if (!earliestByTopic.has(key)) earliestByTopic.set(key, task.dueDate);
+    });
+  const result = new Set<string>();
+  tasks
+    .filter((task) => !task.isArchived && !task.isCompleted)
+    .forEach((task) => {
+      const key = getReviewTopicKey(task);
+      const earliest = earliestByTopic.get(key);
+      if (earliest !== undefined && task.dueDate === earliest) result.add(key);
+    });
+  return result;
+};
 
 const PlanCommands: React.FC<{
   tasks: ReviewTask[];
@@ -724,67 +835,63 @@ const PlanCommands: React.FC<{
   planViewMode: 'list' | 'calendar';
   onViewModeChange: (mode: 'list' | 'calendar') => void;
   onBatchAdjust: () => void;
+  onBatchReschedule: () => void;
   safeMode: boolean;
   highLoadMode: boolean;
-  stats: { topicCount: number; total: number; completed: number; todayDue: number; overdue: number; ratio: number };
-}> = ({ tasks, selectedDate, onSelectDate, planViewMode, onViewModeChange, onBatchAdjust, safeMode, highLoadMode, stats }) => {
+  selectedTopicCount: number;
+  multiSelectMode: boolean;
+  onToggleMultiSelect: () => void;
+  onBatchReschedulePanel: () => void;
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+}> = ({ tasks, selectedDate, onSelectDate, planViewMode, onViewModeChange, onBatchAdjust, onBatchReschedule, safeMode, highLoadMode, selectedTopicCount, multiSelectMode, onToggleMultiSelect, onBatchReschedulePanel, onSelectAll, onClearSelection }) => {
   const today = todayStr();
   const weekday = getDayOfWeek(selectedDate);
   const weekStart = addDays(selectedDate, weekday === 0 ? -6 : 1 - weekday);
-  const dates = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
-  const metrics = useMemo(() => {
-    const byDate = new Map<string, { total: number; completed: number; overdue: number }>();
-    tasks.forEach((task) => {
-      if (task.isArchived) return;
-      const value = byDate.get(task.dueDate) ?? { total: 0, completed: 0, overdue: 0 };
-      value.total += 1;
-      if (task.isCompleted) value.completed += 1;
-      else if (task.dueDate < todayStr()) value.overdue += 1;
-      byDate.set(task.dueDate, value);
-    });
-    return byDate;
-  }, [tasks]);
 
   return (
-    <div className="eb-plan-commands">
+    <div className={`eb-plan-commands ${planViewMode === 'calendar' ? 'is-calendar' : ''}`}>
       <div className="eb-plan-commands-left">
         <button type="button" className="eb-plan-nav-btn" onClick={() => onSelectDate(addDays(selectedDate, -7))} aria-label="上一周"><ChevronLeft size={14} /></button>
         <strong className="eb-plan-week-label">{formatDate(weekStart, 'M月D日')}—{formatDate(addDays(weekStart, 6), 'M月D日')}</strong>
         <button type="button" className="eb-plan-nav-btn" onClick={() => onSelectDate(addDays(selectedDate, 7))} aria-label="下一周"><ChevronRight size={14} /></button>
         <button type="button" className="eb-plan-today-btn" onClick={() => onSelectDate(today)}>今天</button>
-        <div className="eb-plan-divider" />
-        {dates.map((date) => {
-          const value = metrics.get(date) ?? { total: 0, completed: 0, overdue: 0 };
-          const allDone = value.total > 0 && value.completed === value.total;
-          return (
-            <button
-              key={date}
-              type="button"
-              className={`eb-plan-day-btn ${date === selectedDate ? 'is-selected' : ''} ${date === today ? 'is-today' : ''} ${value.overdue > 0 && date < today ? 'has-overdue' : ''} ${allDone ? 'is-done' : ''}`}
-              onClick={() => onSelectDate(date)}
-              title={`${formatDate(date, 'M月D日')} · ${value.total} 个复习轮次`}
-            >
-              <span className="eb-plan-day-label">{WEEKDAY_SHORT[getDayOfWeek(date)]}</span>
-              <strong className="eb-plan-day-num">{Number(date.slice(8))}</strong>
-              <small className="eb-plan-day-count">{value.total > 0 ? `${value.total}轮` : '无'}</small>
-            </button>
-          );
-        })}
       </div>
       <div className="eb-plan-commands-right">
-        <div className="eb-plan-micro-stats">
-          <span className={stats.todayDue > 0 ? 'is-warn' : ''}>{stats.todayDue} 今日到期</span>
-          <span className="eb-plan-dot">·</span>
-          <span>{stats.total} 总任务</span>
-          {stats.overdue > 0 && <><span className="eb-plan-dot">·</span><span className="is-danger">{stats.overdue} 逾期</span></>}
-          <span className="eb-plan-dot">·</span>
-          <span>完成 {Math.round(stats.ratio * 100)}%</span>
-        </div>
         <div className="eb-plan-view-switch" role="group" aria-label="视图切换">
           <button type="button" className={planViewMode === 'list' ? 'is-active' : ''} onClick={() => onViewModeChange('list')}><LayoutGrid size={13} />列表</button>
           <button type="button" className={planViewMode === 'calendar' ? 'is-active' : ''} disabled={safeMode || highLoadMode} title={safeMode || highLoadMode ? '当前数据量较大，暂不启用日历拖拽' : undefined} onClick={() => onViewModeChange('calendar')}><Columns3 size={13} />日历</button>
         </div>
-        <button type="button" className="eb-plan-batch-btn" disabled={tasks.length === 0} onClick={onBatchAdjust}><SlidersHorizontal size={13} />批量管理</button>
+        {multiSelectMode ? (
+          <>
+            <button type="button" className="eb-plan-link-btn" onClick={onSelectAll} title="勾选所有未完成主题"><ListChecks size={13} />全选</button>
+            <button type="button" className="eb-plan-link-btn" disabled={selectedTopicCount === 0} onClick={onClearSelection} title="清空已选择主题">清空</button>
+            <button
+              type="button"
+              className="eb-plan-batch-btn eb-plan-reschedule-btn"
+              disabled={selectedTopicCount === 0}
+              onClick={onBatchReschedulePanel}
+              title={`基于已选中的 ${selectedTopicCount} 个主题进入批量改期面板`}
+            >
+              <CalendarArrowDown size={13} />批量改期
+              <em>{selectedTopicCount}</em>
+            </button>
+            <button type="button" className="eb-plan-exit-multi" onClick={onToggleMultiSelect} aria-label="退出多选模式"><X size={13} /></button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="eb-plan-batch-btn" disabled={tasks.length === 0} onClick={onBatchAdjust}><SlidersHorizontal size={13} />批量管理</button>
+            <button
+              type="button"
+              className="eb-plan-batch-btn eb-plan-reschedule-btn"
+              disabled={tasks.length === 0}
+              onClick={onBatchReschedule}
+              title="进入多选模式后可勾选主题，再批量改期"
+            >
+              <CalendarArrowDown size={13} />批量改期
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

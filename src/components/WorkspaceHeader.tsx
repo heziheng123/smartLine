@@ -1,8 +1,8 @@
-import React from 'react';
+import { type FC, type HTMLAttributes, type ReactNode } from 'react';
 import '@/styles/workspace-shell.css';
 
-interface WorkspaceHeaderProps extends React.HTMLAttributes<HTMLElement> {
-  children: React.ReactNode;
+interface WorkspaceHeaderProps extends HTMLAttributes<HTMLElement> {
+  children: ReactNode;
 }
 
 /**
@@ -10,7 +10,7 @@ interface WorkspaceHeaderProps extends React.HTMLAttributes<HTMLElement> {
  * View-specific controls remain owned by their view; this component only
  * standardizes the page frame, spacing, and responsive behavior.
  */
-const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({ className = '', children, ...props }) => (
+const WorkspaceHeader: FC<WorkspaceHeaderProps> = ({ className = '', children, ...props }) => (
   <header className={`ui-workspace-header ${className}`.trim()} {...props}>
     {children}
   </header>

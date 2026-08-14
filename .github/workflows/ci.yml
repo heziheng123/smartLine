@@ -17,6 +17,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --audit-level=moderate
+      - run: npx depcheck
       - run: npm run test:security
       - run: npm run lint
       - run: npm run build

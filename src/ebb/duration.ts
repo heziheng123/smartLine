@@ -11,14 +11,17 @@ export const DEFAULT_REVIEW_BASE_DURATION: Record<ComplexityLevel, number> = {
 export function normalizeEstimatedMinutes(value: unknown, fallback = 30): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.max(5, Math.ceil(parsed / 5) * 5);
+  // Use rounding (not ceil) so estimated durations are realistic: Math.round(12/5)*5=10,
+  // Math.round(9/5)*5=10 — not always the ceiling. This also allows round>1
+  // durations to actually be shorter than round=1, fixing the decay coefficient issue.
+  return Math.max(5, Math.round(parsed / 5) * 5);
 }
 
 /** Invalid optional values mean “use automatic duration”, not a custom 30m. */
 export function normalizeOptionalEstimatedMinutes(value: unknown): number | undefined {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-  return Math.max(5, Math.ceil(parsed / 5) * 5);
+  return Math.max(5, Math.round(parsed / 5) * 5);
 }
 
 export function getDefaultReviewBaseDuration(complexity?: ComplexityLevel): number {

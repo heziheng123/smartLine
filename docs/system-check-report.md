@@ -45,42 +45,64 @@
 
 ## ⚠️ 发现的问题
 
-### 1. 测试失败（非紧急）
-**位置：** `tests/domain/planning-regressions.test.ts:166`  
+### 1. 测试失败（非紧急）✅ 已修复
+**位置：** `tests/domain/planning-regressions.test.ts:166`
 **测试用例：** `batch reanchor preserves completed history and each plan remaining intervals`
 
-**现象：**
+**现象（历史）：**
 ```
 AssertionError: Expected values to be strictly equal:
 0 !== 1
 ```
 
-**分析：**
-- 这是 EBB 批量调整功能的测试失败，**与多端同步无关**
-- 测试期望 `plan.affectedTopics` 为 1，但实际返回 0
-- 可能原因：`planBatchReviewAdjustment` 中的 `reanchor` 逻辑对空 topic 处理有边界情况
+**根因（已修复）：**
+测试使用了相对日期（如 `2026-08-11`），当测试运行日期超过该日期时，`batchAdjust.ts` 的 reanchor 守卫条件 `request.action.startDate < todayStr()` 导致主题被跳过，`affectedTopics` 返回 0。**修复方式：** 测试日期已改为 `2099-01-*`（永不过期），`npm run test:planning` 实测 13/13 全部通过。
 
-**影响范围：** 仅影响 EBB 批量重新定位功能，不影响核心同步和其他应用功能
+**当前状态：** ✅ 已修复，测试通过。
 
-**建议：** 检查 `src/ebb/batchAdjust.ts` 第 204-236 行的 reanchor 逻辑，确认 `affectedTopics` 计数是否正确累加
-
-### 2. ESLint 警告（轻微）
+### 2. ESLint 警告（轻微）✅ 已修复
 **位置：** `src/App.tsx`
 
+**历史警告：**
 ```
 632:6  warning  React Hook React.useEffect has a missing dependency: 'handleViewChange'
 884:6  warning  React Hook useCallback has an unnecessary dependency: 'handleViewChange'
 ```
 
-**分析：**
-- 第一个警告：`useEffect` 的依赖数组缺少 `handleViewChange`，可能导致引用过期
-- 第二个警告：`useCallback` 不必要地依赖 `handleViewChange`，会导致过度重新创建
+**修复方式：**
+- 第 632 行：代码已重构为 `handleViewChangeRef.current` 模式（ref 而非闭包依赖），完全避免 stale closure 问题。
+- 第 884 行：实际为 `closeDialog` 的 `useCallback`，依赖数组为 `[]`，与 `handleViewChange` 无关，报告引用的行号已过时。
 
-**影响范围：** 极小，可能导致视图切换回调在特殊情况下使用过期闭包
-
-**建议：** 审查这两处依赖关系，要么添加缺失依赖，要么使用 `useRef` 避免闭包陷阱
+**当前状态：** ✅ 已修复，`npm run lint` 实测 0 warning。
 
 ---
+
+### 3. 新发现：拖拽索引偏移（2026-08-14 审查发现）⚠️ 已修复
+**位置：** `src/components/dailySchedule/DailyScheduleView.tsx` L736-741
+
+**问题：** `source.index` 来自 `@hello-pangea/dnd`（含虚拟块的索引），但 `normalItems` 过滤了虚拟块。`splice(source.index, 1)` 在有虚拟块时删除错误项目。
+
+**修复方式：** 将 `source.index` 和 `destIndex` 映射到 `normalItems` 的坐标系（减去排在前面的虚拟块数量）。
+
+**当前状态：** ✅ 已修复。
+
+### 4. 新发现：d3 zoom 未清理（2026-08-14 审查发现）⚠️ 已修复
+**位置：** `src/graph/components/KnowledgeGraphView.tsx` L670-680
+
+**问题：** `svg.call(zoomBehaviorRef.current)` 绑定 zoom 监听器，但 useEffect 无 return cleanup 函数。
+
+**修复方式：** 添加 `return () => { svg.on('.zoom', null); };`。
+
+**当前状态：** ✅ 已修复。
+
+### 5. 新发现：迁移窗口期丢编辑（2026-08-14 审查发现）⚠️ 已修复
+**位置：** `src/services/workspaceSync.ts` L1303-1331
+
+**问题：** `inspectLegacyWorkspaceWithBase` 是网络异步操作，有窗口期供用户编辑，但 `clearPendingWorkspaceSync()` 无条件清空队列，导致编辑丢失。
+
+**修复方式：** 在清空队列前先调用 `flushWorkspaceQueueInternal()` 将编辑 flush 到旧房间。
+
+**当前状态：** ✅ 已修复。
 
 ## ✅ 应用整体功能检查结果
 

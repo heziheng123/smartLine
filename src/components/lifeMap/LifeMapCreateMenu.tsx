@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { CalendarRange, Diamond, Layers3, Plus, Repeat2, StickyNote } from 'lucide-react';
 
 interface LifeMapCreateMenuProps {

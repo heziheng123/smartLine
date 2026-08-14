@@ -171,7 +171,22 @@ export function buildBalancedDailyReviewPlan(
   };
 }
 
-const sameTask = (a: ReviewTask, b: ReviewTask) => JSON.stringify(a) === JSON.stringify(b);
+// Shallow comparison: check the fields that drive the daily review planning decision.
+const sameTask = (a: ReviewTask, b: ReviewTask): boolean => {
+  return (
+    a.id === b.id
+    && a.topicName === b.topicName
+    && a.dueDate === b.dueDate
+    && a.isCompleted === b.isCompleted
+    && a.completedDate === b.completedDate
+    && a.roundOrder === b.roundOrder
+    && a.graphNodeId === b.graphNodeId
+    && a.complexity === b.complexity
+    && a.baseDurationMinutes === b.baseDurationMinutes
+    && a.durationOverrideMinutes === b.durationOverrideMinutes
+    && a.rollingDeferralCount === b.rollingDeferralCount
+  );
+};
 
 /**
  * Builds one atomic rolling-day decision.

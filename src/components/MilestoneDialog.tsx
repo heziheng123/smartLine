@@ -1,9 +1,11 @@
 // ============================================================
-// Smart Timeline - 里程碑新增 / 编辑对话框
+// Smart Timeline - 里程碑新增 / 编辑对话框（已标准化）
 // ============================================================
 
-import React, { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Milestone } from '@/types';
+import { Dialog, DialogField, ColorPicker } from '@/design/dialogs';
+import { normalizeHex } from '@/design/color';
 
 interface MilestoneDialogProps {
   milestone?: Milestone;
@@ -12,9 +14,10 @@ interface MilestoneDialogProps {
   onCancel: () => void;
 }
 
-const PRESET_COLORS = [
-  '#FBBF24', '#F59E0B', '#EF4444', '#10B981',
-  '#3B82F6', '#8B5CF6', '#EC4899', '#6366F1',
+const IMPORTANCE_OPTIONS: Array<[NonNullable<Milestone['importance']>, string]> = [
+  ['normal', '普通提醒'],
+  ['important', '重要节点'],
+  ['core', '核心事件'],
 ];
 
 const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
@@ -28,137 +31,93 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
   const [name, setName] = useState(milestone?.name ?? '');
   const [date, setDate] = useState(milestone?.date ?? '');
   const [color, setColor] = useState(milestone?.color ?? '');
-  const [importance, setImportance] = useState<NonNullable<Milestone['importance']>>(milestone?.importance ?? 'important');
+  const [importance, setImportance] = useState<NonNullable<Milestone['importance']>>(
+    milestone?.importance ?? 'important',
+  );
+
+  const errors = useMemo(() => {
+    const out: string[] = [];
+    if (!name.trim()) out.push('请填写里程碑名称');
+    if (!date) out.push('请选择日期');
+    if (color && color.trim() && !normalizeHex(color)) {
+      out.push('颜色格式无效（例：#5E5CE6）');
+    }
+    return out;
+  }, [name, date, color]);
+
+  const canSubmit = errors.length === 0;
 
   const handleSave = () => {
+    if (!canSubmit) return;
     const trimmed = name.trim();
-    if (!trimmed || !date) return;
-
-    let finalColor: string | undefined;
-    const colorTrimmed = color.trim();
-    if (colorTrimmed) {
-      let c = colorTrimmed.replace(/^#/, '');
-      if (/^[0-9a-fA-F]{3}$/.test(c)) {
-        c = c.split('').map(x => x + x).join('');
-      }
-      if (/^[0-9a-fA-F]{6}$/.test(c)) {
-        finalColor = `#${c.toUpperCase()}`;
-      }
-    }
-
     onSave({
       id: milestone?.id ?? crypto.randomUUID(),
       name: trimmed,
       date,
-      color: finalColor,
+      color: normalizeHex(color),
       placement: milestone?.placement,
       importance,
     });
   };
 
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onCancel();
-  };
-
   return (
-    <div className="tl-dialog-overlay" onClick={handleOverlayClick}>
-      <div className="tl-dialog">
-        <div className="tl-dialog-header">
-          <h3>{isEdit ? '编辑里程碑' : '新建里程碑'}</h3>
-        </div>
+    <Dialog
+      title={isEdit ? '编辑里程碑' : '新建里程碑'}
+      onCancel={onCancel}
+      onSubmit={handleSave}
+      canSubmit={canSubmit}
+      submitLabel={isEdit ? '保存' : '创建'}
+      sideAction={
+        isEdit && onDelete
+          ? { label: '删除', onClick: () => onDelete(milestone!.id), danger: true }
+          : undefined
+      }
+      errors={errors}
+    >
+      <DialogField label="里程碑名称" fieldId="milestone-name">
+        <input
+          className="tl-dialog-input"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="例如：V1.0 上线"
+          autoFocus
+        />
+      </DialogField>
 
-        <div className="tl-dialog-body">
-          <label className="tl-dialog-field">
-            <span className="tl-dialog-label">里程碑名称</span>
-            <input
-              className="tl-dialog-input"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例如：V1.0 上线"
-              autoFocus
-            />
-          </label>
+      <DialogField label="日期" fieldId="milestone-date">
+        <input
+          className="tl-dialog-input"
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+        />
+      </DialogField>
 
-          <label className="tl-dialog-field">
-            <span className="tl-dialog-label">日期</span>
-            <input
-              className="tl-dialog-input"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
-          </label>
-
-          <div className="tl-dialog-field">
-            <span className="tl-dialog-label">关键程度</span>
-            <div className="tl-dialog-segmented" role="group" aria-label="关键日期重要程度">
-              {([['normal', '普通提醒'], ['important', '重要节点'], ['core', '核心事件']] as Array<[NonNullable<Milestone['importance']>, string]>).map(([value, label]) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={importance === value ? 'is-active' : ''}
-                  onClick={() => setImportance(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label className="tl-dialog-field">
-            <span className="tl-dialog-label">标记颜色</span>
-            <div className="tl-dialog-color-row">
-              {PRESET_COLORS.map((c) => (
-                <button
-                  key={c}
-                  className={`tl-dialog-color-btn ${color === c ? 'tl-dialog-color-btn--active' : ''}`}
-                  style={{ background: c }}
-                  onClick={() => setColor(c)}
-                  type="button"
-                />
-              ))}
-              <input
-                className="tl-dialog-input tl-dialog-color-input"
-                type="text"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                placeholder="#自定义"
-              />
-            </div>
-          </label>
-        </div>
-
-        <div className="tl-dialog-footer">
-          {isEdit && onDelete && (
+      <DialogField label="关键程度" fieldId="milestone-importance">
+        <div className="tl-dialog-segmented" role="radiogroup" aria-label="关键日期重要程度">
+          {IMPORTANCE_OPTIONS.map(([value, label]) => (
             <button
-              className="tl-dialog-btn tl-dialog-btn--danger"
-              onClick={() => onDelete(milestone!.id)}
               type="button"
+              key={value}
+              role="radio"
+              aria-checked={importance === value}
+              className={importance === value ? 'is-active' : ''}
+              onClick={() => setImportance(value)}
             >
-              删除
+              {label}
             </button>
-          )}
-          <div className="tl-dialog-footer-right">
-            <button
-              className="tl-dialog-btn tl-dialog-btn--secondary"
-              onClick={onCancel}
-              type="button"
-            >
-              取消
-            </button>
-            <button
-              className="tl-dialog-btn tl-dialog-btn--primary"
-              onClick={handleSave}
-              disabled={!name.trim() || !date}
-              type="button"
-            >
-              {isEdit ? '保存' : '创建'}
-            </button>
-          </div>
+          ))}
         </div>
-      </div>
-    </div>
+      </DialogField>
+
+      <DialogField label="标记颜色" fieldId="milestone-color">
+        <ColorPicker
+          value={color || undefined}
+          onChange={(c) => setColor(c ?? '')}
+        />
+      </DialogField>
+    </Dialog>
   );
 };
 

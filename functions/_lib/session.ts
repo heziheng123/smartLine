@@ -133,7 +133,12 @@ export async function readSession(request: Request, env: AuthEnv): Promise<Sessi
 
 export function isSameOriginRequest(request: Request): boolean {
   const origin = request.headers.get('Origin');
-  return !origin || origin === new URL(request.url).origin;
+  // For state-changing requests, if Origin is present it must match.
+  // Non-browser clients (curl, etc.) don't send Origin and are not a CSRF vector
+  // because SameSite=Lax cookie protection applies to browser-initiated requests.
+  // However, to be explicit: if Origin is provided it must be the app origin.
+  if (origin && origin !== new URL(request.url).origin) return false;
+  return true;
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {

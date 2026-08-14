@@ -184,7 +184,7 @@ export function buildNextRoundTask(
 
   // Use smartSpreadDate to avoid conflicts and load limits
   if (settings) {
-    dueDate = smartSpreadDate(dueDate, sortedTasks, lastTask.topicName, settings, occupiedDates);
+    dueDate = smartSpreadDate(dueDate, sortedTasks, getReviewTopicKey(lastTask), settings, occupiedDates);
   } else {
     // Simple collision avoidance without load balancing
     while (occupiedDates.has(dueDate)) {
@@ -250,10 +250,14 @@ export function generateTasks(
   const tasks: ReviewTask[] = [];
   const createdAt = new Date().toISOString();
 
+  // topicKey uses the same format as getReviewTopicKey so smartSpreadDate groups
+  // tasks by graph chain (graph:${id}) or standalone topic (topic:${name}) consistently.
+  const topicKey = 'topic:' + input.topicName;
+
   // 收集同主题已有日期集合
   const topicDates = new Set<string>();
   for (const t of existingTasks) {
-    if (t.topicName === input.topicName) topicDates.add(t.dueDate);
+    if (getReviewTopicKey(t) === topicKey) topicDates.add(t.dueDate);
   }
 
   for (let i = 0; i < input.intervals.length; i++) {
@@ -268,7 +272,7 @@ export function generateTasks(
 
     // smartSpread：若启用设置，检查日负载
     if (settings) {
-      const spread = smartSpreadDate(dueDate, [...existingTasks, ...tasks], input.topicName, settings, topicDates);
+      const spread = smartSpreadDate(dueDate, [...existingTasks, ...tasks], topicKey, settings, topicDates);
       if (spread !== dueDate) conflicts++;
       dueDate = spread;
     }
@@ -284,7 +288,7 @@ export function generateTasks(
       roundOrder: Math.max(
         0,
         ...existingTasks
-          .filter((task) => task.topicName === input.topicName && !task.isArchived)
+          .filter((task) => getReviewTopicKey(task) === topicKey && !task.isArchived)
           .map((task) => task.roundOrder ?? 0),
       ) + tasks.length + 1,
       isCompleted: false,
@@ -342,7 +346,7 @@ export function validateInput(input: GenerateTasksInput): string[] {
 export function smartSpreadDate(
   initialDate: string,
   existingTasks: ReviewTask[],
-  topicName: string,
+  topicKey: string,
   settings: EbbSettings,
   topicDates: Set<string>,
 ): string {
@@ -355,9 +359,10 @@ export function smartSpreadDate(
     // 同主题日期冲突
     if (topicDates.has(candidate)) continue;
 
-    // 同主题最小间隔校验
+    // 同主题最小间隔校验：use topicKey (getReviewTopicKey format: "graph:${id}" or "topic:${name}")
+    // so renamed graph nodes still group with their chain, and standalone topics use "topic:${name}".
     if (minTopicGapDays > 0) {
-      const sameTopicTasks = existingTasks.filter((t) => t.topicName === topicName);
+      const sameTopicTasks = existingTasks.filter((t) => getReviewTopicKey(t) === topicKey);
       const tooClose = sameTopicTasks.some((t) => {
         const d = Math.abs(diffDays(candidate, t.dueDate));
         return d < minTopicGapDays && d > 0;

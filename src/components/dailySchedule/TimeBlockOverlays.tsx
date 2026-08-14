@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { type FC, useEffect, useRef, useState } from 'react';
 import type { TimeBlock } from './types';
 
-export const QuickCreateInput: React.FC<{
+export const QuickCreateInput: FC<{
   initialTime: string;
   onCreate: (name: string, startTime: string) => void;
   onCancel: () => void;

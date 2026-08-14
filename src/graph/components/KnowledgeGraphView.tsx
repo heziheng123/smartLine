@@ -677,6 +677,9 @@ export const KnowledgeGraphView: React.FC = () => {
         if (event.sourceEvent) setIsViewportShifted(true);
       });
     svg.call(zoomBehaviorRef.current);
+    return () => {
+      svg.on('.zoom', null);
+    };
   }, [isHydrated]);
 
   const zoomToFit = useCallback(() => {
