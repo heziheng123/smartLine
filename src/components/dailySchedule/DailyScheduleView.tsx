@@ -161,6 +161,9 @@ const DailyScheduleView: React.FC = () => {
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
     };
     const handler = (event: KeyboardEvent) => {
+      // F-4 修复：忽略 IME 组合输入状态（中文拼音/日文 IME 等），防止在输入中途
+      // 误触发日期快捷键；另外 keyCode 229 是 composition 的兜底标志。
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isTypingTarget(event.target)) return;
       if (event.key === 'j' || event.key === 'J' || event.key === ']' || event.key === 'ArrowRight') {

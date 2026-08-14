@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useDialogKeyboard } from './useDialogKeyboard';
+import { requestConfirmation } from '@/services/confirmation';
 
 /**
  * Dialog 标准外壳。
@@ -78,10 +79,16 @@ export function Dialog(props: DialogProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
-  // P0 D-3 守卫：脏态检测 → 关窗确认
+  // P0 D-3 守卫：脏态检测 → 关窗确认（使用项目统一的 modal，避免 native confirm 风格断裂）
   const requestCancel = useCallback(async (): Promise<void> => {
     if (isDirty) {
-      const ok = window.confirm(discardConfirmMessage);
+      const ok = await requestConfirmation({
+        title: '放弃未保存的修改',
+        message: discardConfirmMessage,
+        confirmLabel: '放弃修改',
+        cancelLabel: '继续编辑',
+        tone: 'warning',
+      });
       if (!ok) return;
     }
     onCancel();
@@ -95,7 +102,23 @@ export function Dialog(props: DialogProps) {
   // P1 D-1：focus trap + 打开时聚焦首个可聚焦元素 + 关闭时还原焦点
   useEffect(() => {
     if (typeof document === 'undefined') return undefined;
-    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+    // P1 D-1（已加强）：用微任务延迟一拍抓 activeElement。React 18 commit 阶段
+    // activeElement 可能已经是 <body>（触发 dialog 的按钮在 commit 后才稳定），
+    // 微任务里能抓到的真实触发按钮。strict mode 下也能避免 focus 还原退回 <body>。
+    queueMicrotask(() => {
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active
+        && active !== document.body
+        && document.contains(active)
+        && (
+          !previouslyFocusedRef.current
+          || previouslyFocusedRef.current === document.body
+        )
+      ) {
+        previouslyFocusedRef.current = active;
+      }
+    });
 
     const focusFirst = () => {
       const root = dialogRef.current;
@@ -136,10 +159,13 @@ export function Dialog(props: DialogProps) {
     return () => {
       window.clearTimeout(id);
       document.removeEventListener('keydown', handleKey);
-      const prev = previouslyFocusedRef.current;
-      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
-        prev.focus();
-      }
+      // 用 requestAnimationFrame 延迟到下一帧再还原焦点，避免与 React 18 下一次 commit 抢焦点
+      requestAnimationFrame(() => {
+        const prev = previouslyFocusedRef.current;
+        if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+          prev.focus();
+        }
+      });
     };
   }, []);
 

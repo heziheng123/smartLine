@@ -3,7 +3,7 @@
 // 核心理念：所见即所做，直接拖入即可批量调整复习日期
 // ============================================================
 
-import React, { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd';
 import {
@@ -148,6 +148,25 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
   const [moves, setMoves] = useState<Record<string, TopicMove>>({});
   const [toast, setToast] = useState<MoveValidationError | null>(null);
   const [dragPreview, setDragPreview] = useState<{ topicKey: string; targetDate: string } | null>(null);
+  // F-14 修复：单一 toast timer ref + helper。旧实现 3 处独立的 window.setTimeout
+  // 会导致连续触发时第一个 timer 仍然运行、清掉第二个 toast 的 state。
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = useCallback((next: MoveValidationError, durationMs = 3000) => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToast(next);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, durationMs);
+  }, []);
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+  }, []);
 
   const moveList = Object.values(moves);
   const totalTopics = topics.length;
@@ -233,8 +252,7 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
 
     const validation = validateDrop(draggableId, targetDate);
     if (!validation.ok) {
-      setToast({ topicName: '当前主题', reason: validation.reason });
-      window.setTimeout(() => setToast(null), 3000);
+      showToast({ topicName: '当前主题', reason: validation.reason });
       return;
     }
 
@@ -243,14 +261,12 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
     try {
       plan = planReviewRoundReschedule(reviewTasks, topic.firstTaskId, targetDate, 'following');
     } catch {
-      setToast({ topicName: topic.topicName, reason: '改期冲突，请选择其他日期' });
-      window.setTimeout(() => setToast(null), 3000);
+      showToast({ topicName: topic.topicName, reason: '改期冲突，请选择其他日期' });
       return;
     }
 
     if (!plan) {
-      setToast({ topicName: topic.topicName, reason: '调整会打乱复习顺序' });
-      window.setTimeout(() => setToast(null), 3000);
+      showToast({ topicName: topic.topicName, reason: '调整会打乱复习顺序' });
       return;
     }
 

@@ -663,20 +663,22 @@ const App: React.FC = () => {
   }, [store]);
 
   // 抽屉：删除任务
-  const handleDeleteTaskFromDrawer = useCallback(async (taskId: string) => {
+  // F-5 修复：返回 boolean，true=已删除，false=用户取消。
+  // 这样 TaskDialog 的删除按钮可以根据返回值决定是否关闭对话框。
+  const handleDeleteTaskFromDrawer = useCallback(async (taskId: string): Promise<boolean> => {
     const task = [...store.tasks, ...store.groups.flatMap((group) => group.children)].find((item) => item.id === taskId);
-    if (task) {
-      const confirmed = await requestConfirmation({
-        title: '永久删除任务',
-        message: `确定永久删除“${task.name}”吗？关联的每日安排、复习进度和知识节点关系会同步清理，删除后无法从回收站恢复。`,
-        confirmLabel: '永久删除',
-        cancelLabel: '取消',
-        tone: 'danger',
-      });
-      if (!confirmed) return;
-      store.deleteTask(taskId);
-    }
+    if (!task) return false;
+    const confirmed = await requestConfirmation({
+      title: '永久删除任务',
+      message: `确定永久删除“${task.name}”吗？关联的每日安排、复习进度和知识节点关系会同步清理，删除后无法从回收站恢复。`,
+      confirmLabel: '永久删除',
+      cancelLabel: '取消',
+      tone: 'danger',
+    });
+    if (!confirmed) return false;
+    store.deleteTask(taskId);
     setDrawerTaskId(null);
+    return true;
   }, [store]);
 
   const handleAddTask = useCallback(() => {
@@ -696,16 +698,12 @@ const App: React.FC = () => {
   }, [dialogMode, store]);
 
   const handleDeleteTask = useCallback(async (taskId: string) => {
-    // P0 D-2: 等待"任务删除确认"对话框返回；用户取消时保留任务对话框，
-    // 避免误删整条主线任务。
-    await handleDeleteTaskFromDrawer(taskId);
-    // 仅在确实执行了删除（drawer 已关闭）后才关闭当前对话框
-    if (!store.tasks.some((t) => t.id === taskId)
-      && !store.groups.some((g) => g.children.some((c) => c.id === taskId))) {
-      setDialogType(null);
-      setEditingTask(undefined);
-    }
-  }, [handleDeleteTaskFromDrawer, store]);
+    // F-5 修复：透传返回的 boolean；用户取消 → 保留当前对话框，不重置 editingTask。
+    const removed = await handleDeleteTaskFromDrawer(taskId);
+    if (!removed) return;
+    setDialogType(null);
+    setEditingTask(undefined);
+  }, [handleDeleteTaskFromDrawer]);
 
   // ── 分组操作 ──────────────────────────────────────────────
 

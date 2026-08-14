@@ -3,7 +3,7 @@
 // P1 a11y：键盘可达性 + role="button" + Enter/Space 触发
 // ============================================================
 
-import { type FC } from 'react';
+import { type FC, useRef } from 'react';
 import type { TaskSegment } from '@/types';
 import type { TimelineMetrics } from '@/utils/timeline-utils';
 import { getTaskTextColor, getTaskBorderColor } from '@/utils/timeline-utils';
@@ -17,6 +17,7 @@ const SegmentBar: FC<{
   onContextMenu?: (e: React.MouseEvent) => void;
 }> = ({ segment, daysInMonth, metrics, onClick, onContextMenu }) => {
   const { startDay, endDay, row, color, taskName, isStart, isEnd, isMain, completed } = segment;
+  const ref = useRef<HTMLDivElement | null>(null);
 
   const leftPct = ((startDay - 1) / daysInMonth) * 100;
   const widthPct = ((endDay - startDay + 1) / daysInMonth) * 100;
@@ -47,10 +48,15 @@ const SegmentBar: FC<{
     } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
       e.preventDefault();
       e.stopPropagation();
-      // 触发与右键相同的处理
+      // F-2 修复：原实现 fakeEvent 缺 clientX/clientY，导致下游 setContextMenu 收到 NaN。
+      // 用元素本身 rect 构造坐标，让右键菜单出现在合理位置（元素底部中心）。
+      const target = ref.current;
+      const rect = target?.getBoundingClientRect();
       const fakeEvent = {
         preventDefault: () => {},
         stopPropagation: () => {},
+        clientX: rect ? rect.left + rect.width / 2 : 0,
+        clientY: rect ? rect.bottom : 0,
       } as unknown as React.MouseEvent;
       onContextMenu?.(fakeEvent);
     }
@@ -58,6 +64,7 @@ const SegmentBar: FC<{
 
   return (
     <div
+      ref={ref}
       className={`tl-seg ${!isStart ? 'tl-seg--continued' : ''} ${!isEnd ? 'tl-seg--continues' : ''} ${isMain ? 'tl-seg--main' : ''} ${completed ? 'tl-seg--completed' : ''}`}
       style={{
         left: `${leftPct}%`,
