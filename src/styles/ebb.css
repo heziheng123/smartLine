@@ -8165,6 +8165,45 @@
   border-radius: 6px;
 }
 
+/* 待安排主题：筛选 chip 区 */
+.ebb-new-sidebar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #F1F5F9;
+  background: #FAFBFF;
+}
+
+.ebb-new-sidebar-filters .eb-filter-popover-wrap {
+  flex: 1 1 calc(50% - 3px);
+  min-width: 0;
+}
+
+.ebb-new-sidebar-filters .eb-filter-chip {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.ebb-new-filter-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.ebb-new-filter-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
 .ebb-new-topic-list {
   flex: 1;
   overflow-y: auto;
@@ -8241,6 +8280,14 @@
 .ebb-new-topic-overdue {
   color: #EF4444;
   font-weight: 600;
+}
+
+.ebb-new-topic-created {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #94A3B8;
+  font-size: 11px;
 }
 
 /* Footer */

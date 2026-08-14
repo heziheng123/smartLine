@@ -10,10 +10,12 @@ import {
   AlertTriangle,
   Calendar,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
   RotateCcw,
+  SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { addDays, diffDays, formatDate, getDayOfWeek, todayStr } from '@/utils/dateSafe';
@@ -26,8 +28,18 @@ import { useGraphStore } from '@/graph/store';
 import type { EbbSettings, ReviewTask } from '../types';
 
 type ViewRange = 'week' | 'month';
+type SortBy = 'date' | 'created-desc' | 'created-asc';
 
 const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
+
+const formatCreatedAt = (value?: string): string => {
+  if (!value) return '生成时间未知';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '生成时间未知';
+  return `生成于 ${new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date)}`;
+};
 
 const shiftMonth = (date: string, amount: number) => {
   const year = Number(date.slice(0, 4));
@@ -143,11 +155,55 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
     });
   }, [activeTasks, rootByNodeId, roundMap, settings.tagColors, today, totalRoundsMap]);
 
+  // 主题级 createdAt：与 TopicStat 同源（最早轮次的 ISO 时间戳）
+  const createdAtByTopic = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const topic of topics) {
+      const earliest = topic.pending
+        .map((t) => t.createdAt)
+        .filter((v): v is string => Boolean(v))
+        .sort()[0];
+      if (earliest) map.set(topic.topicKey, earliest);
+    }
+    return map;
+  }, [topics]);
+
+  // 主题级 category.label（与 categoryColor 同源）
+  const tagLabelByTopic = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const topic of topics) {
+      const first = topic.pending[0];
+      if (!first) continue;
+      const category = resolveReviewCategory(first, rootByNodeId);
+      map.set(topic.topicKey, category?.label ?? '');
+    }
+    return map;
+  }, [topics, rootByNodeId]);
+
+  // 标签下拉选项（按当前 topics 实际出现；按数量降序）
+  const tagOptions = useMemo(() => {
+    const counter = new Map<string, { label: string; color: string; count: number }>();
+    for (const topic of topics) {
+      const first = topic.pending[0];
+      if (!first) continue;
+      const category = resolveReviewCategory(first, rootByNodeId);
+      if (!category) continue;
+      const label = category.label;
+      const cur = counter.get(label);
+      if (cur) cur.count += 1;
+      else counter.set(label, { label, color: topic.categoryColor, count: 1 });
+    }
+    return [...counter.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'zh-Hans-CN'));
+  }, [topics, rootByNodeId]);
+
   const [rangeMode, setRangeMode] = useState<ViewRange>('week');
   const [cursor, setCursor] = useState<string>(addDays(today, 1));
   const [moves, setMoves] = useState<Record<string, TopicMove>>({});
   const [toast, setToast] = useState<MoveValidationError | null>(null);
   const [dragPreview, setDragPreview] = useState<{ topicKey: string; targetDate: string } | null>(null);
+  // 待安排主题侧边栏：标签筛选 + 生成时间排序（弹窗实例内持久）
+  const [filterTag, setFilterTag] = useState<string>('');
+  const [sortBy, setSortBy] = useState<SortBy>('date');
   // F-14 修复：单一 toast timer ref + helper。旧实现 3 处独立的 window.setTimeout
   // 会导致连续触发时第一个 timer 仍然运行、清掉第二个 toast 的 state。
   const toastTimerRef = useRef<number | null>(null);
@@ -171,6 +227,42 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
   const moveList = Object.values(moves);
   const totalTopics = topics.length;
   const arrangedCount = moveList.length;
+
+  // 侧边栏筛选/排序后的可见列表（在 useState 之后）
+  const visibleTopics = useMemo(() => {
+    const allUnarranged = topics.filter((t) => !moves[t.topicKey]);
+    const list = filterTag
+      ? allUnarranged.filter((t) => tagLabelByTopic.get(t.topicKey) === filterTag)
+      : [...allUnarranged];
+
+    const byName = (a: typeof list[number], b: typeof list[number]) =>
+      a.topicName.localeCompare(b.topicName, 'zh-Hans-CN');
+    const byCreatedDesc = (a: typeof list[number], b: typeof list[number]) =>
+      (createdAtByTopic.get(b.topicKey) ?? '').localeCompare(createdAtByTopic.get(a.topicKey) ?? '') || byName(a, b);
+    const byCreatedAsc = (a: typeof list[number], b: typeof list[number]) =>
+      (createdAtByTopic.get(a.topicKey) ?? '9999').localeCompare(createdAtByTopic.get(b.topicKey) ?? '') || byName(a, b);
+    if (sortBy === 'date') {
+      return [...list].sort((a, b) =>
+        (a.firstDueDate || '9999').localeCompare(b.firstDueDate || '9999') || byName(a, b));
+    }
+    if (sortBy === 'created-desc') {
+      return [...list].sort(byCreatedDesc);
+    }
+    return [...list].sort(byCreatedAsc);
+  }, [topics, moves, filterTag, sortBy, tagLabelByTopic, createdAtByTopic]);
+
+  // 未安排主题总数（与筛选无关——按你确认的语义）
+  const allUnarrangedCount = useMemo(
+    () => topics.filter((t) => !moves[t.topicKey]).length,
+    [topics, moves],
+  );
+
+  // 渲染侧边栏 chip 的小颜色圆点（label → 颜色）
+  const tagColorByLabel = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const opt of tagOptions) map[opt.label] = opt.color;
+    return map;
+  }, [tagOptions]);
 
   // 按日期分组的已安排项
   const movesByDate = useMemo(() => {
@@ -510,17 +602,97 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
           <aside className="ebb-new-sidebar">
             <div className="ebb-new-sidebar-header">
               <span>待安排主题</span>
-              <span className="ebb-new-sidebar-count">{totalTopics - arrangedCount}</span>
+              <span className="ebb-new-sidebar-count" title={filterTag || sortBy !== 'date' ? `共 ${allUnarrangedCount} 个未安排` : undefined}>
+                {allUnarrangedCount}
+              </span>
             </div>
+
+            {/* 筛选 chip 区：标签 + 排序，与 MatrixView 一致 */}
+            <div className="ebb-new-sidebar-filters">
+              <details className="eb-filter-popover-wrap">
+                <summary className={`eb-filter-chip ${filterTag ? 'is-active' : ''}`}>
+                  <SlidersHorizontal size={12} />
+                  {filterTag ? (
+                    <>
+                      <span
+                        className="ebb-new-filter-dot"
+                        style={{ background: tagColorByLabel[filterTag] ?? '#94A3B8' }}
+                      />
+                      <span className="ebb-new-filter-label">{filterTag}</span>
+                    </>
+                  ) : (
+                    <span className="ebb-new-filter-label">全部标签</span>
+                  )}
+                  <ChevronDown size={11} />
+                </summary>
+                <div className="eb-filter-popover">
+                  <button
+                    type="button"
+                    className={filterTag === '' ? 'is-active' : ''}
+                    onClick={() => setFilterTag('')}
+                  >
+                    全部标签
+                  </button>
+                  {tagOptions.map((opt) => (
+                    <button
+                      type="button"
+                      key={opt.label}
+                      className={filterTag === opt.label ? 'is-active' : ''}
+                      onClick={() => setFilterTag(opt.label)}
+                    >
+                      <span
+                        className="ebb-new-filter-dot"
+                        style={{ background: opt.color }}
+                      />
+                      {opt.label} ({opt.count})
+                    </button>
+                  ))}
+                </div>
+              </details>
+
+              <details className="eb-filter-popover-wrap">
+                <summary className="eb-filter-chip">
+                  <SlidersHorizontal size={12} />
+                  <span className="ebb-new-filter-label">
+                    {sortBy === 'date' ? '按下次复习日期' : '按生成时间'}
+                  </span>
+                  <ChevronDown size={11} />
+                </summary>
+                <div className="eb-filter-popover">
+                  <button
+                    type="button"
+                    className={sortBy === 'date' ? 'is-active' : ''}
+                    onClick={() => setSortBy('date')}
+                  >
+                    按下次复习日期
+                  </button>
+                  <button
+                    type="button"
+                    className={sortBy === 'created-desc' ? 'is-active' : ''}
+                    onClick={() => setSortBy('created-desc')}
+                  >
+                    按生成时间（新→旧）
+                  </button>
+                  <button
+                    type="button"
+                    className={sortBy === 'created-asc' ? 'is-active' : ''}
+                    onClick={() => setSortBy('created-asc')}
+                  >
+                    按生成时间（旧→新）
+                  </button>
+                </div>
+              </details>
+            </div>
+
             <Droppable droppableId="ebb-topics-source" isDropDisabled>
               {(provided) => (
                 <div ref={provided.innerRef} {...provided.droppableProps} className="ebb-new-topic-list">
-                  {topics.filter((t) => !moves[t.topicKey]).length === 0 && (
+                  {visibleTopics.length === 0 && (
                     <div className="ebb-new-sidebar-empty">
-                      所有主题已安排
+                      {allUnarrangedCount === 0 ? '所有主题已安排' : '该筛选下无待安排主题'}
                     </div>
                   )}
-                  {topics.filter((t) => !moves[t.topicKey]).map((topic, index) => (
+                  {visibleTopics.map((topic, index) => (
                     <Draggable
                       key={topic.topicKey}
                       draggableId={topic.topicKey}
@@ -552,6 +724,14 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
                               <span>{topic.minutes}m</span>
                               {topic.overdueCount > 0 && (
                                 <span className="ebb-new-topic-overdue">{topic.overdueCount}逾期</span>
+                              )}
+                              {sortBy !== 'date' && createdAtByTopic.get(topic.topicKey) && (
+                                <span
+                                  className="ebb-new-topic-created"
+                                  title={createdAtByTopic.get(topic.topicKey)}
+                                >
+                                  <Clock3 size={11} />{formatCreatedAt(createdAtByTopic.get(topic.topicKey))}
+                                </span>
                               )}
                             </div>
                           </div>
