@@ -21,6 +21,7 @@ import {
   removeWorkspaceConflict,
   replaceWorkspaceConflictPending,
   setWorkspaceQueueSuppressed,
+  setWorkspaceSystemMutationSuppressed,
   WORKSPACE_QUEUE_EVENT,
   workspaceQueueChannel,
   workspaceQueueTabId,
@@ -134,11 +135,18 @@ export function startWorkspaceCrossTabDataSync(): () => void {
     }
     if (event.data.type !== 'fields' || !event.data.fields) return;
 
+    // Remote-broadcast fields are not local user edits. System mutation
+    // suppression blocks trackedSet from journaling this apply and recreating
+    // a queue loop on tabs that intentionally do not hold their own connection.
+    setWorkspaceSystemMutationSuppressed(true);
     setWorkspaceQueueSuppressed(true);
     try {
       applyWorkspaceFields(event.data.fields);
     } finally {
-      window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
+      window.setTimeout(() => {
+        setWorkspaceQueueSuppressed(false);
+        setWorkspaceSystemMutationSuppressed(false);
+      }, 0);
     }
   };
 

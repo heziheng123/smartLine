@@ -58,6 +58,21 @@ const QUEUE_LOCK_NAME = 'smart-line-workspace-sync-queue-v1';
 const QUEUE_FALLBACK_LOCK_KEY = 'smart-line-workspace-sync-queue-lock-v1';
 const QUEUE_FALLBACK_LEASE_MS = 15_000;
 const QUEUE_FALLBACK_SETTLE_MS = 32;
+export type WorkspaceQueueErrorKind =
+  /** IndexedDB 写入失败，已降级到 emergency 存储，数据未丢失但需要页面保持开启。 */
+  | 'storage_write_failed'
+  /** 待同步数据补传失败（flush 异常），巡检机制会自动重试。 */
+  | 'flush_failed'
+  /** 同步队列持续变化（多源写入竞争），暂停并需要用户等待。 */
+  | 'flush_restart_exhausted'
+  /** 云端工作区持续变化（多人/多设备写入竞争），暂停并等待对端完成。 */
+  | 'cloud_drift_exhausted';
+
+export interface WorkspaceQueueErrorDetail {
+  kind: WorkspaceQueueErrorKind;
+  message: string;
+}
+
 export const WORKSPACE_QUEUE_EVENT = 'smartline:workspace-queue';
 export const WORKSPACE_QUEUE_ERROR_EVENT = 'smartline:workspace-queue-error';
 export const workspaceQueueTabId = crypto.randomUUID();
@@ -178,7 +193,10 @@ function preserveEmergencyPending(pending: PendingWorkspaceSync): void {
     // The in-memory copy remains available until the page is closed.
   }
   window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, {
-    detail: { message: '离线变更尚未安全写入同步队列，请勿关闭页面并尽快重试。' },
+    detail: {
+      kind: 'storage_write_failed',
+      message: '离线变更尚未安全写入同步队列，请勿关闭页面并尽快重试。',
+    } satisfies WorkspaceQueueErrorDetail,
   }));
 }
 

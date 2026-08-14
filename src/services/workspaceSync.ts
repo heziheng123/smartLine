@@ -29,6 +29,8 @@ import {
   setWorkspaceConnectionMutationCapture,
   setWorkspaceQueueSuppressed,
   type WorkspaceStorageField,
+  type WorkspaceQueueErrorKind,
+  type WorkspaceQueueErrorDetail,
 } from './workspaceSyncQueueCore';
 import {
   assertWorkspaceQueueDrained,
@@ -928,21 +930,29 @@ export async function inspectLegacyWorkspace(roomCode: string): Promise<LegacyWo
 function waitForUnifiedStorage(targetRoomId: string, timeoutMs = 20_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
-    const timer = window.setInterval(() => {
+    const evaluate = () => {
       const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState(), useLifeMapStore.getState()];
-      const ready = stores.every((store) => (
+      return stores.every((store) => (
         store.liveblocks?.room?.id === targetRoomId
         && store.liveblocks?.status === 'connected'
         && !store.liveblocks?.isStorageLoading
       ));
-      if (ready) {
+    };
+    if (evaluate()) {
+      resolve();
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (evaluate()) {
         window.clearInterval(timer);
         resolve();
-      } else if (Date.now() - startedAt > timeoutMs) {
+        return;
+      }
+      if (Date.now() - startedAt > timeoutMs) {
         window.clearInterval(timer);
         reject(new Error('统一工作区连接超时，已保留旧房间，可稍后重试。'));
       }
-    }, 100);
+    }, 250);
   });
 }
 
@@ -1112,6 +1122,11 @@ function waitForRoomStorageSynchronized(
   if (typeof room.getStorageStatus !== 'function') return Promise.resolve();
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
+    const evaluate = () => room.getStatus() === 'connected' && room.getStorageStatus?.() === 'synchronized';
+    if (evaluate()) {
+      resolve();
+      return;
+    }
     const timer = window.setInterval(() => {
       if (room.getStatus() !== 'connected') {
         window.clearInterval(timer);
@@ -1125,13 +1140,24 @@ function waitForRoomStorageSynchronized(
         window.clearInterval(timer);
         reject(new Error('本机修改已提交，但云端确认超时。请保持页面开启并稍后重试。'));
       }
-    }, 100);
+    }, 250);
   });
+}
+
+function classifyQueueFlushFailure(error: unknown): WorkspaceQueueErrorKind {
+  if (error instanceof Error) {
+    const named = (error as Error & { workspaceQueueErrorKind?: WorkspaceQueueErrorKind }).workspaceQueueErrorKind;
+    if (named) return named;
+    if (error.message.includes('本机同步队列持续变化')) return 'flush_restart_exhausted';
+    if (error.message.includes('云端工作区持续变化')) return 'cloud_drift_exhausted';
+  }
+  return 'flush_failed';
 }
 
 function reportQueueFlushFailure(error: unknown): void {
   const message = error instanceof Error ? error.message : '待同步数据补传失败，请保持页面开启并重试。';
-  window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, { detail: { message } }));
+  const detail: WorkspaceQueueErrorDetail = { kind: classifyQueueFlushFailure(error), message };
+  window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, { detail }));
 }
 
 function ensureQueueListener(): void {
@@ -1212,7 +1238,9 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
   const latest = await readPendingWorkspaceSync();
   if (!latest) return { applied: 0, conflict: false };
   if (getPendingWorkspaceSyncToken(latest) !== getPendingWorkspaceSyncToken(pending)) {
-    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) throw new Error('本机同步队列持续变化，请稍后重试。');
+    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) {
+      throw Object.assign(new Error('本机同步队列持续变化，请稍后重试。'), { workspaceQueueErrorKind: 'flush_restart_exhausted' as WorkspaceQueueErrorKind });
+    }
     return flushWorkspaceQueueInternal(restartCount + 1);
   }
 
@@ -1222,7 +1250,9 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
   // remote snapshot.
   const latestRootJson = root.toJSON() as Record<string, unknown>;
   if (hasWorkspaceFieldSnapshotChanged(rootJson, latestRootJson, [...pendingKeys, 'metadata'])) {
-    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) throw new Error('云端工作区持续变化，请等待其他设备完成同步后重试。');
+    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) {
+      throw Object.assign(new Error('云端工作区持续变化，请等待其他设备完成同步后重试。'), { workspaceQueueErrorKind: 'cloud_drift_exhausted' as WorkspaceQueueErrorKind });
+    }
     return flushWorkspaceQueueInternal(restartCount + 1);
   }
 
@@ -1278,7 +1308,9 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
       remaining = await readPendingWorkspaceSync();
     }
     if (remaining) {
-      if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) throw new Error('本机仍有新的修改等待同步，请稍后重试。');
+      if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) {
+        throw Object.assign(new Error('本机仍有新的修改等待同步，请稍后重试。'), { workspaceQueueErrorKind: 'flush_restart_exhausted' as WorkspaceQueueErrorKind });
+      }
       return flushWorkspaceQueueInternal(restartCount + 1);
     }
   } finally {

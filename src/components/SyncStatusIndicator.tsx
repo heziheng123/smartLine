@@ -12,6 +12,7 @@ import {
   WORKSPACE_QUEUE_ERROR_EVENT,
   WORKSPACE_QUEUE_EVENT,
 } from '@/services/workspaceOfflineQueue';
+import type { WorkspaceQueueErrorDetail, WorkspaceQueueErrorKind } from '@/services/workspaceSyncQueueCore';
 import { readWorkspaceSyncSettings, WORKSPACE_VERIFIED_EVENT } from '@/services/workspaceSync';
 import { isWorkspaceConflictHistorical } from '@/services/workspaceSyncCore';
 import { liveblocksAuthMode } from '@/auth/config';
@@ -62,8 +63,10 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   const lifeMap = useLifeMapStore(useShallow((state) => ({ enabled: state.syncEnabled, status: state.syncStatus })));
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
   const [pendingCount, setPendingCount] = useState(0);
-  const [conflictCount, setConflictCount] = useState(0);
-  const [queueError, setQueueError] = useState(false);
+  const [activeConflictCount, setActiveConflictCount] = useState(0);
+  const [historicalConflictCount, setHistoricalConflictCount] = useState(0);
+  const [queueErrorKind, setQueueErrorKind] = useState<WorkspaceQueueErrorKind | null>(null);
+  const [queueErrorMessage, setQueueErrorMessage] = useState<string | null>(null);
   const [queueLoaded, setQueueLoaded] = useState(false);
   const [lastConnectedAt, setLastConnectedAt] = useState<string | null>(readLastConnectedAt);
   const [unifiedArchitecture, setUnifiedArchitecture] = useState(
@@ -88,12 +91,18 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       const currentRoomId = readWorkspaceSyncSettings().unifiedRoomId ?? null;
       const verificationMatchesRoom = !verification.roomId || verification.roomId === currentRoomId;
       setPendingCount(pending ? Object.keys(pending.fields ?? {}).length : 0);
-      setConflictCount(conflicts.filter((conflict) => !verificationMatchesRoom
-        || !isWorkspaceConflictHistorical(conflict.detectedAt, verification.at ?? undefined)).length);
+      const activeConflicts = conflicts.filter((conflict) => !verificationMatchesRoom
+        || !isWorkspaceConflictHistorical(conflict.detectedAt, verification.at ?? undefined));
+      setActiveConflictCount(activeConflicts.length);
+      setHistoricalConflictCount(conflicts.length - activeConflicts.length);
       setLastConnectedAt(verification.at);
-      if (!pending) setQueueError(false);
+      if (!pending) {
+        setQueueErrorKind(null);
+        setQueueErrorMessage(null);
+      }
     } catch {
-      setQueueError(true);
+      setQueueErrorKind('flush_failed');
+      setQueueErrorMessage(null);
     } finally {
       setQueueLoaded(true);
     }
@@ -104,7 +113,11 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     const handleOnline = () => { setOnline(true); void refreshQueueState(); };
     const handleOffline = () => setOnline(false);
     const handleQueue = () => void refreshQueueState();
-    const handleQueueError = () => setQueueError(true);
+    const handleQueueError = (event: Event) => {
+      const detail = (event as CustomEvent<WorkspaceQueueErrorDetail | undefined>).detail;
+      setQueueErrorKind(detail?.kind ?? 'flush_failed');
+      setQueueErrorMessage(detail?.message ?? null);
+    };
     const handleStorage = (event: StorageEvent) => {
       if (event.key === 'smart-line-sync-last-connected') setLastConnectedAt(readLastConnectedAt());
       if (event.key === 'smart-line-sync-architecture-v1') {
@@ -140,15 +153,29 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       modules,
       online,
       pendingCount,
-      conflictCount,
-      queueError,
+      conflictCount: activeConflictCount,
+      queueError: queueErrorKind !== null,
     });
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && !unifiedArchitecture;
   const indicatorState = requiresUnifiedMigration && derivedIndicatorState === 'connected'
     ? 'pending'
     : derivedIndicatorState;
 
-  const issueCount = conflictCount + errorCount;
+  const issueCount = activeConflictCount + errorCount;
+  const historicalHint = historicalConflictCount > 0
+    ? `（另有 ${historicalConflictCount} 项历史冲突可清理）`
+    : '';
+  const errorHint = queueErrorMessage ?? (
+      queueErrorKind === 'storage_write_failed'
+        ? '本机写入暂时降级，请勿关闭页面并尽快重试。'
+        : queueErrorKind === 'flush_restart_exhausted'
+          ? '本机同步队列持续变化，请稍候片刻。'
+          : queueErrorKind === 'cloud_drift_exhausted'
+            ? '云端工作区持续变化，请等待其他设备完成同步。'
+            : queueErrorKind === 'flush_failed'
+              ? '待同步数据补传失败，请保持页面开启。'
+              : null
+    );
   const description = indicatorState === 'off'
     ? '同步未开启'
     : requiresUnifiedMigration
@@ -159,7 +186,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
         ? `已同步 ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
         : indicatorState === 'pending'
           ? `${online ? '等待上传' : '网络离线'}${pendingCount > 0 ? ` · ${pendingCount} 个数据字段待同步` : ''}`
-          : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项需要处理` : ''}`;
+          : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项需要处理` : ''}${errorHint ? ` · ${errorHint}` : ''}${historicalHint}`;
 
   return (
     <button
