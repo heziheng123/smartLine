@@ -4,7 +4,7 @@ import { ChevronDown, Eye, EyeOff, FastForward, Layers3, ListFilter, Palette, Pa
 import { useShallow } from 'zustand/react/shallow';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
 import { useTimelineStore } from '@/store';
-import { activeLifeMapItems, LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
+import { activeLifeMapItems, LEARNING_CHILD_PALETTE, LIFE_MAP_PLAN_GROUP_META, suggestAreaChildColor } from '@/lifeMap/data';
 import { calculateGoalProgress, currentSystemStats, systemCompletedForRange, systemTargetForRange } from '@/lifeMap/metrics';
 import { useLifeMapStore, type LifeMapShiftSnapshot } from '@/lifeMap/store';
 import { activeMaintenancePeriod, mergeMaintenancePeriods } from '@/lifeMap/maintenance';
@@ -152,6 +152,22 @@ const LifeMapWorkspace: React.FC = () => {
   );
   const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
   const selectedArea = selectedAreaId === 'all' ? null : areaById.get(selectedAreaId) ?? null;
+  const existingColorsByArea = useMemo(() => {
+    const map = new Map<string, string[]>();
+    const collect = (color: string | undefined, areaId: string) => {
+      if (!color) return;
+      const list = map.get(areaId) ?? [];
+      list.push(color);
+      map.set(areaId, list);
+    };
+    activeLifeMapItems(store.lifeMapGoals).forEach((item) => collect(item.color, item.areaId));
+    activeLifeMapItems(store.lifeMapSystems).forEach((item) => collect(item.color, item.areaId));
+    return map;
+  }, [store.lifeMapGoals, store.lifeMapSystems]);
+  const recommendColorForArea = (areaId: string, seed?: string): string => {
+    const area = areaById.get(areaId);
+    return suggestAreaChildColor(area?.planGroupId, existingColorsByArea.get(areaId) ?? [], seed ?? areaId);
+  };
   const allProjectedTimelineTasks = useMemo(() => timelineTasks.filter((task) => {
     const projection = task.lifeMapProjection;
     return projection?.enabled && areaById.has(projection.areaId);
@@ -401,7 +417,7 @@ const LifeMapWorkspace: React.FC = () => {
       areaId: selectedAreaId === 'all' ? undefined : selectedAreaId,
     }, store, lastUsedAreaIdsRef.current) : {};
     const resolvedAreaId = defaults.areaId ?? editorAreaId;
-    setColor(areaById.get(resolvedAreaId)?.color ?? '#6366F1');
+    setColor(recommendColorForArea(resolvedAreaId));
     setDraftAreaId(resolvedAreaId);
     setDraftPlanGroupId('life');
     setShowEditorMore(false);
@@ -907,7 +923,7 @@ const LifeMapWorkspace: React.FC = () => {
           if (parent) applyPhaseParentDefaults(parent, editor.id);
         }}><option value="">请选择项目</option>{plans.filter((item) => !editor.id || item.id !== editor.id).map((item) => <option key={item.id} value={item.id}>{areaById.get(item.areaId)?.name ?? '未分类'} · {item.name}</option>)}</select>{plans.length === 0 && <small className="life-map-editor__hint">请先新建项目，再添加子阶段。</small>}</label>}
         {!['area', 'review'].includes(editor.kind) && (areas.length > 0
-          ? <label className="life-map-editor__classification">二级分类<select aria-label="人生领域" required disabled={editor.kind === 'phase'} value={draftAreaId} onChange={(event) => { const areaId = event.target.value; setDraftAreaId(areaId); setColor(areaById.get(areaId)?.color ?? color); }}>{areas.map((area) => <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>)}</select><small>{editor.kind === 'phase' ? '自动继承所属项目' : '已根据当前视图自动选择，可直接修改'}</small></label>
+          ? <label className="life-map-editor__classification">二级分类<select aria-label="人生领域" required disabled={editor.kind === 'phase'} value={draftAreaId} onChange={(event) => { const areaId = event.target.value; setDraftAreaId(areaId); if (editor.kind !== 'phase') setColor(recommendColorForArea(areaId)); else setColor(areaById.get(areaId)?.color ?? color); }}>{areas.map((area) => <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>)}</select><small>{editor.kind === 'phase' ? '自动继承所属项目' : '已根据当前视图自动选择，可直接修改'}</small></label>
           : <div className="life-map-editor__error" role="alert"><span>请先创建二级分类，再保存这项内容。</span><button type="button" onClick={() => openAreaCreate('learning')} aria-label="先创建二级分类">先创建二级分类</button></div>)}
         {editor.kind === 'review' && <><label>复盘范围<select value={reviewAreaId} onChange={(event) => setReviewAreaId(event.target.value)}><option value="all">全部人生</option>{areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}</select></label><label>周期<select value={reviewPeriod} onChange={(event) => { const period = event.target.value as LifeReview['period']; const base = dayjs(); const periodStart = period === 'month' ? base.startOf('month') : base.month(Math.floor(base.month() / 3) * 3).startOf('month'); setReviewPeriod(period); setStart(periodStart.format('YYYY-MM-DD')); setEnd(periodStart.add(period === 'month' ? 1 : 3, 'month').subtract(1, 'day').format('YYYY-MM-DD')); }}><option value="month">月度复盘</option><option value="quarter">季度复盘</option></select></label></>}
         {editor.kind === 'area' && <label>所属一级分类<select value={draftPlanGroupId} onChange={(event) => setDraftPlanGroupId(event.target.value as LifeMapPlanGroupId)}>{(['learning', 'work', 'life'] as const).map((id) => <option key={id} value={id}>{LIFE_MAP_PLAN_GROUP_META[id].name}</option>)}</select><small className="life-map-editor__hint">决定项目、子阶段和长期系统显示在哪个一级泳道，不改变任何日期。</small></label>}
@@ -926,7 +942,69 @@ const LifeMapWorkspace: React.FC = () => {
         {editorMoreVisible && editor.kind === 'system' && <div className="life-map-editor__dates"><label>目标次数<input type="number" min={1} value={targetCount} onChange={(event) => setTargetCount(Number(event.target.value))} /></label><label>每次分钟<input type="number" min={5} step={5} value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} /></label></div>}
         {editorMoreVisible && editor.kind === 'system' && <label>单位<input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="次、公里、分、元…" /></label>}
         {editor.kind === 'review' && <><label>本周期发生了什么<textarea rows={5} value={reflection} onChange={(event) => setReflection(event.target.value)} placeholder="结果、感受、意外和原因…" /></label><label>下一周期如何调整<textarea rows={4} value={adjustments} onChange={(event) => setAdjustments(event.target.value)} placeholder="保留什么、停止什么、开始什么…" /></label>{editor.id && <div className="life-map-review-snapshot"><b>保存时快照</b><span>{reviewPlanSnapshots.length} 个项目 · {editingReview?.snapshot.systems.length ?? 0} 个长期系统</span>{reviewChanges.length ? <ul>{reviewChanges.slice(0, 6).map((change) => <li key={change}>{change}</li>)}</ul> : <small>与保存快照相比，暂无新的状态变化。</small>}</div>}</>}
-        {(editorMoreVisible || !['plan', 'phase', 'system'].includes(editor.kind)) && editor.kind !== 'review' && <label className="life-map-editor__color-field">识别色<span className="life-map-editor__color-control"><span className="life-map-editor__color-swatch" style={{ background: color }}><Palette size={16} /></span><span><b>{color.toUpperCase()}</b><small>{editor.kind === 'phase' ? '自动继承项目颜色' : '用于时间线上的快速识别'}</small></span><input aria-label="选择识别色" disabled={editor.kind === 'phase'} type="color" value={color} onChange={(event) => setColor(event.target.value)} /></span></label>}
+        {(editorMoreVisible || !['plan', 'phase', 'system'].includes(editor.kind)) && editor.kind !== 'review' && (
+          <div className="life-map-editor__color-field">
+            <span className="life-map-editor__color-label">
+              <b>识别色</b>
+              <small>{editor.kind === 'phase' ? '自动继承项目颜色' : '同领域内不同子任务建议用不同色,一眼区分'}</small>
+            </span>
+            <div className="life-map-editor__color-control">
+              <span className="life-map-editor__color-swatch" style={{ background: color }}><Palette size={16} /></span>
+              {editor.kind !== 'phase' && (
+                <div className="life-map-editor__color-presets" role="radiogroup" aria-label="推荐色">
+                  {LEARNING_CHILD_PALETTE.map((entry) => (
+                    <button
+                      key={entry.hex}
+                      type="button"
+                      role="radio"
+                      aria-checked={color.toLowerCase() === entry.hex.toLowerCase()}
+                      aria-label={`${entry.label} ${entry.hex}${entry.hint ? ` · ${entry.hint}` : ''}`}
+                      title={`${entry.label} · ${entry.hint}`}
+                      className={`life-map-editor__color-chip${color.toLowerCase() === entry.hex.toLowerCase() ? ' is-active' : ''}`}
+                      style={{ background: entry.hex }}
+                      onClick={() => setColor(entry.hex)}
+                    />
+                  ))}
+                  <span className="life-map-editor__color-custom" aria-hidden="true">
+                    <input
+                      aria-label="选择自定义识别色"
+                      type="color"
+                      value={color}
+                      onChange={(event) => setColor(event.target.value)}
+                    />
+                  </span>
+                </div>
+              )}
+              {editor.kind === 'phase' && <b className="life-map-editor__color-hex">{color.toUpperCase()}</b>}
+              {editor.id && (editor.kind === 'plan' || editor.kind === 'system') && (
+                <button
+                  type="button"
+                  className="life-map-editor__color-distribute"
+                  onClick={() => {
+                    const targetAreaId = editor.kind === 'plan' ? (activeLifeMapItems(store.lifeMapGoals).find((item) => item.id === editor.id)?.areaId ?? draftAreaId) : draftAreaId;
+                    const area = areaById.get(targetAreaId);
+                    if (!area) return;
+                    const siblings = editor.kind === 'plan'
+                      ? activeLifeMapItems(store.lifeMapGoals).filter((item) => item.areaId === targetAreaId && item.kind === 'plan' && !item.deletedAt)
+                      : activeLifeMapItems(store.lifeMapSystems).filter((item) => item.areaId === targetAreaId && !item.deletedAt);
+                    const palette = LEARNING_CHILD_PALETTE;
+                    siblings.forEach((sibling, index) => {
+                      const next = palette[index % palette.length].hex;
+                      if (sibling.color?.toLowerCase() !== next.toLowerCase()) {
+                        if (editor.kind === 'plan') store.updateGoal(sibling.id, { color: next });
+                        else store.updateSystem(sibling.id, { color: next });
+                      }
+                    });
+                    const currentIdx = siblings.findIndex((s) => s.id === editor.id);
+                    setColor(palette[(currentIdx >= 0 ? currentIdx : 0) % palette.length].hex);
+                  }}
+                  aria-label="自动为本领域所有项目分配识别色"
+                  title="把同领域里所有项目按调色板循环重新分配颜色"
+                >为同领域所有项目重新着色</button>
+              )}
+            </div>
+          </div>
+        )}
         {editor.kind === 'system' && editor.id && editingSystemStats && <div className="life-map-editor__checkin"><span><b>{editingSystemStats.label} {editingSystemStats.completed}/{editingSystemStats.target}{unit || '次'}</b><small>按自己的周期统计，不再强制折算成本周</small></span><div className="life-map-editor__checkin-row"><input aria-label="打卡日期" type="date" value={checkInDate} onChange={(event) => setCheckInDate(event.target.value)} /><button type="button" disabled={selectedDateCheckIn <= 0} onClick={() => store.setSystemCheckIn(editor.id!, checkInDate, selectedDateCheckIn - 1)}>−</button><b>{selectedDateCheckIn}</b><button type="button" onClick={() => store.addSystemCheckIn(editor.id!, checkInDate)}>+</button></div><small>可补记过去日期，也可以用减号纠正误操作；记录会多端同步。</small></div>}
         {formError && <div className={formError.startsWith('已') ? 'life-map-editor__success' : 'life-map-editor__error'} role="alert">{formError}</div>}
         <footer>{editor.id && <button className="is-danger" type="button" onClick={deleteEditorItem}>删除</button>}<span /><button type="button" onClick={() => setEditor(null)}>取消</button><button className="is-primary" type="submit" disabled={!phaseCreationHasAvailability || !editorHasArea}>保存</button></footer>

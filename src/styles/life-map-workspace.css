@@ -48,15 +48,24 @@
 .life-map-editor__type-guide > span { display: grid; gap: 3px; }
 .life-map-editor__type-guide b { color: #404968; font-size: 12px; }
 .life-map-editor__type-guide small { color: #8790a5; font-size: 10px; line-height: 1.45; }
-.life-map-editor__color-field { gap: 8px !important; }
-.life-map-editor__color-control { position: relative; min-height: 54px; display: grid; grid-template-columns: 36px minmax(0, 1fr) 28px; align-items: center; gap: 11px; padding: 7px 10px; border: 1px solid #dce2eb; border-radius: 12px; background: #f8fafc; cursor: pointer; transition: .16s ease; }
+.life-map-editor__color-field { gap: 6px !important; display: grid; }
+.life-map-editor__color-label { display: grid; gap: 2px; padding: 0 2px; }
+.life-map-editor__color-label b { color: #344057; font-size: 12px; letter-spacing: .02em; font-weight: 700; }
+.life-map-editor__color-label small { color: #8a93a5; font-size: 10px; font-weight: 500; line-height: 1.4; }
+.life-map-editor__color-control { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid #dce2eb; border-radius: 12px; background: #f8fafc; transition: .16s ease; }
 .life-map-editor__color-control:hover { border-color: #c5cddd; background: #fff; }
-.life-map-editor__color-control > span:nth-child(2) { display: grid; gap: 2px; }
-.life-map-editor__color-control b { color: #344057; font-size: 12px; letter-spacing: .04em; }
-.life-map-editor__color-control small { color: #98a1b1; font-size: 10px; font-weight: 500; }
-.life-map-editor__color-swatch { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: rgba(255,255,255,.9); box-shadow: inset 0 0 0 1px rgba(15,23,42,.08), 0 3px 8px rgba(30,41,59,.12); }
-.life-map-editor__color-control input[type=color] { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
-.life-map-editor__color-control::after { content: ''; width: 7px; height: 7px; justify-self: center; border-right: 1.5px solid #778298; border-bottom: 1.5px solid #778298; transform: rotate(-45deg); }
+.life-map-editor__color-swatch { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border-radius: 10px; color: rgba(255,255,255,.92); box-shadow: inset 0 0 0 1px rgba(15,23,42,.08), 0 3px 8px rgba(30,41,59,.12); }
+.life-map-editor__color-presets { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.life-map-editor__color-chip { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(255,255,255,.92); box-shadow: 0 1px 4px rgba(30,41,59,.18), inset 0 0 0 1px rgba(15,23,42,.1); cursor: pointer; padding: 0; transition: transform .14s ease, box-shadow .14s ease; }
+.life-map-editor__color-chip:hover { transform: translateY(-1px) scale(1.06); box-shadow: 0 3px 8px rgba(30,41,59,.24), inset 0 0 0 1px rgba(15,23,42,.12); }
+.life-map-editor__color-chip.is-active { border-color: #fff; box-shadow: 0 0 0 2px var(--life-color-active, #475569), 0 2px 6px rgba(30,41,59,.24); transform: scale(1.08); }
+.life-map-editor__color-chip:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; }
+.life-map-editor__color-custom { position: relative; width: 26px; height: 26px; border-radius: 50%; border: 1px dashed #aab2c5; background: repeating-conic-gradient(from 45deg, #f1f5f9 0deg 90deg, #fff 90deg 180deg); background-size: 8px 8px; cursor: pointer; overflow: hidden; }
+.life-map-editor__color-custom input[type=color] { position: absolute; inset: -4px; width: calc(100% + 8px); height: calc(100% + 8px); padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.life-map-editor__color-hex { color: #344057; font-size: 11px; letter-spacing: .04em; font-weight: 600; padding: 2px 6px; background: rgba(15,23,42,.05); border-radius: 4px; }
+.life-map-editor__color-distribute { margin-left: auto; padding: 5px 10px; border-radius: 7px; border: 1px solid #d8def0; background: linear-gradient(135deg, #f5f3ff, #ede9fe); color: #5b21b6; font-size: 11px; font-weight: 600; cursor: pointer; transition: .14s ease; }
+.life-map-editor__color-distribute:hover { background: linear-gradient(135deg, #ede9fe, #ddd6fe); border-color: #c4b5fd; }
+.life-map-editor__color-distribute:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; }
 .life-map-editor__checkin, .life-map-review-snapshot { padding: 11px 12px; border: 1px solid #e2e5fb; border-radius: 10px; background: #f8f8ff; color: #46506a; }
 .life-map-editor__checkin { display: grid; gap: 10px; }
 .life-map-review-snapshot { display: grid; gap: 5px; }

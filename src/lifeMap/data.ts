@@ -15,6 +15,7 @@ import type {
   LifeMapPlanGroupId,
   LifeMapPlanGroupPreference,
 } from './types';
+import { suggestGroupColor } from '@/utils/timeline-utils';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_AREA_TIMESTAMP = '2026-01-01T00:00:00.000Z';
@@ -47,6 +48,70 @@ export const LIFE_MAP_PLAN_GROUP_META: Record<LifeMapPlanGroupId, { name: string
   work: { name: '工作', color: '#D8A72E' },
   life: { name: '生活', color: '#10B981' },
 };
+
+/**
+ * 学习领域专用子色板（6 色）
+ *
+ * 设计目标：
+ * - 色相差异 ≥ 30°，确保多个学习子任务（考研政治 / 考研英语 / 数学 / 专业课…）一眼区分
+ * - 整体保持柔和高级感，避免过饱和
+ * - 索引 0 = 领域主色（与 LIFE_MAP_PLAN_GROUP_META.learning.color 保持一致）
+ *
+ * 选择建议（用户可手动覆盖）：
+ *   紫 #6366F1 → 通识 / 默认
+ *   蓝 #3B82F6 → 数学 / 理工
+ *   青 #0EA5E9 → 英语 / 语言 / 编程
+ *   粉 #EC4899 → 政治 / 社科
+ *   紫红 #A855F7 → 专业课 / 技术
+ *   绿 #10B981 → 综合 / 兴趣 / 跨学科
+ */
+export const LEARNING_CHILD_PALETTE: ReadonlyArray<{ hex: string; label: string; hint: string }> = [
+  { hex: '#6366F1', label: '通识', hint: '通用学习 / 默认' },
+  { hex: '#3B82F6', label: '理工', hint: '数学 / 理工类' },
+  { hex: '#0EA5E9', label: '语言', hint: '英语 / 编程 / 语言类' },
+  { hex: '#EC4899', label: '社科', hint: '政治 / 社科类' },
+  { hex: '#A855F7', label: '专业课', hint: '专业课 / 技术' },
+  { hex: '#10B981', label: '兴趣', hint: '兴趣 / 跨学科' },
+];
+
+export function isLearningPlanGroup(planGroupId: string | undefined | null): boolean {
+  return planGroupId === 'learning';
+}
+
+/**
+ * 为领域下的子项目推荐一个识别色。
+ *
+ * - 学习组：使用 LEARNING_CHILD_PALETTE，挑选使用次数最少 + 邻色回避的色
+ * - 其它领域：使用现有的 GROUP_COLOR_PRESET（24 色标准调色板）
+ * - 已有自定义色的项目不会被覆盖
+ */
+export function suggestAreaChildColor(
+  planGroupId: string | undefined | null,
+  existingColors: ReadonlyArray<string | undefined>,
+  seed = '',
+): string {
+  if (isLearningPlanGroup(planGroupId)) {
+    const counts = new Map(LEARNING_CHILD_PALETTE.map((entry) => [entry.hex.toLowerCase(), 0]));
+    for (const color of existingColors) {
+      const key = color?.toLowerCase();
+      if (key && counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const minCount = Math.min(...counts.values());
+    const leastUsed = LEARNING_CHILD_PALETTE.filter((entry) => counts.get(entry.hex.toLowerCase()) === minCount);
+    const seedKey = hashStringSeed(seed || String(existingColors.length));
+    return leastUsed[seedKey % leastUsed.length].hex;
+  }
+  return suggestGroupColor([...existingColors], seed);
+}
+
+function hashStringSeed(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
 
 export function isLifeMapPlanGroupId(value: unknown): value is LifeMapPlanGroupId {
   return value === 'learning' || value === 'work' || value === 'life';

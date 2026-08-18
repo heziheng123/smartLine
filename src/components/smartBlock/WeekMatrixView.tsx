@@ -112,9 +112,17 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
     loadWorkloadPreferences,
   );
   const toastTimerRef = useRef<number | null>(null);
-  const suppressCardOpenRef = useRef(false);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    block: ViewBlock;
+    isDragging: boolean;
+  } | null>(null);
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
   const schedules = useDailyScheduleStore((state) => state.schedules);
+
+  const DRAG_ACTIVATION_DISTANCE = 6;
 
   useEffect(() => {
     return () => {
@@ -279,6 +287,31 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
     setHoverCell(null);
   }, []);
 
+  const findDropCell = useCallback((clientX: number, clientY: number) => {
+    if (typeof document === 'undefined') return null;
+    const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    const cell = target?.closest('.wmv-cell[data-row-key][data-date]') as HTMLElement | null;
+    if (!cell) return null;
+    const rowKey = cell.dataset.rowKey;
+    const date = cell.dataset.date;
+    if (!rowKey || !date) return null;
+    return { rowKey, date };
+  }, []);
+
+  const cancelDrag = useCallback(() => {
+    const state = dragStateRef.current;
+    if (state) {
+      try {
+        const target = document.querySelector(`[data-block-id="${state.block.id}"]`) as HTMLElement | null;
+        target?.releasePointerCapture?.(state.pointerId);
+      } catch {
+        // ignore
+      }
+    }
+    dragStateRef.current = null;
+    clearDragState();
+  }, [clearDragState]);
+
   const handleToggle = useCallback(
     (taskId: string, blockId: string, isCompleted: boolean) => {
       const now = todayStr();
@@ -288,29 +321,140 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
     [showToast],
   );
 
-  const handleDragStart = useCallback((block: ViewBlock) => {
-    suppressCardOpenRef.current = false;
-    setDraggingId(`${block._taskId}::${block.id}`);
-  }, []);
+  const commitReschedule = useCallback(
+    async (block: ViewBlock, targetRowKey: string, targetDate: string) => {
+      const dragData: SmartBlockDragPayload = {
+        type: 'smart-block',
+        source: 'week-matrix',
+        taskId: block._taskId,
+        blockId: block.id,
+        tag: block.header.tag,
+        title: block.header.title,
+        fromDate: block.header.date || '',
+      };
 
-  useEffect(() => {
-    const handlePreferences = (event: Event) => {
-      const detail = (event as CustomEvent<WorkloadPreferences>).detail;
-      setWorkloadPreferences(detail ?? loadWorkloadPreferences());
-    };
-    window.addEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
-    return () => window.removeEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
-  }, []);
+      if (
+        groupMode === 'project'
+        && targetRowKey.startsWith('project:')
+        && targetRowKey !== `project:${dragData.taskId}`
+      ) {
+        showToast(`不能通过周矩阵更改所属项目，请拖到日期表头或“${block._projectLabel}”行`);
+        return;
+      }
 
-  const handleDragEnd = useCallback(() => {
-    suppressCardOpenRef.current = true;
-    clearDragState();
-    window.setTimeout(() => { suppressCardOpenRef.current = false; }, 120);
-  }, [clearDragState]);
+      if (dragData.fromDate === targetDate) {
+        return;
+      }
 
-  const handleCellDragOver = useCallback(
+      const canonicalHeader = resolveProjectTask(dragData.taskId, dragData.blockId)?.block.header;
+      const deadline = block.header.deadline ?? canonicalHeader?.deadline;
+      if (deadline && targetDate > deadline) {
+        const confirmed = await requestConfirmation({
+          title: '排期晚于截止日期',
+          message: `“${block.header.title}”的截止日期是 ${deadline}，目标日期是 ${targetDate}。是否仍然安排？`,
+          confirmLabel: '仍然安排',
+          cancelLabel: '返回修改',
+          tone: 'warning',
+        });
+        if (!confirmed) return;
+      }
+
+      const result = rescheduleProjectTask(dragData.taskId, dragData.blockId, targetDate);
+      showToast('error' in result ? result.error : `已将“${block.header.title}”改期到 ${targetDate}`);
+    },
+    [groupMode, showToast],
+  );
+
+  const handleBlockPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>, block: ViewBlock) => {
+      // Only respond to primary button (left click / first touch / pen tip)
+      if (event.button !== 0) return;
+      const target = event.currentTarget;
+      try {
+        target.setPointerCapture(event.pointerId);
+      } catch {
+        // capture may fail on some browsers; we still rely on up/move listeners
+      }
+      dragStateRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        block,
+        isDragging: false,
+      };
+    },
+    [],
+  );
+
+  const handleBlockPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const state = dragStateRef.current;
+      if (!state || state.pointerId !== event.pointerId) return;
+      const dx = event.clientX - state.startX;
+      const dy = event.clientY - state.startY;
+      if (!state.isDragging && Math.hypot(dx, dy) < DRAG_ACTIVATION_DISTANCE) return;
+
+      if (!state.isDragging) {
+        state.isDragging = true;
+        setDraggingId(`${state.block._taskId}::${state.block.id}`);
+      }
+
+      const next = findDropCell(event.clientX, event.clientY);
+      if (next) {
+        setHoverCell((current) => (
+          current && current.rowKey === next.rowKey && current.date === next.date
+            ? current
+            : next
+        ));
+      } else {
+        setHoverCell((current) => (current ? null : current));
+      }
+    },
+    [findDropCell],
+  );
+
+  const handleBlockPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const state = dragStateRef.current;
+      if (!state || state.pointerId !== event.pointerId) return;
+
+      const target = event.currentTarget;
+      try { target.releasePointerCapture(state.pointerId); } catch { /* noop */ }
+
+      const moved = Math.hypot(
+        event.clientX - state.startX,
+        event.clientY - state.startY,
+      ) >= DRAG_ACTIVATION_DISTANCE;
+
+      const block = state.block;
+      const liveHover = hoverCell;
+      dragStateRef.current = null;
+      clearDragState();
+
+      if (!moved) {
+        // Treat as a click — open edit modal.
+        openProjectTaskModal(block._taskId, block.id, {
+          source: 'week-matrix',
+          sourceDate: block.header.date,
+        });
+        return;
+      }
+
+      if (liveHover) {
+        void commitReschedule(block, liveHover.rowKey, liveHover.date);
+      }
+    },
+    [clearDragState, commitReschedule, hoverCell],
+  );
+
+  const handleBlockPointerCancel = useCallback(() => {
+    cancelDrag();
+  }, [cancelDrag]);
+
+  const handleExternalCellDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>, rowKey: string, date: string) => {
-      // 允许所有拖拽（包括来自外部的 Icebox）
+      // Only react to native HTML5 drag (e.g. external Icebox / Backlog River drops).
+      if (dragStateRef.current) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
       if (!hoverCell || hoverCell.rowKey !== rowKey || hoverCell.date !== date) {
@@ -320,12 +464,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
     [hoverCell],
   );
 
-  const handleCellDragLeave = useCallback(
+  const handleExternalCellDragLeave = useCallback(
     (event: React.DragEvent<HTMLDivElement>, rowKey: string, date: string) => {
-      // 避免由于进入子元素而触发的意外 leave 导致闪烁
-      if (event.currentTarget.contains(event.relatedTarget as Node)) {
-        return;
-      }
+      if (event.currentTarget.contains(event.relatedTarget as Node)) return;
       if (hoverCell?.rowKey === rowKey && hoverCell.date === date) {
         setHoverCell(null);
       }
@@ -333,17 +474,17 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
     [hoverCell],
   );
 
-  const handleCellDrop = useCallback(
+  const handleExternalCellDrop = useCallback(
     async (event: React.DragEvent<HTMLDivElement>, targetRowKey: string, targetDate: string) => {
       event.preventDefault();
-      
+      if (dragStateRef.current) return;
+
       let draggedData: SmartBlockDragPayload | null = null;
-      
       try {
         const jsonStr = event.dataTransfer.getData('application/json');
         if (jsonStr) {
           const parsed = JSON.parse(jsonStr);
-          if (parsed.type === 'smart-block') {
+          if (parsed?.type === 'smart-block') {
             draggedData = parsed as SmartBlockDragPayload;
           }
         }
@@ -374,11 +515,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
         return;
       }
 
-      const current = allBlocks.find(
-        (block) => block._taskId === draggedData.taskId && block.id === draggedData.blockId,
-      );
       const canonicalHeader = resolveProjectTask(draggedData.taskId, draggedData.blockId)?.block.header;
-      const deadline = current?.header.deadline ?? canonicalHeader?.deadline;
+      const deadline = canonicalHeader?.deadline;
       if (deadline && targetDate > deadline) {
         const confirmed = await requestConfirmation({
           title: '排期晚于截止日期',
@@ -392,6 +530,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
           return;
         }
       }
+
       const result = draggedData.source === 'icebox' || draggedData.source === 'backlog_river'
         ? scheduleBacklogTaskToDate(draggedData, targetDate)
         : rescheduleProjectTask(draggedData.taskId, draggedData.blockId, targetDate);
@@ -400,6 +539,29 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
     },
     [allBlocks, clearDragState, groupMode, showToast],
   );
+
+  useEffect(() => {
+    if (!draggingId) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancelDrag();
+    };
+    window.addEventListener('keydown', handleKey);
+    const handleWindowBlur = () => cancelDrag();
+    window.addEventListener('blur', handleWindowBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [cancelDrag, draggingId]);
+
+  useEffect(() => {
+    const handlePreferences = (event: Event) => {
+      const detail = (event as CustomEvent<WorkloadPreferences>).detail;
+      setWorkloadPreferences(detail ?? loadWorkloadPreferences());
+    };
+    window.addEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
+    return () => window.removeEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
+  }, []);
 
   const jumpTo = useCallback((dateStr: string) => {
     setCursor(dateStr);
@@ -625,9 +787,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
                   isWeekend ? 'wmv-cell--weekend' : ''
                 } ${hoverCell?.rowKey === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
                 data-date={dateStr}
-                onDragOver={(event) => handleCellDragOver(event, '', dateStr)}
-                onDragLeave={(event) => handleCellDragLeave(event, '', dateStr)}
-                onDrop={(event) => handleCellDrop(event, '', dateStr)}
+                onDragOver={(event) => handleExternalCellDragOver(event, '', dateStr)}
+                onDragLeave={(event) => handleExternalCellDragLeave(event, '', dateStr)}
+                onDrop={(event) => handleExternalCellDrop(event, '', dateStr)}
               >
                 <span className="wmv-date-weekday">{WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}</span>
                 <span className="wmv-date-num">{splitDate(dateStr).day}</span>
@@ -678,9 +840,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
                     data-row-key={row.key}
                     data-tag={row.kind === 'tag' ? row.tag : undefined}
                     data-project-id={row.kind === 'project' ? row.projectId : undefined}
-                    onDragOver={(event) => handleCellDragOver(event, row.key, dateStr)}
-                    onDragLeave={(event) => handleCellDragLeave(event, row.key, dateStr)}
-                    onDrop={(event) => handleCellDrop(event, row.key, dateStr)}
+                    onDragOver={(event) => handleExternalCellDragOver(event, row.key, dateStr)}
+                    onDragLeave={(event) => handleExternalCellDragLeave(event, row.key, dateStr)}
+                    onDrop={(event) => handleExternalCellDrop(event, row.key, dateStr)}
                   >
                     <AnimatePresence mode="popLayout">
                     {blocks.map((block) => {
@@ -706,24 +868,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
                           exit={{ opacity: 0, scale: 0.99, y: 2, transition: { ...MOTION_TRANSITION_EXIT, ease: MOTION_EASE_EXIT } }}
                           transition={MOTION_SPRING_GENTLE}
                           key={`${block._taskId}::${block.id}`}
-                          draggable
                           tabIndex={0}
-                          // @ts-expect-error framer-motion type collision
-                          onDragStart={(event: React.DragEvent<HTMLDivElement>) => {
-                            const dragData: SmartBlockDragPayload = {
-                              type: 'smart-block',
-                              source: 'week-matrix',
-                              taskId: block._taskId,
-                              blockId: block.id,
-                              tag: block.header.tag,
-                              title: block.header.title,
-                              fromDate: block.header.date || ''
-                            };
-                            event.dataTransfer.effectAllowed = 'move';
-                            event.dataTransfer.setData('application/json', JSON.stringify(dragData));
-                            handleDragStart(block);
-                          }}
-                          onDragEnd={handleDragEnd}
+                          onPointerDown={(event) => handleBlockPointerDown(event, block)}
+                          onPointerMove={handleBlockPointerMove}
+                          onPointerUp={handleBlockPointerUp}
+                          onPointerCancel={handleBlockPointerCancel}
                           className={`wmv-block-card ${header.isCompleted ? 'wmv-block-card--done' : ''} ${
                             isOverdue ? 'wmv-block-card--overdue' : ''
                           } ${!hasGraphNode ? 'wmv-block-card--unlinked' : ''} ${
@@ -735,14 +884,13 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
                             backgroundColor: categoryTheme.backgroundColor,
                             borderLeftColor: categoryTheme.accentColor,
                           }}
-                          onClick={() => { if (!suppressCardOpenRef.current) openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date }); }}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault();
                               openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date });
                             }
                           }}
-                          title={groupMode === 'project' ? '拖动到同项目的其他日期列即可直接改期' : '拖动到其他日期列即可直接改期，任务类型不会改变'}
+                          title={groupMode === 'project' ? '点击编辑，拖动到其他日期列即可直接改期' : '点击编辑，拖动到其他日期列即可直接改期，任务类型不会改变'}
                         >
                           <div className="wmv-block-header">
                             <button
