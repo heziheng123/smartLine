@@ -399,6 +399,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
         setDraggingId(`${state.block._taskId}::${state.block.id}`);
       }
 
+      if (event.cancelable) event.preventDefault();
+
       const next = findDropCell(event.clientX, event.clientY);
       if (next) {
         setHoverCell((current) => (
@@ -608,12 +610,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
             今天
           </button>
         </div>
-
-        {draggingId && (
-          <div className="wmv-drag-hint">
-            正在拖动任务；只调整日期，不改变所属项目和任务类型
-          </div>
-        )}
 
         <div className="wmv-nav-right ui-workspace-header__actions">
           {hasOffRangeBlocks && (

@@ -229,15 +229,15 @@
 @media (max-width: 900px) {
   .paletteContainer {
     right: 12px;
-    bottom: 12px;
+    bottom: calc(84px + env(safe-area-inset-bottom));
     left: 12px;
     align-items: stretch;
   }
 
   .panel {
     width: 100% !important;
-    height: min(72vh, 620px) !important;
-    max-height: 72vh !important;
+    height: min(72dvh, 620px, calc(100dvh - 176px)) !important;
+    max-height: calc(100dvh - 176px) !important;
     transform-origin: bottom center;
   }
 
@@ -248,7 +248,7 @@
   .paletteContainerDocked {
     position: fixed;
     right: 12px;
-    bottom: 12px;
+    bottom: calc(84px + env(safe-area-inset-bottom));
     left: 12px;
     z-index: 1000;
     height: auto;
@@ -259,14 +259,14 @@
   .paletteContainerDocked:not(.paletteContainerExpanded) {
     position: fixed;
     right: 12px;
-    bottom: 12px;
+    bottom: calc(84px + env(safe-area-inset-bottom));
     left: 12px;
   }
 
   .paletteContainerDocked .panel {
     width: 100%;
-    height: min(72vh, 620px);
-    max-height: 72vh;
+    height: min(72dvh, 620px, calc(100dvh - 176px));
+    max-height: calc(100dvh - 176px);
     margin-bottom: 12px;
     border: 1px solid rgba(255, 255, 255, 0.6);
     border-radius: 16px;
@@ -285,7 +285,7 @@
   .paletteContainer,
   .paletteContainerDocked,
   .paletteContainerDocked:not(.paletteContainerExpanded) {
-    bottom: 78px;
+    bottom: calc(78px + env(safe-area-inset-bottom));
   }
 }
 

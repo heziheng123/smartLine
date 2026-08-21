@@ -2370,7 +2370,8 @@
   padding: 6px 8px;
   margin-bottom: 4px;
   cursor: grab;
-  touch-action: pan-y;
+  /* Custom pointer dragging must win over the browser's touch panning on tablets. */
+  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   transition: box-shadow var(--stb-transition), transform var(--stb-transition), opacity var(--stb-transition), border-color var(--stb-transition);
@@ -2486,16 +2487,6 @@
   font-size: 11px;
   color: #6b7280;
   line-height: 1.4;
-}
-
-.wmv-drag-hint {
-  margin-left: 12px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.08);
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 500;
 }
 
 .wmv-toast {
