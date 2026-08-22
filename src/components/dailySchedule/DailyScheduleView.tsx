@@ -14,6 +14,7 @@ import {
 } from '@hello-pangea/dnd';
 import {
   BookOpenCheck,
+  ArrowLeft,
   CalendarCheck2,
   CalendarClock,
   RotateCcw,
@@ -79,6 +80,16 @@ import DailyReviewPlanner from '@/ebb/components/DailyReviewPlanner';
 import DailyRetrospectiveDialog from './DailyRetrospectiveDialog';
 import { collectCompletedActivities } from '@/domain/dailyRetrospective';
 import WorkspaceHeader from '@/components/WorkspaceHeader';
+import {
+  openKnowledgeNode,
+  openParentProject,
+  openProjectDocument,
+  openReviewPlan,
+  openWeekPosition,
+  returnToWeek,
+  takeDailyWeekReturnContext,
+  type WeekMatrixContext,
+} from '@/services/actionBridge';
 
 const formatPlanningMinutes = (minutes: number): string => {
   if (minutes < 60) return `${minutes} 分钟`;
@@ -95,7 +106,12 @@ const REVIEW_ADJUSTMENT_INTENT_KEY = 'smart-line-review-adjustment-intent';
 
 // ── 主组件 ───────────────────────────────────────────────────
 
-const DailyScheduleView: React.FC = () => {
+interface DailyScheduleViewProps {
+  targetDate?: string | null;
+  weekReturnContext?: WeekMatrixContext | null;
+}
+
+const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekReturnContext: bridgeWeekReturnContext }) => {
   const today = todayStr();
   const [selectedDate, setSelectedDate] = useState(() => {
     try {
@@ -109,6 +125,9 @@ const DailyScheduleView: React.FC = () => {
     }
     return today;
   });
+  const [weekReturnContext, setWeekReturnContext] = useState<WeekMatrixContext | null>(
+    () => bridgeWeekReturnContext ?? takeDailyWeekReturnContext(),
+  );
   const [showCompletedPool, setShowCompletedPool] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [backlogFeedback, setBacklogFeedback] = useState<{ text: string; operationId?: string } | null>(null);
@@ -136,6 +155,14 @@ const DailyScheduleView: React.FC = () => {
   useEffect(() => setPoolPreference('auto'), [selectedDate]);
 
   useEffect(() => {
+    if (targetDate) setSelectedDate(targetDate);
+  }, [targetDate]);
+
+  useEffect(() => {
+    if (bridgeWeekReturnContext) setWeekReturnContext(bridgeWeekReturnContext);
+  }, [bridgeWeekReturnContext]);
+
+  useEffect(() => {
     const handleNavigation = (event: Event) => {
       const detail = (event as CustomEvent<{ view?: string }>).detail;
       if (detail?.view !== 'daily-schedule') return;
@@ -145,6 +172,7 @@ const DailyScheduleView: React.FC = () => {
           sessionStorage.removeItem('smart-line-daily-target-date');
           setSelectedDate(pending);
         }
+        setWeekReturnContext(takeDailyWeekReturnContext());
       } catch {
         // Ignore optional session storage failures.
       }
@@ -188,6 +216,22 @@ const DailyScheduleView: React.FC = () => {
     }
   }, [selectedDate]);
 
+  const openParentProjectFromSource = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (parsed?.source === 'project') openParentProject(parsed.parentTaskId);
+  }, []);
+
+  const openProjectDocumentFromSource = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (parsed?.source === 'project' && parsed.blockId) {
+      openProjectDocument(parsed.parentTaskId, parsed.blockId);
+    }
+  }, []);
+
+  const openWeekPositionFromSource = useCallback((sourceId: string) => {
+    if (parseSourceId(sourceId)?.source === 'project') openWeekPosition(selectedDate);
+  }, [selectedDate]);
+
   const { tasks: rawTlTasks, groups: rawTlGroups } = useTimelineStore(
     useShallow((s) => ({ tasks: s.tasks, groups: s.groups })),
   );
@@ -217,6 +261,20 @@ const DailyScheduleView: React.FC = () => {
       return !t.graphNodeId || !archivedNodeIds.has(t.graphNodeId);
     });
   }, [rawEbbReviewTasks, archivedNodeIds]);
+
+  const openKnowledgeNodeFromReview = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    const nodeId = parsed?.source === 'review'
+      ? ebbReviewTasks.find((task) => task.id === parsed.reviewId)?.graphNodeId
+      : undefined;
+    if (nodeId) openKnowledgeNode(nodeId);
+    else setOperationError('该复习任务尚未关联知识节点。');
+  }, [ebbReviewTasks]);
+
+  const openReviewPlanFromSource = useCallback((sourceId: string) => {
+    const parsed = parseSourceId(sourceId);
+    if (parsed?.source === 'review') openReviewPlan(parsed.reviewId);
+  }, []);
 
   const tlTasks = useMemo(() => {
     return getUniqueTasks(rawTlTasks, rawTlGroups).map(task => ({
@@ -1021,6 +1079,15 @@ const DailyScheduleView: React.FC = () => {
               <h1 className="ds-title">每日安排</h1>
               <p>当天执行工作台</p>
             </div>
+            {weekReturnContext && (
+              <button
+                type="button"
+                className="ds-header-btn"
+                onClick={() => returnToWeek(weekReturnContext)}
+              >
+                <ArrowLeft size={15} />返回本周
+              </button>
+            )}
           </div>
           <div className="ui-workspace-header__context">
             <input
@@ -1213,6 +1280,11 @@ const DailyScheduleView: React.FC = () => {
                     checkIsUnlinkedTask={checkIsUnlinkedTask}
                     checkIsLinkedTask={checkIsLinkedTask}
                     onOpenProjectSource={openProjectTaskFromSource}
+                    onOpenParentProject={openParentProjectFromSource}
+                    onOpenProjectDocument={openProjectDocumentFromSource}
+                    onViewWeekPosition={openWeekPositionFromSource}
+                    onViewKnowledgeNode={openKnowledgeNodeFromReview}
+                    onOpenReviewPlan={openReviewPlanFromSource}
                     onToggleItem={handleToggleItem}
                     onRecordQuantityTarget={handleRecordQuantityTarget}
                     onRemoveItem={handleRemoveItem}

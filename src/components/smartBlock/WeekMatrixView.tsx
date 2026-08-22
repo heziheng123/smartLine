@@ -24,6 +24,7 @@ import {
 } from '@/services/workloadPreferences';
 import { requestConfirmation } from '@/services/confirmation';
 import { buildProjectDescriptorMap } from '@/domain/projectDescriptor';
+import { openDailyFromWeek, takeWeekRestoreContext, type WeekMatrixContext } from '@/services/actionBridge';
 import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import WorkspaceHeader from '@/components/WorkspaceHeader';
 import {
@@ -39,6 +40,7 @@ import {
 interface WeekMatrixViewProps {
   tasks: Task[];
   groups: TaskGroup[];
+  restoreContext?: WeekMatrixContext | null;
 }
 
 interface ViewBlock extends SmartTaskBlock {
@@ -100,10 +102,11 @@ function getSanitizedTaskBody(body: string): string {
   return sanitized;
 }
 
-const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
-  const [cursor, setCursor] = useState(() => todayStr());
-  const [mode, setMode] = useState<'week' | 'month'>('week');
-  const [groupMode, setGroupMode] = useState<MatrixGroupMode>(loadGroupMode);
+const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreContext }) => {
+  const [restoredContext] = useState(() => restoreContext ?? takeWeekRestoreContext());
+  const [cursor, setCursor] = useState(() => restoredContext?.cursor ?? todayStr());
+  const [mode, setMode] = useState<'week' | 'month'>(() => restoredContext?.mode ?? 'week');
+  const [groupMode, setGroupMode] = useState<MatrixGroupMode>(() => restoredContext?.groupMode ?? loadGroupMode());
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ rowKey: string; date: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -783,6 +786,16 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups }) => {
                   isWeekend ? 'wmv-cell--weekend' : ''
                 } ${hoverCell?.rowKey === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
                 data-date={dateStr}
+                role="button"
+                tabIndex={0}
+                aria-label={`打开 ${formatDate(dateStr, 'M月D日')} 的每日安排`}
+                onClick={() => openDailyFromWeek(dateStr, { cursor, mode, groupMode })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openDailyFromWeek(dateStr, { cursor, mode, groupMode });
+                  }
+                }}
                 onDragOver={(event) => handleExternalCellDragOver(event, '', dateStr)}
                 onDragLeave={(event) => handleExternalCellDragLeave(event, '', dateStr)}
                 onDrop={(event) => handleExternalCellDrop(event, '', dateStr)}

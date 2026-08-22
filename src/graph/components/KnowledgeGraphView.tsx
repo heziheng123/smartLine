@@ -31,6 +31,7 @@ import { getUniqueTasks } from '@/store/timelineData';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import NodeRetrospectiveRecords from './NodeRetrospectiveRecords';
 import { isRetrospectiveEntryCurrentlyCompleted } from '@/domain/dailyRetrospective';
+import { takeKnowledgeNodeFocus } from '@/services/actionBridge';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
 import { zoom, zoomIdentity, ZoomBehavior } from 'd3-zoom';
@@ -123,6 +124,7 @@ const getContrastYIQ = (hexcolor: string) => {
 };
 
 export const KnowledgeGraphView: React.FC = () => {
+  const [bridgeNodeId] = useState(() => takeKnowledgeNodeFocus());
   const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore(
     useShallow((state) => ({
       isHydrated: state.isHydrated,
@@ -203,6 +205,12 @@ export const KnowledgeGraphView: React.FC = () => {
   const [showHint, setShowHint] = useState(() => {
     return localStorage.getItem('knowledge-graph-hint-dismissed') !== 'true';
   });
+
+  useEffect(() => {
+    if (!bridgeNodeId || !nodes.some((node) => node.id === bridgeNodeId)) return;
+    setSelectedNodeId(bridgeNodeId);
+    setIsPanelOpen(true);
+  }, [bridgeNodeId, nodes]);
 
   useEffect(() => {
     if (!activeDockPanel) return;

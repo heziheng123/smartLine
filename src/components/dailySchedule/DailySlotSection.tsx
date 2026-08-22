@@ -28,6 +28,11 @@ interface DailySlotSectionProps {
   checkIsUnlinkedTask: (sourceId: string) => boolean;
   checkIsLinkedTask: (sourceId: string) => boolean;
   onOpenProjectSource: (sourceId: string) => void;
+  onOpenParentProject: (sourceId: string) => void;
+  onOpenProjectDocument: (sourceId: string) => void;
+  onViewWeekPosition: (sourceId: string) => void;
+  onViewKnowledgeNode: (sourceId: string) => void;
+  onOpenReviewPlan: (sourceId: string) => void;
   onToggleItem: (itemId: string) => void;
   onRecordQuantityTarget: (itemId: string, target: number) => void;
   onRemoveItem: (itemId: string) => void;
@@ -52,6 +57,11 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
   checkIsUnlinkedTask,
   checkIsLinkedTask,
   onOpenProjectSource,
+  onOpenParentProject,
+  onOpenProjectDocument,
+  onViewWeekPosition,
+  onViewKnowledgeNode,
+  onOpenReviewPlan,
   onToggleItem,
   onRecordQuantityTarget,
   onRemoveItem,
@@ -193,12 +203,22 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
                           <Check size={13} />
                         </button>
                       )}
-                      {item.source === 'project' && !quantity && !item.completed && !item.id.startsWith('virtual-block-') && (
+                      {item.source === 'project' && (
                         <details className="ds-item-menu" onClick={(event) => event.stopPropagation()}>
                           <summary aria-label={`任务菜单：${item.name}`} title="任务菜单">
                             <MoreHorizontal size={14} />
                           </summary>
                           <div role="menu">
+                            <button type="button" role="menuitem" onClick={() => onOpenParentProject(item.sourceId)}>
+                              打开所属项目
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => onOpenProjectDocument(item.sourceId)}>
+                              查看项目文档
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => onViewWeekPosition(item.sourceId)}>
+                              查看本周位置
+                            </button>
+                            {!quantity && !item.completed && (
                             <button
                               type="button"
                               role="menuitem"
@@ -208,6 +228,22 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
                               }}
                             >
                               <ArchiveRestore size={13} />移回待排期箱
+                            </button>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                      {item.source === 'review' && (
+                        <details className="ds-item-menu" onClick={(event) => event.stopPropagation()}>
+                          <summary aria-label={`复习任务菜单：${item.name}`} title="复习任务菜单">
+                            <MoreHorizontal size={14} />
+                          </summary>
+                          <div role="menu">
+                            <button type="button" role="menuitem" onClick={() => onViewKnowledgeNode(item.sourceId)}>
+                              查看知识节点
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => onOpenReviewPlan(item.sourceId)}>
+                              打开复习计划
                             </button>
                           </div>
                         </details>

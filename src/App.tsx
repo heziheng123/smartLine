@@ -39,6 +39,8 @@ import '@/styles/motion-system.css';
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 type TimelineNavigateDetail = {
   view?: AppModule;
+  date?: string;
+  weekContext?: WeekMatrixContext;
   taskId?: string;
   blockId?: string;
 };
@@ -115,6 +117,7 @@ import { useGraphStore } from '@/graph/store';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { useLifeMapStore } from '@/lifeMap/store';
+import type { WeekMatrixContext } from '@/services/actionBridge';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
 import { reconnectConfiguredWorkspace, WORKSPACE_CONFLICT_EVENT } from '@/services/workspaceSync';
 import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking, WORKSPACE_QUEUE_ERROR_EVENT } from '@/services/workspaceOfflineQueue';
@@ -401,6 +404,9 @@ const App: React.FC = () => {
 
   // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
   const [currentView, setCurrentView] = useState<AppModule>(getInitialAppView);
+  const [dailyTargetDate, setDailyTargetDate] = useState<string | null>(null);
+  const [dailyWeekReturnContext, setDailyWeekReturnContext] = useState<WeekMatrixContext | null>(null);
+  const [weekRestoreContext, setWeekRestoreContext] = useState<WeekMatrixContext | null>(null);
   const [lifeMapEntry, setLifeMapEntry] = useState(0);
   const [phoneFullView, setPhoneFullView] = useState(false);
   const [viewDirection, setViewDirection] = useState(1);
@@ -423,6 +429,11 @@ const App: React.FC = () => {
       setPhoneFullView(false);
       if (view === 'life-map') setLifeMapEntry((entry) => entry + 1);
     }
+    if (view !== 'daily-schedule') {
+      setDailyTargetDate(null);
+      setDailyWeekReturnContext(null);
+    }
+    if (view !== 'week-matrix') setWeekRestoreContext(null);
     setCurrentView(view);
     if (isPhoneLayout) {
       try { localStorage.setItem(PHONE_LAST_VIEW_STORAGE_KEY, view); } catch { /* optional preference */ }
@@ -624,6 +635,11 @@ const App: React.FC = () => {
     const handleNav = (event: Event) => {
       const e = event as CustomEvent<TimelineNavigateDetail>;
       const detail = e.detail;
+      if (detail?.view === 'daily-schedule') {
+        setDailyTargetDate(detail.date ?? null);
+        setDailyWeekReturnContext(detail.weekContext ?? null);
+      }
+      if (detail?.view === 'week-matrix') setWeekRestoreContext(detail.weekContext ?? null);
       if (detail?.view) {
         handleViewChangeRef.current(detail.view);
       }
@@ -1037,7 +1053,10 @@ const App: React.FC = () => {
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
-                <DailyScheduleView />
+                <DailyScheduleView
+                  targetDate={dailyTargetDate}
+                  weekReturnContext={dailyWeekReturnContext}
+                />
               </Suspense>
             </div>
           </motion.div>
@@ -1061,6 +1080,7 @@ const App: React.FC = () => {
                   <WeekMatrixView
                     tasks={weekMatrixTasks}
                     groups={store.groups}
+                    restoreContext={weekRestoreContext}
                   />
                 </Suspense>
               </div>
