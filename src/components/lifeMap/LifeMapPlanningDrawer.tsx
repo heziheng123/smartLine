@@ -21,10 +21,12 @@ export interface LifeMapStructureAreaItem {
 
 interface LifeMapPlanningDrawerProps {
   open: boolean;
+  view?: 'overview' | 'areas';
   plans: LifeMapPlanningItem[];
   systems: LifeMapPlanningItem[];
   reviews: LifeMapPlanningItem[];
   periods: LifeMapPlanningItem[];
+  unassignedCount: number;
   areas: LifeMapStructureAreaItem[];
   planGroups: LifeMapPlanGroupPreference[];
   onClose: () => void;
@@ -80,21 +82,21 @@ const LifeMapPlanningDrawer: React.FC<LifeMapPlanningDrawerProps> = (props) => {
   }, [props.open]);
   if (!props.open) return null;
 
+  const areaManagement = props.view === 'areas';
+  const title = areaManagement ? '领域与分类' : '规划概览';
   const groups = props.planGroups.slice().sort((left, right) => left.order - right.order);
   return <div className="life-map-planning-drawer__backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose(); }}>
-    <aside ref={drawerRef} className="life-map-planning-drawer" role="dialog" aria-modal="true" aria-label="规划概览">
-      <header><div><small>人生地图</small><h2>规划概览</h2></div><button ref={closeRef} type="button" onClick={props.onClose} aria-label="关闭规划概览"><X size={18} /></button></header>
+    <aside ref={drawerRef} className="life-map-planning-drawer" role="dialog" aria-modal="true" aria-label={title}>
+      <header><div><small>人生地图</small><h2>{title}</h2></div><button ref={closeRef} type="button" onClick={props.onClose} aria-label={`关闭${title}`}><X size={18} /></button></header>
       <div className="life-map-planning-drawer__content">
-        <section><h3><Layers3 size={15} />进行中的人生计划</h3><ItemList items={props.plans} empty="暂无进行中的人生计划" onOpen={(item) => props.onEdit('plan', item)} />{props.onShiftPlans && <button type="button" className="is-action" onClick={props.onShiftPlans}>批量调整人生计划日期</button>}</section>
-        <section><h3><Repeat2 size={15} />长期系统</h3><ItemList items={props.systems} empty="暂无长期系统" onOpen={(item) => props.onEdit('system', item)} /></section>
-        <section><h3><NotebookPen size={15} />复盘</h3><ItemList items={props.reviews} empty="还没有保存复盘" onOpen={(item) => props.onEdit('review', item)} /><div className="life-map-planning-drawer__actions"><button type="button" onClick={() => props.onCreateReview('month')}>开始月度复盘</button><button type="button" onClick={() => props.onCreateReview('quarter')}>开始季度复盘</button></div></section>
-        <section><h3><Settings2 size={15} />结构设置</h3><ItemList items={props.periods} empty="尚未设置人生时期" onOpen={(item) => props.onEdit('period', item)} /><button type="button" className="is-action" onClick={props.onCreatePeriod}>新建人生时期</button>
+        {!areaManagement && <>{props.unassignedCount > 0 && <section className="life-map-planning-drawer__unassigned"><h3>未归属阶段内容</h3><p>{props.unassignedCount} 项内容尚未与任何人生阶段相交；它们仍保留在这里与各自的规划入口中。</p></section>}<section><h3><Layers3 size={15} />进行中的人生计划</h3><ItemList items={props.plans} empty="暂无进行中的人生计划" onOpen={(item) => props.onEdit('plan', item)} />{props.onShiftPlans && <button type="button" className="is-action" onClick={props.onShiftPlans}>批量调整人生计划日期</button>}</section><section><h3><Repeat2 size={15} />长期系统</h3><ItemList items={props.systems} empty="暂无长期系统" onOpen={(item) => props.onEdit('system', item)} /></section><section><h3><NotebookPen size={15} />复盘</h3><ItemList items={props.reviews} empty="还没有保存复盘" onOpen={(item) => props.onEdit('review', item)} /><div className="life-map-planning-drawer__actions"><button type="button" onClick={() => props.onCreateReview('month')}>开始月度复盘</button><button type="button" onClick={() => props.onCreateReview('quarter')}>开始季度复盘</button></div></section></>}
+        <section><h3><Settings2 size={15} />{areaManagement ? '人生领域' : '结构设置'}</h3>{!areaManagement && <><ItemList items={props.periods} empty="尚未设置人生时期" onOpen={(item) => props.onEdit('period', item)} /><button type="button" className="is-action" onClick={props.onCreatePeriod}>新建人生时期</button></>}
           <div className="life-map-structure-settings">
             {groups.map((group) => {
               const meta = LIFE_MAP_PLAN_GROUP_META[group.id];
               const areas = props.areas.filter((area) => area.planGroupId === group.id).sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
-              return <section key={group.id} role="group" aria-label={`${meta.name}二级分类`} style={{ '--structure-group-color': meta.color } as React.CSSProperties}>
-                <header><span><i /><b>{meta.name}</b><small>{areas.length} 个二级分类</small></span><button type="button" onClick={() => props.onUpdateGroupPlacement(group.id, group.placement === 'above' ? 'below' : 'above')} aria-label={`${meta.name}移到${group.placement === 'above' ? '下方' : '上方'}`}>{group.placement === 'above' ? <ArrowDown size={14} /> : <ArrowUp size={14} />}{group.placement === 'above' ? '轴上' : '轴下'}</button></header>
+              return <section key={group.id} role="group" aria-label={`${meta.name}人生领域`} style={{ '--structure-group-color': meta.color } as React.CSSProperties}>
+                <header><span><i /><b>{meta.name}</b><small>{areas.length} 个人生领域</small></span>{!areaManagement && <button type="button" onClick={() => props.onUpdateGroupPlacement(group.id, group.placement === 'above' ? 'below' : 'above')} aria-label={`${meta.name}移到${group.placement === 'above' ? '下方' : '上方'}`}>{group.placement === 'above' ? <ArrowDown size={14} /> : <ArrowUp size={14} />}{group.placement === 'above' ? '轴上' : '轴下'}</button>}</header>
                 <div className="life-map-structure-settings__areas">
                   {areas.map((area, index) => <div key={area.id} className={area.isHidden ? 'is-hidden' : ''}>
                     <i style={{ background: area.color }} /><span><b>{area.name}</b><small>{area.itemCount} 项内容{area.isHidden ? ' · 已隐藏' : ''}</small></span>
@@ -102,11 +104,11 @@ const LifeMapPlanningDrawer: React.FC<LifeMapPlanningDrawerProps> = (props) => {
                     <button type="button" disabled={index === areas.length - 1} onClick={() => props.onMoveArea(area.id, 'down')} aria-label={`下移${area.name}`}><ArrowDown size={13} /></button>
                     <button type="button" onClick={() => props.onToggleArea(area.id)} aria-label={area.isHidden ? `显示${area.name}` : `隐藏${area.name}`}>{area.isHidden ? <Eye size={13} /> : <EyeOff size={13} />}</button>
                     <button type="button" onClick={() => props.onEditArea(area.id)} aria-label={`编辑${area.name}`}>编辑</button>
-                    <button type="button" disabled={area.itemCount > 0} title={area.itemCount > 0 ? '仍有规划内容，不能删除' : '删除二级分类'} onClick={() => props.onDeleteArea(area.id)} aria-label={`删除${area.name}`}><Trash2 size={13} /></button>
+                    <button type="button" disabled={area.itemCount > 0} title={area.itemCount > 0 ? '仍有规划内容，不能删除' : '删除人生领域'} onClick={() => props.onDeleteArea(area.id)} aria-label={`删除${area.name}`}><Trash2 size={13} /></button>
                   </div>)}
-                  {areas.length === 0 && <p>尚无二级分类，可直接在这里添加。</p>}
+                  {areas.length === 0 && <p>尚无人生领域，可直接在这里添加。</p>}
                 </div>
-                <button type="button" className="life-map-structure-settings__add" onClick={() => props.onCreateArea(group.id)} aria-label={`在${meta.name}下添加二级分类`}><Plus size={14} />添加二级分类</button>
+                <button type="button" className="life-map-structure-settings__add" onClick={() => props.onCreateArea(group.id)} aria-label={`在${meta.name}下添加人生领域`}><Plus size={14} />添加人生领域</button>
               </section>;
             })}
           </div>

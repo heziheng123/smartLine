@@ -1,0 +1,57 @@
+.life-manuscript__ruler,
+.life-manuscript__ruler header,
+.life-manuscript__tick time,
+.life-manuscript__tick .life-manuscript__month-boundary,
+.life-manuscript__tick .life-manuscript__tick-today-label,
+.life-manuscript__ruler-events button {
+  background-color: #fff;
+}
+
+.life-manuscript__ruler header {
+  overflow: hidden;
+  color: #4529a4;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.life-manuscript__tick time {
+  right: 128px;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.life-manuscript__tick .life-manuscript__tick-rule {
+  left: 78px;
+}
+
+.life-manuscript__tick .life-manuscript__month-boundary {
+  color: #4529a4;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.life-manuscript__tick.is-today time {
+  color: #4529a4;
+  font-weight: 700;
+}
+
+.life-manuscript__tick .life-manuscript__tick-today-label {
+  left: 78px;
+  padding: 1px 5px;
+  color: #4529a4;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.life-manuscript__today {
+  right: var(--manuscript-rail);
+}
+
+.life-manuscript--month .life-manuscript__ruler-events button {
+  left: 78px;
+  right: 2px;
+}
+
+.life-manuscript--month .life-manuscript__ruler-events button > span {
+  min-width: 0;
+}

@@ -178,7 +178,7 @@ function inspectReferences(backup: WorkspaceBackup, findings: WorkspaceAuditFind
     ...backup.lifeMap.lifeMapNotes,
   ];
   for (const item of areaEntities) {
-    if (!areaIds.has(item.areaId)) addMissingReference(findings, 'lifeMap', item.id, '人生领域', item.areaId);
+    if (item.areaId && !areaIds.has(item.areaId)) addMissingReference(findings, 'lifeMap', item.id, '人生领域', item.areaId);
   }
   for (const item of backup.lifeMap.lifeMapSystemCheckIns) {
     if (!systemIds.has(item.systemId)) addMissingReference(findings, 'lifeMap.systemCheckIns', item.id, '长期系统', item.systemId);

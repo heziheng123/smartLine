@@ -1,11 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const setLifeMapZoom = async (page: Page, zoom: 'year' | 'month' | 'week' | 'day') => {
-  const label = { year: '年视图', month: '月视图', week: '周视图', day: '日视图' }[zoom];
-  await page.getByRole('combobox', { name: '时间尺度' }).click();
-  await page.getByRole('option', { name: new RegExp(`^${label}`) }).click();
-};
-
 const openFullViewOnPhone = async (page: Page) => {
   if (await page.locator('.phone-workspace').count() === 0) return;
   await page.getByLabel('打开完整视图').click();
@@ -145,20 +139,21 @@ test('tablet viewport keeps the existing project timeline layout', async ({ page
   await expect(page.locator('.tl-year-stack')).toBeVisible();
 });
 
-test('life map keeps every planning scale on one literal zoomable line', async ({ page }) => {
+test('life map opens the vertical map and keeps every planning scale available', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   await openFullViewOnPhone(page);
   await expect(page.getByRole('heading', { name: '人生地图', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '人生时间线' })).toBeVisible();
-  await expect(page.locator('.life-line__axis')).toHaveCount(1);
-  await expect(page.locator('.life-line__canvas')).toBeVisible();
-
-  await setLifeMapZoom(page, 'day');
-  await expect(page.getByLabel('人生规划日视图时间轴')).toBeVisible();
-  await setLifeMapZoom(page, 'week');
-  await expect(page.getByLabel('人生规划周视图时间轴')).toBeVisible();
-  await page.getByRole('button', { name: '今天', exact: true }).click();
-  await expect(page.locator('.life-line__today')).toBeVisible();
+  const manuscript = page.getByRole('main', { name: '人生地图' });
+  await expect(manuscript).toBeVisible();
+  await expect(manuscript).toHaveClass(/life-manuscript--day/);
+  await manuscript.getByRole('button', { name: '周', exact: true }).click();
+  await expect(manuscript).toHaveClass(/life-manuscript--week/);
+  await manuscript.getByRole('button', { name: '月', exact: true }).click();
+  await expect(manuscript).toHaveClass(/life-manuscript--month/);
+  await manuscript.getByRole('button', { name: '年', exact: true }).click();
+  await expect(manuscript).toHaveClass(/life-manuscript--year/);
+  await manuscript.getByRole('button', { name: '定位到今天' }).click();
+  await expect(manuscript.locator('.life-manuscript__today')).toBeVisible();
 });
 
 test('project planning opens the timeline directly without an internal view menu', async ({ page }) => {
@@ -334,10 +329,17 @@ test('EBB safe mode keeps recovery controls usable and disables the high-load bo
   await page.evaluate(() => sessionStorage.setItem('smart-line-ebb-safe-mode', '1'));
   await page.getByTitle('艾宾浩斯复习').click();
   await openFullViewOnPhone(page);
-  await expect(page.getByRole('status')).toContainText('安全模式已开启');
-  await page.getByRole('tab', { name: '复习计划' }).click();
-  await expect(page.getByRole('button', { name: '日历' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '退出安全模式' })).toBeVisible();
+  const safeModeStatus = page.getByRole('status').filter({ hasText: '安全模式已开启' });
+  await expect(safeModeStatus).toBeVisible();
+  await expect(page.getByText('复习计划', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '日历', exact: true })).toBeDisabled();
+  const exitButton = page.getByRole('button', { name: '退出安全模式' });
+  await expect(exitButton).toBeVisible();
+  await exitButton.click();
+  await expect(safeModeStatus).toHaveCount(0);
+  await page.getByTitle('艾宾浩斯复习').click();
+  await openFullViewOnPhone(page);
+  await expect(page.getByRole('button', { name: '日历', exact: true })).toBeEnabled();
 });
 
 test('EBB complexity settings can be edited, saved and reset without closing the panel', async ({ page }) => {

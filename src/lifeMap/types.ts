@@ -39,7 +39,13 @@ export interface LifeMapStage extends LifeMapSyncMeta {
   name: string;
   start: string;
   end: string;
+  /** 阶段的补充说明。旧数据会在规范化时补为空字符串。 */
+  description?: string;
   color?: string;
+  /** 仅表示用户定义的重要性；当前与选中状态属于运行时 UI 状态。 */
+  importance?: 'normal' | 'important';
+  /** 缺失时阶段作为全局叙事背景，覆盖学习、工作和生活。 */
+  areaIds?: string[];
 }
 
 export interface LifeTheme extends LifeMapSyncMeta {
@@ -74,6 +80,8 @@ export interface LifeGoal extends LifeMapSyncMeta {
   kind?: 'goal' | 'plan' | 'phase';
   /** 仅项目子阶段使用，指向 kind=plan 的 LifeGoal。 */
   parentGoalId?: string;
+  /** 子项目的时间关系。缺失的旧数据按先后阶段处理。 */
+  childRole?: 'phase' | 'track';
   /** 历史兼容字段；新项目 UI 不再写入，规范化和备份仍保留。 */
   outcomeGoalId?: string;
   /** 面向时间线展示的简短说明或阶段结果。 */
@@ -150,12 +158,19 @@ export interface LifeFocus extends LifeMapSyncMeta {
 
 export interface LifeMapNote extends LifeMapSyncMeta {
   id: string;
-  areaId: string;
+  /** 缺失表示全局人生批注。 */
+  areaId?: string;
   name: string;
+  body?: string;
   date: string;
   endDate?: string;
   type: 'pin' | 'range';
+  relatedStageId?: string;
+  /** 可关联项目或项目单元。 */
+  relatedGoalId?: string;
   color?: string;
+  mood?: string;
+  importance?: 'normal' | 'important';
   placement?: LifeMapPlacement;
   layoutLane?: LifeMapLayoutLane;
 }

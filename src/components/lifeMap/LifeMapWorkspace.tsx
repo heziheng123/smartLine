@@ -5,13 +5,18 @@ import { useShallow } from 'zustand/react/shallow';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
 import { useTimelineStore } from '@/store';
 import { activeLifeMapItems, LEARNING_CHILD_PALETTE, LIFE_MAP_PLAN_GROUP_META, suggestAreaChildColor } from '@/lifeMap/data';
+import { addDays } from '@/utils/dateSafe';
 import { calculateGoalProgress, currentSystemStats, systemCompletedForRange, systemTargetForRange } from '@/lifeMap/metrics';
 import { useLifeMapStore, type LifeMapShiftSnapshot } from '@/lifeMap/store';
 import { activeMaintenancePeriod, mergeMaintenancePeriods } from '@/lifeMap/maintenance';
 import { findFirstAvailablePhaseRange, resolveLifeMapCreationDefaults, type LifeMapPrimaryIntent } from '@/lifeMap/lifeMapCreationContext';
 import { createLifeMapPeriodFocusItems } from '@/lifeMap/lifeMapPeriodFocus';
-import type { LifeGoal, LifeMaintenancePeriod, LifeMapPlanGroupId, LifeMapStatus, LifeReview, LifeSystem } from '@/lifeMap/types';
+import { getUnassignedLifeMapContent } from '@/lifeMap/selectors/lifeMapSelectors';
+import type { LifeGoal, LifeMaintenancePeriod, LifeMapData, LifeMapNote, LifeMapPlanGroupId, LifeMapStatus, LifeReview, LifeSystem } from '@/lifeMap/types';
 import LifeMapView from './LifeMapView';
+import LifeManuscriptView from './manuscript/LifeManuscriptView';
+import LifeMapStageEditor, { type LifeMapStageDraft } from './LifeMapStageEditor';
+import StageWorkspace from './stageWorkspace/StageWorkspace';
 import LifeMapPlanningDrawer from './LifeMapPlanningDrawer';
 import LifeMapEntityEditor from './LifeMapEntityEditor';
 import '@/styles/life-map-workspace.css';
@@ -103,6 +108,7 @@ const LifeMapWorkspace: React.FC = () => {
   const [progress, setProgress] = useState(0);
   const [unit, setUnit] = useState('');
   const [parentGoalId, setParentGoalId] = useState('');
+  const [childRole, setChildRole] = useState<'phase' | 'track'>('phase');
   const [summary, setSummary] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [hasEnd, setHasEnd] = useState(false);
@@ -125,9 +131,19 @@ const LifeMapWorkspace: React.FC = () => {
   const [shiftDays, setShiftDays] = useState(7);
   const [lastShift, setLastShift] = useState<LifeMapShiftSnapshot[]>([]);
   const [planningDrawerOpen, setPlanningDrawerOpen] = useState(false);
+  const [planningDrawerView, setPlanningDrawerView] = useState<'overview' | 'areas'>('overview');
   const [lifeStageEditorRequest, setLifeStageEditorRequest] = useState<{ stage?: LifeStage; token: number } | null>(null);
+  const [classicViewOpen, setClassicViewOpen] = useState(false);
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
+  const [inspectorPinned, setInspectorPinned] = useState(false);
+  const [adaptiveStageDraft, setAdaptiveStageDraft] = useState<LifeMapStageDraft | null>(null);
+  const [adaptiveStageEditingId, setAdaptiveStageEditingId] = useState<string | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const lastUsedAreaIdsRef = useRef<Partial<Record<LifeMapPrimaryIntent, string>>>(readLastUsedAreaIds());
+
+  useEffect(() => {
+    localStorage.removeItem('life-map-view-mode-v14');
+  }, []);
 
   useEffect(() => {
     if (!store.isHydrated) return;
@@ -218,7 +234,7 @@ const LifeMapWorkspace: React.FC = () => {
     return true;
   }), [store.lifeMapEvents, visibleAreaIds]);
   const focuses = useMemo(() => activeLifeMapItems(store.lifeMapFocuses).filter((item) => visibleAreaIds.has(item.areaId)), [store.lifeMapFocuses, visibleAreaIds]);
-  const lifeNotes = useMemo(() => activeLifeMapItems(store.lifeMapNotes).filter((item) => visibleAreaIds.has(item.areaId)), [store.lifeMapNotes, visibleAreaIds]);
+  const lifeNotes = useMemo(() => activeLifeMapItems(store.lifeMapNotes).filter((item) => !item.areaId || visibleAreaIds.has(item.areaId)), [store.lifeMapNotes, visibleAreaIds]);
   const periodFocusItems = useMemo(() => createLifeMapPeriodFocusItems(store).filter((item) => visibleAreaIds.has(item.areaId)), [store, visibleAreaIds]);
   const areaItemCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -384,6 +400,90 @@ const LifeMapWorkspace: React.FC = () => {
   const stages = useMemo<LifeStage[]>(() => activeLifeMapItems(store.lifeMapStages).map((item) => ({
     id: item.id, name: item.name, start: item.start, end: item.end, color: item.color,
   })), [store.lifeMapStages]);
+  const lifeMapData = useMemo<LifeMapData>(() => ({
+    lifeMapAreas: store.lifeMapAreas,
+    lifeMapPlanGroups: store.lifeMapPlanGroups,
+    lifeMapStages: store.lifeMapStages,
+    lifeMapThemes: store.lifeMapThemes,
+    lifeMapGoals: store.lifeMapGoals,
+    lifeMapSystems: store.lifeMapSystems,
+    lifeMapSystemCheckIns: store.lifeMapSystemCheckIns,
+    lifeMapEvents: store.lifeMapEvents,
+    lifeMapFocuses: store.lifeMapFocuses,
+    lifeMapNotes: store.lifeMapNotes,
+    lifeMapReviews: store.lifeMapReviews,
+  }), [store.lifeMapAreas, store.lifeMapEvents, store.lifeMapFocuses, store.lifeMapGoals, store.lifeMapNotes, store.lifeMapPlanGroups, store.lifeMapReviews, store.lifeMapStages, store.lifeMapSystemCheckIns, store.lifeMapSystems, store.lifeMapThemes]);
+  const manuscriptData = useMemo<LifeMapData>(() => {
+    const projectedGoals: LifeGoal[] = allProjectedTimelineTasks.map((task) => ({
+      id: `timeline-project:${task.id}`,
+      areaId: task.lifeMapProjection!.areaId,
+      name: task.name,
+      start: task.start,
+      targetDate: task.end,
+      color: task.color ?? areaById.get(task.lifeMapProjection!.areaId)?.color,
+      placement: task.lifeMapProjection!.placement,
+      status: task.completed ? 'completed' : 'active',
+      kind: 'plan',
+      createdAt: '', updatedAt: '', revision: 0,
+    }));
+    const legacyPeriodNotes: LifeMapNote[] = createLifeMapPeriodFocusItems(lifeMapData)
+      .filter((item) => item.sourceKind !== 'range-note')
+      .map((item) => ({
+        id: `${item.sourceKind}:${item.sourceId}`,
+        areaId: item.areaId,
+        name: item.name,
+        date: item.start,
+        endDate: item.end,
+        type: 'range',
+        color: item.color,
+        placement: item.placement,
+        layoutLane: item.layoutLane,
+        createdAt: '', updatedAt: '', revision: 0,
+      }));
+    return {
+      ...lifeMapData,
+      lifeMapGoals: [...lifeMapData.lifeMapGoals, ...projectedGoals],
+      lifeMapNotes: [...lifeMapData.lifeMapNotes, ...legacyPeriodNotes],
+    };
+  }, [allProjectedTimelineTasks, areaById, lifeMapData]);
+  const unassignedContent = useMemo(() => getUnassignedLifeMapContent(lifeMapData), [lifeMapData]);
+  const openClassicView = () => {
+    setSelectedStageId(null);
+    setClassicViewOpen(true);
+  };
+  const openPlanningDrawer = (view: 'overview' | 'areas' = 'overview') => {
+    setPlanningDrawerView(view);
+    setPlanningDrawerOpen(true);
+  };
+  const updateManuscriptNote = (id: string, updates: Partial<LifeMapNote>) => {
+    const [legacyKind, legacyId] = id.split(':');
+    if ((legacyKind === 'theme' || legacyKind === 'focus') && legacyId) {
+      const rangeUpdates = {
+        ...(updates.name !== undefined ? { name: updates.name } : {}),
+        ...(updates.date !== undefined ? { start: updates.date } : {}),
+        ...(updates.endDate !== undefined ? { end: updates.endDate } : {}),
+        ...(updates.areaId ? { areaId: updates.areaId } : {}),
+        ...(updates.color !== undefined ? { color: updates.color } : {}),
+      };
+      if (legacyKind === 'theme') store.updateTheme(legacyId, rangeUpdates);
+      else store.updateFocus(legacyId, rangeUpdates);
+      return;
+    }
+    store.updateNote(id, updates);
+  };
+  const deleteManuscriptNote = (id: string) => {
+    const [legacyKind, legacyId] = id.split(':');
+    if (legacyKind === 'theme' && legacyId) store.deleteTheme(legacyId);
+    else if (legacyKind === 'focus' && legacyId) store.deleteFocus(legacyId);
+    else store.deleteNote(id);
+  };
+  const openReviewAtDate = (date: string) => {
+    openCreate('review');
+    const periodStart = dayjs(date).startOf('month');
+    setName(`${periodStart.format('YYYY年M月')}复盘`);
+    setStart(periodStart.format('YYYY-MM-DD'));
+    setEnd(periodStart.endOf('month').format('YYYY-MM-DD'));
+  };
 
   const editorAreaId = selectedAreaId !== 'all'
     ? selectedAreaId
@@ -408,7 +508,7 @@ const LifeMapWorkspace: React.FC = () => {
     setToolbarMenu(null);
     setName(''); setStart(defaultDate()); setEnd(futureDate()); setTargetCount(3); setFrequency('weekly');
     setStatus('active'); setProgress(0); setUnit('');
-    setParentGoalId(''); setSummary(''); setDurationMinutes(30); setHasEnd(false); setCheckInDate(defaultDate());
+    setParentGoalId(''); setChildRole('phase'); setSummary(''); setDurationMinutes(30); setHasEnd(false); setCheckInDate(defaultDate());
     setReviewPeriod('month'); setReviewAreaId(selectedAreaId); setReflection(''); setAdjustments(''); setFormError('');
     const primaryIntent = (kind === 'plan' || kind === 'system') ? kind : undefined;
     const defaults = primaryIntent ? resolveLifeMapCreationDefaults(primaryIntent, {
@@ -476,7 +576,7 @@ const LifeMapWorkspace: React.FC = () => {
     setStatus('status' in item ? item.status : 'active');
     if ('progress' in item) {
       setProgress(calculateGoalProgress(item)); setUnit(item.unit ?? '');
-      setParentGoalId(item.parentGoalId ?? ''); setSummary(item.summary ?? '');
+      setParentGoalId(item.parentGoalId ?? ''); setChildRole(item.childRole ?? 'phase'); setSummary(item.summary ?? '');
     }
     if ('targetCount' in item) {
       setTargetCount(item.targetCount); setFrequency(item.frequency); setUnit(item.unit ?? '');
@@ -545,7 +645,7 @@ const LifeMapWorkspace: React.FC = () => {
         && item.id !== editor?.id
         && item.start <= end
         && item.targetDate >= start);
-      if (overlappingPhase) {
+      if (overlappingPhase && childRole !== 'track') {
         setFormError(`当前日期与子阶段“${overlappingPhase.name}”重叠，请调整起止日期后再保存。`); return;
       }
     }
@@ -570,6 +670,7 @@ const LifeMapWorkspace: React.FC = () => {
         isCore: false,
         kind: goalKind,
         parentGoalId: goalKind === 'phase' ? parentGoalId : undefined,
+        childRole: goalKind === 'phase' ? childRole : undefined,
         summary: summary.trim() || undefined,
       };
       const id = editor.id ?? store.addGoal(value).id;
@@ -624,12 +725,26 @@ const LifeMapWorkspace: React.FC = () => {
   };
   const applyTemplate = (kind: 'balanced' | 'health') => {
     const learning = allAreas.find((area) => area.id === 'learning') ?? allAreas[0];
+    const work = allAreas.find((area) => area.planGroupId === 'work') ?? allAreas[0];
     const health = allAreas.find((area) => area.id === 'health') ?? allAreas[0];
-    if (!learning || !health) return;
+    if (!learning || !work || !health) return;
     if (kind === 'balanced') {
-      store.addStage({ name: '学习与生活平衡期', start: defaultDate(), end: dayjs().add(3, 'month').endOf('month').format('YYYY-MM-DD'), color: '#7C6FE6' });
-      store.addTheme({ areaId: learning.id, name: '推进当前最重要的学习项目', start: defaultDate(), end: dayjs().add(3, 'month').format('YYYY-MM-DD'), color: learning.color });
-      store.addGoal({ areaId: learning.id, name: '完成本阶段核心学习项目', start: defaultDate(), targetDate: dayjs().add(3, 'month').format('YYYY-MM-DD'), color: learning.color, kind: 'plan', status: 'active', progress: 0 });
+      const date = (offset: number) => dayjs().add(offset, 'day').format('YYYY-MM-DD');
+      const stage = store.addStage({ name: '考研备考与生活平衡期', start: date(-51), end: date(128), color: '#7453D6' });
+      store.addFocus({ areaId: learning.id, name: '挖出', start: date(-21), end: date(70), color: '#3E9B67' });
+      store.addTheme({ areaId: learning.id, name: '考研备考', start: date(-4), end: date(18), color: '#6840C6' });
+      const study = store.addGoal({ areaId: learning.id, name: '考研备考', start: date(-4), targetDate: date(18), color: '#6840C6', kind: 'plan', status: 'active', progress: 0 });
+      store.addGoal({ areaId: learning.id, parentGoalId: study.id, childRole: 'track', name: '政治', start: date(-3), targetDate: date(6), color: '#6840C6', kind: 'phase', status: 'active', progress: 0 });
+      const english = store.addGoal({ areaId: learning.id, parentGoalId: study.id, childRole: 'track', name: '英语', start: date(-1), targetDate: date(15), color: '#8454D7', kind: 'phase', status: 'active', progress: 0 });
+      store.addGoal({ areaId: learning.id, parentGoalId: study.id, childRole: 'track', name: '专业课', start: date(2), targetDate: date(18), color: '#8454D7', kind: 'phase', status: 'active', progress: 0 });
+      store.addGoal({ areaId: work.id, name: '项目收尾', start: date(3), targetDate: date(10), color: '#3971CF', kind: 'plan', status: 'active', progress: 0 });
+      store.addGoal({ areaId: health.id, name: '睡眠调整', start: date(-3), targetDate: date(13), color: '#EE6272', kind: 'plan', status: 'active', progress: 0 });
+      store.addGoal({ areaId: health.id, name: '每日运动', start: date(1), targetDate: date(18), color: '#EE6272', kind: 'plan', status: 'active', progress: 0 });
+      store.addEvent({ areaId: learning.id, relatedPlanId: study.id, name: '六级成绩公布', date: date(3), color: '#E98233', importance: 'important' });
+      store.addNote({ name: '状态逐渐稳定', body: '连续几天状态很好。复习节奏终于稳定下来，也开始找到生活与目标之间的平衡。', date: date(-3), endDate: date(1), type: 'range', relatedStageId: stage.id, color: '#5632B6' });
+      store.addNote({ areaId: learning.id, name: '英语进入冲刺阶段', body: '白天专注学习，晚上适当放松。', date: date(1), endDate: date(5), type: 'range', relatedGoalId: english.id, color: '#2F915B', importance: 'important' });
+      store.addNote({ name: '收到六级成绩，比预期更好。', date: date(3), type: 'pin', color: '#E98233', importance: 'important' });
+      store.addNote({ name: '计划调整', body: '有点疲惫。重新调整计划，给自己留一点呼吸的空间。', date: date(14), endDate: date(18), type: 'range', relatedStageId: stage.id, color: '#5632B6' });
       store.addSystem({ areaId: health.id, name: '保持规律运动', start: defaultDate(), frequency: 'weekly', targetCount: 3, durationMinutes: 40, color: health.color });
       store.addSystem({ areaId: health.id, name: '稳定睡眠节奏', start: defaultDate(), frequency: 'daily', targetCount: 1, durationMinutes: 10, color: health.color });
     } else {
@@ -665,10 +780,10 @@ const LifeMapWorkspace: React.FC = () => {
   ] : [];
   const maintenanceTarget = maintenanceEditor?.scope === 'area'
     ? allAreas.find((item) => item.id === maintenanceEditor.id)
-    : goals.find((item) => item.id === maintenanceEditor?.id && item.kind === 'plan');
+    : allGoals.find((item) => item.id === maintenanceEditor?.id && item.kind === 'plan');
   const currentMaintenance = activeMaintenancePeriod(maintenanceTarget?.maintenancePeriods);
   const selectedAreaMaintenance = activeMaintenancePeriod(selectedArea?.maintenancePeriods);
-  const shiftCandidates = goals.filter((item) => (item.kind === 'plan' || item.kind === 'phase') && item.status !== 'archived');
+  const shiftCandidates = allGoals.filter((item) => (item.kind === 'plan' || item.kind === 'phase') && item.status !== 'archived');
   const expandedShiftIds = useMemo(() => {
     const ids = new Set(shiftSelection);
     shiftCandidates.filter((item) => item.kind === 'phase' && item.parentGoalId && ids.has(item.parentGoalId)).forEach((item) => ids.add(item.id));
@@ -740,8 +855,48 @@ const LifeMapWorkspace: React.FC = () => {
     return <div className="life-map-workspace__loading" role="status" aria-live="polite">正在安全恢复人生地图…</div>;
   }
 
-  return <div className="life-map-workspace">
-    <LifeMapView
+  return <div className={`life-map-workspace${!classicViewOpen && selectedStageId ? ' is-adaptive-stage-open' : ''}`}>
+    {!classicViewOpen ? <LifeManuscriptView
+      data={manuscriptData}
+      selectedStageId={selectedStageId}
+      onSelectStage={setSelectedStageId}
+      onEditStage={(stage) => { setAdaptiveStageEditingId(stage.id); setAdaptiveStageDraft({ name: stage.name, start: stage.start, end: stage.end, description: stage.description ?? '', color: stage.color, importance: stage.importance ?? 'normal', areaIds: stage.areaIds }); }}
+      inspectorPinned={inspectorPinned}
+      onToggleInspectorPin={() => setInspectorPinned((pinned) => !pinned)}
+      onCreateStageAtDate={(date, endDate, groupId) => {
+        const areaId = groupId ? areas.find((area) => area.planGroupId === groupId)?.id : undefined;
+        setAdaptiveStageEditingId(null);
+        setAdaptiveStageDraft({ name: '', start: date, end: endDate ?? addDays(date, 90), description: '', color: areaId ? recommendColorForArea(areaId) : '#7C6FE6', importance: 'normal', areaIds: areaId ? [areaId] : undefined });
+      }}
+      onCreateProjectAtDate={(date, endDate, groupId) => {
+        const areaId = groupId ? areas.find((area) => area.planGroupId === groupId)?.id : undefined;
+        openCreate('plan');
+        setStart(date);
+        setEnd(endDate ?? addDays(date, 90));
+        if (areaId) {
+          setDraftAreaId(areaId);
+          setColor(recommendColorForArea(areaId));
+        }
+      }}
+      onOpenProject={(id) => openEntity(`goal:${id}`)}
+      onUpdateProject={(id, updates) => store.updateGoal(id, updates)}
+      onAddNote={(note) => store.addNote(note)}
+      onUpdateNote={updateManuscriptNote}
+      onDeleteNote={deleteManuscriptNote}
+      onAddEvent={(event) => store.addEvent(event)}
+      onUpdateEvent={(id, updates) => store.updateEvent(id, updates)}
+      onDeleteEvent={(id) => store.deleteEvent(id)}
+      onSetSystemCheckIn={(systemId, date, count) => store.setSystemCheckIn(systemId, date, count)}
+      onCreateReview={openReviewAtDate}
+      onOpenReview={(id) => openEntity(`review:${id}`)}
+      showArchived={showArchived}
+      onToggleArchived={() => setShowArchived((visible) => !visible)}
+      onManageProjectMaintenance={(id, name) => openMaintenance('plan', id, name)}
+      onManageAreaMaintenance={(id, name) => openMaintenance('area', id, name)}
+      onOpenAreaManagement={() => openPlanningDrawer('areas')}
+      onOpenBatchShift={openShiftEditor}
+      onOpenClassicView={openClassicView}
+    /> : <LifeMapView
       tasks={tasks}
       groups={groups}
       notes={notes}
@@ -751,7 +906,7 @@ const LifeMapWorkspace: React.FC = () => {
       planSystems={systems}
       planAreas={areas}
       planGroups={planGroups}
-      toolbarScope={<div className="life-map-scope" ref={toolbarRef} aria-label="人生领域">
+      toolbarScope={<><button type="button" className="life-map-preview-toggle" onClick={() => setClassicViewOpen(false)}>返回人生地图</button><div className="life-map-scope" ref={toolbarRef} aria-label="人生领域">
         <button
           className="life-map-scope__trigger"
           type="button"
@@ -785,16 +940,16 @@ const LifeMapWorkspace: React.FC = () => {
             </section>;
           })}
           <button type="button" className="life-map-scope__manage" onClick={() => setShowArchived((value) => !value)}>{showArchived ? <EyeOff size={15} /> : <Eye size={15} />}<span><b>{showArchived ? '隐藏归档内容' : '显示归档内容'}</b><small>归档只收起，不会删除数据</small></span></button>
-          <button type="button" className="life-map-scope__manage" onClick={() => { setToolbarMenu(null); setPlanningDrawerOpen(true); }}><Settings2 size={15} /><span><b>管理二级分类</b><small>按学习、工作、生活分组管理</small></span></button>
+          <button type="button" className="life-map-scope__manage" onClick={() => { setToolbarMenu(null); openPlanningDrawer('areas'); }}><Settings2 size={15} /><span><b>管理人生领域</b><small>按学习、工作、生活分组管理</small></span></button>
         </div>}
-      </div>}
+      </div></>}
       onCreatePlan={() => openCreate('plan')}
       onCreatePhase={plans.length > 0 ? () => openCreate('phase') : undefined}
       onCreatePhaseForPlan={(taskId) => {
         if (taskId.startsWith('goal:') && !taskId.startsWith('goal:timeline-project:')) openCreate('phase', { planId: taskId.slice('goal:'.length) });
       }}
       onCreateSystem={() => openCreate('system')}
-      onOpenPlanning={() => setPlanningDrawerOpen(true)}
+      onOpenPlanning={openPlanningDrawer}
       lifeStageEditorRequest={lifeStageEditorRequest}
       onManageProjectMaintenance={(taskId) => {
         if (taskId.startsWith('goal:timeline-project:')) return;
@@ -836,13 +991,31 @@ const LifeMapWorkspace: React.FC = () => {
       onUpdateMilestone={(item) => store.updateEvent(item.id.replace(/^event:/, ''), { name: item.name, date: item.date, color: item.customColor, placement: item.placement, importance: item.importance, layoutLane: item.layoutLane, areaId: item.areaId, relatedPlanId: item.relatedPlanId })}
       onDeleteMilestone={(id) => store.deleteEvent(id.replace(/^event:/, ''))}
       onOpenTask={(taskId) => openEntity(taskId)}
-    />
+    />}
+    {!classicViewOpen && selectedStageId && <StageWorkspace
+      data={lifeMapData}
+      stageId={selectedStageId}
+      pinned={inspectorPinned}
+      onTogglePin={() => setInspectorPinned((pinned) => !pinned)}
+      onClose={() => setSelectedStageId(null)}
+      onEdit={(stage) => { setAdaptiveStageEditingId(stage.id); setAdaptiveStageDraft({ name: stage.name, start: stage.start, end: stage.end, description: stage.description ?? '', color: stage.color, importance: stage.importance ?? 'normal', areaIds: stage.areaIds }); }}
+      onDelete={(stage) => {
+        if (!window.confirm(`删除“${stage.name}”阶段？项目、系统和便签不会被删除。`)) return;
+        store.deleteStage(stage.id);
+        setSelectedStageId(null);
+      }}
+      onCreatePlan={() => openCreate('plan')}
+      onCreateNote={() => openCreate('focus')}
+      onOpenGoal={(id) => openEntity(`goal:${id}`)}
+    />}
     <LifeMapPlanningDrawer
       open={planningDrawerOpen}
+      view={planningDrawerView}
       plans={plans.filter((item) => item.status === 'active').map((item) => ({ id: item.id, name: item.name, meta: `${item.start} — ${item.targetDate}${activeMaintenancePeriod(item.maintenancePeriods) ? ' · 维护中' : ''}` }))}
       systems={activeSystems.map((item) => ({ id: item.id, name: item.name, meta: systemStats.get(item.id) ? `${systemStats.get(item.id)!.label} ${systemStats.get(item.id)!.completed}/${systemStats.get(item.id)!.target}` : undefined }))}
       reviews={reviews.slice().sort((left, right) => right.end.localeCompare(left.end)).slice(0, 5).map((item) => ({ id: item.id, name: item.title, meta: `${item.period === 'month' ? '月度' : '季度'} · ${item.end}` }))}
       periods={activeLifeMapItems(store.lifeMapStages).map((item) => ({ id: item.id, name: item.name, meta: `${item.start} — ${item.end}` }))}
+      unassignedCount={unassignedContent.count}
       areas={allAreas.map((item) => ({ id: item.id, name: item.name, color: item.color, planGroupId: item.planGroupId, order: item.order, isHidden: item.isHidden, itemCount: areaItemCounts.get(item.id) ?? 0 }))}
       planGroups={activeLifeMapItems(store.lifeMapPlanGroups).sort((left, right) => left.order - right.order)}
       onClose={() => setPlanningDrawerOpen(false)}
@@ -879,6 +1052,22 @@ const LifeMapWorkspace: React.FC = () => {
       onShiftPlans={plans.length > 0 ? () => { setPlanningDrawerOpen(false); openShiftEditor(); } : undefined}
       onUpdateGroupPlacement={store.updatePlanGroupPlacement}
     />
+    {adaptiveStageDraft && <LifeMapStageEditor
+      stage={adaptiveStageDraft}
+      areas={allAreas}
+      existing={Boolean(adaptiveStageEditingId)}
+      onDismiss={() => { setAdaptiveStageDraft(null); setAdaptiveStageEditingId(null); }}
+      onDelete={adaptiveStageEditingId ? () => {
+        const stage = activeLifeMapItems(store.lifeMapStages).find((item) => item.id === adaptiveStageEditingId);
+        if (!stage || !window.confirm(`删除“${stage.name}”阶段？项目、系统和便签不会被删除。`)) return;
+        store.deleteStage(stage.id); setSelectedStageId(null); setAdaptiveStageDraft(null); setAdaptiveStageEditingId(null);
+      } : undefined}
+      onSave={(draft) => {
+        if (adaptiveStageEditingId) store.updateStage(adaptiveStageEditingId, draft);
+        else store.addStage(draft);
+        setAdaptiveStageDraft(null); setAdaptiveStageEditingId(null);
+      }}
+    />}
     {lastShift.length > 0 && <div className="life-map-shift-undo" role="status"><FastForward size={15} /><span>已统一调整 {lastShift.length} 个计划或阶段</span><button type="button" onClick={() => { store.restorePlanningItems(lastShift); setLastShift([]); }}>撤销</button><button type="button" aria-label="关闭调整提示" onClick={() => setLastShift([])}><X size={13} /></button></div>}
     {maintenanceEditor && maintenanceTarget && <div className="life-map-editor" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMaintenanceEditor(null); }}>
       <section className="life-map-editor__panel life-map-resilience-dialog" aria-label={`${maintenanceEditor.name}维护模式`}>
@@ -914,7 +1103,7 @@ const LifeMapWorkspace: React.FC = () => {
       <div><button type="button" className="is-primary" onClick={() => applyTemplate('balanced')}>学习与生活平衡</button><button type="button" onClick={() => applyTemplate('health')}>健康重启</button><button type="button" onClick={dismissOnboarding}>从空白开始</button></div>
     </aside>}
     {editor && <LifeMapEntityEditor kind={editor.kind} onSubmit={saveEditor} onDismiss={() => setEditor(null)}>
-        <header><div><small>人生地图</small><h2>{editor.id ? '编辑' : '新建'}{editor.kind === 'plan' ? '人生计划' : editor.kind === 'phase' ? '计划阶段' : editor.kind === 'system' ? '长期系统' : ['theme', 'focus', 'range-note'].includes(editor.kind) ? '时期重点' : editor.kind === 'review' ? '周期复盘' : '二级分类'}</h2></div><button type="button" onClick={() => setEditor(null)} aria-label="关闭"><X /></button></header>
+        <header><div><small>人生地图</small><h2>{editor.id ? '编辑' : '新建'}{editor.kind === 'plan' ? '人生计划' : editor.kind === 'phase' ? '计划阶段' : editor.kind === 'system' ? '长期系统' : ['theme', 'focus', 'range-note'].includes(editor.kind) ? '时期重点' : editor.kind === 'review' ? '周期复盘' : '人生领域'}</h2></div><button type="button" onClick={() => setEditor(null)} aria-label="关闭"><X /></button></header>
         <label className="life-map-editor__name-field">{editor.kind === 'review' ? '复盘标题' : '名称'}<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={editor.kind === 'plan' ? '例如：考研政治' : editor.kind === 'phase' ? '例如：完成马原学习' : editor.kind === 'system' ? '例如：每周跑步' : editor.kind === 'review' ? '例如：七月复盘' : '写下真正重要的方向'} /></label>
         {['plan', 'phase'].includes(editor.kind) && <div className="life-map-editor__type-guide"><Layers3 size={15} /><span><b>这里设计人生地图中的长期推进方向</b><small>人生计划及其阶段只保存在人生地图数据库，不会生成项目规划任务。</small></span></div>}
         {editor.kind === 'phase' && <label>所属项目<select required value={parentGoalId} onChange={(event) => {
@@ -922,6 +1111,7 @@ const LifeMapWorkspace: React.FC = () => {
           setParentGoalId(event.target.value);
           if (parent) applyPhaseParentDefaults(parent, editor.id);
         }}><option value="">请选择项目</option>{plans.filter((item) => !editor.id || item.id !== editor.id).map((item) => <option key={item.id} value={item.id}>{areaById.get(item.areaId)?.name ?? '未分类'} · {item.name}</option>)}</select>{plans.length === 0 && <small className="life-map-editor__hint">请先新建项目，再添加子阶段。</small>}</label>}
+        {editor.kind === 'phase' && <label>子项目关系<select value={childRole} onChange={(event) => setChildRole(event.target.value as 'phase' | 'track')}><option value="phase">先后阶段</option><option value="track">并行方向（可与其他方向重叠）</option></select><small>政治、英语、专业课等同时推进的内容请选择“并行方向”。</small></label>}
         {!['area', 'review'].includes(editor.kind) && (areas.length > 0
           ? <label className="life-map-editor__classification">二级分类<select aria-label="人生领域" required disabled={editor.kind === 'phase'} value={draftAreaId} onChange={(event) => { const areaId = event.target.value; setDraftAreaId(areaId); if (editor.kind !== 'phase') setColor(recommendColorForArea(areaId)); else setColor(areaById.get(areaId)?.color ?? color); }}>{areas.map((area) => <option key={area.id} value={area.id}>{LIFE_MAP_PLAN_GROUP_META[area.planGroupId].name} · {area.name}</option>)}</select><small>{editor.kind === 'phase' ? '自动继承所属项目' : '已根据当前视图自动选择，可直接修改'}</small></label>
           : <div className="life-map-editor__error" role="alert"><span>请先创建二级分类，再保存这项内容。</span><button type="button" onClick={() => openAreaCreate('learning')} aria-label="先创建二级分类">先创建二级分类</button></div>)}

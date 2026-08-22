@@ -55,16 +55,16 @@ const LifeMapCreateMenu: React.FC<LifeMapCreateMenuProps> = ({
       <Repeat2 size={16} /><span><strong>长期系统</strong><small>准备长期保持什么规律</small></span>
     </button>}
     <button type="button" role="menuitem" onClick={onCreateEvent} aria-label="新建关键日期">
-      <Diamond size={16} /><span><strong>关键日期</strong><small>不能忽略的某一天</small></span>
+      <Diamond size={16} /><span><strong>关键日期</strong><small>时间点 · 不能忽略的某一天</small></span>
     </button>
-    <button type="button" role="menuitem" disabled={!hasAreas} title={!hasAreas ? '请先创建二级分类' : undefined} onClick={onCreatePeriodFocus} aria-label="添加时期重点">
-      <CalendarRange size={16} /><span><strong>时期重点</strong><small>标记一段时间的整体重点</small></span>
+    <button type="button" role="menuitem" disabled={!hasAreas} title={!hasAreas ? '请先创建二级分类' : undefined} onClick={onCreatePeriodFocus} aria-label="添加时间段注记">
+      <CalendarRange size={16} /><span><strong>时间注记（时间段）</strong><small>一段时间的重点或说明</small></span>
     </button>
-    <button type="button" role="menuitem" disabled={!hasAreas} title={!hasAreas ? '请先创建二级分类' : undefined} onClick={onCreateNote} aria-label="添加文字便签">
-      <StickyNote size={16} /><span><strong>文字便签</strong><small>在某一天留下简短说明</small></span>
+    <button type="button" role="menuitem" disabled={!hasAreas} title={!hasAreas ? '请先创建二级分类' : undefined} onClick={onCreateNote} aria-label="添加时间点注记">
+      <StickyNote size={16} /><span><strong>时间注记（时间点）</strong><small>在某一天留下简短说明</small></span>
     </button>
     {!hasAreas && onCreateArea && <button type="button" role="menuitem" className="life-line__primary-create-context" onClick={onCreateArea} aria-label="先创建二级分类">
-      <Plus size={16} /><span><strong>先创建二级分类</strong><small>时期重点和文字便签需要所属分类</small></span>
+      <Plus size={16} /><span><strong>先创建二级分类</strong><small>时间注记需要所属分类</small></span>
     </button>}
     {hasPlans && onCreatePhase && <button type="button" role="menuitem" className="life-line__primary-create-context" onClick={onCreatePhase} aria-label="给现有人生计划添加阶段">
       <CalendarRange size={16} /><span><strong>给人生计划添加阶段</strong><small>选择计划后自动继承分类与日期</small></span>

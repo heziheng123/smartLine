@@ -401,6 +401,7 @@ const App: React.FC = () => {
 
   // 视图切换：timeline（甘特图） / ebb（艾宾浩斯复习） / daily-schedule（每日安排） / week-matrix（周矩阵）
   const [currentView, setCurrentView] = useState<AppModule>(getInitialAppView);
+  const [lifeMapEntry, setLifeMapEntry] = useState(0);
   const [phoneFullView, setPhoneFullView] = useState(false);
   const [viewDirection, setViewDirection] = useState(1);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
@@ -420,6 +421,7 @@ const App: React.FC = () => {
       setDrawerTaskId(null);
       setDrawerBlockId(null);
       setPhoneFullView(false);
+      if (view === 'life-map') setLifeMapEntry((entry) => entry + 1);
     }
     setCurrentView(view);
     if (isPhoneLayout) {
@@ -983,7 +985,7 @@ const App: React.FC = () => {
       <AnimatePresence mode="popLayout" initial={false} custom={viewMotionContext}>
         {currentView === 'life-map' && (
           <motion.div
-            key="life-map"
+            key={`life-map:${lifeMapEntry}`}
             id="view-life-map"
             role="tabpanel"
             className="tl-app-split tl-app-split--ebb"

@@ -26,6 +26,8 @@ import type {
   LifeSystemCheckIn,
   LifeTheme,
 } from './types';
+import { canonicalizeAnnotationDateFields } from './annotationSemantics';
+import { todayStr } from '@/utils/dateSafe';
 
 const STORAGE_KEY = 'line-life-map-storage-v1';
 const STORAGE_MIRROR_KEY = `${STORAGE_KEY}:mirror`;
@@ -44,13 +46,13 @@ export type LifeMapSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'e
 export interface LifeMapShiftSnapshot { id: string; start: string; targetDate: string }
 
 type NewArea = Pick<LifeArea, 'name' | 'color' | 'planGroupId'> & Partial<Pick<LifeArea, 'icon' | 'order' | 'isHidden'>>;
-type NewStage = Pick<LifeMapStage, 'name' | 'start' | 'end'> & Partial<Pick<LifeMapStage, 'id' | 'color'>>;
+type NewStage = Pick<LifeMapStage, 'name' | 'start' | 'end'> & Partial<Pick<LifeMapStage, 'id' | 'color' | 'description' | 'importance' | 'areaIds'>>;
 type NewTheme = Pick<LifeTheme, 'areaId' | 'name' | 'start' | 'end'> & Partial<Pick<LifeTheme, 'color' | 'placement'>>;
 type NewGoal = Pick<LifeGoal, 'areaId' | 'name' | 'start' | 'targetDate'> & Partial<Omit<LifeGoal, 'id' | 'areaId' | 'name' | 'start' | 'targetDate' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
 type NewSystem = Pick<LifeSystem, 'areaId' | 'name' | 'start' | 'frequency' | 'targetCount'> & Partial<Omit<LifeSystem, 'id' | 'areaId' | 'name' | 'start' | 'frequency' | 'targetCount' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
 type NewEvent = Pick<LifeEvent, 'name' | 'date'> & Partial<Omit<LifeEvent, 'name' | 'date' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
 type NewFocus = Pick<LifeFocus, 'areaId' | 'name' | 'start' | 'end'> & Partial<Pick<LifeFocus, 'id' | 'color' | 'placement'>>;
-type NewNote = Pick<LifeMapNote, 'areaId' | 'name' | 'date' | 'type'> & Partial<Pick<LifeMapNote, 'id' | 'endDate' | 'color' | 'placement'>>;
+type NewNote = Pick<LifeMapNote, 'name' | 'date' | 'type'> & Partial<Omit<LifeMapNote, 'name' | 'date' | 'type' | 'createdAt' | 'updatedAt' | 'revision' | 'deletedAt'>>;
 type NewReview = Pick<LifeReview, 'title' | 'period' | 'start' | 'end' | 'reflection' | 'adjustments' | 'snapshot'> & Partial<Pick<LifeReview, 'areaIds'>>;
 
 interface LifeMapStore extends LifeMapData {
@@ -201,11 +203,22 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
         },
         updatePlanGroupPlacement: (id, placement) => updateCollection('lifeMapPlanGroups', id, { placement }),
         addStage: (value) => {
-          const item = stamp({ ...value, id: value.id ?? genId('stage') });
+          const item = stamp({
+            ...value,
+            id: value.id ?? genId('stage'),
+            description: value.description?.trim() ?? '',
+            importance: value.importance === 'important' ? 'important' as const : 'normal' as const,
+            areaIds: value.areaIds?.filter((id) => id.trim().length > 0),
+          });
           set((state) => ({ lifeMapStages: [...state.lifeMapStages, item] }));
           return item;
         },
-        updateStage: (id, updates) => updateCollection('lifeMapStages', id, updates),
+        updateStage: (id, updates) => updateCollection('lifeMapStages', id, {
+          ...updates,
+          ...(updates.description === undefined ? {} : { description: updates.description.trim() }),
+          ...(updates.importance === undefined ? {} : { importance: updates.importance === 'important' ? 'important' : 'normal' }),
+          ...(updates.areaIds === undefined ? {} : { areaIds: updates.areaIds.filter((id) => id.trim().length > 0) }),
+        }),
         deleteStage: (id) => deleteFromCollection('lifeMapStages', id),
         addTheme: (value) => {
           const item = stamp({ id: genId('theme'), ...value });
@@ -280,7 +293,7 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
         },
         updateSystem: (id, updates) => updateCollection('lifeMapSystems', id, updates),
         deleteSystem: (id) => deleteFromCollection('lifeMapSystems', id),
-        addSystemCheckIn: (systemId, date = new Date().toISOString().slice(0, 10), count = 1) => {
+        addSystemCheckIn: (systemId, date = todayStr(), count = 1) => {
           const safeCount = Math.max(0, count);
           const existing = get().lifeMapSystemCheckIns.find((item) => !item.deletedAt && item.systemId === systemId && item.date === date);
           if (existing) {
@@ -321,11 +334,16 @@ export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
         updateFocus: (id, updates) => updateCollection('lifeMapFocuses', id, updates),
         deleteFocus: (id) => deleteFromCollection('lifeMapFocuses', id),
         addNote: (value) => {
-          const item = stamp({ ...value, id: value.id ?? genId('note') });
+          const item = stamp({ ...value, ...canonicalizeAnnotationDateFields(value), id: value.id ?? genId('note'), body: value.body?.trim() ?? '', importance: value.importance === 'important' ? 'important' as const : 'normal' as const });
           set((state) => ({ lifeMapNotes: [...state.lifeMapNotes, item] }));
           return item;
         },
-        updateNote: (id, updates) => updateCollection('lifeMapNotes', id, updates),
+        updateNote: (id, updates) => {
+          const current = get().lifeMapNotes.find((item) => item.id === id);
+          if (!current) return;
+          const merged = { ...current, ...updates };
+          updateCollection('lifeMapNotes', id, { ...updates, ...canonicalizeAnnotationDateFields(merged) });
+        },
         deleteNote: (id) => deleteFromCollection('lifeMapNotes', id),
         addReview: (value) => {
           const item = stamp({ id: genId('review'), ...value });

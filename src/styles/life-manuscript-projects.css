@@ -1,0 +1,95 @@
+.life-manuscript__project-group {
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.life-manuscript__project-heading {
+  top: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.life-manuscript__project-heading b {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.life-manuscript__project-heading small,
+.life-manuscript__project-empty {
+  display: none;
+}
+
+.life-manuscript__track-capsule {
+  box-sizing: border-box;
+  min-width: 72px;
+  max-width: 88px;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  justify-items: center;
+  align-content: start;
+  padding: 9px 0 7px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--project-color, #6840c6) 8%, transparent);
+  box-shadow: none;
+  color: var(--project-color, #6840c6);
+  text-align: center;
+}
+
+.life-manuscript__track-capsule:hover {
+  background: color-mix(in srgb, var(--project-color, #6840c6) 11%, transparent);
+  box-shadow: none;
+}
+
+.life-manuscript__track-capsule:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--project-color, #6840c6) 44%, transparent);
+  outline-offset: 2px;
+}
+
+.life-manuscript__track-capsule b {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.life-manuscript__track-capsule small {
+  width: 100%;
+  margin-top: 4px;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.life-manuscript__track-capsule em {
+  position: absolute;
+  right: 0;
+  bottom: 7px;
+  left: 0;
+  width: 100%;
+  color: inherit;
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.life-manuscript__track-capsule.is-phase {
+  border-style: solid;
+}

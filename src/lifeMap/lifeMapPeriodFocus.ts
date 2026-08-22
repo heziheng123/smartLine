@@ -26,9 +26,9 @@ export function createLifeMapPeriodFocusItems(data: Pick<LifeMapData, 'lifeMapTh
       start: item.start, end: item.end, color: item.color, placement: item.placement, layoutLane: item.layoutLane,
     }));
   const rangeNotes: LifeMapPeriodFocus[] = data.lifeMapNotes
-    .filter((item) => !item.deletedAt && item.type === 'range' && Boolean(item.endDate))
+    .filter((item) => !item.deletedAt && item.type === 'range' && Boolean(item.endDate) && Boolean(item.areaId))
     .map((item) => ({
-      sourceKind: 'range-note', sourceId: item.id, areaId: item.areaId, name: item.name,
+      sourceKind: 'range-note', sourceId: item.id, areaId: item.areaId!, name: item.name,
       start: item.date, end: item.endDate!, color: item.color, placement: item.placement, layoutLane: item.layoutLane,
     }));
   return [...themes, ...focuses, ...rangeNotes]

@@ -16,6 +16,7 @@ import type {
   LifeMapPlanGroupPreference,
 } from './types';
 import { suggestGroupColor } from '@/utils/timeline-utils';
+import { canonicalizeAnnotationDateFields } from './annotationSemantics';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_AREA_TIMESTAMP = '2026-01-01T00:00:00.000Z';
@@ -226,7 +227,13 @@ function validPlanGroup(value: unknown): value is LifeMapPlanGroupPreference {
 }
 
 function validStage(value: unknown): value is LifeMapStage {
-  return hasBase(value) && isLifeMapDate(value.start) && isLifeMapDate(value.end) && value.start <= value.end;
+  return hasBase(value)
+    && isLifeMapDate(value.start)
+    && isLifeMapDate(value.end)
+    && value.start <= value.end
+    && (value.description === undefined || typeof value.description === 'string')
+    && (value.importance === undefined || value.importance === 'normal' || value.importance === 'important')
+    && (value.areaIds === undefined || (Array.isArray(value.areaIds) && value.areaIds.every((id) => typeof id === 'string')));
 }
 
 function validAreaRange(value: unknown): value is LifeTheme | LifeFocus {
@@ -251,6 +258,7 @@ function validGoal(value: unknown): value is LifeGoal {
     && (value.progressMode === undefined || value.progressMode === 'manual' || value.progressMode === 'auto')
     && (value.kind === undefined || value.kind === 'goal' || value.kind === 'plan' || value.kind === 'phase')
     && (value.parentGoalId === undefined || typeof value.parentGoalId === 'string')
+    && (value.childRole === undefined || value.childRole === 'phase' || value.childRole === 'track')
     && (value.outcomeGoalId === undefined || typeof value.outcomeGoalId === 'string')
     && (value.summary === undefined || typeof value.summary === 'string')
     && (value.kind !== 'phase' || (typeof value.parentGoalId === 'string' && value.parentGoalId.trim().length > 0))
@@ -314,11 +322,16 @@ function validEvent(value: unknown): value is LifeEvent {
 function validNote(value: unknown): value is LifeMapNote {
   return hasBase(value)
     && hasValidLayout(value)
-    && typeof value.areaId === 'string'
+    && (value.areaId === undefined || typeof value.areaId === 'string')
     && isLifeMapDate(value.date)
     && (value.endDate === undefined || isLifeMapDate(value.endDate))
     && (value.endDate === undefined || value.date <= value.endDate)
-    && (value.type === 'pin' || value.type === 'range');
+    && (value.type === 'pin' || value.type === 'range')
+    && (value.body === undefined || typeof value.body === 'string')
+    && (value.relatedStageId === undefined || typeof value.relatedStageId === 'string')
+    && (value.relatedGoalId === undefined || typeof value.relatedGoalId === 'string')
+    && (value.mood === undefined || typeof value.mood === 'string')
+    && (value.importance === undefined || value.importance === 'normal' || value.importance === 'important');
 }
 
 export interface LegacyLifeMapLayoutData {
@@ -453,20 +466,30 @@ export function normalizeLifeMapData(value: unknown): LifeMapData {
   return {
     lifeMapAreas: areas,
     lifeMapPlanGroups: planGroups,
-    lifeMapStages: dedupe(source.lifeMapStages, validStage),
+    // v13 adds stage descriptions and importance without a destructive migration.
+    // Normalizing at every read boundary makes old local, synced and backup data
+    // immediately behave like new records while preserving their original IDs.
+    lifeMapStages: dedupe(source.lifeMapStages, validStage).map((stage) => ({
+      ...stage,
+      description: stage.description ?? '',
+      importance: stage.importance ?? 'normal',
+      areaIds: stage.areaIds?.filter((id) => areaIds.has(id)),
+    })),
     lifeMapThemes: keepArea(dedupe(source.lifeMapThemes, validAreaRange)),
-    lifeMapGoals: goals,
+    lifeMapGoals: goals.map((goal) => ({ ...goal, ...(goal.kind === 'phase' ? { childRole: goal.childRole ?? 'phase' } : {}) })),
     lifeMapSystems: systems,
     lifeMapSystemCheckIns: dedupe(source.lifeMapSystemCheckIns, validSystemCheckIn).filter((item) => systemIds.has(item.systemId)),
     lifeMapEvents: events,
     lifeMapFocuses: keepArea(dedupe(source.lifeMapFocuses, validAreaRange)),
-    lifeMapNotes: keepArea(dedupe(source.lifeMapNotes, validNote)),
+    lifeMapNotes: dedupe(source.lifeMapNotes, validNote)
+      .filter((note) => Boolean(note.deletedAt) || !note.areaId || areaIds.has(note.areaId))
+      .map((note) => ({ ...note, ...canonicalizeAnnotationDateFields(note), body: note.body ?? '', importance: note.importance ?? 'normal' })),
     lifeMapReviews: dedupe(source.lifeMapReviews, validReview),
   };
 }
 
 export function canDeleteLifeArea(data: LifeMapData, areaId: string): boolean {
-  const isActiveAreaReference = (item: { areaId: string; deletedAt?: string }) => (
+  const isActiveAreaReference = (item: { areaId?: string; deletedAt?: string }) => (
     !item.deletedAt && item.areaId === areaId
   );
   const hasPlanningReference = data.lifeMapGoals.some((item) => (

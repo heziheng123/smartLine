@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { isValidHex, normalizeHex } from '@/design/color';
+import { normalizeHex } from '@/design/color';
 import { DIALOG_COLOR_SWATCHES, TASK_COLOR_SWATCHES, GROUP_COLOR_SWATCHES } from '@/design/colors';
 
 /**
@@ -86,6 +86,3 @@ export function ColorPicker(props: ColorPickerProps) {
     </div>
   );
 }
-
-/** 重导出，方便对话框文件只用一行 import。 */
-export { isValidHex, normalizeHex };

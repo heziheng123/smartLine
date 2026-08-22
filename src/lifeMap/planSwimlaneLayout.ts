@@ -1,4 +1,5 @@
 import { LIFE_MAP_PLAN_GROUP_META } from './data.ts';
+import { addDays } from '@/utils/dateSafe';
 import type {
   LifeArea,
   LifeGoal,
@@ -82,12 +83,6 @@ interface LayoutInput {
   layoutEnd?: string;
 }
 
-const nextDate = (date: string): string => {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  value.setUTCDate(value.getUTCDate() + 1);
-  return value.toISOString().slice(0, 10);
-};
-
 export function assignInclusiveIntervalTracks(plans: Pick<LifeGoal, 'id' | 'start' | 'targetDate'>[]): PlanTrackAssignment {
   const trackById = new Map<string, number>();
   const trackEnds: string[] = [];
@@ -98,7 +93,7 @@ export function assignInclusiveIntervalTracks(plans: Pick<LifeGoal, 'id' | 'star
     .forEach((plan) => {
       const available = trackEnds.findIndex((endExclusive) => endExclusive <= plan.start);
       const trackIndex = available === -1 ? trackEnds.length : available;
-      trackEnds[trackIndex] = nextDate(plan.targetDate);
+      trackEnds[trackIndex] = addDays(plan.targetDate, 1);
       trackById.set(plan.id, trackIndex);
     });
   return { trackById, trackCount: trackEnds.length };
@@ -159,7 +154,7 @@ export function createLifeMapPlanSwimlaneLayout(input: LayoutInput): LifeMapPlan
           trackIndex,
           top: rowTop + PLAN_SWIMLANE_ROW_PADDING + trackIndex * PLAN_SWIMLANE_TRACK_HEIGHT,
           left,
-          width: Math.max(6, input.dateToX(nextDate(end)) - left),
+          width: Math.max(6, input.dateToX(addDays(end, 1)) - left),
         };
       });
       const planBars = areaPlans.flatMap((plan): LifeMapPlanSwimlaneBar[] => {
@@ -180,7 +175,7 @@ export function createLifeMapPlanSwimlaneLayout(input: LayoutInput): LifeMapPlan
             trackIndex,
             top: barTop,
             left,
-            width: Math.max(6, input.dateToX(nextDate(goal.targetDate)) - left),
+            width: Math.max(6, input.dateToX(addDays(goal.targetDate, 1)) - left),
           };
         };
         const phaseBars = (phasesByParent.get(plan.id) ?? [])

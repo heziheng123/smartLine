@@ -191,6 +191,36 @@ test('规范化会拒绝空日期和起止倒置，避免保存后刷新静默�
   assert.equal(data.lifeMapNotes.length, 0);
 });
 
+test('v13 阶段字段兼容旧数据，并保留描述与重要性', () => {
+  const data = normalizeLifeMapData({
+    lifeMapStages: [
+      { id: 'legacy', name: '旧阶段', start: '2026-08-01', end: '2026-08-31', ...meta },
+      { id: 'important', name: '重要阶段', start: '2026-09-01', end: '2026-09-30', description: '需要集中投入', importance: 'important', ...meta },
+    ],
+  });
+
+  assert.deepEqual(data.lifeMapStages.map((stage) => ({
+    id: stage.id,
+    description: stage.description,
+    importance: stage.importance,
+  })), [
+    { id: 'legacy', description: '', importance: 'normal' },
+    { id: 'important', description: '需要集中投入', importance: 'important' },
+  ]);
+});
+
+test('阶段导入校验拒绝不合法的重要性与描述', () => {
+  const invalidImportance = normalizeLifeMapData({
+    lifeMapStages: [{ id: 'bad-importance', name: '阶段', start: '2026-08-01', end: '2026-08-31', importance: 'core', ...meta }],
+  });
+  const invalidDescription = normalizeLifeMapData({
+    lifeMapStages: [{ id: 'bad-description', name: '阶段', start: '2026-08-01', end: '2026-08-31', description: 42, ...meta }],
+  });
+
+  assert.equal(invalidImportance.lifeMapStages.length, 0);
+  assert.equal(invalidDescription.lifeMapStages.length, 0);
+});
+
 test('长期系统完成记录与周期复盘可规范化，并过滤悬空完成记录', () => {
   const data = normalizeLifeMapData({
     lifeMapSystems: [{ id: 'system-1', areaId: 'health', name: '每周跑步', start: '2026-07-01', status: 'active', frequency: 'weekly', targetCount: 3, durationMinutes: 40, ...meta }],

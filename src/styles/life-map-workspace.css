@@ -1,6 +1,7 @@
 .life-map-workspace { height: 100%; display: flex; flex-direction: column; min-height: 0; background: #fff; }
 .life-map-workspace > .life-line { flex: 1; min-height: 0; }
 .life-map-scope { position: relative; min-width: 0; }
+.life-map-preview-toggle { min-height: 30px; margin-right: 7px; padding: 0 9px; border: 1px dashed #cbd0f3; border-radius: 7px; color: #6268c8; background: #f8f8ff; font-size: 10px; font-weight: 700; cursor: pointer; }
 .life-map-scope__trigger { height: 34px; min-width: 154px; max-width: 230px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #dfe2ea; border-radius: 8px; color: #536079; background: #fff; cursor: pointer; }
 .life-map-scope__trigger:hover, .life-map-scope__trigger[aria-expanded="true"] { border-color: #b8c0f5; background: #f7f7ff; }
 .life-map-scope__trigger > span:not(.life-map-scope__dot) { overflow: hidden; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -41,6 +42,20 @@
 .life-map-editor input[type=date] { color-scheme: light; }
 .life-map-editor input[type=range] { min-height: 24px; padding: 0; border: 0; background: transparent; box-shadow: none; accent-color: #6366f1; }
 .life-map-editor__dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.life-map-editor__stage-areas { min-width: 0; display: grid; gap: 10px; margin: 0; padding: 13px; border: 1px solid #dfe4ed; border-radius: 13px; background: #fafbfe; }
+.life-map-editor__stage-areas legend { padding: 0 3px; color: #3f4b62; font-size: 12px; font-weight: 700; }
+.life-map-editor__stage-areas-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: -2px; }
+.life-map-editor__stage-areas-head > small { color: #818b9c; font-size: 10px; line-height: 1.45; }
+.life-map-editor__stage-areas-head > button { height: 27px; flex: 0 0 auto; padding: 0 9px; border: 1px solid #d9deea; border-radius: 7px; color: #69758b; background: #fff; font-size: 10px; font-weight: 700; cursor: pointer; }
+.life-map-editor__stage-areas-head > button:hover { border-color: #bbc3e9; color: #5961cf; background: #f7f7ff; }
+.life-map-editor__stage-areas-head > button.is-global-active { border-color: #b8bdf4; color: #5159c8; background: #f1f1ff; }
+.life-map-editor__stage-area-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.life-map-editor__stage-area-grid > label { min-height: 38px; display: flex; align-items: center; min-width: 0; gap: 7px; padding: 0 8px; border: 1px solid #e1e5ed; border-radius: 9px; color: #667287; background: #fff; font-size: 11px; font-weight: 650; cursor: pointer; transition: .14s ease; }
+.life-map-editor__stage-area-grid > label:hover { border-color: #c7cfdf; background: #fdfdff; }
+.life-map-editor__stage-area-grid > label.is-selected { border-color: #b8bef1; color: #5159c8; background: #f4f4ff; box-shadow: inset 0 0 0 1px rgba(99,102,241,.08); }
+.life-map-editor__stage-area-grid input[type="checkbox"] { width: 15px; height: 15px; min-height: 15px; flex: 0 0 15px; margin: 0; padding: 0; accent-color: #6366f1; box-shadow: none; }
+.life-map-editor__stage-area-grid i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(148,163,184,.1); }
+.life-map-editor__stage-area-grid span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .life-map-editor__check { min-height: 42px; grid-template-columns: 18px minmax(0, 1fr) !important; align-items: center; gap: 10px !important; padding: 0 2px; color: #58647b !important; cursor: pointer; }
 .life-map-editor__check input { width: 17px; height: 17px; min-height: 17px; margin: 0; padding: 0; accent-color: #6366f1; box-shadow: none; }
 .life-map-editor__type-guide { display: grid; grid-template-columns: 24px minmax(0,1fr); align-items: center; gap: 10px; margin-top: -3px; padding: 11px 13px; border: 1px solid #e1e5fb; border-radius: 12px; color: #666fc5; background: linear-gradient(135deg, #fafaff, #f6f7ff); }
@@ -120,6 +135,7 @@
 .life-map-editor footer .is-primary:hover { border-color: #4e52d4; background: linear-gradient(135deg, #6266e5, #4e52d4); }
 .life-map-editor footer .is-danger { color: #c73535; border-color: #f0caca; background: #fffafa; }
 @media (max-width: 760px) {
+  .life-map-editor__stage-area-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .life-map-shift-dialog__columns { grid-template-columns: 1fr; }
   .life-map-shift-dialog__columns > section { min-height: 210px; }
   .life-map-shift-undo { right: 10px; bottom: 82px; left: 10px; justify-content: center; }
@@ -198,6 +214,7 @@
 .life-map-planning-drawer > header button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; background: #f4f5f8; cursor: pointer; }
 .life-map-planning-drawer__content { display: grid; gap: 10px; padding: 12px; overflow-y: auto; }
 .life-map-planning-drawer__content > section { display: grid; gap: 7px; padding: 12px; border: 1px solid #e7e9ee; border-radius: 11px; background: #fcfcfd; }
+.life-map-planning-drawer__unassigned { border-color: #f0ddbd !important; background: #fffaf1 !important; }.life-map-planning-drawer__unassigned h3 { color: #9a6b24; }.life-map-planning-drawer__unassigned p { margin: 0; color: #8c7960; font-size: 10px; line-height: 1.5; }
 .life-map-planning-drawer__content h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; }
 .life-map-planning-drawer__list { display: grid; gap: 4px; }
 .life-map-planning-drawer__list > button { padding: 7px 8px; border: 0; border-radius: 7px; text-align: left; background: #fff; cursor: pointer; }

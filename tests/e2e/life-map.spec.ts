@@ -403,7 +403,7 @@ test('life map creates a persistent range annotation directly on the canvas', as
   await page.getByTitle('人生地图').click();
   await selectLifeMapArea(page);
   await page.getByRole('button', { name: '添加到时间线' }).click();
-    await page.getByRole('menuitem', { name: '添加时期重点' }).click();
+  await page.getByRole('menuitem', { name: '添加时间段注记' }).click();
 
   const scroller = page.locator('.life-line__scroller');
   const box = await scroller.boundingBox();
@@ -600,11 +600,11 @@ test('life map preserves unified project and task projections across zoom levels
   await setLifeMapZoom(page, 'year');
   await expect(page.locator('.life-line__task-marker')).toHaveCount(0);
   await expect(page.locator('[data-project-id="goal:graduate-exam"]')).toBeVisible();
+  await expect(page.locator('.life-line__project-band.is-life-system')).toHaveCount(0);
   await expect(page.locator('.life-line__node.is-milestone').filter({ hasText: '六级成绩公布' })).toHaveCount(0);
-  await expect(page.locator('.life-line__anchor.is-milestone[title*="六级成绩公布"]')).toBeVisible();
-  await expect(page.locator('.life-line__anchor.is-milestone.is-importance-normal[title*="阶段模拟考试"]')).toBeVisible();
+  await expect(page.locator('.life-line__anchor.is-milestone')).toHaveCount(0);
   await expect(page.locator('.life-line__annotation-callout')).toHaveCount(0);
-  await expect(page.locator('.life-line__annotation-year-label').filter({ hasText: '暑期备考主线' })).toBeVisible();
+  await expect(page.locator('.life-line__annotation-year-label')).toHaveCount(0);
 });
 
 test('life map keeps the date under the pointer fixed while wheel zooming', async ({ page }) => {
@@ -914,10 +914,10 @@ test('project group filter hides only swimlanes and resets with the session', as
   await expect(page.locator('.life-line__plan-group-labels')).toHaveCount(3);
 });
 
-test('planning structure adds a second-level category directly under its fixed group', async ({ page }) => {
+test('planning structure adds a life area directly under its fixed group', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   await page.getByRole('button', { name: '规划概览' }).click();
-  await page.getByRole('dialog', { name: '规划概览' }).getByRole('button', { name: '在工作下添加二级分类' }).click();
+  await page.getByRole('dialog', { name: '规划概览' }).getByRole('button', { name: '在工作下添加人生领域' }).click();
   const editor = page.locator('.life-map-editor form');
   await editor.getByLabel('名称').fill('副业探索');
   await expect(editor.getByLabel('所属一级分类')).toHaveValue('work');
@@ -929,7 +929,7 @@ test('planning structure adds a second-level category directly under its fixed g
   })).toBe('work');
 
   await page.getByRole('button', { name: '规划概览' }).click();
-  await expect(page.getByRole('group', { name: '工作二级分类' })).toContainText('副业探索');
+  await expect(page.getByRole('group', { name: '工作人生领域' })).toContainText('副业探索');
 });
 
 test('life map supports command jump and creates a dedicated planning review', async ({ page }) => {

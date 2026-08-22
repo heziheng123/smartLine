@@ -257,10 +257,10 @@ const ZOOM_META: Record<ZoomLevel, { label: string; pixelsPerDay: number }> = {
   day: { label: '日', pixelsPerDay: 46 },
 };
 const ZOOM_HINTS: Record<ZoomLevel, string> = {
-  year: '全局规划',
-  month: '项目与节点',
-  week: '重点与节奏',
-  day: '当天记录',
+  year: '人生结构与复盘',
+  month: '阶段规划与节点',
+  week: '近期执行与节律',
+  day: '打卡与细节调整',
 };
 const MIN_PIXELS_PER_DAY = ZOOM_META.year.pixelsPerDay;
 const MAX_PIXELS_PER_DAY = ZOOM_META.day.pixelsPerDay;
@@ -654,7 +654,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
         const isReview = /^复盘[：:·\s]/.test(item.name);
         nextNodes.push({
           id: `note:${item.id}`, kind: 'note', title: item.name,
-          subtitle: `${isReview ? '规划复盘' : '文字便签'} · ${item.date}`,
+          subtitle: `${isReview ? '规划复盘' : '时间注记'} · ${item.date}`,
           date: start,
           color: NOTE_COLOR,
           noteId: item.id,
@@ -744,21 +744,22 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
 
   const planSwimlaneLayout = useMemo(() => createLifeMapPlanSwimlaneLayout({
     plans: planGoals.filter((goal) => goal.kind === 'plan'),
-    phases: planGoals.filter((goal) => goal.kind === 'phase'),
-    systems: planSystems,
+    // 年视图只保留长期目标；阶段和系统属于后续尺度的执行细节。
+    phases: zoom === 'year' ? [] : planGoals.filter((goal) => goal.kind === 'phase'),
+    systems: zoom === 'year' ? [] : planSystems,
     areas: planAreas,
     groups: planGroups,
     filter: planGroupFilter,
     dateToX: (date) => dateToX(dayjs(date)),
     layoutEnd: bounds.end.format('YYYY-MM-DD'),
-  }), [bounds.end, dateToX, planAreas, planGoals, planGroupFilter, planGroups, planSystems]);
+  }), [bounds.end, dateToX, planAreas, planGoals, planGroupFilter, planGroups, planSystems, zoom]);
 
   const projectBands = useMemo<PositionedProjectBand[]>(() => {
     const levelRightEdges: Record<ProjectSide, number[]> = { above: [], below: [] };
     const projectRanges = ranges
       .filter((range) => range.kind === 'project')
       .filter((range) => range.lifeMapKind !== 'plan' && range.lifeMapKind !== 'phase' && range.lifeMapKind !== 'system')
-      .filter((range) => range.lifeMapKind !== 'review' || layers.reviews)
+      .filter((range) => range.lifeMapKind !== 'review' || layers.reviews || zoom === 'year')
       .sort((left, right) => left.start.valueOf() - right.start.valueOf() || right.end.valueOf() - left.end.valueOf() || left.id.localeCompare(right.id));
     const positionedLegacy = projectRanges.map((range) => {
         const left = dateToX(range.start);
@@ -800,7 +801,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       }];
     });
     return [...positionedLegacy, ...positionedPlans];
-  }, [dateToX, layers.reviews, planSwimlaneLayout, ranges]);
+  }, [dateToX, layers.reviews, planSwimlaneLayout, ranges, zoom]);
 
   const projectBandIndex = useMemo(() => {
     const byTaskId = new Map<string, PositionedProjectBand>();
@@ -986,11 +987,10 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
   const selectedProjectBand = selectedProjectId ? projectBandIndex.byTaskId.get(selectedProjectId) : undefined;
   const selectedProjectIsTimelineProjection = selectedProjectBand?.taskId?.startsWith('goal:timeline-project:') ?? false;
   const activeProjectId = selectedProjectId ?? hoveredProjectId;
-  const visibleAnnotations = useMemo(() => annotations.filter((annotation) => {
-    if (!layers.annotations) return false;
-    if (zoom === 'year') return annotation.end.diff(annotation.start, 'day') >= 21;
-    return true;
-  }), [annotations, layers.annotations, zoom]);
+  const visibleAnnotations = useMemo(
+    () => layers.annotations && zoom !== 'year' ? annotations : [],
+    [annotations, layers.annotations, zoom],
+  );
   const aboveAnnotations = visibleAnnotations.filter((item) => item.placement === 'above');
   const belowAnnotations = visibleAnnotations.filter((item) => item.placement === 'below');
   const aboveAnnotationBracketDistance = hasProjectRowsAbove ? projectAboveExtent + 38 : 34;
@@ -1019,6 +1019,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       .filter((node) => node.kind !== 'action' && node.kind !== 'deadline')
       .filter((node) => intersectsRenderWindow(dateToX(node.date)))
       .filter((node) => (layers.completed || !node.completed) && (node.kind === 'milestone' ? layers.milestones : layers.notes))
+      .filter((node) => zoom !== 'year' || node.kind !== 'milestone' || node.importance === 'core')
       .filter((node) => shouldShowNodeCard(node, zoom))
       .filter((node) => node.kind !== 'milestone'
         || zoom === 'week'
@@ -1151,7 +1152,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     const visible = nodes.filter((node) => {
       if (node.kind === 'action' || node.kind === 'deadline') return false;
       if (!layers.completed && node.completed) return false;
-      if (node.kind === 'milestone') return layers.milestones;
+      if (node.kind === 'milestone') return layers.milestones && (zoom !== 'year' || node.importance === 'core');
       return layers.notes && zoom !== 'year';
     });
     const entries: Array<{ key: string; node: LineNode; count: number; titles: string[] }> = [];
@@ -1505,7 +1506,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     });
   }, []);
 
-  const commitNoteUpdate = useCallback((before: Note, after: Note, label = '移动批注') => {
+  const commitNoteUpdate = useCallback((before: Note, after: Note, label = '移动时间注记') => {
     onUpdateNote(after);
     setDraft((current) => current?.id === after.id ? {
       ...current,
@@ -1558,10 +1559,10 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       };
       if (draft.id) {
         const before = existingNote;
-        if (before) commitNoteUpdate(before, note, '编辑批注'); else onUpdateNote(note);
+        if (before) commitNoteUpdate(before, note, '编辑时间注记'); else onUpdateNote(note);
       } else {
         onCreateNote(note);
-        pushHistory({ label: '创建批注', undo: () => onDeleteNote(note.id), redo: () => onCreateNote(note) });
+        pushHistory({ label: '创建时间注记', undo: () => onDeleteNote(note.id), redo: () => onCreateNote(note) });
       }
     }
     setDraft(null);
@@ -1576,7 +1577,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
     } else {
       const before = notes.find((item) => item.id === draft.id);
       onDeleteNote(draft.id);
-      if (before) pushHistory({ label: '删除批注', undo: () => onCreateNote(before), redo: () => onDeleteNote(before.id) });
+      if (before) pushHistory({ label: '删除时间注记', undo: () => onCreateNote(before), redo: () => onDeleteNote(before.id) });
     }
     setDraft(null);
   };
@@ -1793,7 +1794,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             <div className="life-line__menu-control">
               <button type="button" className={`life-line__jump-button ${showJumpMenu ? 'is-active' : ''}`} onClick={() => { setShowJumpMenu((open) => !open); setShowScaleMenu(false); setShowAddMenu(false); setShowViewMenu(false); }} aria-expanded={showJumpMenu} aria-label="快速跳转"><Search size={15} /><span>跳转</span></button>
               {showJumpMenu && <div className="life-line__command-menu life-line__jump-menu">
-                <label><Search size={14} /><input autoFocus value={jumpQuery} onChange={(event) => setJumpQuery(event.target.value)} placeholder="项目、系统、时期、关键日期或日期" aria-label="搜索人生地图" /></label>
+                <label><Search size={14} /><input autoFocus value={jumpQuery} onChange={(event) => setJumpQuery(event.target.value)} placeholder="计划、系统、时期、注记或日期" aria-label="搜索人生地图" /></label>
                 <div className="life-line__jump-results">
                   {jumpQuery.trim() && jumpResults.length === 0 && <small>没有找到匹配内容</small>}
                   {jumpResults.map((result) => <button type="button" key={result.id} onClick={() => {
@@ -1837,7 +1838,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
               <button type="button" className={`life-line__view-button ${showViewMenu ? 'is-active' : ''}`} onClick={() => { setShowViewMenu((open) => !open); setShowScaleMenu(false); setShowAddMenu(false); setShowJumpMenu(false); }} aria-expanded={showViewMenu} aria-label="视图设置"><Layers3 size={15} /><span>视图</span><ChevronDown size={12} /></button>
               {showViewMenu && <div className="life-line__command-menu life-line__view-menu">
                 <section><header><strong>显示内容</strong></header>
-              {([['projects', '项目'], ['annotations', '时期重点'], ['milestones', '关键日期'], ['notes', '文字便签'], ['reviews', '周期复盘'], ['completed', '已完成内容']] as Array<[keyof LayerState, string]>).map(([key, label]) => <button type="button" className="life-line__toggle-row" key={key} onClick={() => setLayers((current) => ({ ...current, [key]: !current[key] }))}>{layers[key] ? <Eye size={13} /> : <EyeOff size={13} />}<span>{label}</span><i className={layers[key] ? 'is-on' : ''} /></button>)}
+              {([['projects', '人生计划与系统'], ['annotations', '时间注记（时间段）'], ['milestones', '关键日期'], ['notes', '时间注记（时间点）'], ['reviews', '周期复盘'], ['completed', '已完成内容']] as Array<[keyof LayerState, string]>).map(([key, label]) => <button type="button" className="life-line__toggle-row" key={key} onClick={() => setLayers((current) => ({ ...current, [key]: !current[key] }))}>{layers[key] ? <Eye size={13} /> : <EyeOff size={13} />}<span>{label}</span><i className={layers[key] ? 'is-on' : ''} /></button>)}
                 </section>
                 <section className="life-line__view-actions">
                   <button type="button" className={focusMode !== 'off' ? 'is-active' : ''} onClick={() => setFocusMode((current) => current === 'off' ? 'week' : current === 'week' ? 'month' : 'off')}><Focus size={14} /><span>{focusMode === 'week' ? '聚焦本周' : focusMode === 'month' ? '聚焦本月' : '开启聚焦'}</span></button>
@@ -1861,7 +1862,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             onClick={() => setPlanGroupFilter(id)}
           >{id === 'all' ? '全部人生计划' : LIFE_MAP_PLAN_GROUP_META[id].name}</button>)}
         </div>
-        {canvasTool !== 'select' && <div className="life-line__hint"><span>{canvasTool === 'range' ? '时期重点' : canvasTool === 'note' ? '文字便签' : '关键日期'}</span>{canvasTool === 'range' ? '在画布上横向拖动选择时间范围' : '在画布对应日期单击放置'}<button type="button" onClick={() => setCanvasTool('select')}>退出</button></div>}
+        {canvasTool !== 'select' && <div className="life-line__hint"><span>{canvasTool === 'range' ? '时间注记（时间段）' : canvasTool === 'note' ? '时间注记（时间点）' : '关键日期'}</span>{canvasTool === 'range' ? '在画布上横向拖动选择时间范围' : '在画布对应日期单击放置'}<button type="button" onClick={() => setCanvasTool('select')}>退出</button></div>}
 
         <div className="life-line__scroller ui-workspace-content-stage" ref={scrollerRef} onScroll={handleScroll} onWheel={handleWheel} onPointerDown={startPinch} onPointerMove={movePinch} onPointerUp={endPinch} onPointerCancel={endPinch} tabIndex={0} aria-label={`人生规划${ZOOM_META[zoom].label}视图时间轴`}>
           <div className="life-line__canvas" ref={canvasRef} style={{ width: canvasWidth, height: canvasHeight }} onDoubleClick={handleCanvasDoubleClick}>
@@ -2193,7 +2194,8 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
               </div>;
             })}
 
-            {positionedNodes.filter((node) => intersectsRenderWindow(node.anchorX) && (node.kind === 'milestone' ? layers.milestones : node.kind === 'note' ? layers.notes : true)).map((node) => {
+            {positionedNodes.filter((node) => intersectsRenderWindow(node.anchorX)
+              && (node.kind === 'milestone' ? layers.milestones && (zoom !== 'year' || node.importance === 'core') : node.kind === 'note' ? layers.notes : true)).map((node) => {
               const milestoneImportance = node.importance ?? 'important';
               const isDirectlyDragging = directDrag
                 && ((node.noteId && directDrag.kind === 'note-card' && directDrag.id === node.noteId)
@@ -2262,7 +2264,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
               />
             )}
 
-            {nodes.length === 0 && ranges.length === 0 && lifeStages.length === 0 && <div className="life-line__empty"><CalendarRange size={28} /><strong>这张人生地图还没有内容</strong><span>先添加一个项目、长期系统、关键日期或时期重点。</span></div>}
+            {nodes.length === 0 && ranges.length === 0 && lifeStages.length === 0 && <div className="life-line__empty"><CalendarRange size={28} /><strong>这张人生地图还没有内容</strong><span>先添加一个人生计划、长期系统、关键日期或时间注记。</span></div>}
           </div>
         </div>
 
@@ -2323,7 +2325,7 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
       {draft && (
         <form className="life-line__draft-editor" onSubmit={(event) => { event.preventDefault(); saveDraft(); }}>
           <header>
-            <div><span>时间画布</span><strong>{draft.kind === 'range' ? '时期重点' : draft.kind === 'milestone' ? '关键日期' : '文字便签'}</strong></div>
+            <div><span>时间画布</span><strong>{draft.kind === 'range' ? '时间注记（时间段）' : draft.kind === 'milestone' ? '关键日期' : '时间注记（时间点）'}</strong></div>
             <button type="button" onClick={() => setDraft(null)} aria-label="关闭编辑器"><X size={15} /></button>
           </header>
           <label>
@@ -2356,12 +2358,16 @@ const LifeMapView: React.FC<LifeMapViewProps> = ({
             <label><span>关联领域（可选）</span><select aria-label="关联领域" value={draft.areaId ?? ''} onChange={(event) => setDraft({ ...draft, areaId: event.target.value || undefined })}><option value="">全局关键日期</option>{planAreas.filter((item) => !item.deletedAt).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label><span>自定义颜色</span><input aria-label="关键日期颜色" type="color" value={draft.color || MILESTONE_COLOR} onChange={(event) => setDraft({ ...draft, color: event.target.value })} /></label>
           </details>}
-          <div className="life-line__draft-placement" role="group" aria-label="文字位置">
-            <span>画布位置</span>
-            <button type="button" className={draft.placement === 'above' ? 'is-active' : ''} onClick={() => setDraft({ ...draft, placement: 'above' })}>时间线上方</button>
-            <button type="button" className={draft.placement === 'below' ? 'is-active' : ''} onClick={() => setDraft({ ...draft, placement: 'below' })}>时间线下方</button>
-          </div>
-          <div className="life-line__drawer-tip">在画布中选中时期重点后，可以直接拖动两端调整日期。</div>
+          <details className="life-line__draft-more">
+            <summary>更多显示设置</summary>
+            <div className="life-line__draft-placement" role="group" aria-label="文字位置">
+              <span>画布位置</span>
+              <button type="button" className={draft.placement === 'above' ? 'is-active' : ''} onClick={() => setDraft({ ...draft, placement: 'above' })}>时间线上方</button>
+              <button type="button" className={draft.placement === 'below' ? 'is-active' : ''} onClick={() => setDraft({ ...draft, placement: 'below' })}>时间线下方</button>
+            </div>
+            <small>默认由系统自动避让；只有需要时再调整到另一侧。</small>
+          </details>
+          <div className="life-line__drawer-tip">选中时间段注记后，可以直接拖动两端调整日期。</div>
           <footer>
             {draft.id ? <button type="button" className="is-danger" onClick={deleteDraft}><Trash2 size={13} />删除</button> : <span />}
             <div><button type="button" onClick={() => setDraft(null)}>取消</button><button type="submit" className="is-primary" disabled={!draft.name.trim() || !validDate(draft.start) || (draft.kind === 'range' && (!validDate(draft.end) || draft.end < draft.start))}>{draft.id ? '保存' : '添加到画布'}</button></div>
