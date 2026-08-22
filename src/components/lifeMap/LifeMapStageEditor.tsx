@@ -1,7 +1,7 @@
 import React from 'react';
 import { Palette, X } from 'lucide-react';
-import { LEARNING_CHILD_PALETTE } from '@/lifeMap/data';
-import type { LifeArea, LifeMapStage } from '@/lifeMap/types';
+import { LEARNING_CHILD_PALETTE, LIFE_MAP_PLAN_GROUP_META } from '@/lifeMap/data';
+import type { LifeArea, LifeMapPlanGroupId, LifeMapStage } from '@/lifeMap/types';
 import LifeMapEntityEditor from './LifeMapEntityEditor';
 
 export type LifeMapStageDraft = Pick<LifeMapStage, 'name' | 'start' | 'end' | 'description' | 'color' | 'importance' | 'areaIds'>;
@@ -20,15 +20,27 @@ const LifeMapStageEditor: React.FC<LifeMapStageEditorProps> = ({ stage, existing
   const update = <K extends keyof LifeMapStageDraft>(key: K, value: LifeMapStageDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const selectedAreaIds = draft.areaIds ?? [];
   const stageColor = draft.color ?? '#7C6FE6';
+  const areaIdsByPlanGroup = React.useMemo(() => areas.reduce((groups, area) => {
+    groups.set(area.planGroupId, [...(groups.get(area.planGroupId) ?? []), area.id]);
+    return groups;
+  }, new Map<LifeMapPlanGroupId, string[]>()), [areas]);
+  const selectedPlanGroupIds = new Set(areas.filter((area) => selectedAreaIds.includes(area.id)).map((area) => area.planGroupId));
+  const togglePlanGroup = (planGroupId: LifeMapPlanGroupId, checked: boolean) => {
+    const groupAreaIds = areaIdsByPlanGroup.get(planGroupId) ?? [];
+    update('areaIds', checked
+      ? [...new Set([...selectedAreaIds, ...groupAreaIds])]
+      : selectedAreaIds.filter((areaId) => !groupAreaIds.includes(areaId)));
+  };
   return <LifeMapEntityEditor kind="stage" onDismiss={onDismiss} onSubmit={(event) => { event.preventDefault(); onSave({ ...draft, name: draft.name.trim(), description: draft.description?.trim() ?? '' }); }}>
     <header><div><small>人生地图</small><h2>{existing ? '编辑阶段' : '新建阶段'}</h2></div><button type="button" onClick={onDismiss} aria-label="关闭"><X /></button></header>
     <label className="life-map-editor__name-field">阶段名称<input autoFocus required value={draft.name} onChange={(event) => update('name', event.target.value)} placeholder="例如：研究生备考强化期" /></label>
     <div className="life-map-editor__dates"><label>开始日期<input required type="date" value={draft.start} onChange={(event) => update('start', event.target.value)} /></label><label>结束日期<input required type="date" min={draft.start} value={draft.end} onChange={(event) => update('end', event.target.value)} /></label></div>
     <label className="life-map-editor__summary-field">说明<textarea rows={3} value={draft.description ?? ''} onChange={(event) => update('description', event.target.value)} placeholder="这个阶段想达成什么，或要如何度过？" /></label>
     <label>重要性<select value={draft.importance ?? 'normal'} onChange={(event) => update('importance', event.target.value as LifeMapStage['importance'])}><option value="normal">普通阶段</option><option value="important">重要阶段</option></select></label>
-    {areas.length > 0 && <fieldset className="life-map-editor__stage-areas"><legend>关联分类</legend><div className="life-map-editor__stage-areas-head"><small>不选择分类时，阶段会跨越学习、工作和生活三列。</small><button type="button" className={selectedAreaIds.length === 0 ? 'is-global-active' : ''} aria-pressed={selectedAreaIds.length === 0} onClick={() => update('areaIds', [])}>全局阶段</button></div><div className="life-map-editor__stage-area-grid">{areas.map((area) => {
-      const checked = selectedAreaIds.includes(area.id);
-      return <label key={area.id} className={checked ? 'is-selected' : undefined}><input type="checkbox" checked={checked} onChange={(event) => update('areaIds', event.target.checked ? [...selectedAreaIds, area.id] : selectedAreaIds.filter((id) => id !== area.id))} /><i style={{ background: area.color }} /><span>{area.name}</span></label>;
+    {areas.length > 0 && <fieldset className="life-map-editor__stage-areas"><legend>关联分类</legend><div className="life-map-editor__stage-areas-head"><small>选择阶段所在的学习、工作或生活分类；不选则跨越全部三列。</small><button type="button" className={selectedAreaIds.length === 0 ? 'is-global-active' : ''} aria-pressed={selectedAreaIds.length === 0} onClick={() => update('areaIds', [])}>全局阶段</button></div><div className="life-map-editor__stage-area-grid">{(Object.keys(LIFE_MAP_PLAN_GROUP_META) as LifeMapPlanGroupId[]).filter((id) => areaIdsByPlanGroup.has(id)).map((planGroupId) => {
+      const checked = selectedPlanGroupIds.has(planGroupId);
+      const planGroup = LIFE_MAP_PLAN_GROUP_META[planGroupId];
+      return <label key={planGroupId} className={checked ? 'is-selected' : undefined}><input type="checkbox" checked={checked} onChange={(event) => togglePlanGroup(planGroupId, event.target.checked)} /><i style={{ background: planGroup.color }} /><span>{planGroup.name}</span></label>;
     })}</div></fieldset>}
     <div className="life-map-editor__color-field life-map-editor__stage-color">
       <span className="life-map-editor__color-label"><b>识别色</b><small>用于阶段背景和边框的轻量提示。</small></span>

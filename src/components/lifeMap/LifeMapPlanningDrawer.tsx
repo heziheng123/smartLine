@@ -31,6 +31,7 @@ interface LifeMapPlanningDrawerProps {
   planGroups: LifeMapPlanGroupPreference[];
   onClose: () => void;
   onEdit: (kind: 'plan' | 'system' | 'review' | 'period', item: LifeMapPlanningItem) => void;
+  onCreateSystem: () => void;
   onCreateReview: (period: 'month' | 'quarter') => void;
   onCreatePeriod: () => void;
   onCreateArea: (groupId: LifeMapPlanGroupId) => void;
@@ -89,7 +90,7 @@ const LifeMapPlanningDrawer: React.FC<LifeMapPlanningDrawerProps> = (props) => {
     <aside ref={drawerRef} className="life-map-planning-drawer" role="dialog" aria-modal="true" aria-label={title}>
       <header><div><small>人生地图</small><h2>{title}</h2></div><button ref={closeRef} type="button" onClick={props.onClose} aria-label={`关闭${title}`}><X size={18} /></button></header>
       <div className="life-map-planning-drawer__content">
-        {!areaManagement && <>{props.unassignedCount > 0 && <section className="life-map-planning-drawer__unassigned"><h3>未归属阶段内容</h3><p>{props.unassignedCount} 项内容尚未与任何人生阶段相交；它们仍保留在这里与各自的规划入口中。</p></section>}<section><h3><Layers3 size={15} />进行中的人生计划</h3><ItemList items={props.plans} empty="暂无进行中的人生计划" onOpen={(item) => props.onEdit('plan', item)} />{props.onShiftPlans && <button type="button" className="is-action" onClick={props.onShiftPlans}>批量调整人生计划日期</button>}</section><section><h3><Repeat2 size={15} />长期系统</h3><ItemList items={props.systems} empty="暂无长期系统" onOpen={(item) => props.onEdit('system', item)} /></section><section><h3><NotebookPen size={15} />复盘</h3><ItemList items={props.reviews} empty="还没有保存复盘" onOpen={(item) => props.onEdit('review', item)} /><div className="life-map-planning-drawer__actions"><button type="button" onClick={() => props.onCreateReview('month')}>开始月度复盘</button><button type="button" onClick={() => props.onCreateReview('quarter')}>开始季度复盘</button></div></section></>}
+        {!areaManagement && <>{props.unassignedCount > 0 && <section className="life-map-planning-drawer__unassigned"><h3>未归属阶段内容</h3><p>{props.unassignedCount} 项内容尚未与任何人生阶段相交；它们仍保留在这里与各自的规划入口中。</p></section>}<section><h3><Layers3 size={15} />进行中的人生计划</h3><ItemList items={props.plans} empty="暂无进行中的人生计划" onOpen={(item) => props.onEdit('plan', item)} />{props.onShiftPlans && <button type="button" className="is-action" onClick={props.onShiftPlans}>批量调整人生计划日期</button>}</section><section><h3><Repeat2 size={15} />长期系统</h3><ItemList items={props.systems} empty="暂无长期系统" onOpen={(item) => props.onEdit('system', item)} /><button type="button" className="is-action" onClick={props.onCreateSystem}>新建长期系统</button></section><section><h3><NotebookPen size={15} />复盘</h3><ItemList items={props.reviews} empty="还没有保存复盘" onOpen={(item) => props.onEdit('review', item)} /><div className="life-map-planning-drawer__actions"><button type="button" onClick={() => props.onCreateReview('month')}>开始月度复盘</button><button type="button" onClick={() => props.onCreateReview('quarter')}>开始季度复盘</button></div></section></>}
         <section><h3><Settings2 size={15} />{areaManagement ? '人生领域' : '结构设置'}</h3>{!areaManagement && <><ItemList items={props.periods} empty="尚未设置人生时期" onOpen={(item) => props.onEdit('period', item)} /><button type="button" className="is-action" onClick={props.onCreatePeriod}>新建人生时期</button></>}
           <div className="life-map-structure-settings">
             {groups.map((group) => {

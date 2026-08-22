@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Diamond, Map as MapIcon, MoreHorizontal, Pin, PinOff, Plus, StickyNote, X } from 'lucide-react';
 import WorkspaceHeader from '@/components/WorkspaceHeader';
 import { Card } from '@/design/components/Card';
@@ -9,6 +9,7 @@ import { createLifeMapTimeMapper, getManuscriptDateRange } from '@/lifeMap/time/
 import { createVerticalAnnotationBracePath, resolveAnnotationPresentation } from '@/lifeMap/geometry/annotationBraceGeometry';
 import { assignAnnotationTracks } from '@/lifeMap/geometry/annotationIntervalLayout';
 import { resolveAnnotationTextCollisions } from '@/lifeMap/geometry/annotationTextCollision';
+import { layoutSystemChips, SYSTEM_CHIP_HEIGHT } from '@/lifeMap/geometry/systemChipLayout';
 import { getCategoryProjectLanes, getCategoryProjectTracks, getManuscriptAreas, MANUSCRIPT_CATEGORIES, type ManuscriptProjectStrip } from '@/lifeMap/manuscript/manuscriptSelectors';
 import { addDays, diffDays, formatDate, getDayOfWeek, splitDate, todayStr } from '@/utils/dateSafe';
 import '@/styles/life-manuscript.css';
@@ -112,6 +113,7 @@ interface Props {
   inspectorPinned: boolean;
   onToggleInspectorPin: () => void;
   onCreateStageAtDate: (date: string, endDate?: string, categoryId?: LifeMapPlanGroupId) => void;
+  onCreateSystem: () => void;
   onCreateProjectAtDate: (date: string, endDate?: string, categoryId?: LifeMapPlanGroupId) => void;
   onOpenProject: (id: string) => void;
   onUpdateProject: (id: string, updates: Partial<LifeGoal>) => void;
@@ -186,7 +188,7 @@ function formatRulerMonth(date: string, includeYear = true) {
   return includeYear ? `${year}年 ${String(month).padStart(2, '0')}月` : `${String(month).padStart(2, '0')}月`;
 }
 
-const LifeManuscriptView: React.FC<Props> = ({ data, selectedStageId, onSelectStage, onEditStage, inspectorPinned, onToggleInspectorPin, onCreateStageAtDate, onCreateProjectAtDate, onOpenProject, onUpdateProject, onAddNote, onUpdateNote, onDeleteNote, onAddEvent, onUpdateEvent, onDeleteEvent, onSetSystemCheckIn, onCreateReview, onOpenReview, showArchived, onToggleArchived, onManageProjectMaintenance, onManageAreaMaintenance, onOpenAreaManagement, onOpenBatchShift, onOpenClassicView }) => {
+const LifeManuscriptView: React.FC<Props> = ({ data, selectedStageId, onSelectStage, onEditStage, inspectorPinned, onToggleInspectorPin, onCreateStageAtDate, onCreateSystem, onCreateProjectAtDate, onOpenProject, onUpdateProject, onAddNote, onUpdateNote, onDeleteNote, onAddEvent, onUpdateEvent, onDeleteEvent, onSetSystemCheckIn, onCreateReview, onOpenReview, showArchived, onToggleArchived, onManageProjectMaintenance, onManageAreaMaintenance, onOpenAreaManagement, onOpenBatchShift, onOpenClassicView }) => {
   const today = todayStr();
   const scrollerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -595,7 +597,7 @@ const LifeManuscriptView: React.FC<Props> = ({ data, selectedStageId, onSelectSt
         <div className="tl-workspace-year life-manuscript__zoom" role="group" aria-label="时间缩放">{(['year', 'month', 'week', 'day'] as Zoom[]).map((item) => <button key={item} type="button" aria-pressed={zoom === item} onClick={() => changeZoom(item)}>{{ year: '年', month: '月', week: '周', day: '日' }[item]}</button>)}</div>
         <button type="button" className="ds-header-btn life-manuscript__today-button" aria-label="定位到今天" onClick={() => locateToday()}>今天</button>
         <button type="button" className="ds-header-btn" aria-label="更多人生地图选项" aria-expanded={showClassicViewMenu} onClick={() => setShowClassicViewMenu((open) => !open)}><MoreHorizontal size={18} /></button>
-        {showClassicViewMenu && <div className="life-manuscript__fallback-menu" role="menu" aria-label="更多人生地图选项"><section role="group" aria-label="时间规划"><b>时间规划</b><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); const date = mapper.worldYToDate(viewport.top + viewport.height / 2); createNote(date, addDays(date, 30)); }}>添加时期重点</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onCreateReview(mapper.worldYToDate(viewport.top + viewport.height / 2)); }}>新建周期复盘</button></section><section role="group" aria-label="管理视图"><b>管理视图</b><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onOpenAreaManagement(); }}>管理人生领域</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onOpenBatchShift(); }}>批量调整计划</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onToggleArchived(); }}>{showArchived ? '隐藏归档内容' : '显示归档内容'}</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); setShowAdvancedFilters(true); }}>高级筛选</button></section><section className="life-manuscript__fallback-legacy" role="group" aria-label="兼容选项"><button type="button" role="menuitem" onClick={onOpenClassicView}><span>经典人生地图</span><small>旧版布局，临时保留</small></button></section></div>}
+        {showClassicViewMenu && <div className="life-manuscript__fallback-menu" role="menu" aria-label="更多人生地图选项"><section role="group" aria-label="时间规划"><b>时间规划</b><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onCreateSystem(); }}>新建长期系统</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); const date = mapper.worldYToDate(viewport.top + viewport.height / 2); createNote(date, addDays(date, 30)); }}>添加时期重点</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onCreateReview(mapper.worldYToDate(viewport.top + viewport.height / 2)); }}>新建周期复盘</button></section><section role="group" aria-label="管理视图"><b>管理视图</b><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onOpenAreaManagement(); }}>管理人生领域</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onOpenBatchShift(); }}>批量调整计划</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onToggleArchived(); }}>{showArchived ? '隐藏归档内容' : '显示归档内容'}</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); setShowAdvancedFilters(true); }}>高级筛选</button></section><section className="life-manuscript__fallback-legacy" role="group" aria-label="兼容选项"><button type="button" role="menuitem" onClick={onOpenClassicView}><span>经典人生地图</span><small>旧版布局，临时保留</small></button></section></div>}
       </div>
     </WorkspaceHeader>
     {showAdvancedFilters && <aside className="life-manuscript__advanced-filters" role="dialog" aria-label="人生地图高级筛选"><header><span><b>高级筛选</b><small>只改变当前视图，不修改数据</small></span><button type="button" aria-label="关闭高级筛选" onClick={() => setShowAdvancedFilters(false)}><X size={15} /></button></header><section><b>显示内容</b>{([['stages', '人生时期'], ['projects', '人生计划'], ['systems', '长期系统'], ['events', '关键日期'], ['notes', '时间注记'], ['reviews', '周期复盘']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={layers[key]} onChange={() => setLayers((current) => ({ ...current, [key]: !current[key] }))} />{label}</label>)}</section><section><b>项目与系统状态</b>{([['active', '进行中'], ['completed', '已完成'], ['paused', '已暂停']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={statuses[key]} onChange={() => setStatuses((current) => ({ ...current, [key]: !current[key] }))} />{label}</label>)}<label><input type="checkbox" checked={showArchived && statuses.archived} onChange={() => { if (!showArchived) onToggleArchived(); else setStatuses((current) => ({ ...current, archived: !current.archived })); }} />已归档</label></section><section className="life-manuscript__maintenance-filter"><b>领域维护</b>{data.lifeMapAreas.filter((area) => !area.deletedAt && !area.isHidden).map((area) => { const active = activeMaintenancePeriod(area.maintenancePeriods); return <button type="button" key={area.id} className={active ? 'is-active' : ''} onClick={() => { setShowAdvancedFilters(false); onManageAreaMaintenance(area.id, area.name); }}><span style={{ background: area.color }} /><b>{area.name}</b><small>{active ? `维护中 · ${active.start}` : '正常运行'}</small></button>; })}</section></aside>}
@@ -607,7 +609,7 @@ const LifeManuscriptView: React.FC<Props> = ({ data, selectedStageId, onSelectSt
         <section className="life-manuscript__categories" style={{ gridTemplateColumns: categoryWidths.map((width) => `${width}px`).join(' ') }}>
           <div className="life-manuscript__grid-lines" aria-hidden="true">{gridMarks.map((date) => <i key={date} data-date={date} style={{ top: mapper.dateToWorldY(date) }} />)}</div>
           <GlobalStageLayer stages={stages.filter((stage) => !stage.areaIds?.length)} mapper={mapper} canvasWidth={canvasWidth} selectedStageId={selected?.type === 'stage' ? selected.id : selectedStageId} today={today} zoom={zoom} onSelectStage={(id, anchor) => selectEntity({ type: 'stage', id }, anchor)} onOpenStageInspector={(id) => openInspector({ type: 'stage', id })} />
-          {categories.map((category, index) => <CategoryColumn key={category.id} data={viewData} groupId={category.id} stages={stages} mapper={mapper} visible={visible} viewportTop={viewport.top} columnWidth={categoryWidths[index]} selectedStageId={selected?.type === 'stage' ? selected.id : selectedStageId} selectedProjectId={selected?.type === 'project' ? selected.id : null} today={today} zoom={zoom} projectPreview={projectPreview} canvasCreateDraft={canvasCreateDraft?.categoryId === category.id ? canvasCreateDraft : null} onSelectStage={(id, anchor) => selectEntity({ type: 'stage', id }, anchor)} onOpenStageInspector={(id) => openInspector({ type: 'stage', id })} onShowProject={showProjectDetails} onOpenProjectInspector={(id) => openInspector({ type: 'project', id })} onOpenSystem={(id) => openInspector({ type: 'system', id })} onProjectPointerDown={beginProjectDrag} onProjectPointerMove={moveProjectDrag} onProjectPointerUp={finishProjectDrag} onProjectPointerCancel={cancelProjectDrag} />)}
+          {categories.map((category, index) => <CategoryColumn key={category.id} data={viewData} groupId={category.id} stages={stages} mapper={mapper} visible={visible} columnWidth={categoryWidths[index]} selectedStageId={selected?.type === 'stage' ? selected.id : selectedStageId} selectedProjectId={selected?.type === 'project' ? selected.id : null} today={today} zoom={zoom} projectPreview={projectPreview} canvasCreateDraft={canvasCreateDraft?.categoryId === category.id ? canvasCreateDraft : null} onSelectStage={(id, anchor) => selectEntity({ type: 'stage', id }, anchor)} onOpenStageInspector={(id) => openInspector({ type: 'stage', id })} onShowProject={showProjectDetails} onOpenProjectInspector={(id) => openInspector({ type: 'project', id })} onOpenSystem={(id) => openInspector({ type: 'system', id })} onProjectPointerDown={beginProjectDrag} onProjectPointerMove={moveProjectDrag} onProjectPointerUp={finishProjectDrag} onProjectPointerCancel={cancelProjectDrag} />)}
           {canResizeLanes && [0, 1].map((index) => <div key={index} className="life-manuscript__lane-resizer" data-lane-boundary={index === 0 ? 'learning-work' : 'work-life'} role="separator" aria-orientation="vertical" aria-label={`调整${categories[index].name}和${categories[index + 1].name}列宽`} style={{ left: categoryWidths.slice(0, index + 1).reduce((total, width) => total + width, 0) }} onPointerDown={(event) => beginLaneResize(event, index)} onPointerMove={moveLaneResize} onPointerUp={finishLaneResize} onPointerCancel={finishLaneResize} />)}
         </section>
         {railWidth > 0 && zoomPolicy.annotations === 'aggregate' && <YearAnnotationSummary notes={notes} mapper={mapper} />}
@@ -643,7 +645,6 @@ interface CategoryColumnProps {
   stages: LifeMapStage[];
   mapper: ReturnType<typeof createLifeMapTimeMapper>;
   visible: { top: number; bottom: number };
-  viewportTop: number;
   columnWidth: number;
   selectedStageId: string | null;
   selectedProjectId: string | null;
@@ -662,11 +663,13 @@ interface CategoryColumnProps {
   onProjectPointerCancel: (event: React.PointerEvent<HTMLButtonElement>) => void;
 }
 
-const CategoryColumn: React.FC<CategoryColumnProps> = ({ data, groupId, stages, mapper, visible, viewportTop, columnWidth, selectedStageId, selectedProjectId, today, zoom, projectPreview, canvasCreateDraft, onSelectStage, onOpenStageInspector, onShowProject, onOpenProjectInspector, onOpenSystem, onProjectPointerDown, onProjectPointerMove, onProjectPointerUp, onProjectPointerCancel }) => {
+const CategoryColumn: React.FC<CategoryColumnProps> = ({ data, groupId, stages, mapper, visible, columnWidth, selectedStageId, selectedProjectId, today, zoom, projectPreview, canvasCreateDraft, onSelectStage, onOpenStageInspector, onShowProject, onOpenProjectInspector, onOpenSystem, onProjectPointerDown, onProjectPointerMove, onProjectPointerUp, onProjectPointerCancel }) => {
   const category = MANUSCRIPT_CATEGORIES.find((item) => item.id === groupId)!;
   const areas = useMemo(() => getManuscriptAreas(data, groupId), [data, groupId]);
   const areaIds = useMemo(() => new Set(areas.map((area) => area.id)), [areas]);
   const projectLanes = useMemo(() => getCategoryProjectLanes(data, groupId), [data, groupId]);
+  const systemLaneWidth = Math.min(148, Math.max(108, Math.round(columnWidth * .34)));
+  const projectLaneWidth = Math.max(96, columnWidth - systemLaneWidth - 8);
   const visibleProjects = projectLanes.filter(({ item }) => mapper.dateToWorldY(addDays(item.targetDate, 1)) >= visible.top && mapper.dateToWorldY(item.start) <= visible.bottom);
   const categoryStages = stages.filter((stage) => stage.areaIds?.length && stage.areaIds.some((areaId) => areaIds.has(areaId)));
   const parentProjects = [...new Map(projectLanes.flatMap(({ item }) => item.parentProject ? [[item.parentProject.id, item.parentProject] as const] : []).filter(([, project]) => mapper.dateToWorldY(addDays(project.targetDate, 1)) >= visible.top && mapper.dateToWorldY(project.start) <= visible.bottom)).values()];
@@ -689,7 +692,7 @@ const CategoryColumn: React.FC<CategoryColumnProps> = ({ data, groupId, stages, 
         const projectColor = project.color ?? (groupId === 'learning' ? '#6840c6' : groupId === 'work' ? '#3971cf' : '#ee6272');
         const children = projectLanes.filter(({ item }) => item.parentProject?.id === project.id);
         const bounds = children.map(({ laneIndex, laneCount }) => {
-          const width = Math.min(100, (columnWidth - CATEGORY_PADDING * 2 - PROJECT_GAP * (laneCount - 1)) / laneCount);
+        const width = Math.min(100, (projectLaneWidth - CATEGORY_PADDING * 2 - PROJECT_GAP * (laneCount - 1)) / laneCount);
           const left = CATEGORY_PADDING + laneIndex * (width + PROJECT_GAP);
           return { left, right: left + width };
         });
@@ -704,7 +707,7 @@ const CategoryColumn: React.FC<CategoryColumnProps> = ({ data, groupId, stages, 
         const top = mapper.dateToWorldY(dates.start);
         const bottom = mapper.dateToWorldY(addDays(dates.end, 1));
         const height = bottom - top;
-        const availableWidth = columnWidth - CATEGORY_PADDING * 2 - PROJECT_GAP * (laneCount - 1);
+        const availableWidth = projectLaneWidth - CATEGORY_PADDING * 2 - PROJECT_GAP * (laneCount - 1);
         const projectWidth = Math.min(100, availableWidth / laneCount);
         const left = CATEGORY_PADDING + laneIndex * (projectWidth + PROJECT_GAP);
         const projectColor = project.color ?? (groupId === 'learning' ? '#6840c6' : groupId === 'work' ? '#3971cf' : '#ee6272');
@@ -716,8 +719,7 @@ const CategoryColumn: React.FC<CategoryColumnProps> = ({ data, groupId, stages, 
         return projectDisplay === 'compact' ? <MonthCompactProjectBar key={project.id} {...sharedProps} /> : projectDisplay === 'detailed' ? <DayDetailedProjectBar key={project.id} {...sharedProps} /> : <WeekProjectBar key={project.id} {...sharedProps} />;
       })}
     </div>
-    {ZOOM_POLICY[zoom].systems && <SystemSummaries data={data} areas={areas.map((area) => area.id)} mapper={mapper} visible={visible} viewportTop={viewportTop} onOpen={onOpenSystem} />}
-    {ZOOM_POLICY[zoom].systems && <SystemDots data={data} areas={areas.map((area) => area.id)} mapper={mapper} visible={visible} zoom={zoom} />}
+    {ZOOM_POLICY[zoom].systems && <SystemLane data={data} areas={areas.map((area) => area.id)} mapper={mapper} visible={visible} today={today} left={projectLaneWidth + 8} width={systemLaneWidth} onOpen={onOpenSystem} />}
     {canvasCreateDraft && <i className="life-manuscript__canvas-create-range" aria-hidden="true" style={{ top: draftTop, height: Math.max(1, draftBottom - draftTop) }} />}
   </article>;
 };
@@ -758,12 +760,10 @@ const MonthCompactProjectBar: React.FC<ProjectBarProps> = (props) => <button {..
 </button>;
 
 const WeekProjectBar: React.FC<ProjectBarProps> = (props) => <button {...projectBarProps(props, 'week')}>
-  {props.hasTodayMask && <i className="life-manuscript__project-today-mask" style={{ top: props.todayMaskTop - 2 }} aria-hidden="true" />}
   <span className="life-manuscript__project-strip-header"><b>{props.project.id.startsWith('timeline-project:') ? '↗ ' : ''}{props.project.name}</b><small>{props.dates.start.slice(5)}</small></span><span className="life-manuscript__project-strip-body" aria-hidden="true" /><em>{props.dates.end.slice(5)}</em>
 </button>;
 
 const DayDetailedProjectBar: React.FC<ProjectBarProps> = (props) => <button {...projectBarProps(props, 'day')}>
-  {props.hasTodayMask && <i className="life-manuscript__project-today-mask" style={{ top: props.todayMaskTop - 2 }} aria-hidden="true" />}
   <span className="life-manuscript__project-strip-header"><b>{props.project.id.startsWith('timeline-project:') ? '↗ ' : ''}{props.project.name}</b><small>{props.dates.start.slice(5)} · {props.project.id.startsWith('timeline-project:') ? '项目规划' : props.project.status === 'completed' ? '已完成' : props.project.status === 'paused' ? '已暂停' : props.project.status === 'archived' ? '已归档' : activeMaintenancePeriod(props.project.maintenancePeriods) ? '维护中' : '进行中'}</small></span><span className="life-manuscript__project-strip-body" aria-hidden="true" /><em>{props.dates.end.slice(5)}</em>
 </button>;
 
@@ -894,22 +894,31 @@ const SystemDetailDrawer: React.FC<{ system?: LifeSystem; data: LifeMapData; tod
   </aside>;
 };
 
-const SystemSummaries: React.FC<{ data: LifeMapData; areas: string[]; mapper: ReturnType<typeof createLifeMapTimeMapper>; visible: { top: number; bottom: number }; viewportTop: number; onOpen: (id: string) => void }> = ({ data, areas, mapper, visible, viewportTop, onOpen }) => {
-  const systems = data.lifeMapSystems.filter((system) => !system.deletedAt && areas.includes(system.areaId) && (!system.end || mapper.dateToWorldY(system.end) >= visible.top) && mapper.dateToWorldY(system.start) <= visible.bottom);
-  return <div className="life-manuscript__system-summaries">{systems.map((system, index) => {
+const SystemLane: React.FC<{ data: LifeMapData; areas: string[]; mapper: ReturnType<typeof createLifeMapTimeMapper>; visible: { top: number; bottom: number }; today: string; left: number; width: number; onOpen: (id: string) => void }> = ({ data, areas, mapper, visible, today, left, width, onOpen }) => {
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set());
+  const systems = useMemo(() => data.lifeMapSystems.flatMap((system) => {
+    if (system.deletedAt || !areas.includes(system.areaId)) return [];
+    const anchorDate = system.start > today ? system.start : system.end && system.end < today ? system.end : today;
+    const anchorY = mapper.dateToWorldY(anchorDate);
+    return anchorY >= visible.top && anchorY <= visible.bottom ? [{ ...system, anchorDate }] : [];
+  }), [areas, data.lifeMapSystems, mapper, today, visible]);
+  const placements = useMemo(() => layoutSystemChips(systems, mapper.dateToWorldY, (date) => expandedDates.has(date) ? Number.MAX_SAFE_INTEGER : 3), [expandedDates, mapper.dateToWorldY, systems]);
+  const details = (system: LifeSystem) => {
     const area = data.lifeMapAreas.find((item) => !item.deletedAt && item.id === system.areaId);
     const maintenance = activeMaintenancePeriod(mergeMaintenancePeriods(system.maintenancePeriods, area?.maintenancePeriods));
     const stats = currentSystemStats({ ...system, maintenancePeriods: mergeMaintenancePeriods(system.maintenancePeriods, area?.maintenancePeriods) }, data.lifeMapSystemCheckIns);
-    const reached = stats.target > 0 && stats.completed >= stats.target;
-    const meta = system.status === 'completed' ? '已完成' : system.status === 'paused' ? '已暂停' : system.status === 'archived' ? '已归档' : maintenance ? '维护中 · 不计失败' : `${stats.label} ${stats.completed}/${stats.target}`;
-    return <button key={system.id} type="button" className={`${reached ? 'is-reached' : ''}${system.status === 'archived' ? ' is-archived' : ''}${maintenance ? ' is-maintenance' : ''}`} style={{ top: Math.max(mapper.dateToWorldY(system.start), viewportTop + 10) + index * 36 }} onClick={() => onOpen(system.id)} title={`${system.name} · ${meta}`}><b>{system.name}</b><small>{meta}</small></button>;
+    return { maintenance, stats, reached: stats.target > 0 && stats.completed >= stats.target };
+  };
+  return <div className="life-manuscript__system-lane" aria-label="长期系统" style={{ left, width }}>{placements.map((placement) => {
+    const center = placement.top + SYSTEM_CHIP_HEIGHT / 2;
+    const connectorTop = Math.min(placement.anchorY, center);
+    const connectorHeight = Math.abs(placement.anchorY - center);
+    if (placement.kind === 'overflow') return <Fragment key={`overflow:${placement.date}`}><i className="life-manuscript__system-anchor" aria-hidden="true" style={{ top: connectorTop, height: connectorHeight }} /><button type="button" className="life-manuscript__system-chip is-overflow" style={{ top: placement.top }} onClick={() => setExpandedDates((current) => new Set([...current, placement.date]))}>+{placement.overflowCount} 系统</button></Fragment>;
+    const system = placement.item!;
+    const { maintenance, stats, reached } = details(system);
+    const meta = maintenance ? '维护中' : `${stats.label} ${stats.completed}/${stats.target}`;
+    return <Fragment key={system.id}><i className="life-manuscript__system-anchor" aria-hidden="true" style={{ top: connectorTop, height: connectorHeight }} /><button type="button" className={`life-manuscript__system-chip${reached ? ' is-reached' : ''}${maintenance ? ' is-maintenance' : ''}${system.status === 'archived' ? ' is-archived' : ''}`} style={{ top: placement.top }} title={`${system.name} · ${meta}`} onClick={() => onOpen(system.id)}><b>{system.name}</b><small>{stats.completed}/{stats.target}</small></button></Fragment>;
   })}</div>;
-};
-
-const SystemDots: React.FC<{ data: LifeMapData; areas: string[]; mapper: ReturnType<typeof createLifeMapTimeMapper>; visible: { top: number; bottom: number }; zoom: Zoom }> = ({ data, areas, mapper, visible, zoom }) => {
-  const ids = new Set(data.lifeMapSystems.filter((system) => !system.deletedAt && areas.includes(system.areaId)).map((system) => system.id));
-  const dots = data.lifeMapSystemCheckIns.filter((item) => !item.deletedAt && ids.has(item.systemId) && isVisible(mapper.dateToWorldY(item.date), visible.top, visible.bottom));
-  return <div className={`life-manuscript__system-dots is-${zoom}`}>{dots.map((item) => <i key={item.id} title={`打卡 ${item.date} · ${item.count}`} style={{ top: mapper.dateToWorldY(item.date) + pixelsPerDay[zoom] / 2 }} />)}</div>;
 };
 
 const RulerReviewLayer: React.FC<{ reviews: LifeReview[]; mapper: ReturnType<typeof createLifeMapTimeMapper>; visible: { top: number; bottom: number }; onOpen: (id: string) => void }> = ({ reviews, mapper, visible, onOpen }) => <div className="life-manuscript__ruler-reviews">{reviews.filter((item) => !item.deletedAt && isVisible(mapper.dateToWorldY(item.end), visible.top, visible.bottom)).map((item) => <button key={item.id} type="button" data-review-id={item.id} style={{ top: mapper.dateToWorldY(item.end) }} title={`${item.title} · ${item.start} — ${item.end}`} onClick={() => onOpen(item.id)}><span>复盘</span><b>{item.title}</b></button>)}</div>;

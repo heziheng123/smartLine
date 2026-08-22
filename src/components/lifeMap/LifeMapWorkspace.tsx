@@ -863,6 +863,7 @@ const LifeMapWorkspace: React.FC = () => {
       onEditStage={(stage) => { setAdaptiveStageEditingId(stage.id); setAdaptiveStageDraft({ name: stage.name, start: stage.start, end: stage.end, description: stage.description ?? '', color: stage.color, importance: stage.importance ?? 'normal', areaIds: stage.areaIds }); }}
       inspectorPinned={inspectorPinned}
       onToggleInspectorPin={() => setInspectorPinned((pinned) => !pinned)}
+      onCreateSystem={() => openCreate('system')}
       onCreateStageAtDate={(date, endDate, groupId) => {
         const areaId = groupId ? areas.find((area) => area.planGroupId === groupId)?.id : undefined;
         setAdaptiveStageEditingId(null);
@@ -1029,6 +1030,7 @@ const LifeMapWorkspace: React.FC = () => {
           if (period) setLifeStageEditorRequest({ stage: { id: period.id, name: period.name, start: period.start, end: period.end, color: period.color }, token: Date.now() });
         }
       }}
+      onCreateSystem={() => { setPlanningDrawerOpen(false); openCreate('system'); }}
       onCreateReview={(period) => {
         setPlanningDrawerOpen(false); openCreate('review'); setReviewPeriod(period);
         const base = dayjs(); const periodStart = period === 'month' ? base.startOf('month') : base.month(Math.floor(base.month() / 3) * 3).startOf('month');

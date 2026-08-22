@@ -5,6 +5,7 @@ import { createAnnotationBraceGeometry, createVerticalAnnotationBracePath, resol
 import { assignAnnotationTracks } from '../../src/lifeMap/geometry/annotationIntervalLayout.ts';
 import { resolveAnnotationTextCollisions } from '../../src/lifeMap/geometry/annotationTextCollision.ts';
 import { assignVerticalIntervalLanes, assignVerticalIntervalTracks } from '../../src/lifeMap/geometry/verticalIntervalLayout.ts';
+import { layoutSystemChips } from '../../src/lifeMap/geometry/systemChipLayout.ts';
 import { getCategoryProjectLanes, getProjectStripsByCategory } from '../../src/lifeMap/manuscript/manuscriptSelectors.ts';
 import { getManuscriptDateRange, createLifeMapTimeMapper } from '../../src/lifeMap/time/lifeMapTime.ts';
 
@@ -88,6 +89,19 @@ test('v14 部分重叠的项目条会复用已结束 lane，生命周期内不�
   assert.deepEqual(lanes.map(({ item, laneIndex, laneCount }) => [item.id, laneIndex, laneCount]), [
     ['a', 0, 2], ['b', 1, 2], ['c', 0, 2],
   ]);
+});
+
+test('长期系统使用独立布局层：同日聚合且不会影响项目 lane', () => {
+  const chips = layoutSystemChips([
+    { id: 'a', anchorDate: '2026-08-22' }, { id: 'b', anchorDate: '2026-08-22' },
+    { id: 'c', anchorDate: '2026-08-22' }, { id: 'd', anchorDate: '2026-08-22' },
+    { id: 'later', anchorDate: '2026-08-23' },
+  ], (date) => date === '2026-08-22' ? 100 : 110);
+  assert.deepEqual(chips.map((chip) => [chip.kind, chip.item?.id, chip.overflowCount]), [
+    ['system', 'a', undefined], ['system', 'b', undefined], ['overflow', undefined, 2], ['system', 'later', undefined],
+  ]);
+  assert.ok(chips[0].top < 100 && chips[2].top > 100);
+  assert.ok(chips[3].top >= chips[2].top + 38);
 });
 
 test('v14 有子项目的父项目只作范围说明，子项目与独立项目共用分类 lane', () => {
