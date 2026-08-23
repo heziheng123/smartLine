@@ -219,6 +219,7 @@ const EbbView: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const latestOperation = useOperationHistory((state) => state.entries[0]);
   const undoOperation = useOperationHistory((state) => state.undo);
+  const [visibleUndoNoticeId, setVisibleUndoNoticeId] = useState<string | null>(null);
 
   // 异步加载 IndexedDB 数据
   useEffect(() => {
@@ -304,6 +305,25 @@ const EbbView: React.FC = () => {
   const hasUndo = store.undoStack.length > 0;
   // 注意：store 把最新撤销项放在 index 0（[entry, ...stack]），故读 [0]
   const lastUndo = store.undoStack[0];
+  const activeUndoNoticeId = lastUndo?.id ?? latestOperation?.id;
+  const activeUndoNoticeTimestamp = lastUndo?.timestamp ?? latestOperation?.createdAt;
+
+  useEffect(() => {
+    if (!activeUndoNoticeId || !activeUndoNoticeTimestamp) {
+      setVisibleUndoNoticeId(null);
+      return;
+    }
+    const remaining = 8000 - Math.max(0, Date.now() - activeUndoNoticeTimestamp);
+    if (remaining <= 0) {
+      setVisibleUndoNoticeId(null);
+      return;
+    }
+    setVisibleUndoNoticeId(activeUndoNoticeId);
+    const timer = window.setTimeout(() => {
+      setVisibleUndoNoticeId((current) => current === activeUndoNoticeId ? null : current);
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [activeUndoNoticeId, activeUndoNoticeTimestamp]);
 
   // ── 任务操作回调 ──────────────────────────────────────────
   const handleToggle = useCallback(
@@ -596,17 +616,17 @@ const EbbView: React.FC = () => {
 
         {/* ── 统计区 ──────────────────────────────────────── */}
         {/* ── 撤销条（统一：优先 Ebb undoStack，其次 OperationHistory） ──── */}
-        {(hasUndo && lastUndo) || latestOperation ? (
+        {visibleUndoNoticeId === activeUndoNoticeId && ((hasUndo && lastUndo) || latestOperation) ? (
           <div className="eb-undo-bar" role="status" aria-live="polite">
             <RotateCcw size={14} />
             {hasUndo && lastUndo ? (
               <>
-                <span>可撤销（艾宾浩斯）：{lastUndo.description}</span>
+                <span>已更新：{lastUndo.description}</span>
                 <button type="button" className="eb-undo-btn" onClick={handleUndo}>撤销</button>
               </>
             ) : latestOperation ? (
               <>
-                <span>可撤销（全局）：{latestOperation.label}</span>
+                <span>已更新：{latestOperation.label}</span>
                 {latestOperation.canUndo && (
                   <button type="button" className="eb-undo-btn" onClick={() => void handleUndoLatestOperation()}>撤销</button>
                 )}

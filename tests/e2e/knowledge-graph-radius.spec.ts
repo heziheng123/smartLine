@@ -59,6 +59,15 @@ test('reading and expanded modes automatically focus one disk from the multi-dis
   await sizeGroup.getByRole('button', { name: '总览' }).click();
   await expect(page.getByLabel('知识大盘视角')).toHaveValue('all');
   await expect(sizeGroup.getByRole('button', { name: '总览' })).toHaveAttribute('aria-pressed', 'true');
+
+  const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  await expect.poll(() => canvas.evaluate((svg) => {
+    const graphCenter = svg.querySelector(':scope > g > g') as SVGGElement | null;
+    const matrix = graphCenter?.getScreenCTM();
+    const bounds = svg.getBoundingClientRect();
+    if (!matrix) return Number.POSITIVE_INFINITY;
+    return Math.hypot(matrix.e - (bounds.left + bounds.width / 2), matrix.f - (bounds.top + bounds.height / 2));
+  })).toBeLessThan(2);
 });
 
 test('knowledge graph keeps the app dock navigation-only and moves page controls into the header', async ({ page }) => {

@@ -707,8 +707,12 @@ export const KnowledgeGraphView: React.FC = () => {
       const scaleX = dimensions.width / (totalWidth || dimensions.width);
       const scaleY = dimensions.height / (totalHeight || dimensions.height);
       const scale = Math.min(scaleX, scaleY, 1) * 0.9;
-      
-      svg.transition().duration(750).call(zoomBehaviorRef.current.transform, zoomIdentity.scale(scale));
+      const transform = zoomIdentity
+        .translate(dimensions.width / 2, dimensions.height / 2)
+        .scale(scale)
+        .translate(-dimensions.width / 2, -dimensions.height / 2);
+
+      svg.transition().duration(750).call(zoomBehaviorRef.current.transform, transform);
     } else {
       svg.transition().duration(750).call(zoomBehaviorRef.current.transform, zoomIdentity);
     }

@@ -125,6 +125,7 @@
 }
 
 .paletteContainerDocked:not(.paletteContainerExpanded) {
+  position: fixed;
   top: auto;
   bottom: 0;
   height: auto;

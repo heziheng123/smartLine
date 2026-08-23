@@ -2054,6 +2054,35 @@
   overflow: auto;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  scroll-padding-bottom: calc(112px + env(safe-area-inset-bottom));
+}
+
+.tl-app:has(.week-matrix-workspace) .tl-dock {
+  transition: padding 160ms ease, gap 160ms ease, border-radius 160ms ease;
+}
+
+.tl-app:has(.wmv-container[data-dragging='true']) .tl-dock {
+  gap: 0;
+  padding: 4px;
+  border-radius: 14px;
+}
+
+.tl-app:has(.wmv-container[data-dragging='true']) .tl-dock-btn:not(.tl-dock-btn--active) {
+  display: none;
+}
+
+.tl-app:has(.wmv-container[data-dragging='true']) .tl-dock-btn--active {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  padding: 0;
+}
+
+.tl-app:has(.wmv-container[data-dragging='true']) .tl-dock-phone-label {
+  display: none;
 }
 
 /* ── 跳转提示胶囊（悬停展开） ── */
@@ -2134,6 +2163,7 @@
 .wmv-row {
   border-bottom: 1px solid #f3f4f6;
   min-width: min-content;
+  transition: opacity 160ms ease, background-color 160ms ease, border-color 160ms ease;
 }
 .wmv-row:not(.wmv-row--header) {
   content-visibility: auto;
@@ -2145,6 +2175,53 @@
   top: 0;
   background: #fff;
   z-index: 10;
+}
+
+.wmv-container[data-backlog-project-dragging='true']
+  .wmv-row:not(.wmv-row--header):not(.wmv-row--drag-project-target) {
+  opacity: 0.52;
+}
+
+.wmv-row--drag-project-target {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.wmv-row--ghost {
+  border-top: 1px dashed #60a5fa;
+  border-bottom: 1px dashed #60a5fa;
+  background: #f8fbff;
+}
+
+.wmv-row--ghost .wmv-cell {
+  min-height: 54px;
+}
+
+.wmv-ghost-label {
+  flex: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.76);
+  padding: 2px 5px;
+  color: #2563eb;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.wmv-ghost-drop-hint {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  color: #60a5fa;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.wmv-row--ghost .wmv-cell--drop-target .wmv-ghost-drop-hint {
+  color: #1d4ed8;
+  transform: translate(-50%, -50%) scale(1.14);
 }
 
 .wmv-cell {

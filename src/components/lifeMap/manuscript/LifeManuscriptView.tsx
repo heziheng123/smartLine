@@ -585,18 +585,24 @@ const LifeManuscriptView: React.FC<Props> = ({ data, selectedStageId, onSelectSt
     <div className="life-manuscript__page">
     <Card bare className="life-manuscript__panel">
     <WorkspaceHeader className="life-manuscript__toolbar" aria-label="人生地图工作区">
-      <div className="ui-workspace-header__identity">
+      <div className="ui-workspace-header__identity life-manuscript__brand">
         <span className="ui-workspace-header__identity-icon"><MapIcon size={17} aria-hidden="true" /></span>
         <div className="ui-workspace-header__identity-copy"><h1>人生地图</h1><p>长期规划与回顾</p></div>
       </div>
       <div className="life-manuscript__commands ui-workspace-header__actions">
-        <button type="button" className="ds-header-btn" onClick={() => onCreateStageAtDate(mapper.worldYToDate(viewport.top + viewport.height / 2))}><Plus size={16} />新建阶段</button>
-        <button type="button" className="tl-workspace-primary-btn" onClick={() => onCreateProjectAtDate(mapper.worldYToDate(viewport.top + viewport.height / 2))}><Plus size={17} /><span>添加项目</span></button>
-        <button type="button" className="ds-header-btn" onClick={() => createEvent()}><Diamond size={15} />关键日期</button>
-        <button type="button" className="ds-header-btn" onClick={() => createNote()}><StickyNote size={15} />时间注记</button>
+        <div className="life-manuscript__command-group life-manuscript__create-group" role="group" aria-label="创建内容">
+          <button type="button" className="ds-header-btn life-manuscript__command life-manuscript__command--stage" title="新建阶段" onClick={() => onCreateStageAtDate(mapper.worldYToDate(viewport.top + viewport.height / 2))}><Plus size={16} aria-hidden="true" /><span className="life-manuscript__command-label">新建阶段</span></button>
+          <button type="button" className="tl-workspace-primary-btn life-manuscript__command life-manuscript__command--project" title="添加项目" onClick={() => onCreateProjectAtDate(mapper.worldYToDate(viewport.top + viewport.height / 2))}><Plus size={17} aria-hidden="true" /><span className="life-manuscript__command-label">添加项目</span></button>
+        </div>
+        <div className="life-manuscript__command-group life-manuscript__annotation-group" role="group" aria-label="添加时间标记">
+          <button type="button" className="ds-header-btn life-manuscript__command life-manuscript__command--event" title="添加关键日期" aria-label="添加关键日期" onClick={() => createEvent()}><Diamond size={15} aria-hidden="true" /><span className="life-manuscript__command-label">关键日期</span></button>
+          <button type="button" className="ds-header-btn life-manuscript__command life-manuscript__command--note" title="添加时间注记" aria-label="添加时间注记" onClick={() => createNote()}><StickyNote size={15} aria-hidden="true" /><span className="life-manuscript__command-label">时间注记</span></button>
+        </div>
         <div className="tl-workspace-year life-manuscript__zoom" role="group" aria-label="时间缩放">{(['year', 'month', 'week', 'day'] as Zoom[]).map((item) => <button key={item} type="button" aria-pressed={zoom === item} onClick={() => changeZoom(item)}>{{ year: '年', month: '月', week: '周', day: '日' }[item]}</button>)}</div>
-        <button type="button" className="ds-header-btn life-manuscript__today-button" aria-label="定位到今天" onClick={() => locateToday()}>今天</button>
-        <button type="button" className="ds-header-btn" aria-label="更多人生地图选项" aria-expanded={showClassicViewMenu} onClick={() => setShowClassicViewMenu((open) => !open)}><MoreHorizontal size={18} /></button>
+        <div className="life-manuscript__command-group life-manuscript__navigation-group" role="group" aria-label="时间定位">
+          <button type="button" className="ds-header-btn life-manuscript__today-button" aria-label="定位到今天" onClick={() => locateToday()}>今天</button>
+          <button type="button" className="ds-header-btn life-manuscript__more" aria-label="更多人生地图选项" aria-expanded={showClassicViewMenu} onClick={() => setShowClassicViewMenu((open) => !open)}><MoreHorizontal size={18} aria-hidden="true" /></button>
+        </div>
         {showClassicViewMenu && <div className="life-manuscript__fallback-menu" role="menu" aria-label="更多人生地图选项"><section role="group" aria-label="时间规划"><b>时间规划</b><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onCreateSystem(); }}>新建长期系统</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); const date = mapper.worldYToDate(viewport.top + viewport.height / 2); createNote(date, addDays(date, 30)); }}>添加时期重点</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onCreateReview(mapper.worldYToDate(viewport.top + viewport.height / 2)); }}>新建周期复盘</button></section><section role="group" aria-label="管理视图"><b>管理视图</b><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onOpenAreaManagement(); }}>管理人生领域</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onOpenBatchShift(); }}>批量调整计划</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); onToggleArchived(); }}>{showArchived ? '隐藏归档内容' : '显示归档内容'}</button><button type="button" role="menuitem" onClick={() => { setShowClassicViewMenu(false); setShowAdvancedFilters(true); }}>高级筛选</button></section><section className="life-manuscript__fallback-legacy" role="group" aria-label="兼容选项"><button type="button" role="menuitem" onClick={onOpenClassicView}><span>经典人生地图</span><small>旧版布局，临时保留</small></button></section></div>}
       </div>
     </WorkspaceHeader>

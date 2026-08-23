@@ -24,7 +24,12 @@ import {
 } from '@/services/workloadPreferences';
 import { requestConfirmation } from '@/services/confirmation';
 import { buildProjectDescriptorMap } from '@/domain/projectDescriptor';
-import { openDailyFromWeek, takeWeekRestoreContext, type WeekMatrixContext } from '@/services/actionBridge';
+import {
+  BACKLOG_DRAG_CONTEXT_EVENT,
+  openDailyFromWeek,
+  takeWeekRestoreContext,
+  type WeekMatrixContext,
+} from '@/services/actionBridge';
 import SyncStatusIndicator from '@/components/SyncStatusIndicator';
 import WorkspaceHeader from '@/components/WorkspaceHeader';
 import {
@@ -60,6 +65,7 @@ interface MatrixRow {
   kind: MatrixGroupMode;
   projectId?: string;
   tag?: string;
+  isGhost?: boolean;
 }
 
 const GROUP_MODE_STORAGE_KEY = 'week-matrix-group-mode-v1';
@@ -107,6 +113,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
   const [cursor, setCursor] = useState(() => restoredContext?.cursor ?? todayStr());
   const [mode, setMode] = useState<'week' | 'month'>(() => restoredContext?.mode ?? 'week');
   const [groupMode, setGroupMode] = useState<MatrixGroupMode>(() => restoredContext?.groupMode ?? loadGroupMode());
+  const [externalBacklogDrag, setExternalBacklogDrag] = useState<SmartBlockDragPayload | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ rowKey: string; date: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -143,6 +150,19 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
     }
   }, [groupMode]);
 
+  useEffect(() => {
+    const handleBacklogDrag = (event: Event) => {
+      setExternalBacklogDrag((event as CustomEvent<SmartBlockDragPayload | null>).detail ?? null);
+    };
+    const clearBacklogDrag = () => setExternalBacklogDrag(null);
+    window.addEventListener(BACKLOG_DRAG_CONTEXT_EVENT, handleBacklogDrag);
+    window.addEventListener('blur', clearBacklogDrag);
+    return () => {
+      window.removeEventListener(BACKLOG_DRAG_CONTEXT_EVENT, handleBacklogDrag);
+      window.removeEventListener('blur', clearBacklogDrag);
+    };
+  }, []);
+
   const dateRange = useMemo(() => {
     if (mode === 'week') {
       const start = getWeekStartStr(cursor);
@@ -157,8 +177,12 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
 
   const todayString = todayStr();
 
+  const projectDescriptors = useMemo(
+    () => buildProjectDescriptorMap(tasks, groups),
+    [groups, tasks],
+  );
+
   const allBlocks = useMemo(() => {
-    const projectDescriptors = buildProjectDescriptorMap(tasks, groups);
     const result: ViewBlock[] = [];
     for (const task of tasks) {
       const descriptor = projectDescriptors.get(task.id);
@@ -175,7 +199,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
       }
     }
     return result;
-  }, [groups, tasks]);
+  }, [projectDescriptors, tasks]);
 
   const rows = useMemo(() => {
     const rowMap = new Map<string, MatrixRow>();
@@ -204,6 +228,23 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
     }
     return [...rowMap.values()];
   }, [allBlocks, dateRange, groupMode]);
+
+  const displayedRows = useMemo(() => {
+    if (groupMode !== 'project' || !externalBacklogDrag) return rows;
+    const projectKey = `project:${externalBacklogDrag.taskId}`;
+    if (rows.some((row) => row.key === projectKey)) return rows;
+    const descriptor = projectDescriptors.get(externalBacklogDrag.taskId);
+    if (!descriptor) return rows;
+    return [{
+      key: projectKey,
+      label: descriptor.label,
+      color: descriptor.backgroundColor,
+      textColor: descriptor.textColor,
+      kind: 'project' as const,
+      projectId: descriptor.id,
+      isGhost: true,
+    }, ...rows];
+  }, [externalBacklogDrag, groupMode, projectDescriptors, rows]);
 
   const matrix = useMemo(() => {
     const map = new Map<string, Map<string, ViewBlock[]>>();
@@ -288,6 +329,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
   const clearDragState = useCallback(() => {
     setDraggingId(null);
     setHoverCell(null);
+    setExternalBacklogDrag(null);
   }, []);
 
   const findDropCell = useCallback((clientX: number, clientY: number) => {
@@ -461,12 +503,22 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
       // Only react to native HTML5 drag (e.g. external Icebox / Backlog River drops).
       if (dragStateRef.current) return;
       event.preventDefault();
+      if (
+        groupMode === 'project'
+        && externalBacklogDrag
+        && rowKey.startsWith('project:')
+        && rowKey !== `project:${externalBacklogDrag.taskId}`
+      ) {
+        event.dataTransfer.dropEffect = 'none';
+        setHoverCell(null);
+        return;
+      }
       event.dataTransfer.dropEffect = 'move';
       if (!hoverCell || hoverCell.rowKey !== rowKey || hoverCell.date !== date) {
         setHoverCell({ rowKey, date });
       }
     },
-    [hoverCell],
+    [externalBacklogDrag, groupMode, hoverCell],
   );
 
   const handleExternalCellDragLeave = useCallback(
@@ -583,7 +635,11 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
   const matrixColumnTemplate = `${rowLabelWidth} repeat(${dateRange.length}, minmax(${mode === 'week' ? '88px' : '120px'}, 1fr))`;
 
   return (
-    <div className="wmv-container">
+    <div
+      className="wmv-container"
+      data-dragging={draggingId || hoverCell || externalBacklogDrag ? 'true' : undefined}
+      data-backlog-project-dragging={groupMode === 'project' && externalBacklogDrag ? 'true' : undefined}
+    >
       <WorkspaceHeader className="wmv-nav" aria-label="周矩阵工作区">
         <div className="ui-workspace-header__identity">
           <span className="ui-workspace-header__identity-icon"><LayoutGrid size={17} aria-hidden="true" /></span>
@@ -819,9 +875,17 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
           })}
         </div>
 
-        {rows.map((row) => {
+        {displayedRows.map((row) => {
+          const isDraggedProject = groupMode === 'project'
+            && externalBacklogDrag?.taskId === row.projectId;
           return (
-            <div key={row.key} className="wmv-row" style={{ display: 'grid', gridTemplateColumns: matrixColumnTemplate }}>
+            <div
+              key={row.key}
+              className={`wmv-row ${row.isGhost ? 'wmv-row--ghost' : ''} ${
+                isDraggedProject ? 'wmv-row--drag-project-target' : ''
+              }`}
+              style={{ display: 'grid', gridTemplateColumns: matrixColumnTemplate }}
+            >
               <div className="wmv-cell wmv-cell--tag">
                 <span
                   className={`wmv-tag-badge ${row.kind === 'project' ? 'wmv-project-badge' : ''}`}
@@ -830,6 +894,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
                 >
                   {row.kind === 'project' && <FolderOpen size={13} aria-hidden="true" />}
                   <span>{row.label}</span>
+                  {row.isGhost && <small className="wmv-ghost-label">待排投放</small>}
                 </span>
               </div>
 
@@ -853,6 +918,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
                     onDragLeave={(event) => handleExternalCellDragLeave(event, row.key, dateStr)}
                     onDrop={(event) => handleExternalCellDrop(event, row.key, dateStr)}
                   >
+                    {row.isGhost && <span className="wmv-ghost-drop-hint" aria-hidden="true">＋</span>}
                     <AnimatePresence mode="popLayout">
                     {blocks.map((block) => {
                       const header = block.header;
@@ -964,7 +1030,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
           );
         })}
 
-        {rows.length === 0 && (
+        {displayedRows.length === 0 && (
           <div className="wmv-empty">
             <CalendarDays size={48} />
             <p>{groupMode === 'project' ? `当前${mode === 'week' ? '周' : '月'}暂无已排期项目任务` : '暂无智能任务块'}</p>

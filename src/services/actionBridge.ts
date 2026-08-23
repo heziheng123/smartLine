@@ -1,8 +1,16 @@
+import type { SmartBlockDragPayload } from '@/types';
+
 export type WeekMatrixContext = {
   cursor: string;
   mode: 'week' | 'month';
   groupMode: 'tag' | 'project';
 };
+
+export const BACKLOG_DRAG_CONTEXT_EVENT = 'smart-line:backlog-drag-context';
+
+export function publishBacklogDragContext(detail: SmartBlockDragPayload | null) {
+  window.dispatchEvent(new CustomEvent(BACKLOG_DRAG_CONTEXT_EVENT, { detail }));
+}
 
 const DAILY_TARGET_DATE_KEY = 'smart-line-daily-target-date';
 const WEEK_RETURN_CONTEXT_KEY = 'smart-line-week-return-context';

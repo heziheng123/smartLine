@@ -21,6 +21,7 @@ import { requestConfirmation } from '@/services/confirmation';
 import { diffDays, formatDate, todayStr } from '@/utils/dateSafe';
 import type { SmartBlockDragPayload } from '@/types';
 import { DROPPABLE_BACKLOG } from '@/components/dailySchedule/dndIds';
+import { publishBacklogDragContext } from '@/services/actionBridge';
 import styles from './BacklogTaskList.module.css';
 
 interface BacklogTaskListProps {
@@ -108,6 +109,7 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
     event.dataTransfer.setData('application/json', JSON.stringify(payload));
     event.dataTransfer.setData('application/x-backlog-task', task.id);
     event.dataTransfer.effectAllowed = 'move';
+    publishBacklogDragContext(payload);
   };
 
   const renderCard = (task: BacklogTask, dragHandleProps?: React.HTMLAttributes<HTMLElement>) => (
@@ -184,7 +186,12 @@ export const BacklogTaskList: React.FC<BacklogTaskListProps> = ({
     : (
       <div className={styles.list}>
         {visibleTasks.map((task) => (
-          <div key={task.id} draggable onDragStart={(event) => nativeDragStart(event, task)}>
+          <div
+            key={task.id}
+            draggable
+            onDragStart={(event) => nativeDragStart(event, task)}
+            onDragEnd={() => publishBacklogDragContext(null)}
+          >
             {renderCard(task)}
           </div>
         ))}

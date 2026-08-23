@@ -273,6 +273,68 @@ test('week matrix groups by real project identity without changing workload and 
   await expect(page.locator('[data-project-id="backlog-project"] [data-block-id="scheduled-block"]')).toBeVisible();
 });
 
+test('project grouping reveals a temporary row for the dragged backlog project', async ({ page }) => {
+  await page.evaluate(async ({ date }) => {
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    const state = useTimelineStore.getState();
+    useTimelineStore.setState({
+      tasks: [...state.tasks, {
+        id: 'ghost-project',
+        name: '本周空白项目',
+        start: date,
+        end: date,
+        color: '#38bdf8',
+        blocks: [{
+          type: 'smart-task',
+          id: 'ghost-backlog-block',
+          header: {
+            title: '从待排期箱进入空项目行',
+            tag: '学习',
+            tagColor: '#2563eb',
+            duration: 30,
+            isCompleted: false,
+          },
+          body: '',
+        }],
+      }],
+    });
+  }, { date: today });
+
+  await page.getByTitle('周矩阵').click();
+  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await expect(page.locator('[data-project-id="ghost-project"]')).toHaveCount(0);
+
+  await page.getByRole('button', { name: /待排期箱，\d+ 个任务/ }).click();
+  const sourceCard = page.locator('[data-backlog-task-id="backlog:ghost-project::ghost-backlog-block"]');
+  const source = sourceCard.locator('..');
+  await expect(sourceCard).toBeVisible();
+
+  const cancelledTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await source.dispatchEvent('dragstart', { dataTransfer: cancelledTransfer });
+  const ghostRow = page.locator('.wmv-row--ghost').filter({
+    has: page.locator('[data-project-id="ghost-project"]'),
+  });
+  await expect(ghostRow).toBeVisible();
+  await expect(ghostRow).toContainText('本周空白项目');
+  await expect(ghostRow).toContainText('待排投放');
+  await source.dispatchEvent('dragend', { dataTransfer: cancelledTransfer });
+  await expect(ghostRow).toHaveCount(0);
+
+  const dropTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await source.dispatchEvent('dragstart', { dataTransfer: dropTransfer });
+  const target = page.locator(`.wmv-row--ghost [data-project-id="ghost-project"][data-date="${today}"]`);
+  await expect(target).toBeVisible();
+  await target.dispatchEvent('dragover', { dataTransfer: dropTransfer });
+  await target.dispatchEvent('drop', { dataTransfer: dropTransfer });
+
+  const projectRow = page.locator('.wmv-row:not(.wmv-row--ghost)').filter({
+    has: page.locator('[data-project-id="ghost-project"]'),
+  });
+  await expect(projectRow.locator('[data-block-id="ghost-backlog-block"]')).toBeVisible();
+  await expect(page.locator('.wmv-row--ghost')).toHaveCount(0);
+  await expect(sourceCard).toHaveCount(0);
+});
+
 test('docked backlog leaves Saturday reachable and supports dropping on the date header', async ({ page }) => {
   const saturday = saturdayOfCurrentWeek(today);
   await page.getByTitle('周矩阵').click();
@@ -556,6 +618,49 @@ test('week task can return to the backlog without losing metadata and inline und
       (day as { items?: Array<{ sourceId?: string }> }).items ?? [],
     ).filter((item) => item.sourceId === 'project-blk:backlog-project::scheduled-block').length;
   }).toBe(1);
+});
+
+test('tablet keeps the collapsed week backlog capsule inside the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await page.getByTitle('周矩阵').click();
+
+  const backlogCapsule = page.getByRole('button', { name: '待排期箱，26 个任务' });
+  await expect(backlogCapsule).toBeVisible();
+  expect(await backlogCapsule.evaluate((button) => (
+    getComputedStyle(button.parentElement!).position
+  ))).toBe('fixed');
+
+  const box = await backlogCapsule.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(1180);
+});
+
+test('week matrix reserves dock clearance and collapses navigation while dragging', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await page.getByTitle('周矩阵').click();
+
+  const matrix = page.locator('.wmv-matrix');
+  expect(await matrix.evaluate((element) => parseFloat(getComputedStyle(element).paddingBottom))).toBeGreaterThanOrEqual(96);
+
+  const card = page.locator('[data-block-id="scheduled-block"]');
+  await expect(card).toBeVisible();
+  const cardBox = await card.boundingBox();
+  expect(cardBox).not.toBeNull();
+
+  await page.mouse.move(cardBox!.x + cardBox!.width / 2, cardBox!.y + cardBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(cardBox!.x + cardBox!.width / 2 + 12, cardBox!.y + cardBox!.height / 2 + 12);
+
+  await expect(page.locator('.wmv-container')).toHaveAttribute('data-dragging', 'true');
+  await expect(page.locator('.tl-dock-btn:visible')).toHaveCount(1);
+
+  const compactDockButton = await page.locator('.tl-dock-btn:visible').boundingBox();
+  expect(compactDockButton).not.toBeNull();
+  expect(compactDockButton!.width).toBeLessThanOrEqual(36);
+
+  await page.mouse.up();
+  await expect(page.locator('.wmv-container')).not.toHaveAttribute('data-dragging', 'true');
+  await expect(page.locator('.tl-dock-btn:visible')).toHaveCount(6);
 });
 
 test('daily task menu return remains committed after refresh without a persistent undo library', async ({ page }) => {

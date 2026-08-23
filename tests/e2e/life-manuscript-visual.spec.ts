@@ -604,34 +604,39 @@ test('system check-ins default to the user local calendar date', async ({ page }
   expect(date).toBe('2026-08-21');
 });
 
-test('narrow manuscript toolbar matches the shared workspace control scale', async ({ page }) => {
+test('narrow manuscript toolbar keeps grouped actions compact and fully reachable', async ({ page }) => {
   await page.setViewportSize({ width: 752, height: 898 });
-  await page.waitForFunction(() => Math.round(document.querySelector('.life-manuscript__toolbar')!.getBoundingClientRect().height) === 54);
+  await page.waitForFunction(() => Math.round(document.querySelector('.life-manuscript__toolbar')!.getBoundingClientRect().height) === 58);
 
   const geometry = await page.evaluate(() => {
     const rect = (selector: string) => {
       const bounds = document.querySelector(selector)!.getBoundingClientRect();
-      return { width: bounds.width, height: bounds.height };
+      return { left: bounds.left, right: bounds.right, width: bounds.width, height: bounds.height };
     };
-    const commands = [...document.querySelectorAll('.life-manuscript__commands > button')].map((element) => ({
+    const commands = [...document.querySelectorAll('.life-manuscript__commands button')].map((element) => ({
       text: element.textContent?.trim(),
+      label: element.getAttribute('aria-label') ?? element.getAttribute('title'),
       display: getComputedStyle(element).display,
       height: element.getBoundingClientRect().height,
-      fontSize: getComputedStyle(element).fontSize,
     }));
     return {
       toolbar: rect('.life-manuscript__toolbar'),
       zoom: rect('.life-manuscript__zoom button'),
+      more: rect('.life-manuscript__more'),
       commands,
-      titleSize: getComputedStyle(document.querySelector('.life-manuscript__identity b')!).fontSize,
+      title: document.querySelector('.life-manuscript__brand h1')?.textContent,
+      groups: [...document.querySelectorAll('.life-manuscript__command-group')].map((element) => getComputedStyle(element).display),
     };
   });
 
-  expect(geometry.toolbar.height).toBe(54);
+  expect(geometry.toolbar.height).toBe(58);
   expect(geometry.zoom.height).toBe(30);
-  expect(geometry.titleSize).toBe('18px');
-  expect(geometry.commands.find((item) => item.text === '新建阶段')?.height).toBe(30);
-  expect(geometry.commands.find((item) => item.text === '添加批注')?.height).toBe(30);
-  expect(geometry.commands.find((item) => item.text === '今天')?.height).toBe(30);
-  expect(geometry.commands.find((item) => item.text === '添加项目')?.display).toBe('none');
+  expect(geometry.title).toBe('人生地图');
+  expect(geometry.groups).toEqual(['flex', 'flex', 'flex']);
+  expect(geometry.commands.find((item) => item.text === '新建阶段')?.height).toBe(32);
+  expect(geometry.commands.find((item) => item.text === '添加项目')?.display).toBe('flex');
+  expect(geometry.commands.find((item) => item.label === '添加关键日期')?.height).toBe(32);
+  expect(geometry.commands.find((item) => item.text === '今天')?.height).toBe(32);
+  expect(geometry.commands.find((item) => item.label === '更多人生地图选项')?.display).toBe('flex');
+  expect(geometry.more.right).toBeLessThanOrEqual(geometry.toolbar.right);
 });
