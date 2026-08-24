@@ -1,9 +1,10 @@
 import { type ReactNode } from 'react';
-import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network } from 'lucide-react';
+import { BrainCircuit, CalendarClock, CalendarDays, GitFork, LayoutGrid, Map, Network } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
+import { MIND_MAP_ENABLED } from '@/mindMap/config';
 
-export type AppModule = 'life-map' | 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph';
+export type AppModule = 'life-map' | 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph' | 'mind-map';
 
 interface ToolbarProps {
   currentView: AppModule;
@@ -18,6 +19,9 @@ const NAV_ITEMS: { module: AppModule; label: string; phoneLabel: string; icon: R
   { module: 'week-matrix', label: '周矩阵', phoneLabel: '本周', icon: <LayoutGrid size={18} /> },
   { module: 'ebb', label: '艾宾浩斯复习', phoneLabel: '复习', icon: <BrainCircuit size={18} /> },
   { module: 'knowledge-graph', label: '知识大盘', phoneLabel: '知识', icon: <Network size={18} /> },
+  ...(MIND_MAP_ENABLED
+    ? [{ module: 'mind-map' as const, label: '思维导图', phoneLabel: '导图', icon: <GitFork size={18} /> }]
+    : []),
 ];
 
 const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPreload }) => {

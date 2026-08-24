@@ -28,3 +28,30 @@ export function safeObjectId(value: string): string | null {
 export function archiveKey(userId: string, period: string): string {
   return `users/${userId}/archives/${period}.json`;
 }
+
+export async function readLimitedBody(body: ReadableStream<Uint8Array>, maxBytes: number): Promise<Uint8Array | null> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined;
+}

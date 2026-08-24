@@ -1,8 +1,8 @@
 # SmartLine 独立思维导图工作区：完整需求规格与实施计划
 
-文档版本：1.0  
-日期：2026-08-23  
-状态：待实施  
+文档版本：1.6
+日期：2026-08-24
+状态：Release 1/2 与 5,000 节点性能 Gate 已通过；Release 3 默认关闭并等待真实 Liveblocks Gate；Release 4 与 10k/跨账号未实施
 优先级：隔离与零回归高于功能数量和交付速度
 
 ---
@@ -26,6 +26,12 @@ SmartLine 新增一个名为“思维导图”的独立页面。该页面在应�
 - 新模块只有在用户进入或预加载“思维导图”页面时才下载；只有页面挂载后才初始化。
 
 任何实现若需要突破上述边界，必须停止该任务并先修改本规格，经确认后才能继续。
+
+### 0.1 当前实施状态
+
+截至 2026-08-24，Release 1 核心和本地 Release 2 编辑能力已落地：代码集中在 `src/mindMap/`，使用独立 IndexedDB、独立 Store 和页面内 Command/History；应用壳层仍只包含功能开关、导航类型、懒加载分支和手机页面标签。Markdown 使用 Marked + DOMPurify 正式渲染，LaTeX 使用 KaTeX 排版；Section 支持自动尺寸、数值尺寸和画布手柄调整。上传图片进入独立 `mind_map_assets` Blob Store，并按文档维护引用计数，JSON 导出时重新内嵌为可迁移图片。
+
+500/2,000 节点继续使用 Canvas 2D；2,500 节点以上启用 WebGL 几何层、可见节点空间索引和 Canvas/DOM 交互层，树布局在独立 Worker 执行。5,000 节点已在桌面与小屏真实工作区完成打开、保存、WebGL、Worker 布局、缩放和定位，单项约 2.2–3.3 秒。真实 Chromium E2E 矩阵现为 54 项通过、6 项按条件跳过、0 失败；另有 31 项 Mind Map 单元测试、8 项认证测试、36 项既有同步测试、Lint、类型/依赖检查和生产构建全部通过。Release 3 同步实现仍保留，但 `VITE_MIND_MAP_SYNC_ENABLED` 默认 `false`，页面明确显示“仅本地”；真实双浏览器、断网恢复、目录发现和删除同步 Gate 完成前不得在正式版本开启。Release 4 AI 和 Release 5 的 10k/跨账号协作仍未实施。
 
 ---
 
@@ -921,7 +927,7 @@ interface MindMapNode {
 }
 ~~~
 
-Release 1 的类型与运行时校验都只接受 type 为 text。Release 2 实施对应渲染、编辑和安全校验时，再把联合类型扩展为 image、url、markdown 和 latex。
+当前 schema v2 的类型与运行时校验接受 text、image、url、markdown 和 latex；schema v1 文档会在导入和加载时安全迁移到 v2。
 
 ### 18.4 Edge
 
@@ -1031,7 +1037,7 @@ Canvas 2D       HTML Overlay
 - 原生 crypto.randomUUID 生成 ID。
 - 不在基准测试前增加 Pixi、Konva、React Flow、ELK 或其他大型依赖。
 
-如果 5,000 或 10,000 节点基准证明 Canvas 2D 不足，再在 Release 5 评估 WebGL。不得为“以后可能需要”提前维护两套 Renderer。
+真实 5,000 节点需求已触发分层 Renderer：小图继续使用 Canvas 2D；2,500 节点以上使用 WebGL 绘制大批量节点和连线，Canvas/DOM 只承担交互、文字与高级内容。10,000 节点是否继续升级仍由独立 benchmark 决定。
 
 ---
 
@@ -1230,74 +1236,74 @@ Release 1 不要求：
 
 ### A. 页面与隔离
 
-- [ ] 导航新增思维导图，现有入口名称、顺序和行为不变。
-- [ ] Mind Map 为独立懒加载 chunk。
-- [ ] 未进入页面时无 Mind Map 初始化副作用。
-- [ ] Mind Map 不导入五个现有业务 Store。
-- [ ] Mind Map 不加入 workspace sync、backup 和 schema。
+- [x] 导航新增思维导图，现有入口名称、顺序和行为不变。
+- [x] Mind Map 为独立懒加载 chunk。
+- [x] 未进入页面时无 Mind Map 初始化副作用。
+- [x] Mind Map 不导入五个现有业务 Store。
+- [x] Mind Map 不加入 workspace sync、backup 和 schema。
 - [ ] Mind Map 故障不影响其他页面。
-- [ ] 其他 Store 数据在 Mind Map 操作前后 hash 不变。
+- [x] 其他 Store 数据在 Mind Map 操作前后 hash 不变。
 
 ### B. 文档与持久化
 
-- [ ] 创建、重命名、复制、切换和删除文档。
-- [ ] 每张文档独立保存和恢复。
-- [ ] IndexedDB 使用独立数据库。
-- [ ] 自动保存、手动 flush 和失败恢复可用。
-- [ ] 高版本文档不会被覆盖。
+- [x] 创建、重命名、复制、切换和删除文档。
+- [x] 每张文档独立保存和恢复。
+- [x] IndexedDB 使用独立数据库。
+- [x] 自动保存、手动 flush 和失败恢复可用。
+- [x] 高版本文档不会被覆盖。
 
 ### C. Canvas
 
-- [ ] 平移、缩放、Fit All、Fit Selection、100% 正确。
-- [ ] 鼠标指针中心缩放正确。
+- [x] 平移、缩放、Fit All、Fit Selection、100% 正确。
+- [x] 鼠标指针中心缩放正确。
 - [ ] 页面卸载后无残留监听和渲染循环。
 
 ### D. Node
 
-- [ ] 创建、编辑、移动、尺寸、样式、锁定。
-- [ ] 复制、粘贴、删除。
-- [ ] 单选、多选和框选。
+- [x] 创建、编辑、移动、尺寸、样式、锁定。
+- [x] 复制、粘贴、删除。
+- [x] 单选、多选和框选。
 - [ ] 中文输入法正确。
 
 ### E. Edge
 
-- [ ] 创建、删除、重连。
-- [ ] straight、curve。
-- [ ] 四种方向。
-- [ ] 标签和样式。
+- [x] 创建、删除、重连。
+- [x] straight、curve。
+- [x] 四种方向。
+- [x] 标签和样式。
 
 ### F. History
 
-- [ ] Undo、Redo。
-- [ ] 拖动、输入、批量操作事务合并。
-- [ ] 删除节点 Undo 同时恢复 Edge 和容器关系。
-- [ ] 刷新后历史按设计清空。
+- [x] Undo、Redo。
+- [x] 拖动、输入、批量操作事务合并。
+- [x] 删除节点 Undo 同时恢复 Edge 和容器关系。
+- [x] 刷新后历史按设计清空。
 
 ### G. Layout 与搜索
 
 - [ ] 四向树布局。
 - [ ] 对齐和均匀分布。
-- [ ] 搜索、定位和高亮。
+- [x] 搜索、定位和高亮；命中折叠 Section 内对象时自动展开。
 
 ### H. 导入导出
 
-- [ ] JSON 完整往返。
-- [ ] 非法 JSON 不改变当前文档。
-- [ ] PNG 三种范围导出。
-- [ ] 不包含任何 SmartLine 业务引用。
+- [x] JSON 完整往返。
+- [x] 非法 JSON 不改变当前文档。
+- [x] PNG 三种范围导出。
+- [x] 不包含任何 SmartLine 业务引用。
 
 ### I. 响应式与无障碍
 
-- [ ] 桌面、平板、手机基础操作可用。
+- [x] 桌面、平板、手机基础操作可用。
 - [ ] 200% 缩放可用。
 - [ ] reduced motion。
-- [ ] 键盘菜单和焦点可用。
+- [x] 键盘菜单和焦点可用。
 
 ### J. 性能
 
-- [ ] 500 节点达到 Release 1 指标。
-- [ ] 2,000 节点达到 Release 1 指标。
-- [ ] Mind Map 不增加其他页面运行时工作。
+- [x] 500 节点达到 Release 1 指标。
+- [x] 2,000 节点达到 Release 1 指标。
+- [x] Mind Map 不增加其他页面运行时工作。
 
 ---
 
@@ -1677,9 +1683,9 @@ Gate：
 - [ ] 键盘菜单和焦点管理。
 - [ ] reduced motion。
 - [ ] Canvas 可访问摘要。
-- [ ] 500/2,000 节点基准数据生成器。
-- [ ] 空间索引和几何缓存。
-- [ ] 性能回归测试。
+- [x] 500/2,000 节点基准数据生成器。
+- [x] 可见节点 uniform-grid 空间索引和渲染缓存。
+- [x] 性能回归测试。
 
 Gate：
 
@@ -1687,17 +1693,22 @@ Gate：
 - 500/2,000 节点达到指标。
 - 现有页面性能没有可测回退。
 
+实施结果：真实 Chromium 已在桌面与小屏分别完成 500/2,000/5,000 节点的导入、保存、缩放和末节点定位；5,000 节点约 2.2–3.3 秒。390/820/1440px 隔离回归均通过。
+
 ## 41. Phase 9：Release 2 高级编辑
 
 任务：
 
-- [ ] Section 和 Group 数据与命令。
-- [ ] Section 进入、离开、移动、自动尺寸和折叠。
-- [ ] Orthogonal Edge 和控制点。
-- [ ] 图片、URL、Markdown、LaTeX 节点。
-- [ ] SVG 安全导出。
-- [ ] 小地图和命令面板。
-- [ ] 5,000 节点 benchmark。
+- [x] Section 和 Group 数据与命令。
+- [x] Section 进入、离开、移动、自动尺寸和折叠。
+- [x] Section 手动数值尺寸和画布拖拽尺寸手柄。
+- [x] Orthogonal Edge 和控制点。
+- [x] 图片、URL、Markdown、LaTeX 节点数据类型。
+- [x] 图片独立 Blob Store、旧内嵌图片迁移和引用计数。
+- [x] Markdown、LaTeX 正式渲染。
+- [x] SVG 安全导出。
+- [x] 小地图和命令面板。
+- [x] 5,000 节点 benchmark。
 
 Gate：
 
@@ -1705,18 +1716,21 @@ Gate：
 - 图片和 SVG 安全测试通过。
 - 5,000 节点可打开、保存、缩放和定位。
 
+实施结果：Section 代理端点、节点进出 Section、容器维护、手动尺寸、折叠边界 Fit All、搜索自动展开和 SVG 注入已有专项测试；Markdown 会清洗可执行 HTML，LaTeX 使用 KaTeX HTML + MathML。图片已完成独立 Blob、引用计数、刷新恢复和 PNG/JSON 导出验收。5,000 节点真实画布 Gate 已通过。
+
 ## 42. Phase 10：Release 3 独立同步
 
 任务：
 
-- [ ] 设计每文档 Room ID。
-- [ ] 页面挂载时按文档进入 Room，切换和卸载时离开。
-- [ ] 实体级同步，不同步整张快照。
-- [ ] Presence。
-- [ ] 离线队列只属于 Mind Map。
-- [ ] 本地/远端/基础三方合并。
-- [ ] 删除与修改冲突测试。
-- [ ] Mind Map 页面内同步状态。
+- [x] 设计每文档 Room ID。
+- [x] 页面挂载时按文档进入 Room，切换和卸载时离开。
+- [x] 实体级同步，不同步整张快照。
+- [x] Presence。
+- [x] 离线队列只属于 Mind Map。
+- [x] 本地/远端/基础三方合并。
+- [x] 删除与修改冲突测试。
+- [x] Mind Map 页面内同步状态。
+- [x] owner-scoped Catalog Room、云端文档发现和删除墓碑。
 
 禁止：
 
@@ -1729,6 +1743,8 @@ Gate：
 
 - 两个浏览器上下文同账号同步通过。
 - Mind Map 断网和冲突不影响其他同步域。
+
+实施结果：Catalog 合并、文档发现、删除墓碑、实体补丁、三方合并、删除冲突、房间命名、认证权限和模块边界已有自动化覆盖；`tests/e2e/mind-map-release3.spec.ts` 包含“新设备先发现文档，再进入独立文档 Room 并收敛”的真实双浏览器 Gate，需在配置 Liveblocks 的环境中设置 `MIND_MAP_LIVE_SYNC_E2E=1` 后执行。该 Gate 未通过前，`VITE_MIND_MAP_SYNC_ENABLED=false`，正式页面只显示“仅本地”，不得发布未经验证的云同步。
 
 ## 43. Phase 11：Release 4 AI
 
@@ -1753,10 +1769,10 @@ Gate：
 
 10k：
 
-- [ ] 分析 profiler，不凭猜测换技术。
-- [ ] 布局迁入 Worker。
-- [ ] 增量更新空间索引和几何缓存。
-- [ ] 只有 Canvas 2D 达不到目标时才评估 WebGL。
+- [x] 以真实 5,000 节点浏览器 Gate 分析渲染路径。
+- [x] 布局迁入 Worker。
+- [x] 增加 uniform-grid 空间索引和富内容缓存。
+- [x] 2,500 节点以上启用 WebGL 几何渲染层。
 - [ ] 10,000 节点 benchmark 和内存测试。
 
 跨账号：
@@ -1807,12 +1823,13 @@ Gate：
 
 - tests/e2e/mind-map-navigation.spec.ts
 - tests/e2e/mind-map-editor.spec.ts
-- tests/e2e/mind-map-history.spec.ts
+- tests/e2e/mind-map-edge.spec.ts
 - tests/e2e/mind-map-persistence.spec.ts
-- tests/e2e/mind-map-import-export.spec.ts
+- tests/e2e/mind-map-tools.spec.ts
 - tests/e2e/mind-map-isolation.spec.ts
-- tests/e2e/mind-map-mobile.spec.ts
 - tests/e2e/mind-map-performance.spec.ts
+- tests/e2e/mind-map-release2.spec.ts
+- tests/e2e/mind-map-release3.spec.ts
 
 隔离 E2E 必须执行：
 
@@ -1823,6 +1840,8 @@ Gate：
 - 检查 workspace queue、backup 和 sync room 未出现 Mind Map 字段。
 - 强制 Mind Map 抛错后验证 Timeline 可用。
 - 验证离开后 Space、Delete、Ctrl/Cmd+Z 和滚轮不被 Mind Map 拦截。
+
+2026-08-24 本地发布 Gate 结果：54 项真实 Chromium E2E 通过、6 项按配置或项目条件跳过、0 失败。真实 Liveblocks 双浏览器用例是其中明确跳过的发布开关 Gate；云同步保持关闭。其余跳过项是小屏项目中由桌面项目显式覆盖的 390/820/1440 重复用例，以及不适用于该项目的交互分支。
 
 ## 48. 每阶段回归命令
 
@@ -1857,8 +1876,10 @@ npm run test:all
 ## 49. 发布策略
 
 - VITE_MIND_MAP_ENABLED 作为构建期开关。
+- VITE_MIND_MAP_SYNC_ENABLED 作为独立云同步发布开关，默认 `false`。
 - 默认开发环境开启。
 - 正式发布前先完成 Release 1 Gate。
+- 只有真实双浏览器、断网恢复、目录发现和删除同步 Gate 全部通过后，才可开启 Mind Map 云同步。
 - 关闭开关时隐藏导航且不加载 Mind Map。
 - 回滚只需要关闭入口；独立数据库保留，避免用户数据丢失。
 - 禁止回滚时删除 Mind Map IndexedDB。
@@ -1888,7 +1909,7 @@ npm run test:all
 | 全局快捷键残留 | 其他页面交互异常 | 页面级注册与卸载测试 |
 | 全局 CSS 泄漏 | 其他页面视觉回归 | CSS Module + 截图回归 |
 | 整图快照同步 | 多人覆盖和大数据性能差 | Release 3 实体级同步 |
-| 一开始使用 WebGL | 双渲染器和维护成本 | Canvas 2D，基准后升级 |
+| 大图继续只用 Canvas 2D | 5,000 节点批量几何开销 | 小图 Canvas 2D，2,500+ 节点启用 WebGL 分层渲染 |
 | 把历史持久化或同步 | schema 和协作重放错误 | 历史仅本地内存 |
 | 导入绕过 Command | 数据损坏且不可撤销 | 临时校验后原子命令 |
 | AI 直接写 Store | 绕过历史和安全 | Graph Patch + 确认 + Command |

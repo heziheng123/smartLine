@@ -10,7 +10,7 @@
 浏览器 → Cloudflare Pages 静态站点
        → /api/auth/* GitHub OAuth
        → /api/liveblocks-auth 房间令牌
-       → Liveblocks 统一工作区
+       → Liveblocks 统一工作区及思维导图图片文件
        → /api/archives/*（可选 R2）
 ```
 
@@ -36,9 +36,9 @@
 
 正式稳定后应使用 `/api/liveblocks-auth`，而不是让浏览器长期持有 Public Key。
 
-### 2.3 R2（可选）
+### 2.3 R2
 
-创建 Production 和 Preview 两个不同 bucket，并在 Pages 项目中以 `SMARTLINE_R2` 绑定。R2 仅保存月度历史归档；不配置时相关 API 返回 503，其他功能正常。
+R2 仅用于可选的月度历史归档。需要该功能时创建 Production 和 Preview 两个不同 bucket，并在 Pages 项目中以 `SMARTLINE_R2` 绑定；不使用月度归档可不创建、不绑定，也不影响思维导图及图片同步。
 
 ## 3. Cloudflare Pages 配置
 
@@ -58,6 +58,7 @@ Pages 会自动识别仓库根目录的 `functions/`。`public/_headers` 会进�
 ```env
 VITE_LIVEBLOCKS_AUTH_ENDPOINT=/api/liveblocks-auth
 VITE_DISABLE_PUBLIC_KEY_FALLBACK=true
+VITE_MIND_MAP_SYNC_ENABLED=true
 ```
 
 迁移观察期：
@@ -98,7 +99,8 @@ Preview 环境使用独立 secrets 和 R2 bucket；不得复用 Production Secre
 7. 断网修改后恢复网络，确认离线队列清空且无冲突副本。
 8. 检查响应头 CSP、frame deny、nosniff 和 Service Worker no-cache。
 9. 如启用 R2，测试首次 PUT、带 ETag 更新和错误 ETag 的 409。
-10. 导出完整 JSON，并实际验证一次本地快照恢复流程。
+10. 在设备 A 上传思维导图图片，确认 Liveblocks Files 中出现文件、设备 B 能下载并刷新恢复；断网失败时本机图片不得被删除。
+11. 导出完整 JSON，并实际验证一次本地快照恢复流程。
 
 ## 5. 旧房间迁移
 
@@ -110,9 +112,11 @@ Preview 环境使用独立 secrets 和 R2 bucket；不得复用 Production Secre
 - 至少观察 30 天再停用 Public Key fallback；
 - 任一端有不同非空数据时，不允许自动覆盖。
 
-## 6. R2 归档行为
+## 6. 云端文件与 R2 归档
 
-API 路径为 `/api/archives/{YYYY-MM}`，支持 GET、HEAD、PUT：
+思维导图图片使用 Liveblocks LiveFile，文件引用保存在所属导图房间；`/api/mind-map-files/{documentId}/{fileId}` 仅为当前登录账号代理下载，随后写入本机 IndexedDB 缓存。R2 只用于可选月度归档。
+
+月度归档 API 路径为 `/api/archives/{YYYY-MM}`，支持 GET、HEAD、PUT：
 
 - 必须有有效 GitHub session；
 - 月份严格匹配 `YYYY-MM`；
@@ -121,7 +125,7 @@ API 路径为 `/api/archives/{YYYY-MM}`，支持 GET、HEAD、PUT：
 - 对象按 GitHub 用户 ID 隔离；
 - 已存在对象的更新必须携带当前 ETag，否则返回 409。
 
-R2 不是 Liveblocks 的替代品，也不是实时备份；它用于长期历史归档。
+R2 不是 Liveblocks 的替代品，也不是实时备份；它仅用于长期历史归档。
 
 ## 7. 回滚
 
@@ -133,13 +137,13 @@ R2 不是 Liveblocks 的替代品，也不是实时备份；它用于长期历�
 2. 从当前版本导出完整备份；
 3. 保留当前 Pages deployment；
 4. 验证待回滚版本支持当前 schema 7；任何只支持 schema 6 或更早版本的客户端都不能写入已升级的生产工作区；
-5. 回滚静态部署但不删除 Liveblocks/R2；
+5. 回滚静态部署但不删除 Liveblocks 数据或可选的 R2 归档；
 6. 登录、hydrate、离线队列和导出全部验证后恢复使用。
 
 ## 8. 监控与维护
 
 - 每次依赖更新运行完整测试和 `npm audit`；
-- 定期检查 Pages Functions 4xx/5xx、Liveblocks 连接失败和 R2 409；
+- 定期检查 Pages Functions 4xx/5xx、Liveblocks 连接及文件额度和 R2 归档 409；
 - 关注 IndexedDB 容量、快照数量和离线冲突副本；
 - 保留至少一份不在浏览器中的完整 JSON；
 - OAuth、Liveblocks 和 session secret 轮换要分阶段进行，避免同时失去登录和同步能力。

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSessionCookie, SESSION_COOKIE } from '../../functions/_lib/session.ts';
 import { onRequestHead as inspectArchive, onRequestPut as saveArchive } from '../../functions/api/archives/[period].ts';
+import { onRequestGet as loadMindMapFile } from '../../functions/api/mind-map-files/[documentId]/[fileId].ts';
+import { onRequestGet as inspectStorage } from '../../functions/api/storage/status.ts';
 import type { StorageEnv, SmartLineR2Bucket } from '../../functions/_lib/r2.ts';
 
 const sessionEnv = {
@@ -67,6 +69,72 @@ test('R2 archive endpoints fail closed when login or binding is missing', async 
     request: new Request('https://smartline.example/api/archives/2026-07', { method: 'PUT' }),
   });
   assert.equal(unavailable.status, 503);
+});
+
+test('storage readiness reports optional R2 archives', async () => {
+  const sessionCookie = await cookie();
+  const request = new Request('https://smartline.example/api/storage/status', {
+    headers: { Cookie: `${SESSION_COOKIE}=${sessionCookie}` },
+  });
+  const unavailable = await inspectStorage({ env: sessionEnv, request });
+  assert.deepEqual(await unavailable.json(), {
+    r2Configured: false,
+    archiveEnabled: false,
+  });
+  const available = await inspectStorage({
+    env: {
+      ...sessionEnv,
+      SMARTLINE_R2: { put: async () => undefined, get: async () => null, delete: async () => undefined },
+    },
+    request,
+  });
+  assert.deepEqual(await available.json(), {
+    r2Configured: true,
+    archiveEnabled: true,
+  });
+});
+
+test('mind map LiveFile downloads are authenticated and owner-scoped', async () => {
+  const sessionCookie = await cookie();
+  const fileId = 'fl_123456789012345678901';
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.startsWith('https://api.liveblocks.io/')) {
+      assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer sk_test');
+      return Response.json({
+        id: fileId,
+        mimeType: 'image/png',
+        size: 8,
+        url: 'https://files.example/image',
+      });
+    }
+    return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
+  };
+  try {
+    const response = await loadMindMapFile({
+      env: { ...sessionEnv, LIVEBLOCKS_SECRET_KEY: 'sk_test' },
+      params: { documentId: 'document_123', fileId },
+      request: new Request(`https://smartline.example/api/mind-map-files/document_123/${fileId}`, {
+        headers: { Cookie: `${SESSION_COOKIE}=${sessionCookie}` },
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Content-Type'), 'image/png');
+    assert.equal((await response.arrayBuffer()).byteLength, 8);
+    assert.ok(calls[0].includes('/rooms/workspace-gh_12345-mind-map-document_123/storage/files/'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const unauthenticated = await loadMindMapFile({
+    env: { ...sessionEnv, LIVEBLOCKS_SECRET_KEY: 'sk_test' },
+    params: { documentId: 'document_123', fileId },
+    request: new Request(`https://smartline.example/api/mind-map-files/document_123/${fileId}`),
+  });
+  assert.equal(unauthenticated.status, 401);
 });
 
 test('R2 archives reject oversized and mismatched payloads before storage', async () => {

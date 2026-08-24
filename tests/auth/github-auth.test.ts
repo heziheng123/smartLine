@@ -167,6 +167,40 @@ test('Liveblocks endpoint requires a session and uses a stable GitHub identity',
   assert.equal(unownedLegacyRoom.status, 403);
   assert.equal(requests.length, 2);
 
+  const mindMapRoom = await authenticateLiveblocks({
+    env,
+    request: new Request('https://smartline.example/api/liveblocks-auth', {
+      method: 'POST',
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${sessionValue}`,
+        Origin: 'https://smartline.example',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ room: 'workspace-gh_12345-mind-map-doc_abc' }),
+    }),
+  });
+  assert.equal(mindMapRoom.status, 200);
+  assert.deepEqual(requests[2].body.permissions, {
+    'workspace-gh_12345-mind-map-doc_abc': ['*:write'],
+  });
+
+  const mindMapCatalogRoom = await authenticateLiveblocks({
+    env,
+    request: new Request('https://smartline.example/api/liveblocks-auth', {
+      method: 'POST',
+      headers: {
+        Cookie: `${SESSION_COOKIE}=${sessionValue}`,
+        Origin: 'https://smartline.example',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ room: 'workspace-gh_12345-mind-map-catalog-v1' }),
+    }),
+  });
+  assert.equal(mindMapCatalogRoom.status, 200);
+  assert.deepEqual(requests[3].body.permissions, {
+    'workspace-gh_12345-mind-map-catalog-v1': ['*:write'],
+  });
+
   const crossOrigin = await authenticateLiveblocks({
     env,
     request: new Request('https://smartline.example/api/liveblocks-auth', {

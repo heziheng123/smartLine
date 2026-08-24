@@ -28,6 +28,7 @@ import {
   MOTION_EASE_ENTER,
   MOTION_EASE_EXIT,
 } from '@/motion/system';
+import { MIND_MAP_ENABLED } from '@/mindMap/config';
 
 import '@/styles/design-tokens.css';
 import '@/styles/confirmation.css';
@@ -65,6 +66,7 @@ const loadDailyScheduleView = () => import('@/components/dailySchedule/DailySche
 const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDocumentView');
 const loadWeekMatrixView = () => import('@/components/smartBlock/WeekMatrixView');
 const loadKnowledgeGraphView = () => import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView }));
+const loadMindMapWorkspace = () => import('@/mindMap');
 const loadTaskDialog = () => import('@/components/TaskDialog');
 const loadGroupDialog = () => import('@/components/GroupDialog');
 const loadNoteDialog = () => import('@/components/NoteDialog');
@@ -97,6 +99,7 @@ const DailyScheduleView = React.lazy(loadDailyScheduleView);
 const ProjectDocumentView = React.lazy(loadProjectDocumentView);
 const WeekMatrixView = React.lazy(loadWeekMatrixView);
 const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
+const MindMapWorkspace = React.lazy(loadMindMapWorkspace);
 const TaskDialog = React.lazy(loadTaskDialog);
 const GroupDialog = React.lazy(loadGroupDialog);
 const NoteDialog = React.lazy(loadNoteDialog);
@@ -148,6 +151,7 @@ const APP_VIEW_ORDER: AppModule[] = [
   'week-matrix',
   'ebb',
   'knowledge-graph',
+  'mind-map',
 ];
 
 const PHONE_LAST_VIEW_STORAGE_KEY = 'smart-line-phone-last-view-v1';
@@ -156,7 +160,7 @@ function getInitialAppView(): AppModule {
   if (!isPhoneLayoutViewport()) return 'timeline';
   try {
     const saved = localStorage.getItem(PHONE_LAST_VIEW_STORAGE_KEY) as AppModule | null;
-    if (saved && APP_VIEW_ORDER.includes(saved)) return saved;
+    if (saved && APP_VIEW_ORDER.includes(saved) && (saved !== 'mind-map' || MIND_MAP_ENABLED)) return saved;
   } catch {
     // Storage is optional; the phone execution view remains the safe default.
   }
@@ -950,7 +954,8 @@ const App: React.FC = () => {
     if (view === 'ebb') { void loadEbbView(); return; }
     if (view === 'daily-schedule') { void loadDailyScheduleView(); return; }
     if (view === 'week-matrix') { void loadWeekMatrixView(); return; }
-    if (view === 'knowledge-graph') void loadKnowledgeGraphView();
+    if (view === 'knowledge-graph') { void loadKnowledgeGraphView(); return; }
+    if (view === 'mind-map' && MIND_MAP_ENABLED) void loadMindMapWorkspace();
   }, []);
 
   if (!isHydrated) {
@@ -962,7 +967,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`tl-app ${isPhoneLayout ? 'tl-app--phone' : ''} ${(currentView === 'life-map' || currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph') ? 'tl-app--ebb' : ''} ${currentView === 'timeline' && drawerTask ? 'tl-app--project-split-open' : ''}`}>
+    <div className={`tl-app ${isPhoneLayout ? 'tl-app--phone' : ''} ${(currentView === 'life-map' || currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph' || currentView === 'mind-map') ? 'tl-app--ebb' : ''} ${currentView === 'timeline' && drawerTask ? 'tl-app--project-split-open' : ''}`}>
       <Toolbar
         currentView={currentView}
         onViewChange={handleViewChange}
@@ -979,12 +984,12 @@ const App: React.FC = () => {
 
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
       <ViewErrorBoundary
-        viewName={currentView === 'life-map' ? '人生地图' : currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
+        viewName={currentView === 'life-map' ? '人生地图' : currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'mind-map' ? '思维导图' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
         resetKey={currentView}
         safeModeKey={currentView === 'ebb' ? 'smart-line-ebb-safe-mode' : undefined}
         onExit={currentView === 'timeline' ? undefined : () => handleViewChange('timeline')}
       >
-      {isPhoneLayout && !phoneFullView ? (
+      {isPhoneLayout && !phoneFullView && currentView !== 'mind-map' ? (
         <PhoneWorkspace
           currentView={currentView}
           tasks={weekMatrixTasks}
@@ -1106,6 +1111,26 @@ const App: React.FC = () => {
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
                 <KnowledgeGraphView />
+              </Suspense>
+            </div>
+          </motion.div>
+        )}
+
+        {currentView === 'mind-map' && MIND_MAP_ENABLED && (
+          <motion.div
+            key="mind-map"
+            id="view-mind-map"
+            role="tabpanel"
+            className="tl-app-split tl-app-split--ebb"
+            custom={viewMotionContext}
+            variants={VIEW_MOTION_VARIANTS}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <div className="tl-app-main">
+              <Suspense fallback={<ViewFallback />}>
+                <MindMapWorkspace />
               </Suspense>
             </div>
           </motion.div>

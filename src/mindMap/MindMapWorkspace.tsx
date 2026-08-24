@@ -1,0 +1,559 @@
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Cloud,
+  Copy,
+  Download,
+  FilePlus2,
+  FileCode2,
+  GitFork,
+  Image as ImageIcon,
+  Link2,
+  Maximize2,
+  MoreHorizontal,
+  Redo2,
+  RefreshCw,
+  Save,
+  Trash2,
+  Undo2,
+  Upload,
+} from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
+import { useAuth } from '@/auth/AuthContext';
+import MindMapCanvas from './canvas/MindMapCanvas';
+import { MIND_MAP_SYNC_ENABLED } from './config';
+import {
+  downloadMindMapJson,
+  downloadMindMapSvg,
+  parseMindMapDocumentJson,
+  type MindMapPngScope,
+} from './importExport';
+import type { TreeDirection } from './layout';
+import { layoutMindMapTreeInWorker } from './layoutWorkerClient';
+import { DEFAULT_DOCUMENT_TITLE, type MindMapNodeType } from './model';
+import { mindMapRepository } from './repository';
+import { useMindMapStore } from './store';
+import { MindMapCatalogSession, MindMapSyncSession, type MindMapSyncViewState } from './sync';
+import type { MindMapPresence } from './syncCore';
+import styles from './styles/MindMapWorkspace.module.css';
+import { mindMapVisualCssVariables } from './styles/visualTokens';
+
+const SAVE_LABEL = {
+  idle: '准备就绪',
+  saving: '正在保存…',
+  saved: '已保存',
+  error: '未保存',
+} as const;
+
+const SYNC_LABEL = {
+  local: '仅本地',
+  connecting: '正在同步…',
+  connected: '云端已同步',
+  offline: '离线，等待重连',
+  error: '云同步异常',
+} as const;
+
+const MindMapWorkspace = () => {
+  const auth = useAuth();
+  const {
+    isHydrated,
+    index,
+    document,
+    history,
+    saveStatus,
+    error,
+    hydrate,
+    createDocument,
+    renameDocument,
+    duplicateDocument,
+    switchDocument,
+    deleteCurrentDocument,
+    importDocument,
+    applyRemoteDocument,
+    cacheRemoteDocument,
+    applyRemoteCatalog,
+    execute,
+    undo,
+    redo,
+    flushSave,
+    saveEmergency,
+    clearError,
+  } = useMindMapStore(useShallow((state) => state));
+  const [scale, setScale] = useState(1);
+  const [fitRequest, setFitRequest] = useState(0);
+  const [pngRequest, setPngRequest] = useState(0);
+  const [pngScope, setPngScope] = useState<MindMapPngScope>('viewport');
+  const [treeDirection, setTreeDirection] = useState<TreeDirection>('left-right');
+  const [layoutRunning, setLayoutRunning] = useState(false);
+  const [selectedNodeCount, setSelectedNodeCount] = useState(0);
+  const [creationType, setCreationType] = useState<MindMapNodeType>('text');
+  const [connectionMode, setConnectionMode] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [assetSyncError, setAssetSyncError] = useState<string | null>(null);
+  const [assetRevision, setAssetRevision] = useState(0);
+  const [syncRetry, setSyncRetry] = useState(0);
+  const [syncState, setSyncState] = useState<MindMapSyncViewState>({
+    status: 'local',
+    roomId: null,
+    error: null,
+    others: [],
+  });
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const moreMenuRef = useRef<HTMLDetailsElement>(null);
+  const syncSessionRef = useRef<MindMapSyncSession | null>(null);
+  const catalogSessionRef = useRef<MindMapCatalogSession | null>(null);
+  const documentRef = useRef(document);
+  const indexDocumentsRef = useRef(index.documents);
+  documentRef.current = document;
+  indexDocumentsRef.current = index.documents;
+  const documentId = document?.id;
+
+  useEffect(() => setConnectionMode(false), [documentId]);
+
+  useEffect(() => {
+    const retry = () => setSyncRetry((value) => value + 1);
+    window.addEventListener('online', retry);
+    return () => window.removeEventListener('online', retry);
+  }, []);
+
+  useEffect(() => {
+    void hydrate();
+    const handleVisibility = () => {
+      if (window.document.visibilityState === 'hidden') void flushSave();
+    };
+    const handlePageHide = () => saveEmergency();
+    window.document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', handlePageHide);
+      void flushSave();
+    };
+  }, [flushSave, hydrate, saveEmergency]);
+
+  useEffect(() => {
+    syncSessionRef.current?.stop();
+    syncSessionRef.current = null;
+    const currentDocument = documentRef.current;
+    if (!MIND_MAP_SYNC_ENABLED || !currentDocument || !auth.enabled || auth.status !== 'authenticated' || !auth.userId) {
+      setSyncState({ status: 'local', roomId: null, error: null, others: [] });
+      return;
+    }
+    const session = new MindMapSyncSession({
+      identity: auth.userId,
+      name: auth.login || auth.userId,
+      document: currentDocument,
+      onDocument: applyRemoteDocument,
+      onState: (state) => {
+        if (syncSessionRef.current === session) setSyncState(state);
+      },
+    });
+    syncSessionRef.current = session;
+    void session.start();
+    return () => {
+      if (syncSessionRef.current === session) syncSessionRef.current = null;
+      session.stop();
+    };
+  }, [applyRemoteDocument, auth.enabled, auth.login, auth.status, auth.userId, documentId, syncRetry]);
+
+  useEffect(() => {
+    catalogSessionRef.current?.stop();
+    catalogSessionRef.current = null;
+    if (!MIND_MAP_SYNC_ENABLED || !isHydrated || !auth.enabled || auth.status !== 'authenticated' || !auth.userId) return;
+    const session = new MindMapCatalogSession({
+      identity: auth.userId,
+      name: auth.login || auth.userId,
+      documents: indexDocumentsRef.current,
+      onEntries: (entries) => void applyRemoteCatalog(entries),
+      onError: setLocalError,
+    });
+    catalogSessionRef.current = session;
+    void session.start();
+    return () => {
+      if (catalogSessionRef.current === session) catalogSessionRef.current = null;
+      session.stop();
+    };
+  }, [applyRemoteCatalog, auth.enabled, auth.login, auth.status, auth.userId, isHydrated, syncRetry]);
+
+  useEffect(() => {
+    catalogSessionRef.current?.publish(index.documents);
+  }, [index.documents]);
+
+  useEffect(() => {
+    if (!MIND_MAP_SYNC_ENABLED || !isHydrated || !auth.enabled || auth.status !== 'authenticated' || !auth.userId) return;
+    const identity = auth.userId;
+    const name = auth.login || identity;
+    let cancelled = false;
+    let activeSession: MindMapSyncSession | null = null;
+    void (async () => {
+      for (const summary of indexDocumentsRef.current) {
+        if (cancelled || summary.id === documentRef.current?.id) continue;
+        const backgroundDocument = await mindMapRepository.loadDocument(summary.id);
+        if (!backgroundDocument) continue;
+        let sessionError: string | null = null;
+        let mergedDocument = null as typeof backgroundDocument | null;
+        const session = new MindMapSyncSession({
+          identity,
+          name,
+          document: backgroundDocument,
+          onDocument: (remote) => { mergedDocument = remote; },
+          onState: (state) => { sessionError = state.error; },
+        });
+        activeSession = session;
+        await session.start();
+        if (sessionError) throw new Error(sessionError);
+        const syncedDocument = mergedDocument ?? backgroundDocument;
+        await session.syncImageAssets(syncedDocument);
+        await session.flush();
+        if (mergedDocument) await cacheRemoteDocument(mergedDocument);
+        session.stop();
+        activeSession = null;
+      }
+    })().catch((syncError) => {
+      if (!cancelled) setLocalError(syncError instanceof Error ? syncError.message : '后台导图同步失败。');
+    });
+    return () => {
+      cancelled = true;
+      activeSession?.stop();
+    };
+  }, [auth.enabled, auth.login, auth.status, auth.userId, cacheRemoteDocument, isHydrated, syncRetry]);
+
+  useEffect(() => {
+    if (!document || !MIND_MAP_SYNC_ENABLED || !auth.enabled || auth.status !== 'authenticated' || !auth.userId) {
+      setAssetSyncError(null);
+      return;
+    }
+    if (syncState.status !== 'connected' || !syncSessionRef.current) return;
+    let cancelled = false;
+    void syncSessionRef.current.syncImageAssets(document).then(({ downloaded }) => {
+      if (cancelled) return;
+      setAssetSyncError(null);
+      if (downloaded > 0) setAssetRevision((value) => value + 1);
+      const latest = documentRef.current;
+      if (latest?.id === document.id) syncSessionRef.current?.publish(latest);
+    }).catch((assetError) => {
+      if (cancelled) return;
+      setAssetSyncError(assetError instanceof Error ? assetError.message : '思维导图图片同步失败。');
+      const latest = documentRef.current;
+      if (latest?.id === document.id) syncSessionRef.current?.publish(latest);
+    });
+    return () => { cancelled = true; };
+  }, [auth.enabled, auth.status, auth.userId, document, syncRetry, syncState.status]);
+
+  const updatePresence = useCallback((patch: Partial<Pick<MindMapPresence, 'cursor' | 'draggingId' | 'editingId'>>) => {
+    syncSessionRef.current?.updatePresence(patch);
+  }, []);
+
+  const confirmDelete = () => {
+    if (!document) return;
+    if (window.confirm('确定删除“' + document.title + '”吗？此操作只删除这张独立思维导图。')) {
+      const deletedId = document.id;
+      void deleteCurrentDocument().then((deleted) => {
+        if (deleted) catalogSessionRef.current?.deleteDocument(deletedId);
+      });
+    }
+  };
+
+  const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setLocalError(null);
+    try {
+      const imported = parseMindMapDocumentJson(await file.text());
+      await importDocument(imported);
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : '导入思维导图失败。');
+    }
+  };
+
+  const runTreeLayout = useCallback(async () => {
+    if (!document || layoutRunning) return;
+    const source = document;
+    setLayoutRunning(true);
+    try {
+      const laidOut = await layoutMindMapTreeInWorker(source, treeDirection);
+      execute('树形布局', (current) => (
+        current.id === source.id && current.updatedAt === source.updatedAt
+          ? { ...current, nodes: laidOut.nodes }
+          : current
+      ));
+    } finally {
+      setLayoutRunning(false);
+    }
+  }, [document, execute, layoutRunning, treeDirection]);
+
+  const closeMoreMenu = () => {
+    if (moreMenuRef.current) moreMenuRef.current.open = false;
+  };
+
+  return (
+    <main
+      className={styles.workspace}
+      style={mindMapVisualCssVariables}
+      data-testid="mind-map-workspace"
+      aria-label="思维导图工作区"
+    >
+      <header className={styles.header}>
+        <h1 className={styles.srOnly}>思维导图</h1>
+        <div className={styles.documentControls}>
+          {isHydrated && document ? (
+            <div className={styles.documentRow}>
+              <input
+                className={styles.titleInput}
+                data-testid="mind-map-title"
+                aria-label="思维导图名称"
+                value={document.title}
+                placeholder={DEFAULT_DOCUMENT_TITLE}
+                maxLength={120}
+                onChange={(event) => renameDocument(event.target.value)}
+                onBlur={(event) => {
+                  if (!event.target.value.trim()) renameDocument(DEFAULT_DOCUMENT_TITLE);
+                }}
+              />
+              <select
+                className={styles.documentSelect}
+                aria-label="切换思维导图"
+                value={document.id}
+                onChange={(event) => void switchDocument(event.target.value)}
+              >
+                {index.documents.map((item) => (
+                  <option key={item.id} value={item.id}>{item.title}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <span className={styles.loadingTitle}>思维导图</span>
+          )}
+        </div>
+        <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={styles.iconAction}
+            title="撤销"
+            aria-label="撤销"
+            data-testid="mind-map-undo"
+            disabled={history.undo.length === 0}
+            onClick={undo}
+          >
+            <Undo2 size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.iconAction}
+            title="重做"
+            aria-label="重做"
+            data-testid="mind-map-redo"
+            disabled={history.redo.length === 0}
+            onClick={redo}
+          >
+            <Redo2 size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.iconAction}
+            title="新建导图"
+            aria-label="新建导图"
+            data-testid="mind-map-new-document"
+            onClick={() => void createDocument()}
+          >
+            <FilePlus2 size={16} aria-hidden="true" />
+          </button>
+          <details ref={moreMenuRef} className={styles.moreMenu}>
+            <summary aria-label="更多操作" title="更多操作">
+              <MoreHorizontal size={17} aria-hidden="true" />
+            </summary>
+            <div className={styles.moreMenuPanel} role="menu" aria-label="更多操作菜单">
+              <button type="button" role="menuitem" onClick={() => {
+                void duplicateDocument();
+                closeMoreMenu();
+              }} disabled={!document}>
+                <Copy size={15} aria-hidden="true" />复制当前导图
+              </button>
+              <button type="button" role="menuitem" onClick={() => {
+                void flushSave();
+                closeMoreMenu();
+              }} disabled={!document}>
+                <Save size={15} aria-hidden="true" />立即保存
+              </button>
+              <span className={styles.menuDivider} aria-hidden="true" />
+              <button type="button" role="menuitem" onClick={() => {
+                importInputRef.current?.click();
+                closeMoreMenu();
+              }}>
+                <Upload size={15} aria-hidden="true" />导入 JSON
+              </button>
+              <button type="button" role="menuitem" onClick={() => {
+                if (document) void downloadMindMapJson(document);
+                closeMoreMenu();
+              }} disabled={!document}>
+                <Download size={15} aria-hidden="true" />导出 JSON
+              </button>
+              <button type="button" role="menuitem" onClick={() => {
+                if (document) downloadMindMapSvg(document);
+                closeMoreMenu();
+              }} disabled={!document}>
+                <FileCode2 size={15} aria-hidden="true" />导出 SVG
+              </button>
+              <div className={styles.pngExportRow}>
+                <button type="button" onClick={() => {
+                  setPngRequest((value) => value + 1);
+                  closeMoreMenu();
+                }} disabled={!document || (pngScope === 'selection' && selectedNodeCount === 0)}>
+                  <ImageIcon size={15} aria-hidden="true" />导出 PNG
+                </button>
+                <select
+                  aria-label="PNG 导出范围"
+                  value={pngScope}
+                  onChange={(event) => setPngScope(event.target.value as MindMapPngScope)}
+                >
+                  <option value="viewport">当前视口</option>
+                  <option value="all">全部内容</option>
+                  <option value="selection">当前选择</option>
+                </select>
+              </div>
+              <span className={styles.menuDivider} aria-hidden="true" />
+              <button className={styles.dangerMenuItem} type="button" role="menuitem" onClick={() => {
+                closeMoreMenu();
+                confirmDelete();
+              }} disabled={!document}>
+                <Trash2 size={15} aria-hidden="true" />删除当前导图
+              </button>
+            </div>
+          </details>
+        </div>
+      </header>
+      <input
+        ref={importInputRef}
+        className={styles.hiddenInput}
+        type="file"
+        accept="application/json,.json"
+        aria-label="选择思维导图 JSON 文件"
+        onChange={(event) => void handleImport(event)}
+      />
+
+      {(localError || error || assetSyncError || syncState.error) && (
+        <div className={styles.errorBanner} role="alert">
+          <span>{localError || error || assetSyncError || syncState.error}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setLocalError(null);
+              setAssetSyncError(null);
+              clearError();
+              if (assetSyncError || syncState.error) setSyncRetry((value) => value + 1);
+            }}
+          >
+            {assetSyncError || syncState.error ? '重试' : '关闭'}
+          </button>
+        </div>
+      )}
+
+      <section className={styles.canvas} aria-label="思维导图画布">
+        <nav className={styles.floatingToolbar} aria-label="思维导图工具">
+          <label className={styles.creationTool}>
+            <span>节点</span>
+            <select
+              aria-label="新节点类型"
+              value={creationType}
+              onChange={(event) => setCreationType(event.target.value as MindMapNodeType)}
+            >
+              <option value="text">文本</option>
+              <option value="markdown">Markdown</option>
+              <option value="latex">LaTeX</option>
+              <option value="url">URL</option>
+              <option value="image">图片</option>
+            </select>
+          </label>
+          <span className={styles.toolDivider} aria-hidden="true" />
+          <button
+            type="button"
+            data-testid="mind-map-layout-tree"
+            disabled={!document || Object.keys(document.nodes).length < 2 || layoutRunning}
+            onClick={() => void runTreeLayout()}
+          >
+            <GitFork size={15} aria-hidden="true" />
+            {layoutRunning ? '布局中…' : '布局'}
+          </button>
+          <select
+            className={styles.directionSelect}
+            aria-label="树形布局方向"
+            value={treeDirection}
+            onChange={(event) => setTreeDirection(event.target.value as TreeDirection)}
+          >
+            <option value="left-right">→</option>
+            <option value="right-left">←</option>
+            <option value="top-bottom">↓</option>
+            <option value="bottom-top">↑</option>
+          </select>
+          <button
+            type="button"
+            className={connectionMode ? styles.toolActive : undefined}
+            aria-pressed={connectionMode}
+            disabled={!document || Object.keys(document.nodes).length < 2}
+            title="依次点击起点和终点节点；也可以拖动节点四边的圆点"
+            onClick={() => setConnectionMode((active) => !active)}
+          >
+            <Link2 size={15} aria-hidden="true" />连线
+          </button>
+          <button
+            className={styles.iconTool}
+            type="button"
+            aria-label="适合画布"
+            title="适合画布"
+            disabled={!document || Object.keys(document.nodes).length === 0}
+            onClick={() => setFitRequest((value) => value + 1)}
+          >
+            <Maximize2 size={15} aria-hidden="true" />
+          </button>
+        </nav>
+        {!isHydrated ? (
+          <div className={styles.loading} role="status">正在加载独立思维导图…</div>
+        ) : document ? (
+          <MindMapCanvas
+            document={document}
+            assetRevision={assetRevision}
+            fitRequest={fitRequest}
+            pngRequest={pngRequest}
+            pngScope={pngScope}
+            creationType={creationType}
+            connectionMode={connectionMode}
+            onConnectionModeChange={setConnectionMode}
+            remotePresences={syncState.others}
+            onPresenceChange={updatePresence}
+            onSelectionChange={setSelectedNodeCount}
+            onScaleChange={setScale}
+          />
+        ) : (
+          <div className={styles.loading} role="status">暂时无法打开思维导图。</div>
+        )}
+      </section>
+
+      <footer className={styles.statusBar}>
+        <span>{Math.round(scale * 100)}%</span>
+        <span>{document ? Object.keys(document.nodes).length : 0} 个节点</span>
+        <span data-testid="mind-map-save-status">{SAVE_LABEL[saveStatus]}</span>
+        <span
+          className={styles.syncStatus}
+          data-testid="mind-map-sync-status"
+          title={syncState.roomId || undefined}
+        >
+          <Cloud size={12} aria-hidden="true" />
+          {SYNC_LABEL[assetSyncError ? 'error' : syncState.status]}
+        </span>
+        {syncState.others.length > 0 && <span>{syncState.others.length + 1} 人在线</span>}
+        {(syncState.status === 'offline' || syncState.status === 'error' || assetSyncError) && (
+          <button
+            className={styles.syncRetry}
+            type="button"
+            aria-label="重试思维导图云同步"
+            onClick={() => setSyncRetry((value) => value + 1)}
+          >
+            <RefreshCw size={12} aria-hidden="true" />
+          </button>
+        )}
+      </footer>
+    </main>
+  );
+};
+
+export default MindMapWorkspace;

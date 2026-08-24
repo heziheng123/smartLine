@@ -1,0 +1,88 @@
+import type { CSSProperties } from 'react';
+
+export const MIND_MAP_VISUAL_TOKENS = {
+  color: {
+    canvas: '#f8f9fb',
+    surface: '#ffffff',
+    surfaceMuted: '#f3f4f7',
+    text: '#202124',
+    textMuted: '#6f7278',
+    border: 'rgba(32, 33, 36, 0.13)',
+    borderStrong: 'rgba(32, 33, 36, 0.2)',
+    accent: '#5b5bd6',
+    accentSoft: '#f0f0ff',
+    danger: '#b42318',
+    dangerSoft: '#fff1f0',
+  },
+  radius: {
+    control: 8,
+    node: 10,
+    panel: 12,
+  },
+  shadow: {
+    node: '0 2px 8px rgba(27, 31, 39, 0.07)',
+    floating: '0 8px 24px rgba(27, 31, 39, 0.1)',
+    modal: '0 18px 54px rgba(27, 31, 39, 0.18)',
+  },
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 12,
+    lg: 16,
+  },
+  typography: {
+    ui: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    sizeSmall: 11,
+    sizeUi: 12,
+    sizeNode: 15,
+  },
+  node: {
+    minWidth: 120,
+    preferredWidth: 180,
+    maxWidth: 360,
+    paddingX: 14,
+    paddingY: 12,
+  },
+  edge: {
+    width: 1.25,
+    arrowSize: 6,
+  },
+  selection: {
+    ringWidth: 2,
+    handleSize: 8,
+  },
+  canvas: {
+    gridDot: 'rgba(32, 33, 36, 0.09)',
+    gridLine: 'rgba(32, 33, 36, 0.06)',
+    nodeShadow: 'rgba(27, 31, 39, 0.08)',
+    nodeShadowBlur: 8,
+    nodeShadowOffsetY: 2,
+  },
+} as const;
+
+export const mindMapVisualCssVariables = {
+  '--mm-canvas': MIND_MAP_VISUAL_TOKENS.color.canvas,
+  '--mm-surface': MIND_MAP_VISUAL_TOKENS.color.surface,
+  '--mm-surface-muted': MIND_MAP_VISUAL_TOKENS.color.surfaceMuted,
+  '--mm-text': MIND_MAP_VISUAL_TOKENS.color.text,
+  '--mm-text-muted': MIND_MAP_VISUAL_TOKENS.color.textMuted,
+  '--mm-border': MIND_MAP_VISUAL_TOKENS.color.border,
+  '--mm-border-strong': MIND_MAP_VISUAL_TOKENS.color.borderStrong,
+  '--mm-accent': MIND_MAP_VISUAL_TOKENS.color.accent,
+  '--mm-accent-soft': MIND_MAP_VISUAL_TOKENS.color.accentSoft,
+  '--mm-danger': MIND_MAP_VISUAL_TOKENS.color.danger,
+  '--mm-danger-soft': MIND_MAP_VISUAL_TOKENS.color.dangerSoft,
+  '--mm-radius-control': `${MIND_MAP_VISUAL_TOKENS.radius.control}px`,
+  '--mm-radius-node': `${MIND_MAP_VISUAL_TOKENS.radius.node}px`,
+  '--mm-radius-panel': `${MIND_MAP_VISUAL_TOKENS.radius.panel}px`,
+  '--mm-shadow-node': MIND_MAP_VISUAL_TOKENS.shadow.node,
+  '--mm-shadow-floating': MIND_MAP_VISUAL_TOKENS.shadow.floating,
+  '--mm-shadow-modal': MIND_MAP_VISUAL_TOKENS.shadow.modal,
+  '--mm-space-xs': `${MIND_MAP_VISUAL_TOKENS.spacing.xs}px`,
+  '--mm-space-sm': `${MIND_MAP_VISUAL_TOKENS.spacing.sm}px`,
+  '--mm-space-md': `${MIND_MAP_VISUAL_TOKENS.spacing.md}px`,
+  '--mm-space-lg': `${MIND_MAP_VISUAL_TOKENS.spacing.lg}px`,
+  '--mm-font-ui': MIND_MAP_VISUAL_TOKENS.typography.ui,
+  '--mm-font-small': `${MIND_MAP_VISUAL_TOKENS.typography.sizeSmall}px`,
+  '--mm-font-size': `${MIND_MAP_VISUAL_TOKENS.typography.sizeUi}px`,
+} as CSSProperties;

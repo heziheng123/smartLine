@@ -1,5 +1,5 @@
 import { isSameOriginRequest, jsonResponse, readSession } from '../../_lib/session.ts';
-import { archiveKey, type StorageEnv } from '../../_lib/r2.ts';
+import { archiveKey, readLimitedBody, type StorageEnv } from '../../_lib/r2.ts';
 
 interface FunctionContext { env: StorageEnv; request: Request; params: { period?: string } }
 function validPeriod(value: string): boolean { return /^\d{4}-(0[1-9]|1[0-2])$/.test(value); }
@@ -10,33 +10,6 @@ function archiveResponseHeaders(httpEtag?: string): HeadersInit {
     'Content-Type': 'application/json',
     ...(httpEtag ? { ETag: httpEtag } : {}),
   };
-}
-
-async function readLimitedBody(body: ReadableStream<Uint8Array>, maxBytes: number): Promise<Uint8Array | null> {
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const combined = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return combined;
 }
 
 export async function onRequestGet({ env, request, params }: FunctionContext): Promise<Response> {

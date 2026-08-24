@@ -1371,7 +1371,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 </div>
               )}
               <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#6B7280' }}>
-                {r2Configured ? '已绑定 SMARTLINE_R2；月度归档可避免浏览器数据被清后丢失历史。' : '绑定 SMARTLINE_R2 后可保存月度归档，不影响现有数据。'}
+                {r2Configured ? '已绑定 SMARTLINE_R2；月度归档可用。' : '绑定 SMARTLINE_R2 后可保存月度归档。'}
               </small>
             </div>
           )}

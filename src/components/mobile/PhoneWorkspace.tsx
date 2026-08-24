@@ -73,6 +73,7 @@ const VIEW_LABEL: Record<AppModule, string> = {
   'week-matrix': '本周',
   ebb: '复习',
   'knowledge-graph': '知识',
+  'mind-map': '思维导图',
 };
 
 const SLOT_LABEL: Record<TimeSlot, string> = {
