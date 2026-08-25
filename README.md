@@ -79,17 +79,10 @@ docs/                    产品、架构、开发、审查与迁移文档
 - 完整备份当前 schema 版本为 `7`；版本 1–6 会自动升级并规范化人生地图分类、全局关键日期、可选关系和项目领域引用，高版本数据会被旧客户端拒绝加载。
 - 项目以 Timeline `Task` 为唯一数据源，并通过 `planningAreaId` 投影到人生地图。启用该分类后必须使用统一工作区同步；旧模块房间会失败关闭，避免旧版本客户端整条保存项目时抹掉分类。
 
-## 当前质量状态
-
-当前门禁覆盖源代码、Pages Functions、构建脚本、主要业务算法和桌面/小屏浏览器流程。每次发布以前述固定命令的实时结果为准，不在文档中固化容易过期的测试数量。详见[代码审查与修复报告](docs/code-review-report.md)和[开发与测试指南](docs/development.md)。
-
 ## 文档索引
 
 - [产品与功能手册](docs/product-guide.md)
 - [架构与数据说明](docs/architecture.md)
 - [开发与测试指南](docs/development.md)
-- [人生地图信息架构与创建流程](docs/life-map-information-architecture.md)
-- [人生地图项目泳道设计与开发指南](docs/life-map-plan-swimlanes.md)
 - [部署指南](DEPLOY_GUIDE.md)
 - [数据架构迁移指南](docs/data-architecture-migration.md)
-- [代码审查报告](docs/code-review-report.md)

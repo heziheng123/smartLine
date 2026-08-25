@@ -5,6 +5,7 @@ import {
   Download,
   FilePlus2,
   FileCode2,
+  FolderOpen,
   GitFork,
   Image as ImageIcon,
   Link2,
@@ -20,6 +21,7 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 import { useAuth } from '@/auth/AuthContext';
 import MindMapCanvas from './canvas/MindMapCanvas';
+import MindMapCatalog from './MindMapCatalog';
 import { MIND_MAP_SYNC_ENABLED } from './config';
 import {
   downloadMindMapJson,
@@ -67,6 +69,7 @@ const MindMapWorkspace = () => {
     duplicateDocument,
     switchDocument,
     deleteCurrentDocument,
+    deleteDocument,
     importDocument,
     applyRemoteDocument,
     cacheRemoteDocument,
@@ -87,6 +90,7 @@ const MindMapWorkspace = () => {
   const [selectedNodeCount, setSelectedNodeCount] = useState(0);
   const [creationType, setCreationType] = useState<MindMapNodeType>('text');
   const [connectionMode, setConnectionMode] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [assetSyncError, setAssetSyncError] = useState<string | null>(null);
   const [assetRevision, setAssetRevision] = useState(0);
@@ -253,6 +257,28 @@ const MindMapWorkspace = () => {
     }
   };
 
+  const handleCatalogOpen = (id: string) => {
+    setCatalogOpen(false);
+    if (id !== documentId) void switchDocument(id);
+  };
+
+  const handleCatalogNew = () => {
+    setCatalogOpen(false);
+    void createDocument();
+  };
+
+  const handleCatalogDuplicate = (id: string) => {
+    setCatalogOpen(false);
+    void duplicateDocument(id);
+  };
+
+  const handleCatalogDelete = (id: string, title: string) => {
+    if (!window.confirm('确定删除“' + title + '”吗？此操作只删除这张独立思维导图。')) return;
+    void deleteDocument(id).then((deleted) => {
+      if (deleted) catalogSessionRef.current?.deleteDocument(id);
+    });
+  };
+
   const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -310,16 +336,18 @@ const MindMapWorkspace = () => {
                   if (!event.target.value.trim()) renameDocument(DEFAULT_DOCUMENT_TITLE);
                 }}
               />
-              <select
-                className={styles.documentSelect}
-                aria-label="切换思维导图"
-                value={document.id}
-                onChange={(event) => void switchDocument(event.target.value)}
+              <button
+                type="button"
+                className={styles.catalogToggle}
+                data-testid="mind-map-catalog-toggle"
+                aria-label="导图目录"
+                aria-haspopup="dialog"
+                aria-expanded={catalogOpen}
+                title="导图目录"
+                onClick={() => setCatalogOpen(true)}
               >
-                {index.documents.map((item) => (
-                  <option key={item.id} value={item.id}>{item.title}</option>
-                ))}
-              </select>
+                <FolderOpen size={16} aria-hidden="true" />
+              </button>
             </div>
           ) : (
             <span className={styles.loadingTitle}>思维导图</span>
@@ -430,6 +458,18 @@ const MindMapWorkspace = () => {
         aria-label="选择思维导图 JSON 文件"
         onChange={(event) => void handleImport(event)}
       />
+
+      {catalogOpen && (
+        <MindMapCatalog
+          documents={index.documents}
+          activeDocumentId={documentId ?? null}
+          onOpen={handleCatalogOpen}
+          onNew={handleCatalogNew}
+          onDuplicate={handleCatalogDuplicate}
+          onDelete={handleCatalogDelete}
+          onClose={() => setCatalogOpen(false)}
+        />
+      )}
 
       {(localError || error || assetSyncError || syncState.error) && (
         <div className={styles.errorBanner} role="alert">

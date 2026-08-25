@@ -35,9 +35,10 @@ interface MindMapStore {
   hydrate: () => Promise<void>;
   createDocument: () => Promise<void>;
   renameDocument: (title: string) => void;
-  duplicateDocument: () => Promise<void>;
+  duplicateDocument: (sourceId?: string) => Promise<void>;
   switchDocument: (id: string) => Promise<void>;
   deleteCurrentDocument: () => Promise<boolean>;
+  deleteDocument: (id: string) => Promise<boolean>;
   importDocument: (value: unknown) => Promise<boolean>;
   applyRemoteDocument: (document: MindMapDocument) => void;
   cacheRemoteDocument: (document: MindMapDocument) => Promise<void>;
@@ -171,11 +172,19 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       queueSave(document, updateSummary(get().index, document));
     },
 
-    duplicateDocument: async () => {
+    duplicateDocument: async (sourceId) => {
       const current = get().document;
       if (!current) return;
       await mindMapRepository.flush();
-      const document = duplicateMindMapDocument(current);
+      const loaded = sourceId && sourceId !== current.id
+        ? await mindMapRepository.loadDocument(sourceId)
+        : null;
+      if (sourceId && sourceId !== current.id && !loaded) {
+        set({ error: '找不到这张思维导图。' });
+        return;
+      }
+      const source = loaded ?? current;
+      const document = duplicateMindMapDocument(source);
       const index = updateSummary(get().index, document);
       const history = emptyMindMapHistory();
       histories.set(document.id, history);
@@ -238,6 +247,26 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         return true;
       } catch {
         set({ saveStatus: 'error', error: '删除导图失败，原数据没有被覆盖。' });
+        return false;
+      }
+    },
+
+    deleteDocument: async (id) => {
+      const current = get().document;
+      if (!current) return false;
+      if (current.id === id) return get().deleteCurrentDocument();
+      await mindMapRepository.flush();
+      const index: MindMapIndex = {
+        ...get().index,
+        documents: get().index.documents.filter((item) => item.id !== id),
+      };
+      try {
+        await mindMapRepository.saveNow(current, index);
+        await mindMapRepository.deleteDocument(id);
+        set({ index, error: null });
+        return true;
+      } catch {
+        set({ error: '删除导图失败，原数据没有被覆盖。' });
         return false;
       }
     },

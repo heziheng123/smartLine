@@ -34,9 +34,10 @@ test('multiple documents remain independent and can be switched', async ({ page 
   await page.getByTestId('mind-map-title').fill('第二张图');
   await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
 
-  const picker = page.getByLabel('切换思维导图');
-  await expect(picker.locator('option')).toHaveCount(2);
-  await picker.selectOption({ label: '第一张图' });
+  await page.getByTestId('mind-map-catalog-toggle').click();
+  const catalog = page.getByTestId('mind-map-catalog');
+  await expect(catalog.getByTestId('mind-map-catalog-item')).toHaveCount(2);
+  await catalog.getByText('第一张图').click();
   await expect(page.getByTestId('mind-map-title')).toHaveValue('第一张图');
 });
 
@@ -96,7 +97,8 @@ test('deleting a document keeps the remaining document intact', async ({ page })
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByLabel('更多操作', { exact: true }).click();
   await page.getByRole('menuitem', { name: '删除当前导图' }).click();
-  await expect(page.getByLabel('切换思维导图').locator('option')).toHaveCount(1);
+  await page.getByTestId('mind-map-catalog-toggle').click();
+  await expect(page.getByTestId('mind-map-catalog').getByTestId('mind-map-catalog-item')).toHaveCount(1);
   await expect(page.getByTestId('mind-map-title')).toHaveValue('保留图');
 });
 
