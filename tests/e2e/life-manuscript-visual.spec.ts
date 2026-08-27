@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+test.beforeEach(() => test.skip(true, '旧人生地图写入口已在迁移验收后关闭。'));
+
 test.use({ viewport: { width: 1536, height: 1024 }, deviceScaleFactor: 1, timezoneId: 'Asia/Shanghai' });
 
 test.beforeEach(async ({ page }) => {

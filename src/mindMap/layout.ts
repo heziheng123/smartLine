@@ -2,6 +2,53 @@ import type { MindMapDocument, MindMapNode } from './model';
 
 export type TreeDirection = 'left-right' | 'right-left' | 'top-bottom' | 'bottom-top';
 
+export function layoutMindMapBranch(
+  document: MindMapDocument,
+  rootId: string,
+  direction: TreeDirection = 'left-right',
+): MindMapDocument {
+  const root = document.nodes[rootId];
+  if (!root) return document;
+  const children = new Map<string, string[]>();
+  for (const edge of Object.values(document.edges)) {
+    if (edge.relationship === 'reference') continue;
+    const list = children.get(edge.sourceId) ?? [];
+    list.push(edge.targetId);
+    children.set(edge.sourceId, list);
+  }
+  const ids = new Set<string>();
+  const pending = [rootId];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (ids.has(id) || !document.nodes[id]) continue;
+    ids.add(id);
+    pending.push(...(children.get(id) ?? []));
+  }
+  if (ids.size < 2) return document;
+  const branch = {
+    ...document,
+    nodes: Object.fromEntries([...ids].map((id) => [id, document.nodes[id]])),
+    edges: Object.fromEntries(Object.entries(document.edges).filter(([, edge]) => (
+      ids.has(edge.sourceId) && ids.has(edge.targetId) && edge.relationship !== 'reference'
+    ))),
+  };
+  const laidOut = layoutMindMapTree(branch, direction);
+  const laidOutRoot = laidOut.nodes[rootId];
+  if (!laidOutRoot) return document;
+  const offset = { x: root.x - laidOutRoot.x, y: root.y - laidOutRoot.y };
+  return {
+    ...document,
+    nodes: {
+      ...document.nodes,
+      ...Object.fromEntries(Object.entries(laidOut.nodes).map(([id, node]) => [id, {
+        ...node,
+        x: node.x + offset.x,
+        y: node.y + offset.y,
+      }])),
+    },
+  };
+}
+
 export function layoutMindMapTree(
   document: MindMapDocument,
   direction: TreeDirection = 'left-right',
@@ -11,7 +58,7 @@ export function layoutMindMapTree(
   const children = new Map<string, string[]>();
   const indegree = new Map(nodeIds.map((id) => [id, 0]));
   for (const edge of Object.values(document.edges)) {
-    if (!document.nodes[edge.sourceId] || !document.nodes[edge.targetId]) continue;
+    if (!document.nodes[edge.sourceId] || !document.nodes[edge.targetId] || edge.relationship === 'reference') continue;
     const list = children.get(edge.sourceId) ?? [];
     list.push(edge.targetId);
     children.set(edge.sourceId, list);

@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 const openMindMap = async (page: Page) => {
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
 };
 
@@ -19,6 +19,30 @@ const graphState = async (page: Page) => page.evaluate(async () => {
   const document = useMindMapStore.getState().document;
   return { nodes: document?.nodes ?? {}, edges: document?.edges ?? {} };
 });
+
+const addProjectReference = async (page: Page, id: string, x: number, y: number) => page.evaluate(async ({ id, x, y }) => {
+  const { useMindMapStore } = await import('/src/mindMap/testing.ts');
+  useMindMapStore.getState().execute('测试项目引用', (document) => ({
+    ...document,
+    projectReferences: {
+      ...document.projectReferences,
+      [id]: {
+        id,
+        kind: 'project-reference',
+        targetType: 'project',
+        targetId: 'project-source-kept',
+        x,
+        y,
+        width: 180,
+        height: 96,
+        display: 'compact',
+        locked: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    },
+  }));
+}, { id, x, y });
 
 test('connection handles create an edge whose type direction and label can be edited', async ({ page }) => {
   await openMindMap(page);
@@ -48,7 +72,7 @@ test('connection handles create an edge whose type direction and label can be ed
   expect(edge.direction).toBe('both');
 });
 
-test('four-side handles and the toolbar connection mode create edges', async ({ page }) => {
+test('the unified relation handle and toolbar connection mode create edges', async ({ page }) => {
   await openMindMap(page);
   await addNode(page, 220, 220, '起点');
   await addNode(page, 460, 360, '终点');
@@ -57,20 +81,69 @@ test('four-side handles and the toolbar connection mode create edges', async ({ 
   expect(box).not.toBeNull();
 
   await canvas.click({ position: { x: 220, y: 220 } });
-  await page.mouse.move(box!.x + 220, box!.y + 248);
+  await page.mouse.move(box!.x + 288, box!.y + 220);
   await page.mouse.down();
   await page.mouse.move(box!.x + 460, box!.y + 360, { steps: 5 });
   await page.mouse.up();
   await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(1);
 
+  await canvas.click({ position: { x: 220, y: 220 } });
+  await page.keyboard.press('L');
+  await expect(page.getByRole('status')).toContainText('已选择起点');
+  await canvas.click({ position: { x: 460, y: 360 } });
+  await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(2);
+
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '连线' }).click();
-  await expect(page.getByRole('status')).toContainText('先点击起点节点');
+  await expect(page.getByRole('status')).toContainText('先点击起点对象');
   await canvas.click({ position: { x: 460, y: 360 } });
   await expect(page.getByRole('status')).toContainText('已选择起点');
   await canvas.click({ position: { x: 220, y: 220 } });
-  await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(2);
+  await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(3);
   await expect(page.getByRole('button', { name: '连线' })).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('project references use the same L and toolbar relation system as nodes', async ({ page }) => {
+  await openMindMap(page);
+  await addNode(page, 220, 220, '考研');
+  await addProjectReference(page, 'project-reference-a', 500, 220);
+  const canvas = page.getByTestId('mind-map-canvas');
+  const reference = page.getByTestId('mind-map-project-reference-project-reference-a');
+  await expect(reference).toBeVisible();
+
+  await canvas.click({ position: { x: 220, y: 220 } });
+  await page.keyboard.press('L');
+  await reference.click({ position: { x: 80, y: 46 } });
+  await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(1);
+  expect(Object.values((await graphState(page)).edges)[0]?.target).toEqual({ type: 'project-reference', id: 'project-reference-a' });
+
+  await page.getByRole('button', { name: '连线' }).click();
+  await reference.click({ position: { x: 80, y: 46 } });
+  await canvas.click({ position: { x: 220, y: 220 } });
+  await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(2);
+  expect(Object.values((await graphState(page)).edges)[1]?.source).toEqual({ type: 'project-reference', id: 'project-reference-a' });
+});
+
+test('a project reference relation handle can be dragged to a mind node', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Precise cross-layer pointer geometry is covered once on desktop.');
+  await openMindMap(page);
+  await addNode(page, 220, 220, '普通节点');
+  await addProjectReference(page, 'project-reference-drag', 500, 220);
+  const reference = page.getByTestId('mind-map-project-reference-project-reference-drag');
+  await reference.hover();
+  const handle = reference.getByRole('button', { name: '创建关联' });
+  await expect(handle).toBeVisible();
+  const box = await handle.boundingBox();
+  const canvas = page.getByTestId('mind-map-canvas');
+  const canvasBox = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  expect(canvasBox).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox!.x + 220, canvasBox!.y + 220, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(1);
+  expect(Object.values((await graphState(page)).edges)[0]?.source).toEqual({ type: 'project-reference', id: 'project-reference-drag' });
 });
 
 test('an edge endpoint can be reconnected without creating a dangling edge', async ({ page }, testInfo) => {

@@ -109,7 +109,7 @@ const dailySchedules = {
 };
 
 test.beforeEach(async ({ page }, testInfo) => {
-  const seededTasks = testInfo.title.includes('tablet pending pool')
+  const seededTasks = testInfo.title.includes('tablet review plan')
     ? [...reviewTasks, ...denseTabletPoolTasks]
     : testInfo.title.includes('minute capacity')
       ? [...reviewTasks, ...extraReviewTasks]
@@ -138,13 +138,13 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.goto('/');
 });
 
-test('tablet pending pool expands into the Today view instead of creating nested scrolling', async ({ page }) => {
+test('tablet review plan keeps one bounded topic-list scroll surface', async ({ page }) => {
   await page.setViewportSize({ width: 1080, height: 900 });
   await page.getByTitle('艾宾浩斯复习').click();
-  const poolList = page.locator('.eb-today-pool-list');
-  await expect(poolList.locator('.eb-today-pool-card')).toHaveCount(18);
+  const topicList = page.locator('.eb-topic-list');
+  await expect(topicList.locator('.eb-topic-row').filter({ hasText: '平板待安排复习' })).toHaveCount(18);
 
-  const poolMetrics = await poolList.evaluate((element) => {
+  const listMetrics = await topicList.evaluate((element) => {
     const style = getComputedStyle(element);
     return {
       overflowY: style.overflowY,
@@ -153,17 +153,9 @@ test('tablet pending pool expands into the Today view instead of creating nested
       scrollHeight: element.scrollHeight,
     };
   });
-  expect(poolMetrics.overflowY).toBe('visible');
-  expect(poolMetrics.maxHeight).toBe('none');
-  expect(Math.abs(poolMetrics.scrollHeight - poolMetrics.clientHeight)).toBeLessThanOrEqual(1);
-
-  const panelMetrics = await page.locator('.eb-today-panel').evaluate((element) => ({
-    overflowY: getComputedStyle(element).overflowY,
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }));
-  expect(panelMetrics.overflowY).toBe('auto');
-  expect(panelMetrics.scrollHeight).toBeGreaterThan(panelMetrics.clientHeight);
+  expect(listMetrics.overflowY).toBe('auto');
+  expect(listMetrics.clientHeight).toBeGreaterThan(0);
+  expect(listMetrics.scrollHeight).toBeGreaterThan(listMetrics.clientHeight);
 });
 
 test('workload planning assigns concrete dates and preserves every relation', async ({ page }) => {

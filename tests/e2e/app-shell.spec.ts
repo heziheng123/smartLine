@@ -46,10 +46,12 @@ test('project details use a landscape split and a portrait right-side drawer', a
 
   const drawer = page.locator('.tl-project-workspace-drawer');
   await expect(drawer).toBeVisible();
+  const projectMain = page.locator('.project-workspace-content > .tl-app-main');
+  await expect(projectMain).toBeVisible();
   await page.waitForTimeout(400);
-  const landscape = await page.locator('.project-workspace-content').evaluate((workspace) => {
-    const main = workspace.querySelector<HTMLElement>('.tl-app-main')!.getBoundingClientRect();
-    const detail = workspace.querySelector<HTMLElement>('.tl-project-workspace-drawer')!;
+  const landscape = await drawer.evaluate((detail) => {
+    const main = detail.parentElement?.querySelector<HTMLElement>(':scope > .tl-app-main')?.getBoundingClientRect();
+    if (!main) throw new Error('项目主视图尚未挂载。');
     const detailRect = detail.getBoundingClientRect();
     return {
       position: getComputedStyle(detail).position,
@@ -88,7 +90,7 @@ test('project details use a landscape split and a portrait right-side drawer', a
 });
 
 test('six main views remain reachable through the real interface', async ({ page }) => {
-  for (const title of ['人生地图', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
+  for (const title of ['地图工作区', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
     await page.getByTitle(title).click();
     await expect(page.getByTitle(title)).toHaveAttribute('aria-selected', 'true');
   }
@@ -104,10 +106,15 @@ test('phone viewport uses dedicated execution views without horizontal overflow'
   await expect(page.getByTitle('每日安排')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.phone-header h1')).toContainText('月');
 
-  for (const title of ['人生地图', '项目规划', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘']) {
+  for (const title of ['地图工作区', '项目规划', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘']) {
     await page.getByTitle(title).click();
     await expect(page.getByTitle(title)).toHaveAttribute('aria-selected', 'true');
-    await expect.poll(() => page.locator('.phone-workspace').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+    if (title === '地图工作区') {
+      await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    } else {
+      await expect.poll(() => page.locator('.phone-workspace').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+    }
   }
 
   const undersizedTargets = await page.locator('.phone-workspace button:visible, .tl-dock button:visible').evaluateAll((buttons) => buttons
@@ -139,21 +146,10 @@ test('tablet viewport keeps the existing project timeline layout', async ({ page
   await expect(page.locator('.tl-year-stack')).toBeVisible();
 });
 
-test('life map opens the vertical map and keeps every planning scale available', async ({ page }) => {
-  await page.getByTitle('人生地图').click();
-  await openFullViewOnPhone(page);
-  await expect(page.getByRole('heading', { name: '人生地图', exact: true })).toBeVisible();
-  const manuscript = page.getByRole('main', { name: '人生地图' });
-  await expect(manuscript).toBeVisible();
-  await expect(manuscript).toHaveClass(/life-manuscript--day/);
-  await manuscript.getByRole('button', { name: '周', exact: true }).click();
-  await expect(manuscript).toHaveClass(/life-manuscript--week/);
-  await manuscript.getByRole('button', { name: '月', exact: true }).click();
-  await expect(manuscript).toHaveClass(/life-manuscript--month/);
-  await manuscript.getByRole('button', { name: '年', exact: true }).click();
-  await expect(manuscript).toHaveClass(/life-manuscript--year/);
-  await manuscript.getByRole('button', { name: '定位到今天' }).click();
-  await expect(manuscript.locator('.life-manuscript__today')).toBeVisible();
+test('the retired life map entry is replaced by the unified map workspace', async ({ page }) => {
+  await expect(page.getByTitle('人生地图')).toHaveCount(0);
+  await page.getByTitle('地图工作区').click();
+  await expect(page.getByTestId('mind-map-workspace')).toBeVisible();
 });
 
 test('project planning opens the timeline directly without an internal view menu', async ({ page }) => {

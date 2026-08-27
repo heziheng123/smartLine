@@ -1,7 +1,5 @@
 import {
   MIND_MAP_SCHEMA_VERSION,
-  DEFAULT_DOCUMENT_TITLE,
-  createEmptyMindMapDocument,
   normalizeMindMapDocument,
   type MindMapDocument,
   type MindMapDocumentSummary,
@@ -10,7 +8,11 @@ import {
   type MindMapNode,
   type MindMapSection,
   type MindMapSettings,
+  type LifeMapMigrationMeta,
+  type ProjectReferenceCard,
+  type TimelineSection,
 } from './model';
+import type { LifeMapData } from '@/lifeMap/types';
 
 export type MindMapSyncStatus = 'local' | 'connecting' | 'connected' | 'offline' | 'error';
 
@@ -32,11 +34,15 @@ export interface MindMapSyncPatch {
   title?: string;
   settings?: MindMapSettings;
   zOrder?: string[];
+  lifeMap?: LifeMapData | null;
+  lifeMapMigration?: LifeMapMigrationMeta | null;
   updatedAt: number;
   nodes: { upserts: Record<string, MindMapNode>; deletes: string[] };
   edges: { upserts: Record<string, MindMapEdge>; deletes: string[] };
   sections: { upserts: Record<string, MindMapSection>; deletes: string[] };
   groups: { upserts: Record<string, MindMapGroup>; deletes: string[] };
+  projectReferences: { upserts: Record<string, ProjectReferenceCard>; deletes: string[] };
+  timelineSections: { upserts: Record<string, TimelineSection>; deletes: string[] };
 }
 
 export interface MindMapSyncState {
@@ -153,7 +159,11 @@ function mergeOrder(base: string[], local: string[], remote: string[], preferLoc
 }
 
 export function emptyMindMapSyncBase(document: MindMapDocument): MindMapDocument {
-  return createEmptyMindMapDocument(DEFAULT_DOCUMENT_TITLE, { id: document.id, now: document.createdAt });
+  // A session may receive local edits before the first room reconciliation.  The
+  // loaded document is the only available baseline for turning those edits into
+  // deletes; an empty base would make a deleted remote entity indistinguishable
+  // from a new remote entity and resurrect it.
+  return document;
 }
 
 export function mergeMindMapDocuments(
@@ -174,6 +184,10 @@ export function mergeMindMapDocuments(
     edges: mergeEntities(base.edges, local.edges, remote.edges),
     sections: mergeEntities(base.sections, local.sections, remote.sections),
     groups: mergeEntities(base.groups, local.groups, remote.groups),
+    projectReferences: mergeEntities(base.projectReferences, local.projectReferences, remote.projectReferences),
+    timelineSections: mergeEntities(base.timelineSections, local.timelineSections, remote.timelineSections),
+    lifeMap: mergeValue(base.lifeMap, local.lifeMap, remote.lifeMap, preferLocal),
+    lifeMapMigration: mergeValue(base.lifeMapMigration, local.lifeMapMigration, remote.lifeMapMigration, preferLocal),
     zOrder: mergeOrder(base.zOrder, local.zOrder, remote.zOrder, preferLocal),
     viewport: local.viewport,
     settings: mergeValue(base.settings, local.settings, remote.settings, preferLocal),
@@ -202,11 +216,15 @@ export function createMindMapSyncPatch(base: MindMapDocument, current: MindMapDo
     ...(same(base.title, current.title) ? {} : { title: current.title }),
     ...(same(base.settings, current.settings) ? {} : { settings: current.settings }),
     ...(same(base.zOrder, current.zOrder) ? {} : { zOrder: current.zOrder }),
+    ...(same(base.lifeMap, current.lifeMap) ? {} : { lifeMap: current.lifeMap }),
+    ...(same(base.lifeMapMigration, current.lifeMapMigration) ? {} : { lifeMapMigration: current.lifeMapMigration }),
     updatedAt: current.updatedAt,
     nodes: entityDiff(base.nodes, current.nodes),
     edges: entityDiff(base.edges, current.edges),
     sections: entityDiff(base.sections, current.sections),
     groups: entityDiff(base.groups, current.groups),
+    projectReferences: entityDiff(base.projectReferences, current.projectReferences),
+    timelineSections: entityDiff(base.timelineSections, current.timelineSections),
   };
 }
 
@@ -214,7 +232,9 @@ export function isMindMapSyncPatchEmpty(patch: MindMapSyncPatch): boolean {
   return patch.title === undefined
     && patch.settings === undefined
     && patch.zOrder === undefined
-    && [patch.nodes, patch.edges, patch.sections, patch.groups]
+    && patch.lifeMap === undefined
+    && patch.lifeMapMigration === undefined
+    && [patch.nodes, patch.edges, patch.sections, patch.groups, patch.projectReferences, patch.timelineSections]
       .every((change) => change.deletes.length === 0 && Object.keys(change.upserts).length === 0);
 }
 
@@ -230,11 +250,15 @@ export function applyMindMapSyncPatch(document: MindMapDocument, patch: MindMapS
     title: patch.title ?? document.title,
     settings: patch.settings ?? document.settings,
     zOrder: patch.zOrder ?? document.zOrder,
+    lifeMap: patch.lifeMap === undefined ? document.lifeMap : patch.lifeMap,
+    lifeMapMigration: patch.lifeMapMigration === undefined ? document.lifeMapMigration : patch.lifeMapMigration,
     updatedAt: Math.max(document.updatedAt, patch.updatedAt),
     nodes: applyEntities(document.nodes, patch.nodes),
     edges: applyEntities(document.edges, patch.edges),
     sections: applyEntities(document.sections, patch.sections),
     groups: applyEntities(document.groups, patch.groups),
+    projectReferences: applyEntities(document.projectReferences, patch.projectReferences),
+    timelineSections: applyEntities(document.timelineSections, patch.timelineSections),
   });
   if (!normalized) throw new Error('同步补丁产生了无效思维导图。');
   return normalized;
@@ -247,6 +271,10 @@ export function mindMapSyncSignature(document: MindMapDocument): string {
     edges: document.edges,
     sections: document.sections,
     groups: document.groups,
+    projectReferences: document.projectReferences,
+    timelineSections: document.timelineSections,
+    lifeMap: document.lifeMap,
+    lifeMapMigration: document.lifeMapMigration,
     zOrder: document.zOrder,
     settings: document.settings,
   }));

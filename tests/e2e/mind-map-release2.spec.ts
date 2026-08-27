@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 const openMindMap = async (page: Page) => {
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
 };
 
@@ -151,7 +151,7 @@ test('advanced nodes, orthogonal edges, SVG export, minimap and command palette 
   await expect(page.getByLabel('思维导图小地图')).toBeVisible();
   await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
   await page.reload();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.locator('img[src^="blob:"]')).toBeVisible();
   const imagePngDownload = page.waitForEvent('download');
   await openMoreMenu(page);

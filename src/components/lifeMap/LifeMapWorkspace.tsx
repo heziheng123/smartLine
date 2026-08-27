@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { ChevronDown, Eye, EyeOff, FastForward, Layers3, ListFilter, Palette, PauseCircle, Play, Plus, Settings2, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { LifeStage, Milestone, Note, Task, TaskGroup } from '@/types';
-import { useTimelineStore } from '@/store';
+import { useProjectPlanningProjects } from '@/projectPlanning/adapter';
 import { activeLifeMapItems, LEARNING_CHILD_PALETTE, LIFE_MAP_PLAN_GROUP_META, suggestAreaChildColor } from '@/lifeMap/data';
 import { addDays } from '@/utils/dateSafe';
 import { calculateGoalProgress, currentSystemStats, systemCompletedForRange, systemTargetForRange } from '@/lifeMap/metrics';
@@ -46,7 +46,7 @@ const compareAreas = (left: { planGroupId: LifeMapPlanGroupId; order: number; id
 );
 
 const LifeMapWorkspace: React.FC = () => {
-  const timelineTasks = useTimelineStore((state) => state.tasks);
+  const timelineTasks = useProjectPlanningProjects();
   const store = useLifeMapStore(useShallow((state) => ({
     isHydrated: state.isHydrated,
     lifeMapAreas: state.lifeMapAreas,

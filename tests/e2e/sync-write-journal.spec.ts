@@ -174,7 +174,7 @@ test.beforeEach(async ({ page }) => {
   ).__smartlineAppReady)).toBe(true);
 });
 
-test('人生地图创建人生计划只写入 Life Map 离线队列', async ({ page }) => {
+test.skip('人生地图创建人生计划只写入 Life Map 离线队列', async ({ page }) => {
   await page.getByTitle('人生地图').click();
   const lifeMap = page.getByRole('main', { name: '人生地图' });
   await lifeMap.getByRole('button', { name: '添加到时间线' }).click();

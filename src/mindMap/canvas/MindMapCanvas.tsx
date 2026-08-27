@@ -7,10 +7,12 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
+  type CSSProperties,
 } from 'react';
-import { Search } from 'lucide-react';
+import { CalendarRange, MoreHorizontal, Search } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
+import { projectPlanningAdapter, projectReferenceSnapshot, useProjectPlanningSnapshot } from '@/projectPlanning/adapter';
+import { addDays, diffDays, todayStr } from '@/utils/dateSafe';
 import {
   MIND_MAP_SCHEMA_VERSION,
   createMindMapGroup,
@@ -25,6 +27,13 @@ import {
   type MindMapSection,
   type MindMapNode,
   type MindMapNodeType,
+  type CanvasObjectRef,
+  edgeSourceRef,
+  edgeTargetRef,
+  edgeTouchesCanvasObject,
+  sameCanvasObjectRef,
+  type ProjectReferenceCard,
+  type TimelineSection,
   type ViewportState,
 } from '../model';
 import { useMindMapStore } from '../store';
@@ -35,7 +44,7 @@ import {
   downloadMindMapPng,
   type MindMapPngScope,
 } from '../importExport';
-import { alignMindMapNodes, distributeMindMapNodes } from '../layout';
+import { alignMindMapNodes, distributeMindMapNodes, layoutMindMapBranch, type TreeDirection } from '../layout';
 import { layoutMindMapTreeInWorker } from '../layoutWorkerClient';
 import { renderMindMapLatex, renderMindMapMarkdown } from '../richText';
 import { MIND_MAP_VISUAL_TOKENS } from '../styles/visualTokens';
@@ -58,7 +67,13 @@ import {
   type Rect,
 } from './geometry';
 import { MindMapSpatialIndex } from './spatialIndex';
+import { buildEdgeRoute, pointOnRoute, type EdgeRoute } from './edgeRouting';
+import { connectableObjects, edgeConnectableObjects, hitConnectableObject, resolveConnectableObject, type ConnectableObject } from './connectableObjects';
 import { renderMindMapWebGl } from './webglRenderer';
+import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timelineVisibleItems, type TimelineProjectionItem } from '../timelineProjection';
+import { useLifeTimelineSnapshot } from '../timelineProjectionHooks';
+import { updateLifePlanningDates } from '../lifePlanning';
+import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, timelineScaleLabel } from '../timelineLayout';
 import 'katex/dist/katex.min.css';
 import styles from './MindMapCanvas.module.css';
 
@@ -67,6 +82,9 @@ interface MindMapCanvasProps {
   assetRevision?: number;
   onScaleChange?: (scale: number) => void;
   fitRequest?: number;
+  treeLayoutRequest?: number;
+  treeDirection?: TreeDirection;
+  onLayoutRunningChange?: (running: boolean) => void;
   pngRequest?: number;
   pngScope?: MindMapPngScope;
   onSelectionChange?: (selectedNodeCount: number) => void;
@@ -111,6 +129,30 @@ type Interaction =
     initialSection: Pick<MindMapSection, 'x' | 'y' | 'width' | 'height'>;
   }
   | {
+    type: 'project-reference-drag';
+    pointerId: number;
+    referenceId: string;
+    startWorld: Point;
+    currentWorld: Point;
+    initial: Point;
+  }
+  | {
+    type: 'timeline-drag';
+    pointerId: number;
+    timelineId: string;
+    startWorld: Point;
+    currentWorld: Point;
+    initial: Point;
+  }
+  | {
+    type: 'timeline-resize';
+    pointerId: number;
+    timelineId: string;
+    startWorld: Point;
+    currentWorld: Point;
+    initial: Pick<TimelineSection, 'x' | 'y' | 'width' | 'height'>;
+  }
+  | {
     type: 'resize';
     pointerId: number;
     nodeId: string;
@@ -121,6 +163,7 @@ type Interaction =
     y: number;
     width: number;
     height: number;
+    rotation: number;
   }
   | {
     type: 'marquee';
@@ -131,8 +174,15 @@ type Interaction =
   | {
     type: 'connect';
     pointerId: number;
-    sourceId: string;
+    source: CanvasObjectRef;
     sourcePoint: Point;
+    currentWorld: Point;
+  }
+  | {
+    type: 'create-child';
+    pointerId: number;
+    parentId: string;
+    startWorld: Point;
     currentWorld: Point;
   }
   | {
@@ -154,6 +204,7 @@ type Interaction =
 interface EditingSession {
   nodeId: string | null;
   connectFromId?: string;
+  treePlacement?: 'auto' | 'manual';
   x: number;
   y: number;
   width: number;
@@ -164,6 +215,7 @@ interface EditingSession {
 
 interface ClipboardGraph {
   nodes: MindMapNode[];
+  projectReferences: ProjectReferenceCard[];
   edges: MindMapEdge[];
 }
 
@@ -173,6 +225,7 @@ interface ContextMenuState {
   world: Point;
   nodeId?: string;
   edgeId?: string;
+  projectReferenceId?: string;
 }
 
 interface PinchState {
@@ -181,33 +234,65 @@ interface PinchState {
   camera: ViewportState;
 }
 
+interface TimelineTaskInteraction {
+  pointerId: number;
+  itemId: string;
+  source: 'project' | 'life';
+  mode: 'move' | 'start' | 'end';
+  startClientX: number;
+  width: number;
+  rangeDays: number;
+  start: string;
+  end: string;
+  deltaDays: number;
+}
+
+interface ProjectDateUndo {
+  taskId: string;
+  start: string;
+  end: string;
+}
+
 const HANDLE_RADIUS = 5;
 const MINIMAP_WIDTH = 144;
 const MINIMAP_HEIGHT = 90;
 const CLIPBOARD_PREFIX = 'smart-line-mind-map-clipboard:';
 
-const connectionPoints = (node: MindMapNode): Point[] => [
-  { x: node.x, y: node.y - node.height / 2 },
-  { x: node.x + node.width / 2, y: node.y },
-  { x: node.x, y: node.y + node.height / 2 },
-  { x: node.x - node.width / 2, y: node.y },
-];
+const relationHandlePoint = (object: ConnectableObject): Point => ({
+  x: object.bounds.x + object.bounds.width + 12,
+  y: object.bounds.y + object.bounds.height / 2,
+});
+const rotateNodePoint = (node: MindMapNode, point: Point): Point => {
+  const radians = node.rotation * Math.PI / 180;
+  const x = point.x - node.x;
+  const y = point.y - node.y;
+  return { x: node.x + x * Math.cos(radians) - y * Math.sin(radians), y: node.y + x * Math.sin(radians) + y * Math.cos(radians) };
+};
+const childHandlePoint = (node: MindMapNode): Point => rotateNodePoint(node, { x: node.x + node.width / 2 + 12, y: node.y - 26 });
+const moreHandlePoint = (node: MindMapNode): Point => rotateNodePoint(node, { x: node.x + node.width / 2 + 42, y: node.y - 26 });
 
 const resizePoints = (node: MindMapNode): Array<{ corner: ResizeCorner; point: Point }> => [
-  { corner: 'nw', point: { x: node.x - node.width / 2, y: node.y - node.height / 2 } },
-  { corner: 'ne', point: { x: node.x + node.width / 2, y: node.y - node.height / 2 } },
-  { corner: 'se', point: { x: node.x + node.width / 2, y: node.y + node.height / 2 } },
-  { corner: 'sw', point: { x: node.x - node.width / 2, y: node.y + node.height / 2 } },
+  { corner: 'nw', point: rotateNodePoint(node, { x: node.x - node.width / 2, y: node.y - node.height / 2 }) },
+  { corner: 'ne', point: rotateNodePoint(node, { x: node.x + node.width / 2, y: node.y - node.height / 2 }) },
+  { corner: 'se', point: rotateNodePoint(node, { x: node.x + node.width / 2, y: node.y + node.height / 2 }) },
+  { corner: 'sw', point: rotateNodePoint(node, { x: node.x - node.width / 2, y: node.y + node.height / 2 }) },
 ];
 
 const resizedNode = (interaction: Extract<Interaction, { type: 'resize' }>) => {
   const horizontal = interaction.corner.includes('e') ? 1 : -1;
   const vertical = interaction.corner.includes('s') ? 1 : -1;
-  const width = Math.max(MIND_MAP_VISUAL_TOKENS.node.minWidth, interaction.width + horizontal * (interaction.currentWorld.x - interaction.startWorld.x));
-  const height = Math.max(40, interaction.height + vertical * (interaction.currentWorld.y - interaction.startWorld.y));
+  const radians = interaction.rotation * Math.PI / 180;
+  const dx = interaction.currentWorld.x - interaction.startWorld.x;
+  const dy = interaction.currentWorld.y - interaction.startWorld.y;
+  const localX = dx * Math.cos(radians) + dy * Math.sin(radians);
+  const localY = -dx * Math.sin(radians) + dy * Math.cos(radians);
+  const width = Math.max(MIND_MAP_VISUAL_TOKENS.node.minWidth, interaction.width + horizontal * localX);
+  const height = Math.max(40, interaction.height + vertical * localY);
+  const offsetX = horizontal * (width - interaction.width) / 2;
+  const offsetY = vertical * (height - interaction.height) / 2;
   return {
-    x: interaction.x + horizontal * (width - interaction.width) / 2,
-    y: interaction.y + vertical * (height - interaction.height) / 2,
+    x: interaction.x + offsetX * Math.cos(radians) - offsetY * Math.sin(radians),
+    y: interaction.y + offsetX * Math.sin(radians) + offsetY * Math.cos(radians),
     width,
     height,
   };
@@ -230,64 +315,53 @@ const pointSegmentDistance = (point: Point, start: Point, end: Point) => {
   return Math.hypot(point.x - (start.x + ratio * dx), point.y - (start.y + ratio * dy));
 };
 
-function edgePoints(edge: MindMapEdge, nodes: Record<string, MindMapNode>) {
-  const source = nodes[edge.sourceId];
-  const target = nodes[edge.targetId];
-  if (!source || !target) return null;
-  const angle = Math.atan2(target.y - source.y, target.x - source.x);
-  const sourceRadius = Math.abs(Math.cos(angle)) * source.width / 2 + Math.abs(Math.sin(angle)) * source.height / 2;
-  const targetRadius = Math.abs(Math.cos(angle)) * target.width / 2 + Math.abs(Math.sin(angle)) * target.height / 2;
-  return {
-    start: {
-      x: source.x + Math.cos(angle) * sourceRadius,
-      y: source.y + Math.sin(angle) * sourceRadius,
-    },
-    end: {
-      x: target.x - Math.cos(angle) * targetRadius,
-      y: target.y - Math.sin(angle) * targetRadius,
-    },
-  };
+function edgeRoute(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection = 'left-right'): EdgeRoute | null {
+  const endpoints = edgeConnectableObjects(document, edge);
+  if (!endpoints) return null;
+  return buildEdgeRoute(
+    endpoints.source.bounds,
+    endpoints.target.bounds,
+    { kind: edge.relationship === 'tree' ? 'hierarchy' : 'relation', hierarchyDirection: treeDirection },
+  );
 }
 
-function orthogonalPoints(edge: MindMapEdge, nodes: Record<string, MindMapNode>) {
-  const endpoints = edgePoints(edge, nodes);
+function edgePoints(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection = 'left-right') {
+  const route = edgeRoute(edge, document, treeDirection);
+  return route ? { start: route.start, end: route.end } : null;
+}
+
+function orthogonalPoints(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection = 'left-right') {
+  const endpoints = edgePoints(edge, document, treeDirection);
   if (!endpoints) return null;
   if (edge.controlPoints.length > 0) return [endpoints.start, ...edge.controlPoints, endpoints.end];
   const middleX = (endpoints.start.x + endpoints.end.x) / 2;
   return [endpoints.start, { x: middleX, y: endpoints.start.y }, { x: middleX, y: endpoints.end.y }, endpoints.end];
 }
 
-function hitEdge(point: Point, document: MindMapDocument, tolerance: number, nodes = document.nodes) {
+function hitEdge(point: Point, document: MindMapDocument, tolerance: number, treeDirection: TreeDirection = 'left-right') {
   const edges = Object.values(document.edges);
   for (let index = edges.length - 1; index >= 0; index -= 1) {
     const edge = edges[index];
     if (edgeIsHiddenInsideCollapsedSection(edge, document)) continue;
-    const points = edgePoints(edge, nodes);
+    const points = edgePoints(edge, document, treeDirection);
     if (!points) continue;
     if (edge.type === 'straight') {
       if (pointSegmentDistance(point, points.start, points.end) <= tolerance) return edge;
       continue;
     }
     if (edge.type === 'orthogonal') {
-      const route = orthogonalPoints(edge, nodes);
+      const route = orthogonalPoints(edge, document, treeDirection);
       if (!route) continue;
       for (let routeIndex = 1; routeIndex < route.length; routeIndex += 1) {
         if (pointSegmentDistance(point, route[routeIndex - 1], route[routeIndex]) <= tolerance) return edge;
       }
       continue;
     }
-    const control = {
-      x: (points.start.x + points.end.x) / 2,
-      y: (points.start.y + points.end.y) / 2 - Math.min(120, Math.abs(points.end.x - points.start.x) * 0.25 + 30),
-    };
-    let previous = points.start;
+    const route = edgeRoute(edge, document, treeDirection);
+    if (!route) continue;
+    let previous = route.start;
     for (let step = 1; step <= 16; step += 1) {
-      const ratio = step / 16;
-      const inverse = 1 - ratio;
-      const current = {
-        x: inverse * inverse * points.start.x + 2 * inverse * ratio * control.x + ratio * ratio * points.end.x,
-        y: inverse * inverse * points.start.y + 2 * inverse * ratio * control.y + ratio * ratio * points.end.y,
-      };
+      const current = pointOnRoute(route, step / 16);
       if (pointSegmentDistance(point, previous, current) <= tolerance) return edge;
       previous = current;
     }
@@ -411,11 +485,63 @@ const hitSection = (point: Point, sections: Record<string, MindMapSection>) => {
   }) ?? null;
 };
 
+const previewProjectReference = (reference: ProjectReferenceCard, interaction: Interaction): ProjectReferenceCard => {
+  if (interaction?.type !== 'project-reference-drag' || interaction.referenceId !== reference.id) return reference;
+  return {
+    ...reference,
+    x: interaction.initial.x + interaction.currentWorld.x - interaction.startWorld.x,
+    y: interaction.initial.y + interaction.currentWorld.y - interaction.startWorld.y,
+  };
+};
+
+const previewTimeline = (timeline: TimelineSection, interaction: Interaction): TimelineSection => {
+  if (interaction?.type !== 'timeline-drag' || interaction.timelineId !== timeline.id) return timeline;
+  return {
+    ...timeline,
+    x: interaction.initial.x + interaction.currentWorld.x - interaction.startWorld.x,
+    y: interaction.initial.y + interaction.currentWorld.y - interaction.startWorld.y,
+  };
+};
+
+const dateAfter = (start: string, days: number) => {
+  const date = new Date(`${start}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const timelineRange = (timeline: TimelineSection, items: TimelineProjectionItem[]) => {
+  const today = todayStr();
+  const fallbackDays = timeline.scale === 'week' ? 6 : timeline.scale === 'month' ? 30 : 365;
+  const earliestItemStart = items.reduce((earliest, item) => !earliest || item.start < earliest ? item.start : earliest, '');
+  const start = (timeline.rangeStart ?? earliestItemStart) || today;
+  const end = timeline.rangeEnd
+    ?? (items.reduce((latest, item) => item.end > latest ? item.end : latest, '') || dateAfter(start, fallbackDays));
+  return { start, end: end >= start ? end : start };
+};
+
+const timelineTaskDates = (item: TimelineProjectionItem, edit: TimelineTaskInteraction | null) => {
+  const itemId = item.projectTaskId ?? item.lifeItemId;
+  if (!itemId || edit?.itemId !== itemId) return { start: item.start, end: item.end };
+  const duration = diffDays(edit.end, edit.start);
+  const delta = edit.mode === 'start'
+    ? Math.min(duration, edit.deltaDays)
+    : edit.mode === 'end'
+      ? Math.max(-duration, edit.deltaDays)
+      : edit.deltaDays;
+  return {
+    start: edit.mode === 'end' ? edit.start : addDays(edit.start, delta),
+    end: edit.mode === 'start' ? edit.end : addDays(edit.end, delta),
+  };
+};
+
 export default function MindMapCanvas({
   document,
   assetRevision = 0,
   onScaleChange,
   fitRequest = 0,
+  treeLayoutRequest = 0,
+  treeDirection = 'left-right',
+  onLayoutRunningChange,
   pngRequest = 0,
   pngScope = 'viewport',
   onSelectionChange,
@@ -446,6 +572,8 @@ export default function MindMapCanvas({
   const clipboardRef = useRef<ClipboardGraph | null>(null);
   const richHtmlCacheRef = useRef(new Map<string, { updatedAt: number; html: string }>());
   const handledFitRequest = useRef(0);
+  const handledTreeLayoutRequest = useRef(0);
+  const layoutGeneration = useRef(0);
   const handledPngRequest = useRef(0);
   const touchPoints = useRef(new Map<number, Point>());
   const pinchRef = useRef<PinchState | null>(null);
@@ -455,8 +583,11 @@ export default function MindMapCanvas({
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [selectedProjectReferenceId, setSelectedProjectReferenceId] = useState<string | null>(null);
+  const [hoveredProjectReferenceId, setHoveredProjectReferenceId] = useState<string | null>(null);
+  const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [connectionSourceId, setConnectionSourceId] = useState<string | null>(null);
+  const [connectionSource, setConnectionSource] = useState<CanvasObjectRef | null>(null);
   const [interaction, setInteractionState] = useState<Interaction>(null);
   const [editing, setEditing] = useState<EditingSession | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -466,6 +597,10 @@ export default function MindMapCanvas({
   const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
   const [imageAssetUrls, setImageAssetUrls] = useState<Record<string, string>>({});
   const [webglActive, setWebglActive] = useState(false);
+  const [timelineTaskInteraction, setTimelineTaskInteraction] = useState<TimelineTaskInteraction | null>(null);
+  const [timelineEditError, setTimelineEditError] = useState<string | null>(null);
+  const [projectDateUndo, setProjectDateUndo] = useState<ProjectDateUndo | null>(null);
+  const [lifeDateUpdated, setLifeDateUpdated] = useState(false);
   const editingSessionKey = editing ? editing.nodeId ?? 'new' : null;
   const {
     execute,
@@ -475,7 +610,7 @@ export default function MindMapCanvas({
     createEdge,
     updateEdge,
     deleteEdges,
-    setViewport,
+    setViewportForDocument,
     undo,
     redo,
     flushSave,
@@ -487,18 +622,66 @@ export default function MindMapCanvas({
     createEdge: state.createEdge,
     updateEdge: state.updateEdge,
     deleteEdges: state.deleteEdges,
-    setViewport: state.setViewport,
+    setViewportForDocument: state.setViewportForDocument,
     undo: state.undo,
     redo: state.redo,
     flushSave: state.flushSave,
   })));
+  const projectPlanning = useProjectPlanningSnapshot();
+  const legacyLifeTimeline = useLifeTimelineSnapshot();
+  const lifeTimeline = document.lifeMap ?? legacyLifeTimeline;
+  const manualTimelineCandidates = useMemo(() => [
+    ...projectPlanning.projects.flatMap((project) => projectTimelineItems(project.id, projectPlanning).map((item) => ({
+      reference: { source: 'project' as const, contextId: project.id, itemId: item.id },
+      label: `${project.name} · ${item.title}`,
+    }))),
+    ...lifeTimeline.lifeMapAreas.filter((area) => !area.deletedAt).flatMap((area) => lifeTimelineItems(area.id, lifeTimeline).map((item) => ({
+      reference: { source: 'life' as const, contextId: area.id, itemId: item.id },
+      label: `${area.name} · ${item.title}`,
+    }))),
+  ], [lifeTimeline, projectPlanning]);
 
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
-  const hiddenNodeIds = useMemo(() => new Set(
-    Object.values(document.nodes)
+  const treeChildrenById = useMemo(() => {
+    const children = new Map<string, string[]>();
+    for (const edge of Object.values(document.edges)) {
+      if (edge.relationship === 'reference') continue;
+      const list = children.get(edge.sourceId) ?? [];
+      list.push(edge.targetId);
+      children.set(edge.sourceId, list);
+    }
+    return children;
+  }, [document.edges]);
+  const hiddenNodeIds = useMemo(() => {
+    const hidden = new Set(Object.values(document.nodes)
       .filter((node) => node.parentSectionId && document.sections[node.parentSectionId]?.collapsed)
-      .map((node) => node.id),
-  ), [document.nodes, document.sections]);
+      .map((node) => node.id));
+    const pending = Object.values(document.nodes).filter((node) => node.collapsed).map((node) => node.id);
+    while (pending.length) {
+      const id = pending.pop()!;
+      for (const childId of treeChildrenById.get(id) ?? []) {
+        if (!hidden.has(childId)) {
+          hidden.add(childId);
+          pending.push(childId);
+        }
+      }
+    }
+    return hidden;
+  }, [document.nodes, document.sections, treeChildrenById]);
+  const nodeDepthById = useMemo(() => {
+    const depths = new Map<string, number>();
+    const childIds = new Set([...treeChildrenById.values()].flat());
+    const pending: Array<[string, number]> = Object.keys(document.nodes)
+      .filter((id) => !childIds.has(id))
+      .map((id) => [id, 0]);
+    while (pending.length) {
+      const [id, depth] = pending.shift()!;
+      if (depths.has(id)) continue;
+      depths.set(id, depth);
+      for (const childId of treeChildrenById.get(id) ?? []) pending.push([childId, depth + 1]);
+    }
+    return depths;
+  }, [document.nodes, treeChildrenById]);
   const canvasNodes = useMemo(() => Object.fromEntries(
     Object.entries(document.nodes).filter(([id]) => !hiddenNodeIds.has(id)),
   ), [document.nodes, hiddenNodeIds]);
@@ -511,6 +694,24 @@ export default function MindMapCanvas({
   const visibleNodes = useMemo(() => spatialIndex.query(visibleWorldRect(size, camera)), [camera, size, spatialIndex]);
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
   const visibleZOrder = useMemo(() => canvasZOrder.filter((id) => visibleNodeIds.has(id)), [canvasZOrder, visibleNodeIds]);
+  const visibleProjectReferences = useMemo(() => {
+    const viewport = visibleWorldRect(size, camera);
+    return Object.values(document.projectReferences).filter((reference) => rectIntersectsRect(viewport, {
+      x: reference.x - reference.width / 2,
+      y: reference.y - reference.height / 2,
+      width: reference.width,
+      height: reference.height,
+    }));
+  }, [camera, document.projectReferences, size]);
+  const visibleTimelines = useMemo(() => {
+    const viewport = visibleWorldRect(size, camera);
+    return Object.values(document.timelineSections).filter((timeline) => rectIntersectsRect(viewport, {
+      x: timeline.x - timeline.width / 2,
+      y: timeline.y - timeline.height / 2,
+      width: timeline.width,
+      height: timeline.collapsed ? 46 : timeline.height,
+    }));
+  }, [camera, document.timelineSections, size]);
   const hitIndexedNode = useCallback((point: Point) => {
     const candidates = spatialIndex.query({ x: point.x - 1, y: point.y - 1, width: 2, height: 2 });
     const ids = new Set(candidates.map((node) => node.id));
@@ -518,16 +719,27 @@ export default function MindMapCanvas({
   }, [canvasZOrder, spatialIndex]);
 
   useEffect(() => {
+    const cache = richHtmlCacheRef.current;
+    for (const id of cache.keys()) {
+      const node = document.nodes[id];
+      if (!node || (node.type !== 'markdown' && node.type !== 'latex')) cache.delete(id);
+    }
+  }, [document.nodes]);
+  const connectables = useMemo(() => connectableObjects(document), [document]);
+  const hitConnectable = useCallback((point: Point) => hitConnectableObject(connectables, point), [connectables]);
+
+  useEffect(() => {
     onSelectionChange?.(selectedNodeIds.length);
   }, [onSelectionChange, selectedNodeIds.length]);
 
   useEffect(() => {
     if (!connectionMode) {
-      setConnectionSourceId(null);
+      setConnectionSource(null);
       return;
     }
-    if (selectedNodeIds.length === 1) setConnectionSourceId(selectedNodeIds[0]);
-  }, [connectionMode, selectedNodeIds]);
+    if (selectedNodeIds.length === 1) setConnectionSource({ type: 'node', id: selectedNodeIds[0] });
+    else if (selectedProjectReferenceId) setConnectionSource({ type: 'project-reference', id: selectedProjectReferenceId });
+  }, [connectionMode, selectedNodeIds, selectedProjectReferenceId]);
 
   const setInteraction = useCallback((next: Interaction) => {
     interactionRef.current = next;
@@ -579,14 +791,14 @@ export default function MindMapCanvas({
     if (cameraSaveTimer.current) clearTimeout(cameraSaveTimer.current);
     if (immediate) {
       cameraSaveTimer.current = null;
-      setViewport(next);
+      setViewportForDocument(document.id, next);
     } else {
       cameraSaveTimer.current = setTimeout(() => {
         cameraSaveTimer.current = null;
-        setViewport(cameraRef.current);
+        setViewportForDocument(document.id, next);
       }, 180);
     }
-  }, [onScaleChange, setViewport]);
+  }, [document.id, onScaleChange, setViewportForDocument]);
 
   useEffect(() => {
     if (renderedDocumentId.current === document.id) return;
@@ -597,6 +809,8 @@ export default function MindMapCanvas({
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
     setSelectedSectionId(null);
+    setSelectedProjectReferenceId(null);
+    setSelectedTimelineId(null);
     setInteraction(null);
     setEditing(null);
     onScaleChange?.(next.scale);
@@ -621,8 +835,8 @@ export default function MindMapCanvas({
     if (interactionFrame.current !== null) cancelAnimationFrame(interactionFrame.current);
     if (presenceCursorTimer.current) clearTimeout(presenceCursorTimer.current);
     if (cameraSaveTimer.current) clearTimeout(cameraSaveTimer.current);
-    setViewport(cameraRef.current);
-  }, [setViewport]);
+    setViewportForDocument(renderedDocumentId.current ?? document.id, cameraRef.current);
+  }, [document.id, setViewportForDocument]);
 
   useEffect(() => {
     if (!editingSessionKey) return;
@@ -664,9 +878,12 @@ export default function MindMapCanvas({
 
   let presenceDraggingId: string | null = null;
   if (interaction?.type === 'drag') presenceDraggingId = selectedNodeIds[0] ?? null;
+  else if (interaction?.type === 'project-reference-drag') presenceDraggingId = interaction.referenceId;
+  else if (interaction?.type === 'timeline-drag') presenceDraggingId = interaction.timelineId;
+  else if (interaction?.type === 'timeline-resize') presenceDraggingId = interaction.timelineId;
   else if (interaction?.type === 'section-drag' || interaction?.type === 'section-resize') presenceDraggingId = interaction.sectionId;
   else if (interaction?.type === 'resize') presenceDraggingId = interaction.nodeId;
-  else if (interaction?.type === 'connect') presenceDraggingId = interaction.sourceId;
+  else if (interaction?.type === 'connect') presenceDraggingId = interaction.source.id;
   else if (interaction?.type === 'reconnect' || interaction?.type === 'edge-control') presenceDraggingId = interaction.edgeId;
 
   useEffect(() => {
@@ -740,8 +957,8 @@ export default function MindMapCanvas({
       setWebglActive(false);
       return;
     }
-    setWebglActive(renderMindMapWebGl(canvas, document, canvasNodes, edgeNodes, camera, size));
-  }, [camera, canvasNodes, document, edgeNodes, size]);
+    setWebglActive(renderMindMapWebGl(canvas, document, canvasNodes, edgeNodes, hiddenNodeIds, treeDirection, camera, size));
+  }, [camera, canvasNodes, document, edgeNodes, hiddenNodeIds, size, treeDirection]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -808,6 +1025,17 @@ export default function MindMapCanvas({
       const previewEdgeNodes = previewsNodeGeometry
         ? edgeRenderNodes({ ...document, nodes: { ...document.nodes, ...previewNodes } })
         : edgeNodes;
+      const movingReference = interaction?.type === 'project-reference-drag'
+        ? document.projectReferences[interaction.referenceId]
+        : null;
+      const previewReference = movingReference ? previewProjectReference(movingReference, interaction) : null;
+      const edgeDocument = (previewsNodeGeometry || previewReference)
+        ? {
+            ...document,
+            nodes: { ...document.nodes, ...previewEdgeNodes },
+            projectReferences: previewReference ? { ...document.projectReferences, [previewReference.id]: previewReference } : document.projectReferences,
+          }
+        : document;
       const visible = visibleWorldRect(size, camera);
 
       for (const section of Object.values(document.sections)) {
@@ -873,43 +1101,46 @@ export default function MindMapCanvas({
 
       for (const edge of webglActive ? [] : Object.values(document.edges)) {
         if (edgeIsHiddenInsideCollapsedSection(edge, document)) continue;
+        if ((edgeSourceRef(edge).type === 'node' && hiddenNodeIds.has(edgeSourceRef(edge).id))
+          || (edgeTargetRef(edge).type === 'node' && hiddenNodeIds.has(edgeTargetRef(edge).id))) continue;
         const renderedEdge = interaction?.type === 'edge-control' && interaction.edgeId === edge.id
           ? {
               ...edge,
               controlPoints: edge.controlPoints.map((point, index) => index === interaction.controlIndex ? interaction.currentWorld : point),
             }
           : edge;
-        const points = edgePoints(renderedEdge, previewEdgeNodes);
+        const points = edgePoints(renderedEdge, edgeDocument, treeDirection);
         if (!points) continue;
+        const bezier = edgeRoute(renderedEdge, edgeDocument, treeDirection);
         const routeWorld = edge.type === 'orthogonal'
-          ? orthogonalPoints(renderedEdge, previewEdgeNodes) ?? [points.start, points.end]
+          ? orthogonalPoints(renderedEdge, edgeDocument, treeDirection) ?? [points.start, points.end]
           : [points.start, points.end];
+        const routeBounds = edge.type === 'curve' && bezier
+          ? [bezier.start, bezier.control1, bezier.control2, bezier.end]
+          : routeWorld;
         const edgeBounds = {
-          x: Math.min(...routeWorld.map((point) => point.x)),
-          y: Math.min(...routeWorld.map((point) => point.y)),
-          width: Math.max(...routeWorld.map((point) => point.x)) - Math.min(...routeWorld.map((point) => point.x)),
-          height: Math.max(...routeWorld.map((point) => point.y)) - Math.min(...routeWorld.map((point) => point.y)),
+          x: Math.min(...routeBounds.map((point) => point.x)),
+          y: Math.min(...routeBounds.map((point) => point.y)),
+          width: Math.max(...routeBounds.map((point) => point.x)) - Math.min(...routeBounds.map((point) => point.x)),
+          height: Math.max(...routeBounds.map((point) => point.y)) - Math.min(...routeBounds.map((point) => point.y)),
         };
         edgeBounds.x -= 40;
         edgeBounds.y -= 40;
         edgeBounds.width += 80;
         edgeBounds.height += 80;
         if (!rectIntersectsRect(visible, edgeBounds)) continue;
-        const start = worldToView(points.start, camera);
-        const end = worldToView(points.end, camera);
+        const start = worldToView(bezier?.start ?? points.start, camera);
+        const end = worldToView(bezier?.end ?? points.end, camera);
         context.beginPath();
         context.moveTo(start.x, start.y);
         let arrowFrom = start;
         let backwardFrom = end;
-        if (edge.type === 'curve') {
-          const controlWorld = {
-            x: (points.start.x + points.end.x) / 2,
-            y: (points.start.y + points.end.y) / 2 - Math.min(120, Math.abs(points.end.x - points.start.x) * 0.25 + 30),
-          };
-          const control = worldToView(controlWorld, camera);
-          context.quadraticCurveTo(control.x, control.y, end.x, end.y);
-          arrowFrom = control;
-          backwardFrom = control;
+        if (edge.type === 'curve' && bezier) {
+          const control1 = worldToView(bezier.control1, camera);
+          const control2 = worldToView(bezier.control2, camera);
+          context.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+          arrowFrom = control2;
+          backwardFrom = control1;
         } else if (edge.type === 'orthogonal') {
           const route = routeWorld.map((point) => worldToView(point, camera));
           for (const point of route.slice(1)) context.lineTo(point.x, point.y);
@@ -918,10 +1149,12 @@ export default function MindMapCanvas({
         } else {
           context.lineTo(end.x, end.y);
         }
-        context.strokeStyle = selectedEdgeIds.includes(edge.id) ? MIND_MAP_VISUAL_TOKENS.color.accent : edge.style.color;
+        context.strokeStyle = selectedEdgeIds.includes(edge.id)
+          ? MIND_MAP_VISUAL_TOKENS.color.accent
+          : edge.relationship === 'reference' ? '#b2bac6' : edge.style.color;
         const edgeWidth = edge.style.width === 2 ? MIND_MAP_VISUAL_TOKENS.edge.width : edge.style.width;
         context.lineWidth = Math.max(1, edgeWidth * camera.scale);
-        context.setLineDash(edge.style.dash === 'dashed' ? [7, 5] : []);
+        context.setLineDash(edge.relationship === 'reference' || edge.style.dash === 'dashed' ? [6, 5] : []);
         context.stroke();
         context.setLineDash([]);
         const arrowSize = Math.max(5, MIND_MAP_VISUAL_TOKENS.edge.arrowSize * camera.scale);
@@ -945,24 +1178,40 @@ export default function MindMapCanvas({
       }
 
       if (interaction?.type === 'connect') {
-        const source = previewNodes[interaction.sourceId];
+        const source = resolveConnectableObject(edgeDocument, interaction.source);
         if (source) {
-          const start = worldToView(interaction.sourcePoint, camera);
-          const end = worldToView(interaction.currentWorld, camera);
+          const previewRoute = buildEdgeRoute(
+            source.bounds,
+            { x: interaction.currentWorld.x - 1, y: interaction.currentWorld.y - 1, width: 2, height: 2 },
+            { kind: 'relation' },
+          );
+          const start = worldToView(previewRoute.start, camera);
+          const control1 = worldToView(previewRoute.control1, camera);
+          const control2 = worldToView(previewRoute.control2, camera);
+          const end = worldToView(previewRoute.end, camera);
           context.beginPath();
           context.moveTo(start.x, start.y);
-          context.lineTo(end.x, end.y);
+          context.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
           context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
           context.lineWidth = MIND_MAP_VISUAL_TOKENS.selection.ringWidth;
           context.setLineDash([6, 4]);
           context.stroke();
           context.setLineDash([]);
+          const target = hitConnectable(interaction.currentWorld);
+          if (target && !sameCanvasObjectRef(target.ref, interaction.source)) {
+            const topLeft = worldToView({ x: target.bounds.x, y: target.bounds.y }, camera);
+            context.save();
+            context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+            context.lineWidth = 1.5;
+            context.strokeRect(topLeft.x - 3, topLeft.y - 3, target.bounds.width * camera.scale + 6, target.bounds.height * camera.scale + 6);
+            context.restore();
+          }
         }
       }
 
       if (interaction?.type === 'reconnect') {
         const edge = document.edges[interaction.edgeId];
-        const points = edge ? edgePoints(edge, previewEdgeNodes) : null;
+        const points = edge ? edgePoints(edge, edgeDocument, treeDirection) : null;
         if (edge && points) {
           const fixed = interaction.endpoint === 'source' ? points.end : points.start;
           const start = worldToView(fixed, camera);
@@ -1012,19 +1261,21 @@ export default function MindMapCanvas({
           context.stroke();
           context.setLineDash([]);
         }
-        if (camera.scale >= 0.2 && node.type !== 'markdown' && node.type !== 'latex') {
+        const depth = nodeDepthById.get(node.id) ?? 0;
+        const semanticHidden = camera.scale < 0.32 && depth > 1;
+        if (camera.scale >= 0.2 && !semanticHidden && node.type !== 'markdown' && node.type !== 'latex') {
           context.fillStyle = node.style.textColor;
           context.font = node.style.fontWeight + ' ' + Math.max(8, node.style.fontSize * camera.scale) + 'px sans-serif';
           context.textAlign = node.style.textAlign;
           context.textBaseline = 'middle';
           const typePrefix = node.type === 'url' ? 'URL · ' : '';
           const lineHeight = node.style.fontSize * node.style.lineHeight * camera.scale;
-          const maximumLines = node.type === 'image'
+          const maximumLines = camera.scale < 0.65 ? 1 : node.type === 'image'
             ? 1
             : Math.max(1, Math.min(100, Math.floor((height - 24 * camera.scale) / lineHeight)));
           const lines = wrapText(
             context,
-            typePrefix + (node.text || '双击编辑'),
+            typePrefix + ((camera.scale < 0.65 ? node.text.split('\n')[0] : node.text) || '双击编辑'),
             Math.max(10, width - MIND_MAP_VISUAL_TOKENS.node.paddingX * 2 * camera.scale),
             maximumLines,
           );
@@ -1041,38 +1292,106 @@ export default function MindMapCanvas({
         context.restore();
       }
 
+      for (const nodeId of renderZOrder) {
+        const node = previewNodes[nodeId];
+        if (!node || !(treeChildrenById.get(node.id)?.length)) continue;
+        const marker = worldToView({ x: node.x - node.width / 2 - 10, y: node.y }, camera);
+        context.save();
+        context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.surface;
+        context.strokeStyle = 'rgba(91, 91, 214, 0.42)';
+        context.lineWidth = 1;
+        context.beginPath();
+        context.arc(marker.x, marker.y, 7, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+        context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+        context.font = '600 12px sans-serif';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(node.collapsed ? '+' : '−', marker.x, marker.y + 0.5);
+        context.restore();
+      }
+
       const handleNodeIds = [...new Set([
         hoveredNodeId,
         selectedNodeIds.length === 1 ? selectedNodeIds[0] : null,
-        connectionSourceId,
+        connectionSource?.type === 'node' ? connectionSource.id : null,
       ].filter((id): id is string => Boolean(id)))];
       for (const nodeId of handleNodeIds) {
+        const object = resolveConnectableObject(edgeDocument, { type: 'node', id: nodeId });
         const node = previewNodes[nodeId];
-        if (node) {
+        const selected = selectedNodeIds.includes(nodeId);
+        const showActions = Boolean(node) && camera.scale >= 0.4 && (selected || camera.scale >= 0.65);
+        if (object && showActions) {
+          if (node) {
+            const childView = worldToView(childHandlePoint(node), camera);
+            context.fillStyle = '#ffffff';
+            context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+            context.lineWidth = MIND_MAP_VISUAL_TOKENS.selection.ringWidth;
+            context.beginPath();
+            context.arc(childView.x, childView.y, HANDLE_RADIUS + 1, 0, Math.PI * 2);
+            context.fill();
+            context.stroke();
+            context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+            context.font = '600 14px sans-serif';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText('+', childView.x, childView.y + 0.5);
+          }
           context.fillStyle = '#ffffff';
           context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
           context.lineWidth = MIND_MAP_VISUAL_TOKENS.selection.ringWidth;
-          for (const point of connectionPoints(node)) {
-            const view = worldToView(point, camera);
+          const view = worldToView(relationHandlePoint(object), camera);
+          context.beginPath();
+          context.arc(view.x, view.y, HANDLE_RADIUS + 1, 0, Math.PI * 2);
+          context.fill();
+          context.stroke();
+          context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+          context.font = '600 12px sans-serif';
+          context.textAlign = 'center';
+          context.textBaseline = 'middle';
+          context.fillText('↗', view.x, view.y + 0.5);
+          if (node && camera.scale >= 0.65) {
+            const moreView = worldToView(moreHandlePoint(node), camera);
+            context.fillStyle = '#ffffff';
+            context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
             context.beginPath();
-            context.arc(view.x, view.y, HANDLE_RADIUS, 0, Math.PI * 2);
+            context.arc(moreView.x, moreView.y, HANDLE_RADIUS + 1, 0, Math.PI * 2);
             context.fill();
             context.stroke();
+            context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+            context.fillText('…', moreView.x, moreView.y - 1);
           }
-          if (selectedNodeIds.length === 1 && selectedNodeIds[0] === node.id) {
+          if (node && selected) {
             for (const { point } of resizePoints(node)) {
-              const resize = worldToView(point, camera);
-              const half = MIND_MAP_VISUAL_TOKENS.selection.handleSize / 2;
-              context.fillRect(resize.x - half, resize.y - half, half * 2, half * 2);
-              context.strokeRect(resize.x - half, resize.y - half, half * 2, half * 2);
+              const resizeView = worldToView(point, camera);
+              context.fillStyle = '#ffffff';
+              context.fillRect(resizeView.x - 4, resizeView.y - 4, 8, 8);
+              context.strokeRect(resizeView.x - 4, resizeView.y - 4, 8, 8);
             }
           }
         }
       }
 
+      if (interaction?.type === 'create-child') {
+        const parent = previewNodes[interaction.parentId];
+        if (parent) {
+          const start = worldToView({ x: parent.x + parent.width / 2, y: parent.y }, camera);
+          const end = worldToView(interaction.currentWorld, camera);
+          context.beginPath();
+          context.moveTo(start.x, start.y);
+          context.lineTo(end.x, end.y);
+          context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+          context.lineWidth = MIND_MAP_VISUAL_TOKENS.selection.ringWidth;
+          context.setLineDash([5, 4]);
+          context.stroke();
+          context.setLineDash([]);
+        }
+      }
+
       if (selectedEdgeIds.length === 1) {
         const edge = document.edges[selectedEdgeIds[0]];
-        const points = edge ? edgePoints(edge, previewEdgeNodes) : null;
+        const points = edge ? edgePoints(edge, edgeDocument, treeDirection) : null;
         if (points) {
           context.fillStyle = '#ffffff';
           context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
@@ -1112,7 +1431,7 @@ export default function MindMapCanvas({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [camera, canvasNodes, connectionSourceId, document, edgeNodes, hoveredNodeId, interaction, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, visibleNodeIds, visibleZOrder, webglActive]);
+  }, [camera, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredNodeId, interaction, nodeDepthById, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, visibleNodeIds, visibleZOrder, webglActive]);
 
   const startEditingNode = (node: MindMapNode) => {
     setEditing({
@@ -1129,6 +1448,57 @@ export default function MindMapCanvas({
     window.requestAnimationFrame(() => surfaceRef.current?.focus());
   };
 
+  const treeParentId = (nodeId: string) => Object.values(document.edges).find((edge) => (
+    edge.relationship === 'tree' && edgeTargetRef(edge).type === 'node' && edgeTargetRef(edge).id === nodeId
+  ))?.sourceId ?? null;
+
+  const suggestedChildPosition = (parent: MindMapNode) => {
+    const siblings = Object.values(document.edges).filter((edge) => edge.relationship === 'tree' && edge.sourceId === parent.id).length;
+    const cross = (siblings - 0.5) * 76;
+    if (treeDirection === 'right-left') return { x: parent.x - parent.width / 2 - 186, y: parent.y + cross };
+    if (treeDirection === 'top-bottom') return { x: parent.x + cross, y: parent.y + parent.height / 2 + 88 };
+    if (treeDirection === 'bottom-top') return { x: parent.x + cross, y: parent.y - parent.height / 2 - 88 };
+    return { x: parent.x + parent.width / 2 + 186, y: parent.y + cross };
+  };
+
+  const createChildNode = (parentId: string, position?: Point) => {
+    const parent = document.nodes[parentId];
+    if (!parent || parent.locked) return;
+    const next = position ?? suggestedChildPosition(parent);
+    setEditing({ nodeId: null, connectFromId: parentId, treePlacement: position ? 'manual' : 'auto', x: next.x, y: next.y, width: 180, height: 56, draft: '' });
+  };
+
+  const createSiblingNode = (nodeId: string) => {
+    const node = document.nodes[nodeId];
+    if (!node || node.locked) return;
+    const parentId = treeParentId(nodeId);
+    if (parentId) createChildNode(parentId);
+    else setEditing({ nodeId: null, x: node.x, y: node.y + node.height / 2 + 88, width: 180, height: 56, draft: '' });
+  };
+
+  const moveNodeToParent = (nodeId: string, parentId: string) => {
+    if (nodeId === parentId || !document.nodes[nodeId] || !document.nodes[parentId]) return;
+    const descendants = new Set<string>([nodeId]);
+    const pending = [nodeId];
+    while (pending.length) {
+      const current = pending.pop()!;
+      for (const edge of Object.values(document.edges)) {
+        if (edge.relationship === 'tree' && edge.sourceId === current && !descendants.has(edge.targetId)) {
+          descendants.add(edge.targetId);
+          pending.push(edge.targetId);
+        }
+      }
+    }
+    if (descendants.has(parentId)) return;
+    execute('移动节点层级', (current) => {
+      const edges = Object.fromEntries(Object.entries(current.edges).filter(([, edge]) => !(
+        edge.relationship === 'tree' && edgeTargetRef(edge).type === 'node' && edgeTargetRef(edge).id === nodeId
+      )));
+      const edge = createMindMapEdge(parentId, nodeId, { relationship: 'tree' });
+      return { ...current, edges: { ...edges, [edge.id]: edge } };
+    });
+  };
+
   const commitEditing = (restoreFocus = false) => {
     const session = editing;
     if (!session) return;
@@ -1139,13 +1509,11 @@ export default function MindMapCanvas({
       const nodeType = session.newNodeType ?? 'text';
       if (session.connectFromId && document.nodes[session.connectFromId]) {
         const node = createMindMapNode({ x: session.x, y: session.y }, nodeType, { text: session.draft });
-        const edge = createMindMapEdge(session.connectFromId, node.id);
-        execute('创建关联节点', (current) => ({
-          ...current,
-          nodes: { ...current.nodes, [node.id]: node },
-          edges: { ...current.edges, [edge.id]: edge },
-          zOrder: [...current.zOrder, node.id],
-        }));
+        const edge = createMindMapEdge(session.connectFromId, node.id, { relationship: 'tree' });
+        execute('创建子节点', (current) => {
+          const next = { ...current, nodes: { ...current.nodes, [node.id]: node }, edges: { ...current.edges, [edge.id]: edge }, zOrder: [...current.zOrder, node.id] };
+          return session.treePlacement === 'auto' ? layoutMindMapBranch(next, session.connectFromId!, treeDirection) : next;
+        });
         setSelectedNodeIds([node.id]);
         setSelectedEdgeIds([]);
       } else {
@@ -1183,7 +1551,7 @@ export default function MindMapCanvas({
     if (node) {
       startEditingNode(node);
     } else {
-      const edge = hitEdge(world, document, 7 / cameraRef.current.scale, edgeNodes);
+      const edge = hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection);
       if (edge) {
         setSelectedNodeIds([]);
         setSelectedEdgeIds([edge.id]);
@@ -1197,12 +1565,17 @@ export default function MindMapCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return;
     setContextMenu(null);
+    setSelectedProjectReferenceId(null);
+    setSelectedTimelineId(null);
     surfaceRef.current?.focus();
     const view = pointerView(event, canvas);
     const world = viewToWorld(view, cameraRef.current);
     if (event.pointerType === 'touch') {
       touchPoints.current.set(event.pointerId, view);
       if (touchPoints.current.size >= 2) {
+        // Keep an active drag intact. Starting a pinch must never discard an
+        // uncommitted node/section edit from the first touch.
+        if (interactionRef.current) return;
         const [first, second] = [...touchPoints.current.values()];
         pinchRef.current = {
           distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
@@ -1210,7 +1583,6 @@ export default function MindMapCanvas({
           camera: cameraRef.current,
         };
         canvas.setPointerCapture(event.pointerId);
-        setInteraction(null);
         return;
       }
     }
@@ -1228,7 +1600,7 @@ export default function MindMapCanvas({
 
     if (selectedEdgeIds.length === 1) {
       const selectedEdge = document.edges[selectedEdgeIds[0]];
-      const points = selectedEdge ? edgePoints(selectedEdge, edgeNodes) : null;
+      const points = selectedEdge ? edgePoints(selectedEdge, document, treeDirection) : null;
       if (selectedEdge && points) {
         const tolerance = HANDLE_RADIUS / cameraRef.current.scale;
         if (selectedEdge.type === 'orthogonal') {
@@ -1266,19 +1638,43 @@ export default function MindMapCanvas({
     const connectionHandleNodes = [...new Set([
       hoveredNodeId,
       selectedNodeIds.length === 1 ? selectedNodeIds[0] : null,
-      connectionSourceId,
+      connectionSource?.type === 'node' ? connectionSource.id : null,
     ].filter((id): id is string => Boolean(id)))];
-    const tolerance = HANDLE_RADIUS / cameraRef.current.scale;
     for (const nodeId of connectionHandleNodes) {
       const node = document.nodes[nodeId];
-      const connectPoint = node && connectionPoints(node).find((point) => (
-        Math.hypot(world.x - point.x, world.y - point.y) <= tolerance
-      ));
-      if (node && connectPoint) {
-          setSelectedNodeIds([node.id]);
+      const hasChildren = Boolean(treeChildrenById.get(nodeId)?.length);
+      const marker = node && { x: node.x - node.width / 2 - 10, y: node.y };
+      if (node && hasChildren && marker && Math.hypot(world.x - marker.x, world.y - marker.y) <= 9 / cameraRef.current.scale) {
+        updateNode(node.id, { collapsed: !node.collapsed });
+        return;
+      }
+    }
+    const tolerance = 10 / cameraRef.current.scale;
+    for (const nodeId of connectionHandleNodes) {
+      const node = document.nodes[nodeId];
+      if (!node || cameraRef.current.scale < 0.4) continue;
+      const childPoint = childHandlePoint(node);
+      const morePoint = moreHandlePoint(node);
+      const touchRadius = 18 / cameraRef.current.scale;
+      if (Math.hypot(world.x - childPoint.x, world.y - childPoint.y) <= touchRadius) {
+        setSelectedNodeIds([node.id]);
+        canvas.setPointerCapture(event.pointerId);
+        setInteraction({ type: 'create-child', pointerId: event.pointerId, parentId: node.id, startWorld: world, currentWorld: world });
+        return;
+      }
+      if (cameraRef.current.scale >= 0.65 && Math.hypot(world.x - morePoint.x, world.y - morePoint.y) <= touchRadius) {
+        setContextMenu({ x: view.x, y: view.y, world, nodeId: node.id });
+        return;
+      }
+    }
+    for (const nodeId of connectionHandleNodes) {
+      const object = resolveConnectableObject(document, { type: 'node', id: nodeId });
+      const connectPoint = object && relationHandlePoint(object);
+      if (object && connectPoint && Math.hypot(world.x - connectPoint.x, world.y - connectPoint.y) <= 16 / cameraRef.current.scale) {
+          setSelectedNodeIds([nodeId]);
           setSelectedEdgeIds([]);
           canvas.setPointerCapture(event.pointerId);
-          setInteraction({ type: 'connect', pointerId: event.pointerId, sourceId: node.id, sourcePoint: connectPoint, currentWorld: world });
+          setInteraction({ type: 'connect', pointerId: event.pointerId, source: object.ref, sourcePoint: connectPoint, currentWorld: world });
           return;
       }
     }
@@ -1302,6 +1698,7 @@ export default function MindMapCanvas({
             y: selected.y,
             width: selected.width,
             height: selected.height,
+            rotation: selected.rotation,
           });
           return;
         }
@@ -1329,17 +1726,20 @@ export default function MindMapCanvas({
 
     const node = hitIndexedNode(world);
     if (connectionMode) {
-      if (!node) return;
-      if (!connectionSourceId) {
-        setConnectionSourceId(node.id);
-        setSelectedNodeIds([node.id]);
+      const target = hitConnectable(world);
+      if (!target) return;
+      if (!connectionSource) {
+        setConnectionSource(target.ref);
+        setSelectedNodeIds(target.ref.type === 'node' ? [target.ref.id] : []);
+        setSelectedProjectReferenceId(target.ref.type === 'project-reference' ? target.ref.id : null);
         setSelectedEdgeIds([]);
         setSelectedSectionId(null);
-      } else if (node.id !== connectionSourceId) {
-        createEdge(connectionSourceId, node.id);
-        setSelectedNodeIds([node.id]);
+      } else if (!sameCanvasObjectRef(target.ref, connectionSource)) {
+        createEdge(connectionSource, target.ref);
+        setSelectedNodeIds(target.ref.type === 'node' ? [target.ref.id] : []);
+        setSelectedProjectReferenceId(target.ref.type === 'project-reference' ? target.ref.id : null);
         setSelectedEdgeIds([]);
-        setConnectionSourceId(null);
+        setConnectionSource(null);
         onConnectionModeChange?.(false);
       }
       return;
@@ -1376,7 +1776,7 @@ export default function MindMapCanvas({
       return;
     }
 
-    const edge = hitEdge(world, document, 7 / cameraRef.current.scale, edgeNodes);
+    const edge = hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection);
     if (edge) {
       setSelectedNodeIds([]);
       setSelectedEdgeIds([edge.id]);
@@ -1571,10 +1971,16 @@ export default function MindMapCanvas({
         .map((node) => node.id);
       setSelectedNodeIds(event.shiftKey ? [...new Set([...selectedNodeIds, ...ids])] : ids);
       setSelectedEdgeIds([]);
+    } else if (activeInteraction.type === 'create-child') {
+      const distance = Math.hypot(activeInteraction.currentWorld.x - activeInteraction.startWorld.x, activeInteraction.currentWorld.y - activeInteraction.startWorld.y);
+      const target = hitConnectable(activeInteraction.currentWorld);
+      if (distance < 10 / cameraRef.current.scale) createChildNode(activeInteraction.parentId);
+      else if (!target) createChildNode(activeInteraction.parentId, activeInteraction.currentWorld);
+      else createChildNode(activeInteraction.parentId);
     } else if (activeInteraction.type === 'connect') {
-      const target = hitIndexedNode(activeInteraction.currentWorld);
-      if (target && target.id !== activeInteraction.sourceId) {
-        createEdge(activeInteraction.sourceId, target.id);
+      const target = hitConnectable(activeInteraction.currentWorld);
+      if (target && !sameCanvasObjectRef(target.ref, activeInteraction.source)) {
+        createEdge(activeInteraction.source, target.ref);
         setSelectedEdgeIds([]);
       }
     } else if (activeInteraction.type === 'edge-control') {
@@ -1586,20 +1992,20 @@ export default function MindMapCanvas({
       }
     } else if (activeInteraction.type === 'reconnect') {
       const edge = document.edges[activeInteraction.edgeId];
-      const target = hitIndexedNode(activeInteraction.currentWorld);
+      const target = hitConnectable(activeInteraction.currentWorld);
       if (edge && target) {
-        const otherId = activeInteraction.endpoint === 'source' ? edge.targetId : edge.sourceId;
-        if (target.id !== otherId) {
+        const other = activeInteraction.endpoint === 'source' ? edgeTargetRef(edge) : edgeSourceRef(edge);
+        if (!sameCanvasObjectRef(target.ref, other)) {
           updateEdge(edge.id, activeInteraction.endpoint === 'source'
-            ? { sourceId: target.id }
-            : { targetId: target.id });
+            ? { source: target.ref, sourceId: target.ref.id }
+            : { target: target.ref, targetId: target.ref.id });
         }
       }
     }
     setInteraction(null);
   };
 
-  const handleWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     event.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1609,14 +2015,321 @@ export default function MindMapCanvas({
     };
     const factor = Math.exp(-event.deltaY * 0.0015);
     updateCamera(zoomCameraAt(cameraRef.current, view, cameraRef.current.scale * factor));
+  }, [updateCamera]);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    surface.addEventListener('wheel', handleWheel, { passive: false });
+    return () => surface.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
+
+  const handleProjectReferencePointerDown = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    reference: ProjectReferenceCard,
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    surfaceRef.current?.focus();
+    setContextMenu(null);
+    setSelectedProjectReferenceId(reference.id);
+    setSelectedTimelineId(null);
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setSelectedSectionId(null);
+    const ref: CanvasObjectRef = { type: 'project-reference', id: reference.id };
+    if (connectionMode) {
+      if (!connectionSource) setConnectionSource(ref);
+      else if (!sameCanvasObjectRef(connectionSource, ref)) {
+        createEdge(connectionSource, ref);
+        setConnectionSource(null);
+        onConnectionModeChange?.(false);
+      }
+      return;
+    }
+    if (reference.locked) return;
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    const world = viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setInteraction({
+      type: 'project-reference-drag',
+      pointerId: event.pointerId,
+      referenceId: reference.id,
+      startWorld: world,
+      currentWorld: world,
+      initial: { x: reference.x, y: reference.y },
+    });
+  };
+
+  const handleProjectReferenceRelationPointerDown = (event: ReactPointerEvent<HTMLButtonElement>, reference: ProjectReferenceCard) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    const object = resolveConnectableObject(document, { type: 'project-reference', id: reference.id });
+    if (!object) return;
+    setSelectedProjectReferenceId(reference.id);
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setInteraction({
+      type: 'connect',
+      pointerId: event.pointerId,
+      source: object.ref,
+      sourcePoint: relationHandlePoint(object),
+      currentWorld: viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current),
+    });
+  };
+
+  const handleProjectReferenceRelationPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const active = interactionRef.current;
+    const surface = surfaceRef.current;
+    if (active?.type !== 'connect' || active.pointerId !== event.pointerId || !surface) return;
+    const rect = surface.getBoundingClientRect();
+    scheduleInteraction({ ...active, currentWorld: viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current) });
+  };
+
+  const finishProjectReferenceRelation = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const active = interactionRef.current;
+    const surface = surfaceRef.current;
+    if (active?.type !== 'connect' || active.pointerId !== event.pointerId || !surface) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const rect = surface.getBoundingClientRect();
+    const target = hitConnectable(viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current));
+    if (target && !sameCanvasObjectRef(active.source, target.ref)) createEdge(active.source, target.ref);
+    setInteraction(null);
+  };
+
+  const handleProjectReferencePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = interactionRef.current;
+    const surface = surfaceRef.current;
+    if (active?.type !== 'project-reference-drag' || active.pointerId !== event.pointerId || !surface) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = surface.getBoundingClientRect();
+    scheduleInteraction({
+      ...active,
+      currentWorld: viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current),
+    });
+  };
+
+  const finishProjectReferenceInteraction = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = interactionRef.current;
+    if (active?.type !== 'project-reference-drag' || active.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const dx = active.currentWorld.x - active.startWorld.x;
+    const dy = active.currentWorld.y - active.startWorld.y;
+    if (dx !== 0 || dy !== 0) {
+      execute('移动项目引用', (current) => {
+        const reference = current.projectReferences[active.referenceId];
+        if (!reference || reference.locked) return current;
+        return {
+          ...current,
+          projectReferences: {
+            ...current.projectReferences,
+            [reference.id]: {
+              ...reference,
+              x: active.initial.x + dx,
+              y: active.initial.y + dy,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+      });
+    }
+    setInteraction(null);
+  };
+
+  const handleTimelinePointerDown = (event: ReactPointerEvent<HTMLDivElement>, timeline: TimelineSection) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    surfaceRef.current?.focus();
+    setContextMenu(null);
+    setSelectedTimelineId(timeline.id);
+    setSelectedProjectReferenceId(null);
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setSelectedSectionId(null);
+    if (timeline.locked) return;
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    const world = viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setInteraction({
+      type: 'timeline-drag',
+      pointerId: event.pointerId,
+      timelineId: timeline.id,
+      startWorld: world,
+      currentWorld: world,
+      initial: { x: timeline.x, y: timeline.y },
+    });
+  };
+
+  const handleTimelinePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+    const active = interactionRef.current;
+    const surface = surfaceRef.current;
+    if ((active?.type !== 'timeline-drag' && active?.type !== 'timeline-resize') || active.pointerId !== event.pointerId || !surface) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = surface.getBoundingClientRect();
+    scheduleInteraction({
+      ...active,
+      currentWorld: viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current),
+    });
+  };
+
+  const finishTimelineInteraction = (event: ReactPointerEvent<HTMLElement>) => {
+    const active = interactionRef.current;
+    if ((active?.type !== 'timeline-drag' && active?.type !== 'timeline-resize') || active.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const dx = active.currentWorld.x - active.startWorld.x;
+    const dy = active.currentWorld.y - active.startWorld.y;
+    if (dx !== 0 || dy !== 0) {
+      execute(active.type === 'timeline-drag' ? '移动时间线' : '调整时间线尺寸', (current) => {
+        const timeline = current.timelineSections[active.timelineId];
+        if (!timeline || timeline.locked) return current;
+        const resized = active.type === 'timeline-resize'
+          ? {
+              x: active.initial.x + Math.max(-active.initial.width + 320, dx) / 2,
+              y: active.initial.y + Math.max(-active.initial.height + 180, dy) / 2,
+              width: Math.max(320, active.initial.width + dx),
+              height: Math.max(180, active.initial.height + dy),
+            }
+          : { x: active.initial.x + dx, y: active.initial.y + dy };
+        return {
+          ...current,
+          timelineSections: {
+            ...current.timelineSections,
+            [timeline.id]: {
+              ...timeline,
+              ...resized,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+      });
+    }
+    setInteraction(null);
+  };
+
+  const handleTimelineResizePointerDown = (event: ReactPointerEvent<HTMLSpanElement>, timeline: TimelineSection) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (timeline.locked) return;
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    const world = viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setInteraction({
+      type: 'timeline-resize',
+      pointerId: event.pointerId,
+      timelineId: timeline.id,
+      startWorld: world,
+      currentWorld: world,
+      initial: { x: timeline.x, y: timeline.y, width: timeline.width, height: timeline.height },
+    });
+  };
+
+  const handleTimelineTaskPointerDown = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    item: TimelineProjectionItem,
+    timeline: TimelineSection,
+    rangeStart: string,
+    rangeEnd: string,
+    mode: TimelineTaskInteraction['mode'],
+  ) => {
+    const itemId = item.projectTaskId ?? item.lifeItemId;
+    if (!itemId || timeline.locked || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setTimelineEditError(null);
+    setTimelineTaskInteraction({
+      pointerId: event.pointerId,
+      itemId,
+      source: item.projectTaskId ? 'project' : 'life',
+      mode,
+      startClientX: event.clientX,
+      width: Math.max(1, createTimelineCoordinates(rangeStart, rangeEnd, timeline.width).plotWidth * cameraRef.current.scale),
+      rangeDays: Math.max(1, diffDays(rangeEnd, rangeStart)),
+      start: item.start,
+      end: item.end,
+      deltaDays: 0,
+    });
+  };
+
+  const handleTimelineTaskPointerMove = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!timelineTaskInteraction || timelineTaskInteraction.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setTimelineTaskInteraction((current) => {
+      if (!current || current.pointerId !== event.pointerId) return current;
+      return {
+        ...current,
+        deltaDays: Math.round((event.clientX - current.startClientX) / current.width * current.rangeDays),
+      };
+    });
+  };
+
+  const finishTimelineTaskInteraction = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const current = timelineTaskInteraction;
+    if (!current || current.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const preview = timelineTaskDates({
+      id: current.itemId,
+      title: '',
+      start: current.start,
+      end: current.end,
+      color: '',
+      kind: 'task',
+      shape: 'range',
+      ...(current.source === 'project' ? { projectTaskId: current.itemId } : { lifeItemId: current.itemId }),
+    }, current);
+    const isSingleDateLifeItem = current.source === 'life' && current.start === current.end && current.mode === 'end';
+    if (!isSingleDateLifeItem && (preview.start !== current.start || preview.end !== current.end)) {
+      if (current.source === 'project') {
+        if (projectPlanningAdapter.updateTaskDates(current.itemId, preview.start, preview.end)) {
+          setProjectDateUndo({ taskId: current.itemId, start: current.start, end: current.end });
+        } else setTimelineEditError('项目任务日期更新失败，源任务可能已被删除。');
+      } else {
+        let changed = false;
+        execute('调整人生规划日期', (map) => {
+          if (!map.lifeMap) return map;
+          const lifeMap = updateLifePlanningDates(map.lifeMap, current.itemId, preview.start, preview.end);
+          if (!lifeMap) return map;
+          changed = true;
+          return { ...map, lifeMap, lifeMapMigration: null };
+        });
+        if (changed) setLifeDateUpdated(true);
+        else setTimelineEditError('人生规划日期更新失败，源对象可能已被删除。');
+      }
+    }
+    setTimelineTaskInteraction(null);
   };
 
   const copySelection = () => {
-    const selected = new Set(selectedNodeIds);
-    if (selected.size === 0) return;
+    const selectedNodes = new Set(selectedNodeIds);
+    const selectedReferences = new Set(selectedProjectReferenceId ? [selectedProjectReferenceId] : []);
+    if (selectedNodes.size === 0 && selectedReferences.size === 0) return;
+    const selected = (ref: CanvasObjectRef) => ref.type === 'node' ? selectedNodes.has(ref.id) : selectedReferences.has(ref.id);
     const clipboard: ClipboardGraph = {
       nodes: selectedNodeIds.map((id) => document.nodes[id]).filter((node): node is MindMapNode => Boolean(node)),
-      edges: Object.values(document.edges).filter((edge) => selected.has(edge.sourceId) && selected.has(edge.targetId)),
+      projectReferences: [...selectedReferences].map((id) => document.projectReferences[id]).filter((reference): reference is ProjectReferenceCard => Boolean(reference)),
+      edges: Object.values(document.edges).filter((edge) => selected(edgeSourceRef(edge)) && selected(edgeTargetRef(edge))),
     };
     clipboardRef.current = clipboard;
     if (navigator.clipboard?.writeText) {
@@ -1626,13 +2339,14 @@ export default function MindMapCanvas({
 
   const pasteSelection = () => {
     const clipboard = clipboardRef.current;
-    if (!clipboard || clipboard.nodes.length === 0) return;
-    const ids = new Map<string, string>();
+    if (!clipboard || (clipboard.nodes.length === 0 && clipboard.projectReferences.length === 0)) return;
+    const nodeIds = new Map<string, string>();
+    const referenceIds = new Map<string, string>();
     const nodes: Record<string, MindMapNode> = {};
     const now = Date.now();
     for (const node of clipboard.nodes) {
       const id = createMindMapId();
-      ids.set(node.id, id);
+      nodeIds.set(node.id, id);
       nodes[id] = {
         ...node,
         id,
@@ -1642,21 +2356,33 @@ export default function MindMapCanvas({
         updatedAt: now,
       };
     }
+    const projectReferences: Record<string, ProjectReferenceCard> = {};
+    for (const reference of clipboard.projectReferences) {
+      const id = createMindMapId();
+      referenceIds.set(reference.id, id);
+      projectReferences[id] = { ...reference, id, x: reference.x + 24, y: reference.y + 24, createdAt: now, updatedAt: now };
+    }
     const edges: Record<string, MindMapEdge> = {};
     for (const edge of clipboard.edges) {
-      const sourceId = ids.get(edge.sourceId);
-      const targetId = ids.get(edge.targetId);
-      if (!sourceId || !targetId) continue;
+      const remap = (ref: CanvasObjectRef) => {
+        const id = ref.type === 'node' ? nodeIds.get(ref.id) : referenceIds.get(ref.id);
+        return id ? { type: ref.type, id } : null;
+      };
+      const source = remap(edgeSourceRef(edge));
+      const target = remap(edgeTargetRef(edge));
+      if (!source || !target) continue;
       const id = createMindMapId();
-      edges[id] = { ...edge, id, sourceId, targetId, createdAt: now, updatedAt: now };
+      edges[id] = { ...edge, id, source, target, sourceId: source.id, targetId: target.id, createdAt: now, updatedAt: now };
     }
     execute('粘贴对象', (current) => ({
       ...current,
       nodes: { ...current.nodes, ...nodes },
+      projectReferences: { ...current.projectReferences, ...projectReferences },
       edges: { ...current.edges, ...edges },
       zOrder: [...current.zOrder, ...Object.keys(nodes)],
     }));
     setSelectedNodeIds(Object.keys(nodes));
+    setSelectedProjectReferenceId(Object.keys(projectReferences)[0] ?? null);
     setSelectedEdgeIds([]);
   };
 
@@ -1665,7 +2391,7 @@ export default function MindMapCanvas({
     try {
       const text = await navigator.clipboard.readText();
       if (!text.startsWith(CLIPBOARD_PREFIX) || text.length > 5_000_000) return;
-      const value = JSON.parse(text.slice(CLIPBOARD_PREFIX.length)) as { nodes?: unknown; edges?: unknown };
+      const value = JSON.parse(text.slice(CLIPBOARD_PREFIX.length)) as { nodes?: unknown; projectReferences?: unknown; edges?: unknown };
       if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) return;
       const rawNodes = Object.fromEntries(value.nodes.flatMap((node) => {
         if (!node || typeof node !== 'object' || !('id' in node) || typeof node.id !== 'string') return [];
@@ -1675,17 +2401,25 @@ export default function MindMapCanvas({
         if (!edge || typeof edge !== 'object' || !('id' in edge) || typeof edge.id !== 'string') return [];
         return [[edge.id, edge]];
       }));
+      const rawProjectReferences = Array.isArray(value.projectReferences)
+        ? Object.fromEntries(value.projectReferences.flatMap((reference) => {
+            if (!reference || typeof reference !== 'object' || !('id' in reference) || typeof reference.id !== 'string') return [];
+            return [[reference.id, reference]];
+          }))
+        : {};
       const normalized = normalizeMindMapDocument({
         kind: 'smart-line-mind-map',
         schemaVersion: MIND_MAP_SCHEMA_VERSION,
         id: 'clipboard',
         nodes: rawNodes,
+        projectReferences: rawProjectReferences,
         edges: rawEdges,
         zOrder: Object.keys(rawNodes),
       });
-      if (!normalized || Object.keys(normalized.nodes).length === 0) return;
+      if (!normalized || (Object.keys(normalized.nodes).length === 0 && Object.keys(normalized.projectReferences).length === 0)) return;
       clipboardRef.current = {
         nodes: Object.values(normalized.nodes),
+        projectReferences: Object.values(normalized.projectReferences),
         edges: Object.values(normalized.edges),
       };
       pasteSelection();
@@ -1702,7 +2436,7 @@ export default function MindMapCanvas({
     const view = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const world = viewToWorld(view, cameraRef.current);
     const node = hitIndexedNode(world);
-    const edge = node ? null : hitEdge(world, document, 7 / cameraRef.current.scale, edgeNodes);
+    const edge = node ? null : hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection);
     if (node) {
       if (!selectedSet.has(node.id)) setSelectedNodeIds([node.id]);
       setSelectedEdgeIds([]);
@@ -1730,14 +2464,28 @@ export default function MindMapCanvas({
     if (next) updateCamera(next, true);
   }, [document, size, updateCamera]);
   const runTreeLayout = useCallback(async () => {
+    const rootId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
+    if (rootId) {
+      execute('整理当前分支', (current) => layoutMindMapBranch(current, rootId, treeDirection));
+      return;
+    }
+    const generation = ++layoutGeneration.current;
     const source = document;
-    const laidOut = await layoutMindMapTreeInWorker(source);
-    execute('树形布局', (current) => (
-      current.id === source.id && current.updatedAt === source.updatedAt
-        ? { ...current, nodes: laidOut.nodes }
-        : current
-    ));
-  }, [document, execute]);
+    onLayoutRunningChange?.(true);
+    try {
+      const laidOut = await layoutMindMapTreeInWorker(source, treeDirection);
+      if (generation !== layoutGeneration.current) return;
+      execute('树形布局', (current) => (
+        current.id === source.id
+          && current.nodes === source.nodes
+          && current.edges === source.edges
+          ? { ...laidOut, viewport: current.viewport }
+          : current
+      ));
+    } finally {
+      if (generation === layoutGeneration.current) onLayoutRunningChange?.(false);
+    }
+  }, [document, execute, onLayoutRunningChange, selectedNodeIds, treeDirection]);
 
   useEffect(() => {
     if (fitRequest <= 0 || fitRequest === handledFitRequest.current) return;
@@ -1746,15 +2494,25 @@ export default function MindMapCanvas({
   }, [fitAll, fitRequest]);
 
   useEffect(() => {
+    if (treeLayoutRequest <= 0 || treeLayoutRequest === handledTreeLayoutRequest.current) return;
+    handledTreeLayoutRequest.current = treeLayoutRequest;
+    void runTreeLayout();
+  }, [runTreeLayout, treeLayoutRequest]);
+
+  useEffect(() => {
     if (pngRequest <= 0 || pngRequest === handledPngRequest.current) return;
     handledPngRequest.current = pngRequest;
     const canvas = canvasRef.current;
     if (pngScope === 'viewport') {
-      if (canvas) downloadCanvasPng(canvas, document.title);
+      // The visible 2D canvas intentionally omits graph content while WebGL is
+      // active, and WebGL does not retain a readable frame buffer.  Export the
+      // same document through the deterministic 2D exporter instead of a blank PNG.
+      if (webglActive) downloadMindMapPng(document, 'all');
+      else if (canvas) downloadCanvasPng(canvas, document.title);
     } else {
       downloadMindMapPng(document, pngScope, selectedNodeIds);
     }
-  }, [document, pngRequest, pngScope, selectedNodeIds]);
+  }, [document, pngRequest, pngScope, selectedNodeIds, webglActive]);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -1782,6 +2540,8 @@ export default function MindMapCanvas({
       setSelectedNodeIds(Object.keys(document.nodes));
       setSelectedEdgeIds([]);
       setSelectedSectionId(null);
+      setSelectedProjectReferenceId(null);
+      setSelectedTimelineId(null);
       return;
     }
     if (modifier && event.key.toLowerCase() === 'c') {
@@ -1814,8 +2574,16 @@ export default function MindMapCanvas({
       setSelectedNodeIds([]);
       setSelectedEdgeIds([]);
       setSelectedSectionId(null);
-      setConnectionSourceId(null);
+      setSelectedProjectReferenceId(null);
+      setSelectedTimelineId(null);
+      setConnectionSource(null);
       onConnectionModeChange?.(false);
+      return;
+    }
+    if (!modifier && !event.altKey && event.key.toLowerCase() === 'l' && (selectedNodeIds.length === 1 || Boolean(selectedProjectReferenceId))) {
+      event.preventDefault();
+      setConnectionSource(selectedNodeIds.length === 1 ? { type: 'node', id: selectedNodeIds[0] } : { type: 'project-reference', id: selectedProjectReferenceId! });
+      onConnectionModeChange?.(true);
       return;
     }
     if (!modifier && !event.altKey && (event.key === 'Tab' || event.key === 'Enter') && selectedNodeIds.length === 1) {
@@ -1823,26 +2591,9 @@ export default function MindMapCanvas({
       if (selected) {
         event.preventDefault();
         if (event.key === 'Tab') {
-          setEditing({
-            nodeId: null,
-            connectFromId: selected.id,
-            x: selected.x + selected.width / 2 + 186,
-            y: selected.y,
-            width: 180,
-            height: 56,
-            draft: '',
-          });
+          createChildNode(selected.id);
         } else {
-          const incoming = Object.values(document.edges).find((edge) => edge.targetId === selected.id);
-          setEditing({
-            nodeId: null,
-            connectFromId: incoming?.sourceId,
-            x: selected.x,
-            y: selected.y + selected.height / 2 + 88,
-            width: 180,
-            height: 56,
-            draft: '',
-          });
+          createSiblingNode(selected.id);
         }
         return;
       }
@@ -1865,9 +2616,29 @@ export default function MindMapCanvas({
           };
         });
       }
+      if (selectedProjectReferenceId) {
+        execute('删除项目引用', (current) => {
+          const projectReferences = { ...current.projectReferences };
+          delete projectReferences[selectedProjectReferenceId];
+          return {
+            ...current,
+            projectReferences,
+            edges: Object.fromEntries(Object.entries(current.edges).filter(([, edge]) => !edgeTouchesCanvasObject(edge, { type: 'project-reference', id: selectedProjectReferenceId }))),
+          };
+        });
+      }
+      if (selectedTimelineId) {
+        execute('删除时间线', (current) => {
+          const timelineSections = { ...current.timelineSections };
+          delete timelineSections[selectedTimelineId];
+          return { ...current, timelineSections };
+        });
+      }
       setSelectedNodeIds([]);
       setSelectedEdgeIds([]);
       setSelectedSectionId(null);
+      setSelectedProjectReferenceId(null);
+      setSelectedTimelineId(null);
       return;
     }
     if (event.key.toLowerCase() === 'f') {
@@ -1905,6 +2676,11 @@ export default function MindMapCanvas({
   const selectedNode = selectedNodeIds.length === 1 ? document.nodes[selectedNodeIds[0]] ?? null : null;
   const selectedEdge = selectedEdgeIds.length === 1 ? document.edges[selectedEdgeIds[0]] ?? null : null;
   const selectedSection = selectedSectionId ? document.sections[selectedSectionId] ?? null : null;
+  const selectedProjectReference = selectedProjectReferenceId
+    ? document.projectReferences[selectedProjectReferenceId] ?? null
+    : null;
+  const selectedTimeline = selectedTimelineId ? document.timelineSections[selectedTimelineId] ?? null : null;
+  const activeRelationTarget = interaction?.type === 'connect' ? hitConnectable(interaction.currentWorld) : null;
   const normalizedSearch = commandSearch.trim().toLocaleLowerCase();
   const searchResults = normalizedSearch
     ? [
@@ -1914,8 +2690,10 @@ export default function MindMapCanvas({
         ...Object.values(document.edges)
           .filter((edge) => edge.label.toLocaleLowerCase().includes(normalizedSearch))
           .map((edge) => {
-            const source = document.nodes[edge.sourceId];
-            const target = document.nodes[edge.targetId];
+            const sourceRef = edgeSourceRef(edge);
+            const targetRef = edgeTargetRef(edge);
+            const source = sourceRef.type === 'node' ? document.nodes[sourceRef.id] : document.projectReferences[sourceRef.id];
+            const target = targetRef.type === 'node' ? document.nodes[targetRef.id] : document.projectReferences[targetRef.id];
             return {
               kind: 'edge' as const,
               id: edge.id,
@@ -1968,6 +2746,11 @@ export default function MindMapCanvas({
         html: node.type === 'markdown' ? renderMindMapMarkdown(node.text) : renderMindMapLatex(node.text),
       };
       richHtmlCacheRef.current.set(node.id, cached);
+      while (richHtmlCacheRef.current.size > 300) {
+        const oldest = richHtmlCacheRef.current.keys().next().value;
+        if (oldest === undefined) break;
+        richHtmlCacheRef.current.delete(oldest);
+      }
     }
     return [{ node, html: cached.html }];
   });
@@ -2011,15 +2794,14 @@ export default function MindMapCanvas({
             publishCursor(null, true);
           }
         }}
-        onWheel={handleWheel}
       />
       {(connectionMode || hoveredNodeId) && (
         <div className={styles.connectionHint} role="status">
           {connectionMode
-            ? connectionSourceId
-              ? '已选择起点，请点击终点节点；按 Esc 取消'
-              : '连线模式：先点击起点节点，再点击终点节点'
-            : '拖动节点四边的圆点到另一个节点，可创建连线'}
+            ? connectionSource
+              ? '已选择起点，请点击终点对象；按 Esc 取消'
+              : '连线模式：先点击起点对象，再点击终点对象'
+            : '拖动节点或项目引用的 ↗ 到另一个对象，可创建关联'}
         </div>
       )}
       {richPreviews.map(({ node, html }) => {
@@ -2041,6 +2823,357 @@ export default function MindMapCanvas({
             }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
+        );
+      })}
+      {visibleTimelines.map((sourceTimeline) => {
+        const timeline = previewTimeline(sourceTimeline, interaction);
+        const allItems = timelineProjectionItems(timeline, projectPlanning, document.lifeMap ?? lifeTimeline);
+        const range = timelineRange(timeline, allItems);
+        const summaryMode = camera.scale < 0.45;
+        const lodItems = summaryMode
+          ? []
+          : camera.scale < 0.75
+            ? allItems.filter((item) => item.kind !== 'task' && item.kind !== 'note')
+            : allItems;
+        const visibleItems = timelineVisibleItems(lodItems, range.start, range.end, Number.MAX_SAFE_INTEGER);
+        const stageCandidates = visibleItems.filter((item) => item.kind === 'stage');
+        const milestoneCandidates = visibleItems.filter((item) => item.kind === 'milestone' || item.shape === 'marker');
+        const rowCandidates = visibleItems.filter((item) => item.kind !== 'stage' && item.kind !== 'milestone' && item.shape !== 'marker');
+        const headerHeight = 48;
+        const axisHeight = 52;
+        const stageRowHeight = 26;
+        const maximumStageRows = Math.max(0, Math.floor((timeline.height - headerHeight - axisHeight - 18 - 80 - 18) / stageRowHeight));
+        const stages = stageCandidates.slice(0, maximumStageRows);
+        const stageHeight = stages.length ? stages.length * stageRowHeight + 8 : 8;
+        const maximumMilestoneStack = Math.max(0, Math.floor((timeline.height - headerHeight - axisHeight - stageHeight - 18 - 80 - 12) / 14));
+        const milestoneDates = new Map<string, number>();
+        const milestones = milestoneCandidates.filter((item) => {
+          const stack = (milestoneDates.get(item.start) ?? 0) + 1;
+          milestoneDates.set(item.start, stack);
+          return stack <= maximumMilestoneStack;
+        });
+        const milestoneStackHeight = milestones.reduce((maximum, item, index) => {
+          const stack = milestones.slice(0, index).filter((candidate) => candidate.start === item.start).length + 1;
+          return Math.max(maximum, stack);
+        }, 0);
+        const milestoneHeight = milestones.length ? 12 + milestoneStackHeight * 14 : 18;
+        const rowAreaHeight = Math.max(32, timeline.height - headerHeight - axisHeight - stageHeight - milestoneHeight - 18);
+        const maximumRows = Math.max(1, Math.floor(rowAreaHeight / 34));
+        const items = rowCandidates.slice(0, maximumRows);
+        const rowStep = items.length ? Math.min(52, Math.max(34, rowAreaHeight / items.length)) : 40;
+        const rowsTop = axisHeight + stageHeight + Math.max(0, (rowAreaHeight - rowStep * items.length) / 2);
+        const milestoneTop = timeline.height - headerHeight - milestoneHeight;
+        const coordinates = createTimelineCoordinates(range.start, range.end, timeline.width);
+        const ticks = buildTimelineTicks({ rangeStart: range.start, rangeEnd: range.end, plotWidth: coordinates.plotWidth, scale: timeline.scale });
+        const today = todayStr();
+        const todayVisible = today >= range.start && today <= range.end;
+        const topLeft = worldToView({
+          x: timeline.x - timeline.width / 2,
+          y: timeline.y - timeline.height / 2,
+        }, camera);
+        const renderedHeight = timeline.collapsed ? headerHeight : timeline.height;
+        const rangeSummary = `${formatTimelineRange(range.start, range.end)} · ${timelineScaleLabel(timeline.scale)}`;
+        const projectCount = allItems.filter((item) => item.kind === 'project').length;
+        const taskCount = allItems.filter((item) => item.kind === 'task').length;
+        const scale = camera.scale;
+        const itemColor = (item: TimelineProjectionItem) => ({ '--timeline-item-color': item.color } as CSSProperties);
+        return (
+          <div
+            key={timeline.id}
+            className={`${styles.timeline} ${selectedTimelineId === timeline.id ? styles.timelineSelected : ''} ${timeline.locked ? styles.timelineLocked : ''}`}
+            data-testid={`mind-map-timeline-${timeline.id}`}
+            data-source={timeline.source}
+            role="group"
+            aria-label={`${timeline.title}，时间线`}
+            style={{
+              left: topLeft.x,
+              top: topLeft.y,
+              width: Math.max(1, timeline.width * camera.scale),
+              height: Math.max(1, renderedHeight * camera.scale),
+              borderRadius: Math.max(7, 15 * camera.scale),
+            }}
+            onPointerDown={(event) => handleTimelinePointerDown(event, timeline)}
+            onPointerMove={handleTimelinePointerMove}
+            onPointerUp={finishTimelineInteraction}
+            onPointerCancel={finishTimelineInteraction}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              execute(timeline.collapsed ? '展开时间线' : '收起时间线', (current) => {
+                const currentTimeline = current.timelineSections[timeline.id];
+                return currentTimeline ? {
+                  ...current,
+                  timelineSections: {
+                    ...current.timelineSections,
+                    [timeline.id]: { ...currentTimeline, collapsed: !timeline.collapsed, updatedAt: Date.now() },
+                  },
+                } : current;
+              });
+            }}
+          >
+            {!timeline.collapsed && summaryMode ? (
+              <div className={styles.timelineSummary}>
+                <span><CalendarRange size={15} aria-hidden="true" /></span>
+                <strong>{timeline.title}</strong>
+                <small>{formatTimelineRange(range.start, range.end)}</small>
+                <p>{projectCount} 个项目 · {taskCount} 个任务</p>
+              </div>
+            ) : <>
+              <div className={styles.timelineHeader} style={{ height: headerHeight * scale, paddingInline: Math.max(8, 14 * scale) }}>
+                <div className={styles.timelineHeaderTitle}>
+                  <CalendarRange size={Math.max(12, 16 * scale)} aria-hidden="true" />
+                  <strong style={{ fontSize: Math.max(11, 15 * scale) }}>{timeline.title}</strong>
+                </div>
+                <div className={styles.timelineHeaderMeta}>
+                  <span title={`${range.start} — ${range.end}`}>{rangeSummary}</span>
+                  <button type="button" aria-label="打开时间线属性" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedTimelineId(timeline.id);
+                  }}><MoreHorizontal size={Math.max(13, 16 * scale)} aria-hidden="true" /></button>
+                </div>
+              </div>
+              {!timeline.collapsed && (
+              <div className={styles.timelineBody} style={{ top: headerHeight * scale }}>
+                <span className={styles.timelineLabelDivider} style={{ left: coordinates.plotLeft * scale }} />
+                <span className={styles.timelineAxisLine} style={{ left: coordinates.plotLeft * scale, top: 39 * scale, width: coordinates.plotWidth * scale }} />
+                {ticks.map((tick) => {
+                  const x = dateToX(tick.date, coordinates) * scale;
+                  return <span key={`${tick.kind}:${tick.date}`} className={`${styles.timelineTick} ${tick.kind === 'minor' ? styles.timelineTickMinor : ''}`} style={{ left: x }}>
+                    {tick.kind === 'major' && <span className={styles.timelineTickLabel} style={{ fontSize: Math.max(9, 11 * scale) }}>{tick.label}{tick.sublabel && <small>{tick.sublabel}</small>}</span>}
+                    <span className={styles.timelineGridLine} style={{ top: 39 * scale, height: Math.max(1, (milestoneTop - 39) * scale) }} />
+                  </span>;
+                })}
+                {todayVisible && <span className={styles.timelineToday} style={{ left: dateToX(today, coordinates) * scale, top: 3 * scale, height: Math.max(1, (milestoneTop + 8) * scale) }}>
+                  <span style={{ fontSize: Math.max(8, 10 * scale) }}>今天 {Number(today.slice(5, 7))}/{Number(today.slice(8, 10))}</span>
+                </span>}
+                {stages.map((item, stageRow) => {
+                  const renderedDates = timelineTaskDates(item, timelineTaskInteraction);
+                  const left = dateToX(renderedDates.start, coordinates) * scale;
+                  const width = Math.max(8, (dateToX(renderedDates.end, coordinates) - dateToX(renderedDates.start, coordinates)) * scale);
+                  return <span
+                    key={item.id}
+                    className={`${styles.timelineStageBand} ${item.lifeItemId ? styles.timelineEditable : ''}`}
+                    title={`${item.title} · ${renderedDates.start} — ${renderedDates.end}`}
+                      style={{ ...itemColor(item), left, top: (axisHeight + 6 + stageRow * stageRowHeight) * scale, width, height: Math.max(13, 23 * scale), fontSize: Math.max(9, 11 * scale) }}
+                    onPointerDown={item.lifeItemId ? (event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'move') : undefined}
+                    onPointerMove={item.lifeItemId ? handleTimelineTaskPointerMove : undefined}
+                    onPointerUp={item.lifeItemId ? finishTimelineTaskInteraction : undefined}
+                    onPointerCancel={item.lifeItemId ? finishTimelineTaskInteraction : undefined}
+                    onDoubleClick={item.lifeItemId ? (event) => event.stopPropagation() : undefined}
+                  >
+                    {item.title}
+                    {item.lifeItemId && (
+                      <>
+                        <span
+                          className={`${styles.timelineTaskHandle} ${styles.timelineTaskHandleStart}`}
+                          role="button"
+                          aria-label={`调整${item.title}开始日期`}
+                          onPointerDown={(event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'start')}
+                          onPointerMove={handleTimelineTaskPointerMove}
+                          onPointerUp={finishTimelineTaskInteraction}
+                          onPointerCancel={finishTimelineTaskInteraction}
+                        />
+                        <span
+                          className={`${styles.timelineTaskHandle} ${styles.timelineTaskHandleEnd}`}
+                          role="button"
+                          aria-label={`调整${item.title}结束日期`}
+                          onPointerDown={(event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'end')}
+                          onPointerMove={handleTimelineTaskPointerMove}
+                          onPointerUp={finishTimelineTaskInteraction}
+                          onPointerCancel={finishTimelineTaskInteraction}
+                        />
+                      </>
+                    )}
+                  </span>;
+                })}
+                {items.map((item, row) => {
+                  const renderedDates = timelineTaskDates(item, timelineTaskInteraction);
+                  const left = dateToX(renderedDates.start, coordinates) * scale;
+                  const width = Math.max(8, (dateToX(renderedDates.end, coordinates) - dateToX(renderedDates.start, coordinates)) * scale);
+                  const rowTop = (rowsTop + row * rowStep) * scale;
+                  const project = item.kind === 'project';
+                  const task = item.kind === 'task';
+                  const barHeight = (project ? 17 : task ? 13 : 14) * scale;
+                  return (
+                    <span key={item.id} className={styles.timelineRow} style={{ top: rowTop, height: rowStep * scale }}>
+                      <span className={`${styles.timelineRowLabel} ${project ? styles.timelineProjectLabel : ''} ${task || item.parentId ? styles.timelineTaskLabel : ''}`} style={{ width: (coordinates.plotLeft - 16) * scale, fontSize: Math.max(9, (project ? 12 : 11) * scale) }}>
+                        {project && <i style={{ backgroundColor: item.color }} />}{item.title}
+                      </span>
+                      <span
+                        className={`${styles.timelineBar} ${project ? styles.timelineProjectBar : ''} ${task ? styles.timelineTaskBar : ''} ${item.kind === 'system' ? styles.timelineSystemBar : ''} ${item.projectTaskId || item.lifeItemId ? styles.timelineEditable : ''} ${item.progress === undefined ? styles.timelineBarNoProgress : ''}`}
+                        title={`${item.title} · ${renderedDates.start}${renderedDates.end !== renderedDates.start ? ` — ${renderedDates.end}` : ''}`}
+                        style={{ ...itemColor(item), left, top: (rowStep * scale - Math.max(7, barHeight)) / 2, width, height: Math.max(7, barHeight) }}
+                        onPointerDown={item.projectTaskId || item.lifeItemId ? (event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'move') : undefined}
+                        onPointerMove={item.projectTaskId || item.lifeItemId ? handleTimelineTaskPointerMove : undefined}
+                        onPointerUp={item.projectTaskId || item.lifeItemId ? finishTimelineTaskInteraction : undefined}
+                        onPointerCancel={item.projectTaskId || item.lifeItemId ? finishTimelineTaskInteraction : undefined}
+                        onDoubleClick={item.projectTaskId || item.lifeItemId ? (event) => event.stopPropagation() : undefined}
+                      >
+                      {item.progress !== undefined && <span className={styles.timelineBarProgress} style={{ width: `${Math.max(0, Math.min(100, item.progress))}%` }} />}
+                      {(item.projectTaskId || item.lifeItemId) && (
+                        <>
+                          <span
+                            className={`${styles.timelineTaskHandle} ${styles.timelineTaskHandleStart}`}
+                            role="button"
+                            aria-label={`调整${item.title}开始日期`}
+                            onPointerDown={(event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'start')}
+                            onPointerMove={handleTimelineTaskPointerMove}
+                            onPointerUp={finishTimelineTaskInteraction}
+                            onPointerCancel={finishTimelineTaskInteraction}
+                          />
+                          <span
+                            className={`${styles.timelineTaskHandle} ${styles.timelineTaskHandleEnd}`}
+                            role="button"
+                            aria-label={`调整${item.title}结束日期`}
+                            onPointerDown={(event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'end')}
+                            onPointerMove={handleTimelineTaskPointerMove}
+                            onPointerUp={finishTimelineTaskInteraction}
+                            onPointerCancel={finishTimelineTaskInteraction}
+                          />
+                        </>
+                      )}
+                      </span>
+                    </span>
+                  );
+                })}
+                {milestones.map((item, index) => {
+                  const stack = milestones.slice(0, index).filter((candidate) => candidate.start === item.start).length;
+                  return <span
+                    key={item.id}
+                    className={`${styles.timelineMilestoneItem} ${item.lifeItemId ? styles.timelineEditable : ''}`}
+                    title={`${item.title} · ${item.start}`}
+                    style={{ ...itemColor(item), left: dateToX(item.start, coordinates) * scale, top: (milestoneTop + stack * 12) * scale, fontSize: Math.max(8, 10 * scale) }}
+                    onPointerDown={item.lifeItemId ? (event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'move') : undefined}
+                    onPointerMove={item.lifeItemId ? handleTimelineTaskPointerMove : undefined}
+                    onPointerUp={item.lifeItemId ? finishTimelineTaskInteraction : undefined}
+                    onPointerCancel={item.lifeItemId ? finishTimelineTaskInteraction : undefined}
+                    onDoubleClick={item.lifeItemId ? (event) => event.stopPropagation() : undefined}
+                  ><i /> <span>{item.title}</span></span>;
+                })}
+                {rowCandidates.length > items.length && <span className={styles.timelineOverflow}>+{rowCandidates.length - items.length} 项</span>}
+              </div>
+              )}
+            </>}
+            {selectedTimelineId === timeline.id && !timeline.locked && !timeline.collapsed && (
+              <span
+                className={styles.timelineResizeHandle}
+                role="button"
+                aria-label="调整时间线尺寸"
+                onPointerDown={(event) => handleTimelineResizePointerDown(event, timeline)}
+                onPointerMove={handleTimelinePointerMove}
+                onPointerUp={finishTimelineInteraction}
+                onPointerCancel={finishTimelineInteraction}
+              />
+            )}
+          </div>
+        );
+      })}
+      {(timelineEditError || projectDateUndo || lifeDateUpdated) && (
+        <div className={styles.timelineEditNotice} role={timelineEditError ? 'alert' : 'status'}>
+          <span>{timelineEditError ?? (lifeDateUpdated ? '人生规划日期已更新，可使用地图撤销恢复' : '项目任务日期已更新')}</span>
+          {projectDateUndo && !timelineEditError && (
+            <button type="button" onClick={() => {
+              if (!projectPlanningAdapter.updateTaskDates(projectDateUndo.taskId, projectDateUndo.start, projectDateUndo.end)) {
+                setTimelineEditError('无法撤销：源任务可能已被删除。');
+                return;
+              }
+              setProjectDateUndo(null);
+            }}>撤销项目日期</button>
+          )}
+          <button type="button" aria-label="关闭项目日期提示" onClick={() => {
+              setTimelineEditError(null);
+              setProjectDateUndo(null);
+              setLifeDateUpdated(false);
+          }}>×</button>
+        </div>
+      )}
+      {visibleProjectReferences.map((sourceReference) => {
+        const reference = previewProjectReference(sourceReference, interaction);
+        const snapshot = projectReferenceSnapshot(reference, projectPlanning);
+        const topLeft = worldToView({
+          x: reference.x - reference.width / 2,
+          y: reference.y - reference.height / 2,
+        }, camera);
+        const compact = reference.display === 'compact';
+        return (
+          <div
+            key={reference.id}
+            className={`${styles.projectReference} ${selectedProjectReferenceId === reference.id ? styles.projectReferenceSelected : ''} ${activeRelationTarget?.ref.type === 'project-reference' && activeRelationTarget.ref.id === reference.id ? styles.projectReferenceRelationTarget : ''} ${reference.locked ? styles.projectReferenceLocked : ''}`}
+            data-testid={`mind-map-project-reference-${reference.id}`}
+            data-display={reference.display}
+            role="button"
+            tabIndex={0}
+            aria-label={`${snapshot ? snapshot.title : '引用已失效'}，项目引用`}
+            style={{
+              left: topLeft.x,
+              top: topLeft.y,
+              width: Math.max(1, reference.width * camera.scale),
+              height: Math.max(1, reference.height * camera.scale),
+              borderRadius: Math.max(4, 12 * camera.scale),
+              padding: `${Math.max(4, 12 * camera.scale)}px ${Math.max(5, 14 * camera.scale)}px`,
+              fontSize: Math.max(8, 14 * camera.scale),
+            }}
+            onPointerDown={(event) => handleProjectReferencePointerDown(event, reference)}
+            onPointerMove={handleProjectReferencePointerMove}
+            onPointerUp={finishProjectReferenceInteraction}
+            onPointerCancel={finishProjectReferenceInteraction}
+            onPointerEnter={() => setHoveredProjectReferenceId(reference.id)}
+            onPointerLeave={() => setHoveredProjectReferenceId((current) => current === reference.id ? null : current)}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              execute(compact ? '展开项目引用' : '收起项目引用', (current) => {
+                const currentReference = current.projectReferences[reference.id];
+                return currentReference ? {
+                  ...current,
+                  projectReferences: {
+                    ...current.projectReferences,
+                    [reference.id]: { ...currentReference, display: compact ? 'expanded' : 'compact', height: compact ? Math.max(120, currentReference.height) : Math.min(96, currentReference.height), updatedAt: Date.now() },
+                  },
+                } : current;
+              });
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setSelectedProjectReferenceId(reference.id);
+              setSelectedTimelineId(null);
+              setSelectedNodeIds([]);
+              setSelectedEdgeIds([]);
+              setSelectedSectionId(null);
+              const surface = surfaceRef.current?.getBoundingClientRect();
+              if (!surface) return;
+              setContextMenu({
+                x: Math.min(event.clientX - surface.left, Math.max(0, size.width - 190)),
+                y: Math.min(event.clientY - surface.top, Math.max(0, size.height - 180)),
+                world: { x: reference.x, y: reference.y },
+                projectReferenceId: reference.id,
+              });
+            }}
+          >
+            <span className={styles.projectReferenceAccent} style={{ backgroundColor: snapshot?.color ?? '#9ca3af' }} />
+            {(selectedProjectReferenceId === reference.id || hoveredProjectReferenceId === reference.id) && (
+              <button
+                type="button"
+                className={styles.projectReferenceRelationHandle}
+                aria-label="创建关联"
+                title="拖动以创建关联"
+                onPointerDown={(event) => handleProjectReferenceRelationPointerDown(event, reference)}
+                onPointerMove={handleProjectReferenceRelationPointerMove}
+                onPointerUp={finishProjectReferenceRelation}
+                onPointerCancel={finishProjectReferenceRelation}
+              >↗</button>
+            )}
+            <strong className={styles.projectReferenceTitle}>{snapshot?.title ?? '引用已失效'}</strong>
+            <span className={styles.projectReferenceSubtitle}>
+              {snapshot?.subtitle ?? '源项目、任务或里程碑已不存在'}
+            </span>
+            {!compact && snapshot?.progress !== undefined && (
+              <span className={styles.projectReferenceProgress} aria-label={`进度 ${snapshot.progress}%`}>
+                <span style={{ width: `${Math.max(0, Math.min(100, snapshot.progress))}%`, backgroundColor: snapshot.color }} />
+              </span>
+            )}
+          </div>
         );
       })}
       {visibleNodes.flatMap((sourceNode) => {
@@ -2117,7 +3250,7 @@ export default function MindMapCanvas({
           ref={contextMenuRef}
           className={styles.contextMenu}
           role="menu"
-          aria-label={contextMenu.nodeId ? '节点菜单' : contextMenu.edgeId ? '连线菜单' : '画布菜单'}
+          aria-label={contextMenu.projectReferenceId ? '项目引用菜单' : contextMenu.nodeId ? '节点菜单' : contextMenu.edgeId ? '连线菜单' : '画布菜单'}
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onKeyDown={(event) => {
             event.stopPropagation();
@@ -2128,6 +3261,52 @@ export default function MindMapCanvas({
             }
           }}
         >
+          {contextMenu.projectReferenceId && document.projectReferences[contextMenu.projectReferenceId] && (
+            <>
+              <button type="button" role="menuitem" onClick={() => {
+                const id = contextMenu.projectReferenceId!;
+                execute('切换项目引用显示', (current) => {
+                  const reference = current.projectReferences[id];
+                  return reference ? {
+                    ...current,
+                    projectReferences: {
+                      ...current.projectReferences,
+                      [id]: { ...reference, display: reference.display === 'compact' ? 'expanded' : 'compact', height: reference.display === 'compact' ? Math.max(120, reference.height) : Math.min(96, reference.height), updatedAt: Date.now() },
+                    },
+                  } : current;
+                });
+                setContextMenu(null);
+              }}>{document.projectReferences[contextMenu.projectReferenceId].display === 'compact' ? '展开卡片' : '收起卡片'}</button>
+              <button type="button" role="menuitem" onClick={() => {
+                const id = contextMenu.projectReferenceId!;
+                execute('切换项目引用锁定', (current) => {
+                  const reference = current.projectReferences[id];
+                  return reference ? {
+                    ...current,
+                    projectReferences: {
+                      ...current.projectReferences,
+                      [id]: { ...reference, locked: !reference.locked, updatedAt: Date.now() },
+                    },
+                  } : current;
+                });
+                setContextMenu(null);
+              }}>{document.projectReferences[contextMenu.projectReferenceId].locked ? '解除锁定' : '锁定卡片'}</button>
+              <button type="button" role="menuitem" onClick={() => {
+                const id = contextMenu.projectReferenceId!;
+                execute('删除项目引用', (current) => {
+                  const projectReferences = { ...current.projectReferences };
+                  delete projectReferences[id];
+                  return {
+                    ...current,
+                    projectReferences,
+                    edges: Object.fromEntries(Object.entries(current.edges).filter(([, edge]) => !edgeTouchesCanvasObject(edge, { type: 'project-reference', id }))),
+                  };
+                });
+                setSelectedProjectReferenceId(null);
+                setContextMenu(null);
+              }}>删除引用</button>
+            </>
+          )}
           {contextMenu.nodeId && document.nodes[contextMenu.nodeId] && (
             <>
               <button type="button" role="menuitem" onClick={() => {
@@ -2139,18 +3318,20 @@ export default function MindMapCanvas({
                 setContextMenu(null);
               }}>复制</button>
               <button type="button" role="menuitem" onClick={() => {
-                const source = document.nodes[contextMenu.nodeId!];
-                setEditing({
-                  nodeId: null,
-                  connectFromId: source.id,
-                  x: source.x + source.width / 2 + 186,
-                  y: source.y,
-                  width: 180,
-                  height: 56,
-                  draft: '',
-                });
+                createChildNode(contextMenu.nodeId!);
                 setContextMenu(null);
               }}>创建子节点</button>
+              <button type="button" role="menuitem" onClick={() => {
+                createSiblingNode(contextMenu.nodeId!);
+                setContextMenu(null);
+              }}>创建同级节点</button>
+              <button type="button" role="menuitem" onClick={() => {
+                const nodeId = contextMenu.nodeId!;
+                const candidate = window.prompt('输入目标父节点名称');
+                const parent = candidate ? Object.values(document.nodes).find((node) => node.text === candidate.trim()) : null;
+                if (parent) moveNodeToParent(nodeId, parent.id);
+                setContextMenu(null);
+              }}>移动到…</button>
               <button type="button" role="menuitem" onClick={() => {
                 const node = document.nodes[contextMenu.nodeId!];
                 updateNode(node.id, { locked: !node.locked });
@@ -2172,7 +3353,9 @@ export default function MindMapCanvas({
             <>
               <button type="button" role="menuitem" onClick={() => {
                 const edge = document.edges[contextMenu.edgeId!];
-                updateEdge(edge.id, { sourceId: edge.targetId, targetId: edge.sourceId });
+                const source = edgeSourceRef(edge);
+                const target = edgeTargetRef(edge);
+                updateEdge(edge.id, { source: target, target: source, sourceId: target.id, targetId: source.id });
                 setContextMenu(null);
               }}>反转连线</button>
               <button type="button" role="menuitem" onClick={() => {
@@ -2182,7 +3365,7 @@ export default function MindMapCanvas({
               }}>删除连线</button>
             </>
           )}
-          {!contextMenu.nodeId && !contextMenu.edgeId && (
+          {!contextMenu.projectReferenceId && !contextMenu.nodeId && !contextMenu.edgeId && (
             <>
               <button type="button" role="menuitem" onClick={() => {
                 setEditing({
@@ -2314,19 +3497,22 @@ export default function MindMapCanvas({
           }}
         />
       )}
-      {Object.keys(document.nodes).length === 0 && !editing && (
+      {Object.keys(document.nodes).length === 0
+        && Object.keys(document.projectReferences).length === 0
+        && Object.keys(document.timelineSections).length === 0
+        && !editing && (
         <div className={styles.emptyOverlay} aria-hidden="true">
           <strong>双击画布创建第一个节点</strong>
           <span>空白处拖动平移，Shift 拖动框选，滚轮缩放</span>
         </div>
       )}
-      {(selectedNode || selectedEdge || selectedSection || selectedNodeIds.length > 1) && !editing && (
+      {(selectedNode || selectedEdge || selectedSection || selectedProjectReference || selectedTimeline || selectedNodeIds.length > 1) && !editing && (
         <aside
           className={styles.inspector}
-          aria-label={selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : '多选排列'}
+          aria-label={selectedTimeline ? '时间线属性' : selectedProjectReference ? '项目引用属性' : selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : '多选排列'}
         >
           <div className={styles.inspectorHeader}>
-            <strong>{selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : `排列 ${selectedNodeIds.length} 个节点`}</strong>
+            <strong>{selectedTimeline ? '时间线' : selectedProjectReference ? '项目引用' : selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : `排列 ${selectedNodeIds.length} 个节点`}</strong>
             <button
               type="button"
               aria-label="关闭属性面板"
@@ -2334,11 +3520,199 @@ export default function MindMapCanvas({
                 setSelectedNodeIds([]);
                 setSelectedEdgeIds([]);
                 setSelectedSectionId(null);
+                setSelectedProjectReferenceId(null);
+                setSelectedTimelineId(null);
               }}
             >
               ×
             </button>
           </div>
+          {selectedTimeline && (
+            <div className={styles.inspectorFields}>
+              <label>
+                <span>名称</span>
+                <input
+                  type="text"
+                  aria-label="时间线名称"
+                  defaultValue={selectedTimeline.title}
+                  maxLength={120}
+                  onBlur={(event) => execute('重命名时间线', (current) => ({
+                    ...current,
+                    timelineSections: {
+                      ...current.timelineSections,
+                      [selectedTimeline.id]: { ...selectedTimeline, title: event.target.value.trim() || '时间线', updatedAt: Date.now() },
+                    },
+                  }))}
+                />
+              </label>
+              <label>
+                <span>来源</span>
+                <select
+                  aria-label="时间线来源"
+                  value={`${selectedTimeline.source}:${selectedTimeline.targetId ?? ''}`}
+                  onChange={(event) => {
+                    const separator = event.target.value.indexOf(':');
+                    const source = event.target.value.slice(0, separator) as TimelineSection['source'];
+                    const targetId = event.target.value.slice(separator + 1) || null;
+                    const title = source === 'project'
+                      ? projectPlanning.projects.find((item) => item.id === targetId)?.name
+                      : source === 'life'
+                        ? lifeTimeline.lifeMapAreas.find((item) => item.id === targetId)?.name
+                        : '时间线';
+                    const preview = { ...selectedTimeline, source, targetId };
+                    const height = recommendedTimelineHeight(timelineProjectionItems(preview, projectPlanning, lifeTimeline));
+                    execute('设置时间线来源', (current) => ({
+                      ...current,
+                      timelineSections: {
+                        ...current.timelineSections,
+                        [selectedTimeline.id]: {
+                          ...selectedTimeline,
+                          source,
+                          targetId,
+                          title: title || selectedTimeline.title,
+                          height,
+                          updatedAt: Date.now(),
+                        },
+                      },
+                    }));
+                  }}
+                >
+                  <option value="manual:">手动选择内容</option>
+                  {projectPlanning.projects.map((project) => <option key={project.id} value={`project:${project.id}`}>项目 · {project.name}</option>)}
+                  {lifeTimeline.lifeMapAreas.filter((area) => !area.deletedAt).map((area) => <option key={area.id} value={`life:${area.id}`}>人生领域 · {area.name}</option>)}
+                </select>
+              </label>
+              {selectedTimeline.source === 'manual' && <details className={styles.timelineContentManager}>
+                <summary><span>内容</span><strong>已选择 {selectedTimeline.manualItems.length} 项</strong><em>管理</em></summary>
+                <fieldset className={styles.manualTimelineItems}>
+                  {manualTimelineCandidates.length === 0 && <small>当前没有可选择的项目或人生规划。</small>}
+                  {manualTimelineCandidates.map(({ reference, label }) => {
+                    const key = `${reference.source}:${reference.contextId}:${reference.itemId}`;
+                    const checked = selectedTimeline.manualItems.some((item) => `${item.source}:${item.contextId}:${item.itemId}` === key);
+                    return <label className={styles.checkboxField} key={key}>
+                      <input type="checkbox" checked={checked} onChange={(event) => execute('设置手动时间线内容', (current) => {
+                        const timeline = current.timelineSections[selectedTimeline.id];
+                        if (!timeline) return current;
+                        const manualItems = event.target.checked
+                          ? [...timeline.manualItems.filter((item) => `${item.source}:${item.contextId}:${item.itemId}` !== key), reference]
+                          : timeline.manualItems.filter((item) => `${item.source}:${item.contextId}:${item.itemId}` !== key);
+                        const preview = { ...timeline, manualItems };
+                        const height = recommendedTimelineHeight(timelineProjectionItems(preview, projectPlanning, lifeTimeline));
+                        return { ...current, timelineSections: { ...current.timelineSections, [timeline.id]: { ...timeline, manualItems, height, updatedAt: Date.now() } } };
+                      })} />
+                      <span>{label}</span>
+                    </label>;
+                  })}
+                </fieldset>
+              </details>}
+              <label>
+                <span>尺度</span>
+                <select
+                  aria-label="时间线尺度"
+                  value={selectedTimeline.scale}
+                  onChange={(event) => execute('设置时间线尺度', (current) => ({
+                    ...current,
+                    timelineSections: {
+                      ...current.timelineSections,
+                      [selectedTimeline.id]: { ...selectedTimeline, scale: event.target.value as TimelineSection['scale'], updatedAt: Date.now() },
+                    },
+                  }))}
+                >
+                  <option value="long-range">长期</option>
+                  <option value="month">月</option>
+                  <option value="week">周</option>
+                </select>
+              </label>
+              <div className={styles.timelineRangeFields}>
+                <span>范围</span>
+                <label><span>开始</span><input type="date" aria-label="时间线开始日期" value={selectedTimeline.rangeStart ?? ''} onChange={(event) => execute('设置时间线范围', (current) => ({
+                  ...current,
+                  timelineSections: { ...current.timelineSections, [selectedTimeline.id]: { ...selectedTimeline, rangeStart: event.target.value || null, updatedAt: Date.now() } },
+                }))} /></label>
+                <b>→</b>
+                <label><span>结束</span><input type="date" aria-label="时间线结束日期" value={selectedTimeline.rangeEnd ?? ''} onChange={(event) => execute('设置时间线范围', (current) => ({
+                  ...current,
+                  timelineSections: { ...current.timelineSections, [selectedTimeline.id]: { ...selectedTimeline, rangeEnd: event.target.value || null, updatedAt: Date.now() } },
+                }))} /></label>
+              </div>
+              <p className={styles.timelineDisplaySummary}><span>显示</span><strong>阶段 · 关键日期 · 进度 · 今天线</strong></p>
+              <label className={styles.checkboxField}>
+                <input
+                  type="checkbox"
+                  aria-label="收起时间线"
+                  checked={selectedTimeline.collapsed}
+                  onChange={(event) => execute('切换时间线折叠', (current) => ({
+                    ...current,
+                    timelineSections: {
+                      ...current.timelineSections,
+                      [selectedTimeline.id]: { ...selectedTimeline, collapsed: event.target.checked, updatedAt: Date.now() },
+                    },
+                  }))}
+                />
+                <span>收起</span>
+              </label>
+              <label className={styles.checkboxField}>
+                <input
+                  type="checkbox"
+                  aria-label="锁定时间线"
+                  checked={selectedTimeline.locked}
+                  onChange={(event) => execute('切换时间线锁定', (current) => ({
+                    ...current,
+                    timelineSections: {
+                      ...current.timelineSections,
+                      [selectedTimeline.id]: { ...selectedTimeline, locked: event.target.checked, updatedAt: Date.now() },
+                    },
+                  }))}
+                />
+                <span>锁定组件</span>
+              </label>
+              <button className={styles.dangerAction} type="button" onClick={() => {
+                execute('删除时间线', (current) => {
+                  const timelineSections = { ...current.timelineSections };
+                  delete timelineSections[selectedTimeline.id];
+                  return { ...current, timelineSections };
+                });
+                setSelectedTimelineId(null);
+              }}>删除时间线</button>
+              <small>拖动组件只改变画布位置，不会修改任何项目日期。</small>
+            </div>
+          )}
+          {selectedProjectReference && (
+            <div className={styles.inspectorFields}>
+              <p>此卡片实时读取源数据，不保存标题、日期或进度副本。</p>
+              <label className={styles.checkboxField}>
+                <input
+                  type="checkbox"
+                  aria-label="锁定项目引用"
+                  checked={selectedProjectReference.locked}
+                  onChange={(event) => execute('切换项目引用锁定', (current) => ({
+                    ...current,
+                    projectReferences: {
+                      ...current.projectReferences,
+                      [selectedProjectReference.id]: {
+                        ...selectedProjectReference,
+                        locked: event.target.checked,
+                        updatedAt: Date.now(),
+                      },
+                    },
+                  }))}
+                />
+                <span>锁定卡片</span>
+              </label>
+              <button className={styles.dangerAction} type="button" onClick={() => {
+                execute('删除项目引用', (current) => {
+                  const projectReferences = { ...current.projectReferences };
+                  delete projectReferences[selectedProjectReference.id];
+                  return {
+                    ...current,
+                    projectReferences,
+                    edges: Object.fromEntries(Object.entries(current.edges).filter(([, edge]) => !edgeTouchesCanvasObject(edge, { type: 'project-reference', id: selectedProjectReference.id }))),
+                  };
+                });
+                setSelectedProjectReferenceId(null);
+              }}>删除引用</button>
+            </div>
+          )}
           {selectedNodeIds.length > 1 && !selectedNode && (
             <div className={styles.arrangeActions}>
               <button type="button" onClick={() => execute('左对齐', (current) => alignMindMapNodes(current, selectedNodeIds, 'left'))}>左对齐</button>
@@ -2528,6 +3902,17 @@ export default function MindMapCanvas({
                 />
                 <span>自动适应文字</span>
               </label>
+              {treeChildrenById.get(selectedNode.id)?.length ? (
+                <label className={styles.checkboxField}>
+                  <input
+                    type="checkbox"
+                    aria-label="折叠子分支"
+                    checked={selectedNode.collapsed}
+                    onChange={(event) => updateNode(selectedNode.id, { collapsed: event.target.checked })}
+                  />
+                  <span>折叠子分支</span>
+                </label>
+              ) : null}
               <label>
                 <span>宽度</span>
                 <input
@@ -2771,7 +4156,7 @@ export default function MindMapCanvas({
                   value={selectedEdge.type}
                   onChange={(event) => {
                     const type = event.target.value as MindMapEdge['type'];
-                    const points = edgePoints(selectedEdge, edgeNodes);
+                    const points = edgePoints(selectedEdge, document, treeDirection);
                     const middleX = points ? (points.start.x + points.end.x) / 2 : 0;
                     updateEdge(selectedEdge.id, {
                       type,

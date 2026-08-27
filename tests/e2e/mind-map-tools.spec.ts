@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 const openMindMap = async (page: Page) => {
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
 };
 
@@ -50,6 +50,23 @@ test('Tab creates a child and Enter creates its sibling as atomic graph commands
   expect(Object.keys(state.document?.edges ?? {})).toHaveLength(2);
   const edges = Object.values(state.document?.edges ?? {});
   expect(edges[0].sourceId).toBe(edges[1].sourceId);
+});
+
+test('the node + action creates a tree child without a keyboard', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await addNode(page, 260, 240, '英语');
+  await canvas.click({ position: { x: 260, y: 240 } });
+  const state = await graphState(page);
+  const parent = Object.values(state.document?.nodes ?? {})[0] as { x: number; y: number; width: number };
+  await canvas.click({ position: { x: parent.x + parent.width / 2 + 12, y: parent.y - 26 } });
+  await expect(page.getByLabel('新节点文本')).toBeVisible();
+  await page.getByLabel('新节点文本').fill('阅读');
+  await page.getByLabel('新节点文本').press('Enter');
+  const after = await graphState(page);
+  const edge = Object.values(after.document?.edges ?? {})[0] as { relationship: string; sourceId: string };
+  expect(edge.relationship).toBe('tree');
+  expect(edge.sourceId).toBe(Object.keys(after.document?.nodes ?? {}).find((id) => (after.document?.nodes[id] as { text: string }).text === '英语'));
 });
 
 test('JSON import, layout, search, JSON export and PNG export stay inside the page', async ({ page }) => {

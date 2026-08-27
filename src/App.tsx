@@ -60,13 +60,13 @@ function mapLiveblocksStatus(status: string | undefined, isStorageLoading = fals
 }
 
 const loadTimelineView = () => import('@/components/TimelineView');
-const loadLifeMapView = () => import('@/components/lifeMap/LifeMapWorkspace');
 const loadEbbView = () => import('@/ebb/components/EbbView');
 const loadDailyScheduleView = () => import('@/components/dailySchedule/DailyScheduleView');
 const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDocumentView');
 const loadWeekMatrixView = () => import('@/components/smartBlock/WeekMatrixView');
 const loadKnowledgeGraphView = () => import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView }));
 const loadMindMapWorkspace = () => import('@/mindMap');
+const loadLifeMapWorkspace = () => import('@/components/lifeMap/LifeMapWorkspace');
 const loadTaskDialog = () => import('@/components/TaskDialog');
 const loadGroupDialog = () => import('@/components/GroupDialog');
 const loadNoteDialog = () => import('@/components/NoteDialog');
@@ -76,7 +76,6 @@ const loadIceboxPalette = () => import('@/components/smartBlock/IceboxPalette')
   .then((module) => ({ default: module.IceboxPalette }));
 
 const TimelineView = React.lazy(loadTimelineView);
-const LifeMapView = React.lazy(loadLifeMapView);
 const EbbView = React.lazy(async () => {
   const retryKey = 'smart-line-lazy-retry-ebb';
   try {
@@ -100,6 +99,7 @@ const ProjectDocumentView = React.lazy(loadProjectDocumentView);
 const WeekMatrixView = React.lazy(loadWeekMatrixView);
 const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
 const MindMapWorkspace = React.lazy(loadMindMapWorkspace);
+const LifeMapWorkspace = React.lazy(loadLifeMapWorkspace);
 const TaskDialog = React.lazy(loadTaskDialog);
 const GroupDialog = React.lazy(loadGroupDialog);
 const NoteDialog = React.lazy(loadNoteDialog);
@@ -160,6 +160,7 @@ function getInitialAppView(): AppModule {
   if (!isPhoneLayoutViewport()) return 'timeline';
   try {
     const saved = localStorage.getItem(PHONE_LAST_VIEW_STORAGE_KEY) as AppModule | null;
+    if (saved === 'life-map' && MIND_MAP_ENABLED) return 'mind-map';
     if (saved && APP_VIEW_ORDER.includes(saved) && (saved !== 'mind-map' || MIND_MAP_ENABLED)) return saved;
   } catch {
     // Storage is optional; the phone execution view remains the safe default.
@@ -411,7 +412,6 @@ const App: React.FC = () => {
   const [dailyTargetDate, setDailyTargetDate] = useState<string | null>(null);
   const [dailyWeekReturnContext, setDailyWeekReturnContext] = useState<WeekMatrixContext | null>(null);
   const [weekRestoreContext, setWeekRestoreContext] = useState<WeekMatrixContext | null>(null);
-  const [lifeMapEntry, setLifeMapEntry] = useState(0);
   const [phoneFullView, setPhoneFullView] = useState(false);
   const [viewDirection, setViewDirection] = useState(1);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
@@ -424,23 +424,23 @@ const App: React.FC = () => {
   }), [prefersReducedMotion]);
 
   const handleViewChange = useCallback((view: AppModule) => {
-    if (view !== currentView) {
+    const target = view === 'life-map' && MIND_MAP_ENABLED ? 'mind-map' : view;
+    if (target !== currentView) {
       const currentIndex = APP_VIEW_ORDER.indexOf(currentView);
-      const nextIndex = APP_VIEW_ORDER.indexOf(view);
+      const nextIndex = APP_VIEW_ORDER.indexOf(target);
       setViewDirection(nextIndex >= currentIndex ? 1 : -1);
       setDrawerTaskId(null);
       setDrawerBlockId(null);
       setPhoneFullView(false);
-      if (view === 'life-map') setLifeMapEntry((entry) => entry + 1);
     }
-    if (view !== 'daily-schedule') {
+    if (target !== 'daily-schedule') {
       setDailyTargetDate(null);
       setDailyWeekReturnContext(null);
     }
-    if (view !== 'week-matrix') setWeekRestoreContext(null);
-    setCurrentView(view);
+    if (target !== 'week-matrix') setWeekRestoreContext(null);
+    setCurrentView(target);
     if (isPhoneLayout) {
-      try { localStorage.setItem(PHONE_LAST_VIEW_STORAGE_KEY, view); } catch { /* optional preference */ }
+      try { localStorage.setItem(PHONE_LAST_VIEW_STORAGE_KEY, target); } catch { /* optional preference */ }
     }
   }, [currentView, isPhoneLayout]);
 
@@ -489,8 +489,8 @@ const App: React.FC = () => {
     if (!isHydrated) {
       hydrateStore();
     }
-    // 人生地图允许独立编辑，必须尽早恢复本地数据。若延迟到空闲阶段，
-    // 用户可能先写入默认状态，随后又被 IndexedDB 中的真实数据覆盖。
+    // 旧 Life Store 已停止独立写入，但仍是迁移更新和灾难恢复的数据来源，
+    // 因此继续尽早恢复，避免地图工作区读取到默认空状态。
     if (!isLifeMapHydrated) {
       hydrateLifeMapStore();
     }
@@ -519,7 +519,7 @@ const App: React.FC = () => {
   ]);
 
   React.useEffect(() => {
-    // “应用已就绪”意味着所有可编辑数据域均已恢复，避免自动化或用户操作
+    // “应用已就绪”意味着所有业务与恢复数据域均已恢复，避免自动化或用户操作
     // 与任一模块的异步 hydration 发生竞争。
     if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;
     let secondFrame = 0;
@@ -949,7 +949,7 @@ const App: React.FC = () => {
   }, [handleOpenSync]);
 
   const preloadView = useCallback((view: AppModule) => {
-    if (view === 'life-map') { void loadLifeMapView(); return; }
+    if (view === 'life-map') { if (MIND_MAP_ENABLED) void loadMindMapWorkspace(); else void loadLifeMapWorkspace(); return; }
     if (view === 'timeline') { void loadTimelineView(); return; }
     if (view === 'ebb') { void loadEbbView(); return; }
     if (view === 'daily-schedule') { void loadDailyScheduleView(); return; }
@@ -984,7 +984,7 @@ const App: React.FC = () => {
 
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
       <ViewErrorBoundary
-        viewName={currentView === 'life-map' ? '人生地图' : currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'mind-map' ? '思维导图' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
+        viewName={currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'mind-map' ? '地图工作区' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
         resetKey={currentView}
         safeModeKey={currentView === 'ebb' ? 'smart-line-ebb-safe-mode' : undefined}
         onExit={currentView === 'timeline' ? undefined : () => handleViewChange('timeline')}
@@ -1004,26 +1004,6 @@ const App: React.FC = () => {
         />
       ) : (
       <AnimatePresence mode="popLayout" initial={false} custom={viewMotionContext}>
-        {currentView === 'life-map' && (
-          <motion.div
-            key={`life-map:${lifeMapEntry}`}
-            id="view-life-map"
-            role="tabpanel"
-            className="tl-app-split tl-app-split--ebb"
-            custom={viewMotionContext}
-            variants={VIEW_MOTION_VARIANTS}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-          >
-            <div className="tl-app-main">
-              <Suspense fallback={<ViewFallback />}>
-                <LifeMapView />
-              </Suspense>
-            </div>
-          </motion.div>
-        )}
-
         {currentView === 'ebb' && (
           <motion.div 
             key="ebb"
@@ -1133,6 +1113,12 @@ const App: React.FC = () => {
                 <MindMapWorkspace />
               </Suspense>
             </div>
+          </motion.div>
+        )}
+
+        {currentView === 'life-map' && !MIND_MAP_ENABLED && (
+          <motion.div key="life-map" id="view-life-map" role="tabpanel" className="tl-app-split tl-app-split--ebb" custom={viewMotionContext} variants={VIEW_MOTION_VARIANTS} initial="initial" animate="animate" exit="exit">
+            <div className="tl-app-main"><Suspense fallback={<ViewFallback />}><LifeMapWorkspace /></Suspense></div>
           </motion.div>
         )}
 

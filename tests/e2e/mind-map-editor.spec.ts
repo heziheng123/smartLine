@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 const openMindMap = async (page: Page) => {
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
 };
 
@@ -63,7 +63,7 @@ test('dragging a node creates one move transaction and persists the position', a
   expect(after.undo).toBe(before.undo + 1);
 
   await page.reload();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]?.x).toBeCloseTo(nodeAfter.x, 0);
 });
 

@@ -37,19 +37,19 @@ export const MIND_MAP_VISUAL_TOKENS = {
     sizeNode: 15,
   },
   node: {
-    minWidth: 120,
-    preferredWidth: 180,
-    maxWidth: 360,
+    minWidth: 112,
+    preferredWidth: 172,
+    maxWidth: 280,
     paddingX: 14,
-    paddingY: 12,
+    paddingY: 8,
   },
   edge: {
     width: 1.25,
     arrowSize: 6,
   },
   selection: {
-    ringWidth: 2,
-    handleSize: 8,
+    ringWidth: 1.5,
+    handleSize: 7,
   },
   canvas: {
     gridDot: 'rgba(32, 33, 36, 0.09)',

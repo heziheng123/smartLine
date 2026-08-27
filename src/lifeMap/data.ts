@@ -495,12 +495,17 @@ export function canDeleteLifeArea(data: LifeMapData, areaId: string): boolean {
   const hasPlanningReference = data.lifeMapGoals.some((item) => (
     (item.kind === 'plan' || item.kind === 'phase') && isActiveAreaReference(item)
   ));
+  const hasAreaListReference = (item: { areaIds?: string[]; deletedAt?: string }) => (
+    !item.deletedAt && item.areaIds?.includes(areaId)
+  );
   return !hasPlanningReference
     && !data.lifeMapSystems.some(isActiveAreaReference)
     && !data.lifeMapThemes.some(isActiveAreaReference)
     && !data.lifeMapFocuses.some(isActiveAreaReference)
     && !data.lifeMapNotes.some(isActiveAreaReference)
-    && !data.lifeMapEvents.some((item) => !item.deletedAt && item.areaId === areaId);
+    && !data.lifeMapEvents.some((item) => !item.deletedAt && item.areaId === areaId)
+    && !data.lifeMapStages.some(hasAreaListReference)
+    && !data.lifeMapReviews.some(hasAreaListReference);
 }
 
 export function validateLifeMapData(value: unknown): string[] {

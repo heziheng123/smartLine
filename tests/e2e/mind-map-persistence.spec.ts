@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 const openMindMap = async (page: import('@playwright/test').Page) => {
   await page.goto('/');
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-workspace')).toBeVisible();
   await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
 };
@@ -20,7 +20,7 @@ test('documents are saved in the dedicated mind map database and restored after 
   expect(databases).toContain('smart-line-mind-map');
 
   await page.reload();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-title')).toHaveValue('产品架构图');
 });
 
@@ -41,6 +41,21 @@ test('multiple documents remain independent and can be switched', async ({ page 
   await expect(page.getByTestId('mind-map-title')).toHaveValue('第一张图');
 });
 
+test('saving the previous camera cannot cancel an immediate edit in the new document', async ({ page }) => {
+  await openMindMap(page);
+  await page.getByTestId('mind-map-title').fill('旧文档');
+  await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
+
+  await page.getByTestId('mind-map-new-document').click();
+  await expect(page.getByTestId('mind-map-title')).toHaveValue('未命名思维导图');
+  await page.getByTestId('mind-map-title').fill('切换后立即编辑');
+  await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
+
+  await page.reload();
+  await page.getByTitle('地图工作区').click();
+  await expect(page.getByTestId('mind-map-title')).toHaveValue('切换后立即编辑');
+});
+
 test('a pending edit is recovered from the emergency journal after pagehide', async ({ page }) => {
   await openMindMap(page);
   const journalWritten = await page.evaluate(async () => {
@@ -54,18 +69,19 @@ test('a pending edit is recovered from the emergency journal after pagehide', as
   expect(journalWritten).toBe(true);
 
   await page.reload();
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-title')).toHaveValue('异常关闭恢复图');
 });
 
 test('a failed IndexedDB save keeps the edit in memory and the emergency journal', async ({ page }) => {
   await openMindMap(page);
   const result = await page.evaluate(async () => {
-    const { mindMapRepository } = await import('/src/mindMap/repository.ts');
-    const { useMindMapStore } = await import('/src/mindMap/testing.ts');
+    const { mindMapRepository, useMindMapStore } = await import('/src/mindMap/testing.ts');
     const original = mindMapRepository.schedule;
+    let callbackStatus = '';
     mindMapRepository.schedule = ((_document, _index, callbacks) => {
       callbacks.onError?.(new Error('forced IndexedDB failure'));
+      callbackStatus = useMindMapStore.getState().saveStatus;
     }) as typeof mindMapRepository.schedule;
     try {
       useMindMapStore.getState().renameDocument('保存失败仍保留');
@@ -74,6 +90,7 @@ test('a failed IndexedDB save keeps the edit in memory and the emergency journal
       return {
         title: state.document?.title,
         status: state.saveStatus,
+        callbackStatus,
         journal: state.document
           ? localStorage.getItem(`mind-map:emergency:${state.document.id}`)
           : null,
@@ -83,6 +100,7 @@ test('a failed IndexedDB save keeps the edit in memory and the emergency journal
     }
   });
   expect(result.title).toBe('保存失败仍保留');
+  expect(result.callbackStatus).toBe('error');
   expect(result.status).toBe('error');
   expect(result.journal).toContain('保存失败仍保留');
 });
@@ -113,7 +131,7 @@ test('a future schema is reported and remains untouched in the dedicated databas
       documents: [],
     });
   });
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByRole('alert')).toContainText('版本过高');
   const storedVersion = await page.evaluate(async () => {
     const { createDedicatedStorage } = await import('/src/utils/persistence.ts');

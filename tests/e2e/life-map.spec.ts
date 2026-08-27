@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
+test.beforeEach(() => test.skip(true, '旧人生地图写入口已在迁移验收后关闭。'));
+
 const setLifeMapZoom = async (page: Page, zoom: 'year' | 'month' | 'week' | 'day') => {
   const label = { year: '年视图', month: '月视图', week: '周视图', day: '日视图' }[zoom];
   await page.getByRole('combobox', { name: '时间尺度' }).click();

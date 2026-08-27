@@ -158,6 +158,22 @@ export function fitMindMapDocument(
       height: section.collapsed ? 42 : section.height,
     });
   }
+  for (const reference of Object.values(document.projectReferences)) {
+    rects.push({
+      x: reference.x - reference.width / 2,
+      y: reference.y - reference.height / 2,
+      width: reference.width,
+      height: reference.height,
+    });
+  }
+  for (const timeline of Object.values(document.timelineSections)) {
+    rects.push({
+      x: timeline.x - timeline.width / 2,
+      y: timeline.y - timeline.height / 2,
+      width: timeline.width,
+      height: timeline.collapsed ? 46 : timeline.height,
+    });
+  }
   return fitRects(rects, size, padding);
 }
 

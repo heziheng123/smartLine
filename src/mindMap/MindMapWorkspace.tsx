@@ -1,6 +1,7 @@
-import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Cloud,
+  CalendarRange,
   Copy,
   Download,
   FilePlus2,
@@ -20,6 +21,8 @@ import {
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAuth } from '@/auth/AuthContext';
+import { createEmptyLifeMapData } from '@/lifeMap/data';
+import { projectTaskReferenceId, useProjectPlanningSnapshot } from '@/projectPlanning/adapter';
 import MindMapCanvas from './canvas/MindMapCanvas';
 import MindMapCatalog from './MindMapCatalog';
 import { MIND_MAP_SYNC_ENABLED } from './config';
@@ -30,12 +33,14 @@ import {
   type MindMapPngScope,
 } from './importExport';
 import type { TreeDirection } from './layout';
-import { layoutMindMapTreeInWorker } from './layoutWorkerClient';
-import { DEFAULT_DOCUMENT_TITLE, type MindMapNodeType } from './model';
+import { migrateLifeMapIntoDocument } from './lifeMapMigration';
+import LifePlanningPanel from './LifePlanningPanel';
+import { createProjectReferenceCard, createTimelineSection, DEFAULT_DOCUMENT_TITLE, type MindMapNodeType, type ProjectReferenceCard } from './model';
 import { mindMapRepository } from './repository';
 import { useMindMapStore } from './store';
 import { MindMapCatalogSession, MindMapSyncSession, type MindMapSyncViewState } from './sync';
 import type { MindMapPresence } from './syncCore';
+import { useLifeMapDataSnapshot, useLifeMapHydrated } from './timelineProjectionHooks';
 import styles from './styles/MindMapWorkspace.module.css';
 import { mindMapVisualCssVariables } from './styles/visualTokens';
 
@@ -86,10 +91,14 @@ const MindMapWorkspace = () => {
   const [pngRequest, setPngRequest] = useState(0);
   const [pngScope, setPngScope] = useState<MindMapPngScope>('viewport');
   const [treeDirection, setTreeDirection] = useState<TreeDirection>('left-right');
+  const [treeLayoutRequest, setTreeLayoutRequest] = useState(0);
   const [layoutRunning, setLayoutRunning] = useState(false);
+  const [migrationRunning, setMigrationRunning] = useState(false);
+  const [lifePlanningOpen, setLifePlanningOpen] = useState(false);
   const [selectedNodeCount, setSelectedNodeCount] = useState(0);
   const [creationType, setCreationType] = useState<MindMapNodeType>('text');
   const [connectionMode, setConnectionMode] = useState(false);
+  const [referenceTarget, setReferenceTarget] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [assetSyncError, setAssetSyncError] = useState<string | null>(null);
@@ -102,6 +111,7 @@ const MindMapWorkspace = () => {
     others: [],
   });
   const importInputRef = useRef<HTMLInputElement>(null);
+  const canvasSectionRef = useRef<HTMLElement>(null);
   const moreMenuRef = useRef<HTMLDetailsElement>(null);
   const syncSessionRef = useRef<MindMapSyncSession | null>(null);
   const catalogSessionRef = useRef<MindMapCatalogSession | null>(null);
@@ -110,6 +120,16 @@ const MindMapWorkspace = () => {
   documentRef.current = document;
   indexDocumentsRef.current = index.documents;
   const documentId = document?.id;
+  const projectPlanning = useProjectPlanningSnapshot();
+  const lifeMapData = useLifeMapDataSnapshot();
+  const lifeMapHydrated = useLifeMapHydrated();
+  const referenceOptions = useMemo(() => [
+    ...projectPlanning.projects.map((project) => ({ value: `project:${project.id}`, label: `项目 · ${project.name}` })),
+    ...projectPlanning.projects.flatMap((project) => project.blocks.flatMap((block) => block.type === 'smart-task'
+      ? [{ value: `task:${projectTaskReferenceId(project.id, block.id)}`, label: `任务 · ${project.name} / ${block.header.title}` }]
+      : [])),
+    ...projectPlanning.milestones.map((milestone) => ({ value: `milestone:${milestone.id}`, label: `关键日期 · ${milestone.name}` })),
+  ], [projectPlanning]);
 
   useEffect(() => setConnectionMode(false), [documentId]);
 
@@ -292,35 +312,97 @@ const MindMapWorkspace = () => {
     }
   };
 
-  const runTreeLayout = useCallback(async () => {
-    if (!document || layoutRunning) return;
-    const source = document;
-    setLayoutRunning(true);
-    try {
-      const laidOut = await layoutMindMapTreeInWorker(source, treeDirection);
-      execute('树形布局', (current) => (
-        current.id === source.id && current.updatedAt === source.updatedAt
-          ? { ...current, nodes: laidOut.nodes }
-          : current
-      ));
-    } finally {
-      setLayoutRunning(false);
-    }
-  }, [document, execute, layoutRunning, treeDirection]);
+  const runTreeLayout = useCallback(() => setTreeLayoutRequest((request) => request + 1), []);
 
   const closeMoreMenu = () => {
     if (moreMenuRef.current) moreMenuRef.current.open = false;
   };
+
+  const migrateLifeMap = async () => {
+    if (!document || !lifeMapHydrated || migrationRunning) return;
+    if (!window.confirm(document.lifeMap
+      ? '这会用旧 Life Store 的内容替换当前地图内的人生规划，并先下载备份。是否继续？'
+      : '将完整人生地图复制到当前导图，并先下载迁移前备份。是否继续？')) return;
+    setMigrationRunning(true);
+    setLocalError(null);
+    try {
+      let source = document;
+      let result = await migrateLifeMapIntoDocument(source, lifeMapData);
+      const latest = documentRef.current;
+      if (latest?.id === source.id && latest.updatedAt !== source.updatedAt) {
+        source = latest;
+        result = await migrateLifeMapIntoDocument(source, lifeMapData);
+      }
+      const blob = new Blob([JSON.stringify(result.backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = window.document.createElement('a');
+      anchor.href = url;
+      anchor.download = `smartline-life-map-backup-${result.backup.createdAt.slice(0, 10)}.json`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      if (!result.changed) return;
+      if (documentRef.current?.id !== source.id || documentRef.current.updatedAt !== source.updatedAt) {
+        throw new Error('迁移期间地图已更新；已下载备份，请重新发起迁移。');
+      }
+      execute('迁移人生地图', (current) => current.id === result.document.id ? result.document : current);
+    } catch (caught) {
+      setLocalError(caught instanceof Error ? caught.message : '迁移人生地图失败。');
+    } finally {
+      setMigrationRunning(false);
+    }
+  };
+
+  const createProjectReference = () => {
+    if (!document || !referenceTarget) return;
+    const separator = referenceTarget.indexOf(':');
+    const targetType = referenceTarget.slice(0, separator) as ProjectReferenceCard['targetType'];
+    const targetId = referenceTarget.slice(separator + 1);
+    if (separator < 1 || !targetId || !['project', 'task', 'milestone'].includes(targetType)) return;
+    const rect = canvasSectionRef.current?.getBoundingClientRect();
+    const center = {
+      x: ((rect?.width ?? 800) / 2 - document.viewport.x) / document.viewport.scale,
+      y: ((rect?.height ?? 600) / 2 - document.viewport.y) / document.viewport.scale,
+    };
+    const reference = createProjectReferenceCard(center, { targetType, targetId });
+    execute('创建项目引用', (current) => ({
+      ...current,
+      projectReferences: { ...current.projectReferences, [reference.id]: reference },
+    }));
+    setReferenceTarget('');
+  };
+
+  const createTimeline = () => {
+    if (!document) return;
+    const rect = canvasSectionRef.current?.getBoundingClientRect();
+    const center = {
+      x: ((rect?.width ?? 800) / 2 - document.viewport.x) / document.viewport.scale,
+      y: ((rect?.height ?? 600) / 2 - document.viewport.y) / document.viewport.scale,
+    };
+    const timeline = createTimelineSection({
+      x: center.x,
+      y: center.y + (Object.keys(document.projectReferences).length > 0 ? 240 : 0),
+    });
+    execute('创建时间线', (current) => ({
+      ...current,
+      timelineSections: { ...current.timelineSections, [timeline.id]: timeline },
+    }));
+  };
+
+  const hasCanvasContent = Boolean(document && (
+    Object.keys(document.nodes).length
+    || Object.keys(document.projectReferences).length
+    || Object.keys(document.timelineSections).length
+  ));
 
   return (
     <main
       className={styles.workspace}
       style={mindMapVisualCssVariables}
       data-testid="mind-map-workspace"
-      aria-label="思维导图工作区"
+      aria-label="地图工作区"
     >
       <header className={styles.header}>
-        <h1 className={styles.srOnly}>思维导图</h1>
+        <h1 className={styles.srOnly}>地图工作区</h1>
         <div className={styles.documentControls}>
           {isHydrated && document ? (
             <div className={styles.documentRow}>
@@ -350,7 +432,7 @@ const MindMapWorkspace = () => {
               </button>
             </div>
           ) : (
-            <span className={styles.loadingTitle}>思维导图</span>
+            <span className={styles.loadingTitle}>地图工作区</span>
           )}
         </div>
         <div className={styles.headerActions}>
@@ -402,6 +484,13 @@ const MindMapWorkspace = () => {
                 closeMoreMenu();
               }} disabled={!document}>
                 <Save size={15} aria-hidden="true" />立即保存
+              </button>
+              <button type="button" role="menuitem" onClick={() => {
+                closeMoreMenu();
+                void migrateLifeMap();
+              }} disabled={!document || !lifeMapHydrated || migrationRunning}>
+                <RefreshCw size={15} aria-hidden="true" />
+                {migrationRunning ? '正在迁移…' : document?.lifeMap ? '从旧人生地图恢复' : '迁移人生地图'}
               </button>
               <span className={styles.menuDivider} aria-hidden="true" />
               <button type="button" role="menuitem" onClick={() => {
@@ -488,7 +577,7 @@ const MindMapWorkspace = () => {
         </div>
       )}
 
-      <section className={styles.canvas} aria-label="思维导图画布">
+      <section ref={canvasSectionRef} className={styles.canvas} aria-label="思维导图画布">
         <nav className={styles.floatingToolbar} aria-label="思维导图工具">
           <label className={styles.creationTool}>
             <span>节点</span>
@@ -505,14 +594,40 @@ const MindMapWorkspace = () => {
             </select>
           </label>
           <span className={styles.toolDivider} aria-hidden="true" />
+          <label className={`${styles.creationTool} ${styles.referenceTool}`}>
+            <span>引用</span>
+            <select
+              aria-label="选择项目规划引用"
+              value={referenceTarget}
+              disabled={referenceOptions.length === 0}
+              onChange={(event) => setReferenceTarget(event.target.value)}
+            >
+              <option value="">选择项目或任务</option>
+              {referenceOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <button className={styles.referenceCreateButton} type="button" disabled={!referenceTarget} onClick={createProjectReference}>
+            <Link2 size={15} aria-hidden="true" />放入画布
+          </button>
+          <button type="button" onClick={createTimeline} disabled={!document}>
+            <CalendarRange size={15} aria-hidden="true" />时间线
+          </button>
+          <button type="button" onClick={() => {
+            if (!document) return;
+            if (!document.lifeMap) execute('启用人生规划', (current) => ({ ...current, lifeMap: createEmptyLifeMapData(), lifeMapMigration: null }));
+            setLifePlanningOpen(true);
+          }} disabled={!document}>
+            <CalendarRange size={15} aria-hidden="true" />人生规划
+          </button>
+          <span className={styles.toolDivider} aria-hidden="true" />
           <button
             type="button"
             data-testid="mind-map-layout-tree"
-            disabled={!document || Object.keys(document.nodes).length < 2 || layoutRunning}
-            onClick={() => void runTreeLayout()}
+            disabled={layoutRunning || !document || Object.keys(document.nodes).length < 2}
+            onClick={runTreeLayout}
           >
             <GitFork size={15} aria-hidden="true" />
-            {layoutRunning ? '布局中…' : '布局'}
+            {layoutRunning ? '布局中…' : selectedNodeCount === 1 ? '整理分支' : '布局'}
           </button>
           <select
             className={styles.directionSelect}
@@ -529,8 +644,8 @@ const MindMapWorkspace = () => {
             type="button"
             className={connectionMode ? styles.toolActive : undefined}
             aria-pressed={connectionMode}
-            disabled={!document || Object.keys(document.nodes).length < 2}
-            title="依次点击起点和终点节点；也可以拖动节点四边的圆点"
+            disabled={!document || Object.keys(document.nodes).length + Object.keys(document.projectReferences).length < 2}
+            title="依次点击起点和终点对象；也可以拖动对象的关联入口"
             onClick={() => setConnectionMode((active) => !active)}
           >
             <Link2 size={15} aria-hidden="true" />连线
@@ -540,7 +655,7 @@ const MindMapWorkspace = () => {
             type="button"
             aria-label="适合画布"
             title="适合画布"
-            disabled={!document || Object.keys(document.nodes).length === 0}
+            disabled={!hasCanvasContent}
             onClick={() => setFitRequest((value) => value + 1)}
           >
             <Maximize2 size={15} aria-hidden="true" />
@@ -553,6 +668,9 @@ const MindMapWorkspace = () => {
             document={document}
             assetRevision={assetRevision}
             fitRequest={fitRequest}
+            treeLayoutRequest={treeLayoutRequest}
+            treeDirection={treeDirection}
+            onLayoutRunningChange={setLayoutRunning}
             pngRequest={pngRequest}
             pngScope={pngScope}
             creationType={creationType}
@@ -568,9 +686,22 @@ const MindMapWorkspace = () => {
         )}
       </section>
 
+      {lifePlanningOpen && document?.lifeMap && <LifePlanningPanel
+        data={document.lifeMap}
+        onClose={() => setLifePlanningOpen(false)}
+        onChange={(lifeMap, label) => execute(label, (current) => ({
+          ...current,
+          lifeMap,
+          lifeMapMigration: null,
+          updatedAt: Date.now(),
+        }))}
+      />}
+
       <footer className={styles.statusBar}>
         <span>{Math.round(scale * 100)}%</span>
         <span>{document ? Object.keys(document.nodes).length : 0} 个节点</span>
+        <span>{document ? Object.keys(document.projectReferences).length : 0} 个项目引用</span>
+        <span>{document ? Object.keys(document.timelineSections).length : 0} 个时间线</span>
         <span data-testid="mind-map-save-status">{SAVE_LABEL[saveStatus]}</span>
         <span
           className={styles.syncStatus}

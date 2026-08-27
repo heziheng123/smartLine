@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+test.beforeEach(() => test.skip(true, '旧人生地图写入口已在迁移验收后关闭。'));
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => { localStorage.clear(); sessionStorage.clear(); });
   await page.goto('/');

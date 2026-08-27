@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 for (const count of [500, 2_000, 5_000]) {
   test(`${count} nodes open save zoom and locate in the real workspace`, async ({ page }) => {
     await page.goto('/');
-    await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
     await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
 
     const result = await page.evaluate(async (nodeCount) => {

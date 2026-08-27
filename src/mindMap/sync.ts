@@ -33,7 +33,7 @@ import {
   type MindMapSyncStatus,
 } from './syncCore';
 
-type MindMapRoomStorage = Record<string, number | string | string[] | JsonObject | LiveFile>;
+type MindMapRoomStorage = Record<string, number | string | string[] | JsonObject | LiveFile | null>;
 type MindMapCatalogRoomStorage = Record<string, number | JsonObject>;
 
 type MindMapRoom = Room<MindMapPresence, MindMapRoomStorage>;
@@ -63,7 +63,7 @@ interface MindMapCatalogSessionOptions {
 }
 
 const PALETTE = ['#5e5ce6', '#007aff', '#34c759', '#ff9500', '#ff2d55', '#af52de'];
-const ENTITY_PREFIX = { nodes: 'node:', edges: 'edge:', sections: 'section:', groups: 'group:' } as const;
+const ENTITY_PREFIX = { nodes: 'node:', edges: 'edge:', sections: 'section:', groups: 'group:', projectReferences: 'project-reference:', timelineSections: 'timeline-section:' } as const;
 const IMAGE_EXTENSION: Record<string, string> = {
   'image/gif': 'gif',
   'image/jpeg': 'jpg',
@@ -97,6 +97,8 @@ function initialStorage(document: MindMapDocument): MindMapRoomStorage {
     updatedAt: document.updatedAt,
     settings: jsonObject(document.settings),
     zOrder: [...document.zOrder],
+    lifeMap: document.lifeMap ? jsonObject(document.lifeMap) : null,
+    lifeMapMigration: document.lifeMapMigration ? jsonObject(document.lifeMapMigration) : null,
   };
   for (const [collection, prefix] of Object.entries(ENTITY_PREFIX)) {
     const entities = document[collection as keyof typeof ENTITY_PREFIX] as Record<string, object>;
@@ -116,10 +118,14 @@ function documentFromRoot(root: LiveObject<MindMapRoomStorage>, local: MindMapDo
     updatedAt: value.updatedAt,
     settings: value.settings,
     zOrder: value.zOrder,
+    lifeMap: value.lifeMap,
+    lifeMapMigration: value.lifeMapMigration,
     nodes: storageEntities(value as MindMapRoomStorage, ENTITY_PREFIX.nodes),
     edges: storageEntities(value as MindMapRoomStorage, ENTITY_PREFIX.edges),
     sections: storageEntities(value as MindMapRoomStorage, ENTITY_PREFIX.sections),
     groups: storageEntities(value as MindMapRoomStorage, ENTITY_PREFIX.groups),
+    projectReferences: storageEntities(value as MindMapRoomStorage, ENTITY_PREFIX.projectReferences),
+    timelineSections: storageEntities(value as MindMapRoomStorage, ENTITY_PREFIX.timelineSections),
     viewport: local.viewport,
   });
   if (!normalized || normalized.id !== local.id) throw new Error('云端房间不属于当前思维导图。');
@@ -495,12 +501,16 @@ export class MindMapSyncSession {
       if (patch.title !== undefined) this.root?.set('title', patch.title);
       if (patch.settings !== undefined) this.root?.set('settings', jsonObject(patch.settings));
       if (patch.zOrder !== undefined) this.root?.set('zOrder', [...patch.zOrder]);
+      if (patch.lifeMap !== undefined) this.root?.set('lifeMap', patch.lifeMap ? jsonObject(patch.lifeMap) : null);
+      if (patch.lifeMapMigration !== undefined) this.root?.set('lifeMapMigration', patch.lifeMapMigration ? jsonObject(patch.lifeMapMigration) : null);
       this.root?.set('updatedAt', patch.updatedAt);
       if (this.root) {
         applyEntityChanges(this.root, ENTITY_PREFIX.nodes, patch.nodes);
         applyEntityChanges(this.root, ENTITY_PREFIX.edges, patch.edges);
         applyEntityChanges(this.root, ENTITY_PREFIX.sections, patch.sections);
         applyEntityChanges(this.root, ENTITY_PREFIX.groups, patch.groups);
+        applyEntityChanges(this.root, ENTITY_PREFIX.projectReferences, patch.projectReferences);
+        applyEntityChanges(this.root, ENTITY_PREFIX.timelineSections, patch.timelineSections);
       }
     });
   }

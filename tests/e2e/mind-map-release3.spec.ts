@@ -20,7 +20,7 @@ test('authenticated mind map sync does not require R2', async ({ page }) => {
     return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"must not start"}' });
   });
   await page.goto('/');
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect.poll(() => liveblocksAuthRequests).toBeGreaterThan(0);
   expect(storageStatusRequests).toBe(0);
 });
@@ -86,7 +86,7 @@ test('image assets survive a failed LiveFile upload and hydrate into another dev
 
 test('background document merges are cached without switching or overwriting the active map', async ({ page }) => {
   await page.goto('/');
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
   const result = await page.evaluate(async () => {
     const { createTextMindMapNode } = await import('/src/mindMap/model.ts');
@@ -115,7 +115,7 @@ test('background document merges are cached without switching or overwriting the
 
 test('remote graph updates stay outside local history and the global sync UI', async ({ page }) => {
   await page.goto('/');
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
   await expect(page.getByTestId('mind-map-sync-status')).toContainText('仅本地');
 

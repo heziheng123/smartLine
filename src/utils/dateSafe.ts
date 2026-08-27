@@ -61,6 +61,17 @@ export function addDays(dateStr: string, days: number): string {
   return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
 }
 
+/** Adds calendar months while clamping to the last valid day of the target month. */
+export function addMonths(dateStr: string, months: number): string {
+  if (!isValidCalendarDate(dateStr)) return dateStr;
+  const { year, month, day } = splitDate(dateStr);
+  const target = year * 12 + month - 1 + months;
+  const targetYear = Math.floor(target / 12);
+  const targetMonth = target % 12 + 1;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+  return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
+}
+
 /**
  * 安全的日期比较：a 是否在 b 之前（精确到天）。
  * 替代 dayjs(a).isBefore(dayjs(b), 'day')。

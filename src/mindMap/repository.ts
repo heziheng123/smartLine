@@ -173,6 +173,15 @@ export class MindMapRepository {
     });
   }
 
+  async saveViewport(documentId: string, viewport: MindMapDocument['viewport']) {
+    return this.enqueue(async () => {
+      const raw = await this.getStorage().getItem<unknown>(documentKey(documentId));
+      const document = normalizeMindMapDocument(raw);
+      if (!document || document.id !== documentId) return;
+      await this.getStorage().setItem(documentKey(documentId), { ...document, viewport });
+    });
+  }
+
   async deleteDocument(id: string) {
     localStorage.removeItem(emergencyKey(id));
     await this.enqueue(async () => {

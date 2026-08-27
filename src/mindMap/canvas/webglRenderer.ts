@@ -1,6 +1,9 @@
-import type { MindMapDocument, MindMapNode, ViewportState } from '../model';
+import { edgeSourceRef, edgeTargetRef, type MindMapDocument, type MindMapEdge, type MindMapNode, type ViewportState } from '../model';
+import type { TreeDirection } from '../layout';
 import { MIND_MAP_VISUAL_TOKENS } from '../styles/visualTokens';
 import { edgeIsHiddenInsideCollapsedSection } from './geometry';
+import { edgeConnectableObjects } from './connectableObjects';
+import { buildEdgeRoute, pointOnRoute } from './edgeRouting';
 
 const vertexSource = `
 attribute vec2 a_position;
@@ -32,6 +35,32 @@ const pushVertex = (target: number[], x: number, y: number, rgba: number[]) => {
   target.push(x, y, rgba[0], rgba[1], rgba[2], rgba[3]);
 };
 
+const rotatePoint = (x: number, y: number, centerX: number, centerY: number, rotation: number) => {
+  const radians = rotation * Math.PI / 180;
+  const dx = x - centerX;
+  const dy = y - centerY;
+  return {
+    x: centerX + dx * Math.cos(radians) - dy * Math.sin(radians),
+    y: centerY + dx * Math.sin(radians) + dy * Math.cos(radians),
+  };
+};
+
+function edgePolyline(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection) {
+  const endpoints = edgeConnectableObjects(document, edge);
+  if (!endpoints) return [];
+  const route = buildEdgeRoute(endpoints.source.bounds, endpoints.target.bounds, {
+    kind: edge.relationship === 'tree' ? 'hierarchy' : 'relation',
+    hierarchyDirection: treeDirection,
+  });
+  if (edge.type === 'orthogonal') {
+    if (edge.controlPoints.length > 0) return [route.start, ...edge.controlPoints, route.end];
+    const middleX = (route.start.x + route.end.x) / 2;
+    return [route.start, { x: middleX, y: route.start.y }, { x: middleX, y: route.end.y }, route.end];
+  }
+  if (edge.type === 'straight') return [route.start, route.end];
+  return Array.from({ length: 13 }, (_, index) => pointOnRoute(route, index / 12));
+}
+
 const shader = (gl: WebGLRenderingContext, type: number, source: string) => {
   const result = gl.createShader(type);
   if (!result) throw new Error('无法创建 WebGL shader。');
@@ -55,6 +84,10 @@ class Renderer {
   private nodeSource: Record<string, MindMapNode> | null = null;
   private edgeSource: MindMapDocument['edges'] | null = null;
   private sectionSource: MindMapDocument['sections'] | null = null;
+  private projectReferenceSource: MindMapDocument['projectReferences'] | null = null;
+  private routingNodeSource: Record<string, MindMapNode> | null = null;
+  private hiddenNodeSource: ReadonlySet<string> | null = null;
+  private treeDirection: TreeDirection | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false, preserveDrawingBuffer: false });
@@ -80,17 +113,36 @@ class Renderer {
     this.camera = camera;
   }
 
-  private rebuild(document: MindMapDocument, nodes: Record<string, MindMapNode>, edgeNodes: Record<string, MindMapNode>) {
-    if (this.nodeSource === nodes && this.edgeSource === document.edges && this.sectionSource === document.sections) return;
+  private rebuild(
+    document: MindMapDocument,
+    nodes: Record<string, MindMapNode>,
+    routingNodes: Record<string, MindMapNode>,
+    hiddenNodeIds: ReadonlySet<string>,
+    treeDirection: TreeDirection,
+  ) {
+    if (
+      this.nodeSource === nodes
+      && this.edgeSource === document.edges
+      && this.sectionSource === document.sections
+      && this.projectReferenceSource === document.projectReferences
+      && this.routingNodeSource === routingNodes
+      && this.hiddenNodeSource === hiddenNodeIds
+      && this.treeDirection === treeDirection
+    ) return;
     const edgeData: number[] = [];
+    const routingDocument = routingNodes === document.nodes ? document : { ...document, nodes: routingNodes };
     for (const edge of Object.values(document.edges)) {
       if (edgeIsHiddenInsideCollapsedSection(edge, document)) continue;
-      const source = edgeNodes[edge.sourceId];
-      const target = edgeNodes[edge.targetId];
-      if (!source || !target) continue;
+      const source = edgeSourceRef(edge);
+      const target = edgeTargetRef(edge);
+      if ((source.type === 'node' && hiddenNodeIds.has(source.id))
+        || (target.type === 'node' && hiddenNodeIds.has(target.id))) continue;
       const rgba = color(edge.style.color, 0.7);
-      pushVertex(edgeData, source.x, source.y, rgba);
-      pushVertex(edgeData, target.x, target.y, rgba);
+      const points = edgePolyline(edge, routingDocument, treeDirection);
+      for (let index = 1; index < points.length; index += 1) {
+        pushVertex(edgeData, points[index - 1].x, points[index - 1].y, rgba);
+        pushVertex(edgeData, points[index].x, points[index].y, rgba);
+      }
     }
     const nodeData: number[] = [];
     for (const node of Object.values(nodes)) {
@@ -100,7 +152,8 @@ class Renderer {
       const bottom = node.y + node.height / 2;
       const rgba = color(node.style.fill, node.style.fillOpacity);
       for (const [x, y] of [[left, top], [right, top], [left, bottom], [left, bottom], [right, top], [right, bottom]]) {
-        pushVertex(nodeData, x, y, rgba);
+        const point = rotatePoint(x, y, node.x, node.y, node.rotation);
+        pushVertex(nodeData, point.x, point.y, rgba);
       }
     }
     const gl = this.gl;
@@ -113,16 +166,22 @@ class Renderer {
     this.nodeSource = nodes;
     this.edgeSource = document.edges;
     this.sectionSource = document.sections;
+    this.projectReferenceSource = document.projectReferences;
+    this.routingNodeSource = routingNodes;
+    this.hiddenNodeSource = hiddenNodeIds;
+    this.treeDirection = treeDirection;
   }
 
   draw(
     document: MindMapDocument,
     nodes: Record<string, MindMapNode>,
-    edgeNodes: Record<string, MindMapNode>,
+    routingNodes: Record<string, MindMapNode>,
+    hiddenNodeIds: ReadonlySet<string>,
+    treeDirection: TreeDirection,
     camera: ViewportState,
     size: { width: number; height: number },
   ) {
-    this.rebuild(document, nodes, edgeNodes);
+    this.rebuild(document, nodes, routingNodes, hiddenNodeIds, treeDirection);
     const gl = this.gl;
     const ratio = window.devicePixelRatio || 1;
     const canvas = gl.canvas as HTMLCanvasElement;
@@ -162,7 +221,9 @@ export function renderMindMapWebGl(
   canvas: HTMLCanvasElement,
   document: MindMapDocument,
   nodes: Record<string, MindMapNode>,
-  edgeNodes: Record<string, MindMapNode>,
+  routingNodes: Record<string, MindMapNode>,
+  hiddenNodeIds: ReadonlySet<string>,
+  treeDirection: TreeDirection,
   camera: ViewportState,
   size: { width: number; height: number },
 ) {
@@ -172,7 +233,7 @@ export function renderMindMapWebGl(
       renderer = new Renderer(canvas);
       renderers.set(canvas, renderer);
     }
-    renderer.draw(document, nodes, edgeNodes, camera, size);
+    renderer.draw(document, nodes, routingNodes, hiddenNodeIds, treeDirection, camera, size);
     return true;
   } catch {
     return false;

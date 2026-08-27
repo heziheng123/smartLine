@@ -5,16 +5,19 @@ import {
   createMindMapEdge,
   createTextMindMapNode,
   duplicateMindMapDocument,
+  edgeTouchesCanvasObject,
   maintainMindMapContainers,
   normalizeMindMapDocument,
   summarizeMindMapDocument,
   type MindMapDocument,
   type MindMapEdge,
+  type CanvasObjectRef,
   type MindMapIndex,
   type MindMapNode,
   type MindMapSaveStatus,
   type ViewportState,
 } from './model';
+import { reconcileLifeMapProjections } from './lifeMapMigration';
 import {
   applyHistoryEntry,
   createHistoryEntry,
@@ -49,10 +52,11 @@ interface MindMapStore {
   createNode: (position: { x: number; y: number }, text?: string) => string | null;
   updateNode: (id: string, updates: Partial<Omit<MindMapNode, 'id' | 'createdAt'>>) => void;
   deleteNodes: (ids: string[]) => void;
-  createEdge: (sourceId: string, targetId: string) => string | null;
+  createEdge: (source: CanvasObjectRef, target: CanvasObjectRef) => string | null;
   updateEdge: (id: string, updates: Partial<Omit<MindMapEdge, 'id' | 'createdAt'>>) => void;
   deleteEdges: (ids: string[]) => void;
   setViewport: (viewport: ViewportState) => void;
+  setViewportForDocument: (documentId: string, viewport: ViewportState) => void;
   flushSave: () => Promise<void>;
   saveEmergency: () => void;
   clearError: () => void;
@@ -300,7 +304,11 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       if (!current || current.id !== remote.id) return;
       const normalized = normalizeMindMapDocument({ ...remote, viewport: current.viewport });
       if (!normalized) return;
-      // Remote updates are persisted locally but deliberately stay outside local Undo/Redo.
+      // History entries refer to the old entity snapshots.  Keeping them after a
+      // remote merge lets Undo overwrite collaborators' newer changes.
+      const history = emptyMindMapHistory();
+      histories.set(normalized.id, history);
+      set({ history });
       queueSave(normalized, updateSummary(get().index, normalized));
     },
 
@@ -401,7 +409,10 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       if (!current) return;
       const transformed = transform(current);
       if (transformed === current) return;
-      const document = { ...maintainMindMapContainers(transformed), updatedAt: Date.now() };
+      const projected = transformed.lifeMap !== current.lifeMap
+        ? reconcileLifeMapProjections(transformed)
+        : transformed;
+      const document = { ...maintainMindMapContainers(projected), updatedAt: Date.now() };
       const entry = createHistoryEntry(label, current, document);
       if (!entry) return;
       const history = pushHistory(get().history, entry);
@@ -474,7 +485,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         const edges = { ...document.edges };
         targets.forEach((id) => delete nodes[id]);
         for (const edge of Object.values(edges)) {
-          if (targets.has(edge.sourceId) || targets.has(edge.targetId)) delete edges[edge.id];
+          if ([...targets].some((id) => edgeTouchesCanvasObject(edge, { type: 'node', id }))) delete edges[edge.id];
         }
         return {
           ...document,
@@ -485,10 +496,13 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       });
     },
 
-    createEdge: (sourceId, targetId) => {
+    createEdge: (source, target) => {
       const document = get().document;
-      if (!document?.nodes[sourceId] || !document.nodes[targetId] || sourceId === targetId) return null;
-      const edge = createMindMapEdge(sourceId, targetId);
+      const exists = (ref: CanvasObjectRef) => ref.type === 'node'
+        ? Boolean(document?.nodes[ref.id])
+        : Boolean(document?.projectReferences[ref.id]);
+      if (!document || !exists(source) || !exists(target) || (source.type === target.type && source.id === target.id)) return null;
+      const edge = createMindMapEdge(source, target);
       get().execute('创建连线', (current) => ({
         ...current,
         edges: { ...current.edges, [edge.id]: edge },
@@ -526,6 +540,17 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       if (!current) return;
       const document = { ...current, viewport, updatedAt: Date.now() };
       queueSave(document, updateSummary(get().index, document));
+    },
+
+    setViewportForDocument: (documentId, viewport) => {
+      const current = get().document;
+      if (current?.id === documentId) {
+        get().setViewport(viewport);
+        return;
+      }
+      void mindMapRepository.saveViewport(documentId, viewport).catch(() => {
+        set({ saveStatus: 'error', error: '画布位置暂时无法保存。' });
+      });
     },
 
     flushSave: async () => {

@@ -2,11 +2,12 @@ import {
   normalizeMindMapDocument,
   type MindMapDocument,
   type MindMapEdge,
-  type MindMapNode,
 } from './model';
+import { buildEdgeRoute } from './canvas/edgeRouting';
+import { edgeConnectableObjects } from './canvas/connectableObjects';
 import { mindMapRepository } from './repository';
 
-const MAX_JSON_BYTES = 10 * 1024 * 1024;
+const MAX_JSON_BYTES = 32 * 1024 * 1024;
 
 const safeFileName = (title: string) => {
   const normalized = [...title.trim().replace(/[<>:"/\\|?*]/g, '-')]
@@ -21,12 +22,26 @@ export function serializeMindMapDocument(document: MindMapDocument) {
 }
 
 export function parseMindMapDocumentJson(source: string): MindMapDocument {
-  if (new Blob([source]).size > MAX_JSON_BYTES) throw new Error('导入文件不能超过 10 MiB。');
+  if (new Blob([source]).size > MAX_JSON_BYTES) throw new Error('导入文件不能超过 32 MiB。');
   let parsed: unknown;
   try {
     parsed = JSON.parse(source);
   } catch {
     throw new Error('这不是有效的思维导图 JSON 文件。');
+  }
+  const raw = parsed as Record<string, unknown>;
+  const collections: Array<[string, number]> = [['nodes', 10_000], ['sections', 2_000], ['groups', 2_000], ['projectReferences', 2_000], ['timelineSections', 2_000], ['edges', 20_000]];
+  for (const [name, limit] of collections) {
+    const value = raw[name];
+    if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > limit) {
+      throw new Error(`导入文件中的 ${name} 超过 ${limit} 条上限。`);
+    }
+  }
+  if (raw.nodes && typeof raw.nodes === 'object' && !Array.isArray(raw.nodes)) {
+    for (const node of Object.values(raw.nodes as Record<string, unknown>)) {
+      const imageSrc = node && typeof node === 'object' ? (node as Record<string, unknown>).imageSrc : null;
+      if (typeof imageSrc === 'string' && imageSrc.length > 3_000_000) throw new Error('导入图片不能超过 3 MB。');
+    }
   }
   const document = normalizeMindMapDocument(parsed);
   if (!document) throw new Error('文件不是受支持的 SmartLine 思维导图。');
@@ -66,11 +81,14 @@ const escapeXml = (value: string) => value
 
 export function serializeMindMapSvg(document: MindMapDocument) {
   const nodes = Object.values(document.nodes);
+  const projectReferences = Object.values(document.projectReferences);
   const sections = Object.values(document.sections);
-  const left = Math.min(0, ...nodes.map((node) => node.x - node.width / 2), ...sections.map((section) => section.x - section.width / 2));
-  const top = Math.min(0, ...nodes.map((node) => node.y - node.height / 2), ...sections.map((section) => section.y - section.height / 2));
-  const right = Math.max(1, ...nodes.map((node) => node.x + node.width / 2), ...sections.map((section) => section.x + section.width / 2));
-  const bottom = Math.max(1, ...nodes.map((node) => node.y + node.height / 2), ...sections.map((section) => section.y + section.height / 2));
+  const objects = [...nodes, ...projectReferences];
+  const objectBounds = objects.map(exportBounds);
+  const left = Math.min(0, ...objectBounds.map((bounds) => bounds.left), ...sections.map((section) => section.x - section.width / 2));
+  const top = Math.min(0, ...objectBounds.map((bounds) => bounds.top), ...sections.map((section) => section.y - section.height / 2));
+  const right = Math.max(1, ...objectBounds.map((bounds) => bounds.right), ...sections.map((section) => section.x + section.width / 2));
+  const bottom = Math.max(1, ...objectBounds.map((bounds) => bounds.bottom), ...sections.map((section) => section.y + section.height / 2));
   const margin = 48;
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${left - margin} ${top - margin} ${right - left + margin * 2} ${bottom - top + margin * 2}" role="img" aria-label="${escapeXml(document.title)}">`,
@@ -82,13 +100,12 @@ export function serializeMindMapSvg(document: MindMapDocument) {
     parts.push(`<text x="${section.x - section.width / 2 + 14}" y="${section.y - section.height / 2 + 24}" font-family="sans-serif" font-size="13" font-weight="600" fill="#4a48b8">${escapeXml(section.title)}</text>`);
   }
   for (const edge of Object.values(document.edges)) {
-    const points = edgeEndpoints(edge, document.nodes);
-    if (!points) continue;
+    const route = edgeRouteForExport(edge, document);
+    if (!route) continue;
+    const points = { start: route.start, end: route.end };
     let path = `M ${points.start.x} ${points.start.y}`;
     if (edge.type === 'curve') {
-      const controlX = (points.start.x + points.end.x) / 2;
-      const controlY = (points.start.y + points.end.y) / 2 - Math.min(120, Math.abs(points.end.x - points.start.x) * 0.25 + 30);
-      path += ` Q ${controlX} ${controlY} ${points.end.x} ${points.end.y}`;
+      path += ` C ${route.control1.x} ${route.control1.y} ${route.control2.x} ${route.control2.y} ${points.end.x} ${points.end.y}`;
     } else if (edge.type === 'orthogonal') {
       const middleX = (points.start.x + points.end.x) / 2;
       const controls = edge.controlPoints.length
@@ -100,13 +117,19 @@ export function serializeMindMapSvg(document: MindMapDocument) {
     }
     const markerStart = edge.direction === 'backward' || edge.direction === 'both' ? ' marker-start="url(#arrow)"' : '';
     const markerEnd = edge.direction === 'forward' || edge.direction === 'both' ? ' marker-end="url(#arrow)"' : '';
-    parts.push(`<path d="${path}" fill="none" stroke="${edge.style.color}" stroke-width="${edge.style.width}"${edge.style.dash === 'dashed' ? ' stroke-dasharray="7 5"' : ''}${markerStart}${markerEnd}/>`);
+    parts.push(`<path d="${path}" fill="none" stroke="${edge.relationship === 'reference' ? '#b2bac6' : edge.style.color}" stroke-width="${edge.style.width}"${edge.relationship === 'reference' || edge.style.dash === 'dashed' ? ' stroke-dasharray="7 5"' : ''}${markerStart}${markerEnd}/>`);
     if (edge.label) parts.push(`<text x="${(points.start.x + points.end.x) / 2}" y="${(points.start.y + points.end.y) / 2 - 7}" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#4a4a4f">${escapeXml(edge.label)}</text>`);
   }
   for (const node of nodes) {
     const x = node.x - node.width / 2;
     const y = node.y - node.height / 2;
     parts.push(`<g transform="rotate(${node.rotation} ${node.x} ${node.y})"><rect x="${x}" y="${y}" width="${node.width}" height="${node.height}" rx="${node.style.borderRadius}" fill="${node.style.fill}" fill-opacity="${node.style.fillOpacity}" stroke="${node.style.borderColor}" stroke-width="${node.style.borderWidth}"${node.style.borderStyle === 'dashed' ? ' stroke-dasharray="7 5"' : ''}/><text x="${node.x}" y="${node.y}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${node.style.fontSize}" font-weight="${node.style.fontWeight}" fill="${node.style.textColor}">${escapeXml(node.text || node.type)}</text></g>`);
+  }
+  for (const reference of projectReferences) {
+    const x = reference.x - reference.width / 2;
+    const y = reference.y - reference.height / 2;
+    parts.push(`<rect x="${x}" y="${y}" width="${reference.width}" height="${reference.height}" rx="12" fill="#fff" stroke="#cbd5e1"/>`);
+    parts.push(`<text x="${x + 16}" y="${reference.y}" dominant-baseline="middle" font-family="sans-serif" font-size="14" font-weight="600" fill="#1f2937">${escapeXml(reference.targetId)}</text>`);
   }
   parts.push('</svg>');
   return parts.join('');
@@ -136,25 +159,16 @@ export function downloadCanvasPng(canvas: HTMLCanvasElement, title: string) {
 
 export type MindMapPngScope = 'viewport' | 'all' | 'selection';
 
-const edgeEndpoints = (edge: MindMapEdge, nodes: Record<string, MindMapNode>) => {
-  const source = nodes[edge.sourceId];
-  const target = nodes[edge.targetId];
-  if (!source || !target) return null;
-  const angle = Math.atan2(target.y - source.y, target.x - source.x);
-  const sourceRadius = Math.abs(Math.cos(angle)) * source.width / 2
-    + Math.abs(Math.sin(angle)) * source.height / 2;
-  const targetRadius = Math.abs(Math.cos(angle)) * target.width / 2
-    + Math.abs(Math.sin(angle)) * target.height / 2;
-  return {
-    start: {
-      x: source.x + Math.cos(angle) * sourceRadius,
-      y: source.y + Math.sin(angle) * sourceRadius,
-    },
-    end: {
-      x: target.x - Math.cos(angle) * targetRadius,
-      y: target.y - Math.sin(angle) * targetRadius,
-    },
-  };
+const exportBounds = (object: { x: number; y: number; width: number; height: number; rotation?: number }) => {
+  const radians = (object.rotation ?? 0) * Math.PI / 180;
+  const width = Math.abs(Math.cos(radians)) * object.width + Math.abs(Math.sin(radians)) * object.height;
+  const height = Math.abs(Math.sin(radians)) * object.width + Math.abs(Math.cos(radians)) * object.height;
+  return { left: object.x - width / 2, top: object.y - height / 2, right: object.x + width / 2, bottom: object.y + height / 2 };
+};
+
+const edgeRouteForExport = (edge: MindMapEdge, document: MindMapDocument) => {
+  const endpoints = edgeConnectableObjects(document, edge);
+  return endpoints ? buildEdgeRoute(endpoints.source.bounds, endpoints.target.bounds, { kind: edge.relationship === 'tree' ? 'hierarchy' : 'relation' }) : null;
 };
 
 const drawArrow = (
@@ -197,15 +211,20 @@ export function downloadMindMapPng(
 ) {
   const selected = new Set(selectedNodeIds);
   const nodes = Object.values(document.nodes).filter((node) => scope === 'all' || selected.has(node.id));
-  if (nodes.length === 0) return false;
+  const projectReferences = scope === 'all' ? Object.values(document.projectReferences) : [];
+  if (nodes.length === 0 && projectReferences.length === 0) return false;
   const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const visibleProjectReferenceIds = new Set(projectReferences.map((reference) => reference.id));
   const edges = Object.values(document.edges).filter((edge) => (
-    visibleNodeIds.has(edge.sourceId) && visibleNodeIds.has(edge.targetId)
+    (edge.source.type === 'node' ? visibleNodeIds.has(edge.source.id) : visibleProjectReferenceIds.has(edge.source.id))
+    && (edge.target.type === 'node' ? visibleNodeIds.has(edge.target.id) : visibleProjectReferenceIds.has(edge.target.id))
   ));
-  const left = Math.min(...nodes.map((node) => node.x - node.width / 2));
-  const top = Math.min(...nodes.map((node) => node.y - node.height / 2));
-  const right = Math.max(...nodes.map((node) => node.x + node.width / 2));
-  const bottom = Math.max(...nodes.map((node) => node.y + node.height / 2));
+  const objects = [...nodes, ...projectReferences];
+  const objectBounds = objects.map(exportBounds);
+  const left = Math.min(...objectBounds.map((bounds) => bounds.left));
+  const top = Math.min(...objectBounds.map((bounds) => bounds.top));
+  const right = Math.max(...objectBounds.map((bounds) => bounds.right));
+  const bottom = Math.max(...objectBounds.map((bounds) => bounds.bottom));
   const margin = 48;
   const contentWidth = Math.max(1, right - left + margin * 2);
   const contentHeight = Math.max(1, bottom - top + margin * 2);
@@ -220,20 +239,17 @@ export function downloadMindMapPng(
   context.setTransform(scale, 0, 0, scale, (-left + margin) * scale, (-top + margin) * scale);
 
   for (const edge of edges) {
-    const points = edgeEndpoints(edge, document.nodes);
-    if (!points) continue;
+    const routeForExport = edgeRouteForExport(edge, document);
+    if (!routeForExport) continue;
+    const points = { start: routeForExport.start, end: routeForExport.end };
     context.beginPath();
     context.moveTo(points.start.x, points.start.y);
     let forwardFrom = points.start;
     let backwardFrom = points.end;
     if (edge.type === 'curve') {
-      const control = {
-        x: (points.start.x + points.end.x) / 2,
-        y: (points.start.y + points.end.y) / 2 - Math.min(120, Math.abs(points.end.x - points.start.x) * 0.25 + 30),
-      };
-      context.quadraticCurveTo(control.x, control.y, points.end.x, points.end.y);
-      forwardFrom = control;
-      backwardFrom = control;
+      context.bezierCurveTo(routeForExport.control1.x, routeForExport.control1.y, routeForExport.control2.x, routeForExport.control2.y, points.end.x, points.end.y);
+      forwardFrom = routeForExport.control2;
+      backwardFrom = routeForExport.control1;
     } else if (edge.type === 'orthogonal') {
       const middleX = (points.start.x + points.end.x) / 2;
       const route = edge.controlPoints.length
@@ -246,9 +262,9 @@ export function downloadMindMapPng(
     } else {
       context.lineTo(points.end.x, points.end.y);
     }
-    context.strokeStyle = edge.style.color;
+    context.strokeStyle = edge.relationship === 'reference' ? '#b2bac6' : edge.style.color;
     context.lineWidth = edge.style.width;
-    context.setLineDash(edge.style.dash === 'dashed' ? [7, 5] : []);
+    context.setLineDash(edge.relationship === 'reference' || edge.style.dash === 'dashed' ? [7, 5] : []);
     context.stroke();
     context.setLineDash([]);
     if (edge.direction === 'forward' || edge.direction === 'both') {
@@ -277,6 +293,9 @@ export function downloadMindMapPng(
     const x = node.x - node.width / 2;
     const y = node.y - node.height / 2;
     context.save();
+    context.translate(node.x, node.y);
+    context.rotate(node.rotation * Math.PI / 180);
+    context.translate(-node.x, -node.y);
     if (node.style.shadow) {
       context.shadowColor = 'rgba(15, 23, 42, 0.12)';
       context.shadowBlur = 14;
@@ -308,6 +327,23 @@ export function downloadMindMapPng(
     const startY = node.y - (lines.length - 1) * lineHeight / 2;
     lines.forEach((line, index) => context.fillText(line, textX, startY + index * lineHeight));
     context.restore();
+  }
+
+  for (const reference of projectReferences) {
+    const x = reference.x - reference.width / 2;
+    const y = reference.y - reference.height / 2;
+    context.fillStyle = '#ffffff';
+    context.strokeStyle = '#cbd5e1';
+    context.lineWidth = 1;
+    context.beginPath();
+    context.roundRect(x, y, reference.width, reference.height, 12);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#1f2937';
+    context.font = '600 14px sans-serif';
+    context.textAlign = 'left';
+    context.textBaseline = 'middle';
+    context.fillText(reference.targetId, x + 16, reference.y);
   }
 
   downloadCanvasPng(canvas, document.title);

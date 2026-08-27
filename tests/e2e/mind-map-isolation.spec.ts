@@ -60,7 +60,7 @@ test('opening and closing the mind map leaves every existing business store unch
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
   const before = await stableBusinessSnapshot(page);
 
-  await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
   await expect(page.getByTestId('mind-map-workspace')).toBeVisible();
   await page.getByTestId('mind-map-new-document').click();
   await page.getByTestId('mind-map-title').fill('隔离性验证');
@@ -85,7 +85,7 @@ for (const viewport of [
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto('/');
     const before = await stableBusinessSnapshot(page);
-    await page.getByTitle('思维导图').click();
+  await page.getByTitle('地图工作区').click();
     await expect(page.getByTestId('mind-map-workspace')).toBeVisible();
     await page.getByTestId('mind-map-title').fill(`隔离验收 ${viewport.width}`);
     await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
