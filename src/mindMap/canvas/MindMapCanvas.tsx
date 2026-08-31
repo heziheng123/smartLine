@@ -74,6 +74,7 @@ import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timel
 import { useLifeTimelineSnapshot } from '../timelineProjectionHooks';
 import { updateLifePlanningDates } from '../lifePlanning';
 import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, timelineScaleLabel } from '../timelineLayout';
+import { mindMapNodeThemeColor, resolveBranchThemeColors, resolveTreeEdgeColor } from '../visualTheme';
 import 'katex/dist/katex.min.css';
 import styles from './MindMapCanvas.module.css';
 
@@ -254,6 +255,9 @@ interface ProjectDateUndo {
 }
 
 const HANDLE_RADIUS = 5;
+const NODE_ACTION_OFFSET = 16;
+const NODE_ACTION_SPACING = 24;
+const NODE_COLLAPSE_OFFSET = 14;
 const MINIMAP_WIDTH = 144;
 const MINIMAP_HEIGHT = 90;
 const CLIPBOARD_PREFIX = 'smart-line-mind-map-clipboard:';
@@ -268,8 +272,135 @@ const rotateNodePoint = (node: MindMapNode, point: Point): Point => {
   const y = point.y - node.y;
   return { x: node.x + x * Math.cos(radians) - y * Math.sin(radians), y: node.y + x * Math.sin(radians) + y * Math.cos(radians) };
 };
-const childHandlePoint = (node: MindMapNode): Point => rotateNodePoint(node, { x: node.x + node.width / 2 + 12, y: node.y - 26 });
-const moreHandlePoint = (node: MindMapNode): Point => rotateNodePoint(node, { x: node.x + node.width / 2 + 42, y: node.y - 26 });
+const nodeActionHandlePoint = (node: MindMapNode, scale: number, slot: -1 | 0 | 1): Point => rotateNodePoint(node, {
+  x: node.x + slot * NODE_ACTION_SPACING / scale,
+  y: node.y - node.height / 2 - NODE_ACTION_OFFSET / scale,
+});
+const childHandlePoint = (node: MindMapNode, scale: number): Point => nodeActionHandlePoint(node, scale, -1);
+const relationHandlePointForNode = (node: MindMapNode, scale: number): Point => nodeActionHandlePoint(node, scale, 0);
+const moreHandlePoint = (node: MindMapNode, scale: number): Point => nodeActionHandlePoint(node, scale, 1);
+const collapseHandlePoint = (node: MindMapNode, scale: number): Point => rotateNodePoint(node, {
+  x: node.x - node.width / 2 - NODE_COLLAPSE_OFFSET / scale,
+  y: node.y,
+});
+
+const drawCanvasAction = (
+  context: CanvasRenderingContext2D,
+  point: Point,
+  icon: string,
+  primary = false,
+  size = 20,
+) => {
+  const half = size / 2;
+  context.save();
+  context.fillStyle = primary ? MIND_MAP_VISUAL_TOKENS.color.accentSoft : 'rgba(255,255,255,0.01)';
+  context.strokeStyle = primary ? 'rgba(91, 91, 214, 0.22)' : 'rgba(91, 91, 214, 0.08)';
+  context.lineWidth = 1;
+  context.beginPath();
+  context.roundRect(point.x - half, point.y - half, size, size, Math.min(7, half));
+  context.fill();
+  context.stroke();
+  context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
+  context.font = `650 ${icon === '•••' ? 10 : 13}px ${MIND_MAP_VISUAL_TOKENS.typography.ui}`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(icon, point.x, point.y + (icon === '•••' ? -1 : 0.5));
+  context.restore();
+};
+
+const drawNodeActionRail = (context: CanvasRenderingContext2D, points: Point[]) => {
+  if (points.length === 0) return;
+  const left = Math.min(...points.map((point) => point.x)) - 12;
+  const right = Math.max(...points.map((point) => point.x)) + 12;
+  const top = Math.min(...points.map((point) => point.y)) - 12;
+  context.save();
+  context.shadowColor = 'rgba(27, 31, 39, 0.07)';
+  context.shadowBlur = 6;
+  context.shadowOffsetY = 2;
+  context.fillStyle = 'rgba(255,255,255,0.96)';
+  context.strokeStyle = 'rgba(32,33,36,0.10)';
+  context.lineWidth = 1;
+  context.beginPath();
+  context.roundRect(left, top, right - left, 24, 8);
+  context.fill();
+  context.shadowColor = 'transparent';
+  context.stroke();
+  context.restore();
+};
+
+const nodeSupportsManualResize = (node: MindMapNode) => node.sizeMode === 'manual' || node.type === 'image';
+
+interface NodePresentation {
+  accent: string;
+  fill: string;
+  border: string;
+  text: string;
+  fontSize: number;
+  fontWeight: number;
+  shadow: boolean;
+  topic: boolean;
+}
+
+const parseHexColor = (color: string) => {
+  const value = color.trim().replace('#', '');
+  const expanded = value.length === 3 ? value.split('').map((character) => character + character).join('') : value;
+  if (!/^[0-9a-f]{6}$/i.test(expanded)) return null;
+  return [0, 2, 4].map((index) => Number.parseInt(expanded.slice(index, index + 2), 16));
+};
+
+const mixHexColor = (source: string, target: string, targetRatio: number) => {
+  const from = parseHexColor(source);
+  const to = parseHexColor(target);
+  if (!from || !to) return source;
+  const ratio = Math.max(0, Math.min(1, targetRatio));
+  return `#${from.map((channel, index) => Math.round(channel + (to[index] - channel) * ratio).toString(16).padStart(2, '0')).join('')}`;
+};
+
+const colorWithAlpha = (color: string, alpha: number) => {
+  const channels = parseHexColor(color);
+  return channels ? `rgba(${channels.join(',')},${alpha})` : `rgba(91,91,214,${alpha})`;
+};
+
+const resolveNodePresentation = (node: MindMapNode, depth: number, accent: string): NodePresentation => {
+  const textColor = ['#1d1d1f', '#202124'].includes(node.style.textColor.toLowerCase())
+    ? null
+    : node.style.textColor;
+  const topic = depth > 1
+    && node.type === 'text'
+    && ['#fff', '#ffffff'].includes(node.style.fill.toLowerCase())
+    && node.style.borderColor.toLowerCase() === '#d9dce3'
+    && !node.style.shadow;
+  if (depth === 0) return {
+    accent,
+    fill: mixHexColor(accent, '#ffffff', 0.68),
+    border: mixHexColor(accent, '#ffffff', 0.34),
+    text: textColor ?? mixHexColor(accent, '#202124', 0.62),
+    fontSize: Math.max(16, node.style.fontSize),
+    fontWeight: Math.max(650, node.style.fontWeight),
+    shadow: node.style.shadow,
+    topic: false,
+  };
+  if (depth === 1) return {
+    accent,
+    fill: mixHexColor(accent, '#ffffff', 0.84),
+    border: mixHexColor(accent, '#ffffff', 0.60),
+    text: textColor ?? mixHexColor(accent, '#202124', 0.68),
+    fontSize: Math.max(14, node.style.fontSize),
+    fontWeight: Math.max(560, node.style.fontWeight),
+    shadow: false,
+    topic: false,
+  };
+  return {
+    accent,
+    fill: mixHexColor(accent, '#ffffff', 0.97),
+    border: mixHexColor(accent, '#ffffff', 0.86),
+    text: textColor ?? mixHexColor(accent, '#202124', 0.78),
+    fontSize: node.style.fontSize,
+    fontWeight: Math.max(430, Math.min(520, node.style.fontWeight)),
+    shadow: false,
+    topic,
+  };
+};
 
 const resizePoints = (node: MindMapNode): Array<{ corner: ResizeCorner; point: Point }> => [
   { corner: 'nw', point: rotateNodePoint(node, { x: node.x - node.width / 2, y: node.y - node.height / 2 }) },
@@ -587,6 +718,7 @@ export default function MindMapCanvas({
   const [hoveredProjectReferenceId, setHoveredProjectReferenceId] = useState<string | null>(null);
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [connectionSource, setConnectionSource] = useState<CanvasObjectRef | null>(null);
   const [interaction, setInteractionState] = useState<Interaction>(null);
   const [editing, setEditing] = useState<EditingSession | null>(null);
@@ -682,9 +814,35 @@ export default function MindMapCanvas({
     }
     return depths;
   }, [document.nodes, treeChildrenById]);
+  const branchThemeColors = useMemo(() => resolveBranchThemeColors(document), [document]);
+  const nodePresentationById = useMemo(() => {
+    const presentations = new Map<string, NodePresentation>();
+    for (const node of Object.values(document.nodes)) {
+      const depth = nodeDepthById.get(node.id) ?? 0;
+      presentations.set(node.id, resolveNodePresentation(
+        node,
+        depth,
+        branchThemeColors.get(node.id) ?? mindMapNodeThemeColor(node),
+      ));
+    }
+    return presentations;
+  }, [branchThemeColors, document.nodes, nodeDepthById]);
   const canvasNodes = useMemo(() => Object.fromEntries(
     Object.entries(document.nodes).filter(([id]) => !hiddenNodeIds.has(id)),
   ), [document.nodes, hiddenNodeIds]);
+  const visualCanvasNodes = useMemo(() => Object.fromEntries(Object.entries(canvasNodes).map(([id, node]) => {
+    const presentation = nodePresentationById.get(id);
+    return [id, presentation ? {
+      ...node,
+      style: {
+        ...node.style,
+        fill: presentation.fill,
+        fillOpacity: presentation.topic ? 0.16 : node.style.fillOpacity,
+        borderColor: presentation.border,
+        textColor: presentation.text,
+      },
+    } : node];
+  })), [canvasNodes, nodePresentationById]);
   const edgeNodes = useMemo(() => edgeRenderNodes(document), [document]);
   const canvasZOrder = useMemo(
     () => document.zOrder.filter((id) => !hiddenNodeIds.has(id)),
@@ -917,13 +1075,11 @@ export default function MindMapCanvas({
     const offsetY = 8 + (logicalHeight - 16 - (bottom - top) * scale) / 2;
     minimapTransformRef.current = { left: left - offsetX / scale, top: top - offsetY / scale, scale };
     for (const node of nodes) {
-      context.fillStyle = node.style.fill;
-      context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.borderStrong;
+      context.fillStyle = nodePresentationById.get(node.id)?.fill ?? node.style.fill;
       context.fillRect(offsetX + (node.x - node.width / 2 - left) * scale, offsetY + (node.y - node.height / 2 - top) * scale, Math.max(2, node.width * scale), Math.max(2, node.height * scale));
-      context.strokeRect(offsetX + (node.x - node.width / 2 - left) * scale, offsetY + (node.y - node.height / 2 - top) * scale, Math.max(2, node.width * scale), Math.max(2, node.height * scale));
     }
     minimapBaseRef.current = base;
-  }, [canvasNodes]);
+  }, [canvasNodes, nodePresentationById]);
 
   useEffect(() => {
     const minimap = minimapRef.current;
@@ -957,8 +1113,8 @@ export default function MindMapCanvas({
       setWebglActive(false);
       return;
     }
-    setWebglActive(renderMindMapWebGl(canvas, document, canvasNodes, edgeNodes, hiddenNodeIds, treeDirection, camera, size));
-  }, [camera, canvasNodes, document, edgeNodes, hiddenNodeIds, size, treeDirection]);
+    setWebglActive(renderMindMapWebGl(canvas, document, visualCanvasNodes, edgeNodes, hiddenNodeIds, treeDirection, camera, size));
+  }, [camera, canvasNodes, document, edgeNodes, hiddenNodeIds, size, treeDirection, visualCanvasNodes]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1149,12 +1305,19 @@ export default function MindMapCanvas({
         } else {
           context.lineTo(end.x, end.y);
         }
-        context.strokeStyle = selectedEdgeIds.includes(edge.id)
+        const edgeSelected = selectedEdgeIds.includes(edge.id);
+        const edgeHovered = hoveredEdgeId === edge.id;
+        context.strokeStyle = edgeSelected
           ? MIND_MAP_VISUAL_TOKENS.color.accent
-          : edge.relationship === 'reference' ? '#b2bac6' : edge.style.color;
+          : edge.relationship === 'reference' ? '#b2bac6' : resolveTreeEdgeColor(edge, branchThemeColors);
         const edgeWidth = edge.style.width === 2 ? MIND_MAP_VISUAL_TOKENS.edge.width : edge.style.width;
-        context.lineWidth = Math.max(1, edgeWidth * camera.scale);
-        context.setLineDash(edge.relationship === 'reference' || edge.style.dash === 'dashed' ? [6, 5] : []);
+        context.globalAlpha = edge.relationship === 'reference'
+          ? edgeSelected ? 1 : edgeHovered ? 0.82 : 0.62
+          : 1;
+        context.lineWidth = edge.relationship === 'reference'
+          ? edgeSelected ? 1.7 : edgeHovered ? 1.45 : 1.15
+          : Math.max(1, edgeWidth * camera.scale);
+        context.setLineDash(edge.relationship === 'reference' || edge.style.dash === 'dashed' ? [4, 5] : []);
         context.stroke();
         context.setLineDash([]);
         const arrowSize = Math.max(5, MIND_MAP_VISUAL_TOKENS.edge.arrowSize * camera.scale);
@@ -1164,6 +1327,7 @@ export default function MindMapCanvas({
         if (edge.direction === 'backward' || edge.direction === 'both') {
           drawArrow(context, backwardFrom, start, context.strokeStyle as string, arrowSize);
         }
+        context.globalAlpha = 1;
         if (edge.label && camera.scale >= 0.35) {
           const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 6 };
           context.font = '500 ' + Math.max(10, 12 * camera.scale) + 'px sans-serif';
@@ -1231,6 +1395,8 @@ export default function MindMapCanvas({
       for (const nodeId of renderZOrder) {
         const node = previewNodes[nodeId];
         if (!node || !rectIntersectsRect(visible, nodeRect(node))) continue;
+        const depth = nodeDepthById.get(node.id) ?? 0;
+        const presentation = nodePresentationById.get(node.id) ?? resolveNodePresentation(node, depth, mindMapNodeThemeColor(node));
         const topLeft = worldToView({ x: node.x - node.width / 2, y: node.y - node.height / 2 }, camera);
         const width = node.width * camera.scale;
         const height = node.height * camera.scale;
@@ -1241,35 +1407,56 @@ export default function MindMapCanvas({
           context.rotate(node.rotation * Math.PI / 180);
           context.translate(-center.x, -center.y);
         }
-        if (!webglActive && !selectedSet.has(node.id) && node.style.shadow && camera.scale >= 0.3) {
+        if (!webglActive && !selectedSet.has(node.id) && presentation.shadow && camera.scale >= 0.3) {
           context.shadowColor = MIND_MAP_VISUAL_TOKENS.canvas.nodeShadow;
           context.shadowBlur = MIND_MAP_VISUAL_TOKENS.canvas.nodeShadowBlur * camera.scale;
           context.shadowOffsetY = MIND_MAP_VISUAL_TOKENS.canvas.nodeShadowOffsetY * camera.scale;
         }
-        if (!webglActive || selectedSet.has(node.id)) {
+        const selected = selectedSet.has(node.id);
+        const hovered = hoveredNodeId === node.id;
+        const showSurface = !presentation.topic || selected || hovered;
+        if ((!webglActive || selected) && showSurface) {
           context.globalAlpha = webglActive ? 0 : node.style.fillOpacity;
-          context.fillStyle = node.style.fill;
+          context.fillStyle = presentation.fill;
           context.beginPath();
           const radius = (node.style.borderRadius === 12 ? MIND_MAP_VISUAL_TOKENS.radius.node : node.style.borderRadius) * camera.scale;
           context.roundRect(topLeft.x, topLeft.y, width, height, radius);
           context.fill();
           context.shadowColor = 'transparent';
           context.globalAlpha = 1;
-          context.strokeStyle = selectedSet.has(node.id) ? MIND_MAP_VISUAL_TOKENS.color.accent : node.style.borderColor;
-          context.lineWidth = (selectedSet.has(node.id) ? MIND_MAP_VISUAL_TOKENS.selection.ringWidth : Math.min(1.25, node.style.borderWidth)) * Math.max(0.6, camera.scale);
-          context.setLineDash(node.style.borderStyle === 'dashed' ? [7, 5] : []);
-          context.stroke();
-          context.setLineDash([]);
+          context.beginPath();
+          context.roundRect(topLeft.x, topLeft.y, width, height, radius);
+          if (selected) {
+            context.strokeStyle = colorWithAlpha(presentation.accent, 0.14);
+            context.lineWidth = 5;
+            context.stroke();
+          }
+          if (!presentation.topic || selected) {
+            context.strokeStyle = selected ? presentation.accent : presentation.border;
+            context.lineWidth = selected ? MIND_MAP_VISUAL_TOKENS.selection.ringWidth : Math.min(1, node.style.borderWidth) * Math.max(0.75, camera.scale);
+            context.setLineDash(node.style.borderStyle === 'dashed' ? [7, 5] : []);
+            context.stroke();
+            context.setLineDash([]);
+          }
         }
-        const depth = nodeDepthById.get(node.id) ?? 0;
+        if (!webglActive && presentation.topic) {
+          context.globalAlpha = selected ? 0.9 : hovered ? 0.68 : 0.46;
+          context.strokeStyle = presentation.accent;
+          context.lineWidth = Math.max(1, 1.25 * camera.scale);
+          context.beginPath();
+          context.moveTo(topLeft.x + 10 * camera.scale, topLeft.y + height - 5 * camera.scale);
+          context.lineTo(topLeft.x + width - 10 * camera.scale, topLeft.y + height - 5 * camera.scale);
+          context.stroke();
+          context.globalAlpha = 1;
+        }
         const semanticHidden = camera.scale < 0.32 && depth > 1;
         if (camera.scale >= 0.2 && !semanticHidden && node.type !== 'markdown' && node.type !== 'latex') {
-          context.fillStyle = node.style.textColor;
-          context.font = node.style.fontWeight + ' ' + Math.max(8, node.style.fontSize * camera.scale) + 'px sans-serif';
+          context.fillStyle = presentation.text;
+          context.font = presentation.fontWeight + ' ' + Math.max(8, presentation.fontSize * camera.scale) + 'px sans-serif';
           context.textAlign = node.style.textAlign;
           context.textBaseline = 'middle';
           const typePrefix = node.type === 'url' ? 'URL · ' : '';
-          const lineHeight = node.style.fontSize * node.style.lineHeight * camera.scale;
+          const lineHeight = presentation.fontSize * node.style.lineHeight * camera.scale;
           const maximumLines = camera.scale < 0.65 ? 1 : node.type === 'image'
             ? 1
             : Math.max(1, Math.min(100, Math.floor((height - 24 * camera.scale) / lineHeight)));
@@ -1295,21 +1482,8 @@ export default function MindMapCanvas({
       for (const nodeId of renderZOrder) {
         const node = previewNodes[nodeId];
         if (!node || !(treeChildrenById.get(node.id)?.length)) continue;
-        const marker = worldToView({ x: node.x - node.width / 2 - 10, y: node.y }, camera);
-        context.save();
-        context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.surface;
-        context.strokeStyle = 'rgba(91, 91, 214, 0.42)';
-        context.lineWidth = 1;
-        context.beginPath();
-        context.arc(marker.x, marker.y, 7, 0, Math.PI * 2);
-        context.fill();
-        context.stroke();
-        context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-        context.font = '600 12px sans-serif';
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        context.fillText(node.collapsed ? '+' : '−', marker.x, marker.y + 0.5);
-        context.restore();
+        const marker = worldToView(collapseHandlePoint(node, camera.scale), camera);
+        drawCanvasAction(context, marker, node.collapsed ? '+' : '−', false, 18);
       }
 
       const handleNodeIds = [...new Set([
@@ -1323,46 +1497,22 @@ export default function MindMapCanvas({
         const selected = selectedNodeIds.includes(nodeId);
         const showActions = Boolean(node) && camera.scale >= 0.4 && (selected || camera.scale >= 0.65);
         if (object && showActions) {
+          const actionPoints = node
+            ? [childHandlePoint(node, camera.scale), relationHandlePointForNode(node, camera.scale), ...(camera.scale >= 0.65 ? [moreHandlePoint(node, camera.scale)] : [])]
+              .map((point) => worldToView(point, camera))
+            : [];
+          drawNodeActionRail(context, actionPoints);
           if (node) {
-            const childView = worldToView(childHandlePoint(node), camera);
-            context.fillStyle = '#ffffff';
-            context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-            context.lineWidth = MIND_MAP_VISUAL_TOKENS.selection.ringWidth;
-            context.beginPath();
-            context.arc(childView.x, childView.y, HANDLE_RADIUS + 1, 0, Math.PI * 2);
-            context.fill();
-            context.stroke();
-            context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-            context.font = '600 14px sans-serif';
-            context.textAlign = 'center';
-            context.textBaseline = 'middle';
-            context.fillText('+', childView.x, childView.y + 0.5);
+            const childView = worldToView(childHandlePoint(node, camera.scale), camera);
+            drawCanvasAction(context, childView, '+', true);
           }
-          context.fillStyle = '#ffffff';
-          context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-          context.lineWidth = MIND_MAP_VISUAL_TOKENS.selection.ringWidth;
-          const view = worldToView(relationHandlePoint(object), camera);
-          context.beginPath();
-          context.arc(view.x, view.y, HANDLE_RADIUS + 1, 0, Math.PI * 2);
-          context.fill();
-          context.stroke();
-          context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-          context.font = '600 12px sans-serif';
-          context.textAlign = 'center';
-          context.textBaseline = 'middle';
-          context.fillText('↗', view.x, view.y + 0.5);
+          const view = worldToView(node ? relationHandlePointForNode(node, camera.scale) : relationHandlePoint(object), camera);
+          drawCanvasAction(context, view, '↗');
           if (node && camera.scale >= 0.65) {
-            const moreView = worldToView(moreHandlePoint(node), camera);
-            context.fillStyle = '#ffffff';
-            context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-            context.beginPath();
-            context.arc(moreView.x, moreView.y, HANDLE_RADIUS + 1, 0, Math.PI * 2);
-            context.fill();
-            context.stroke();
-            context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-            context.fillText('…', moreView.x, moreView.y - 1);
+            const moreView = worldToView(moreHandlePoint(node, camera.scale), camera);
+            drawCanvasAction(context, moreView, '•••');
           }
-          if (node && selected) {
+          if (node && selected && nodeSupportsManualResize(node)) {
             for (const { point } of resizePoints(node)) {
               const resizeView = worldToView(point, camera);
               context.fillStyle = '#ffffff';
@@ -1431,7 +1581,7 @@ export default function MindMapCanvas({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [camera, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredNodeId, interaction, nodeDepthById, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, visibleNodeIds, visibleZOrder, webglActive]);
+  }, [branchThemeColors, camera, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredEdgeId, hoveredNodeId, interaction, nodeDepthById, nodePresentationById, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, visibleNodeIds, visibleZOrder, webglActive]);
 
   const startEditingNode = (node: MindMapNode) => {
     setEditing({
@@ -1573,9 +1723,8 @@ export default function MindMapCanvas({
     if (event.pointerType === 'touch') {
       touchPoints.current.set(event.pointerId, view);
       if (touchPoints.current.size >= 2) {
-        // Keep an active drag intact. Starting a pinch must never discard an
-        // uncommitted node/section edit from the first touch.
-        if (interactionRef.current) return;
+        // The first touch has already started a pan or drag. A second touch
+        // must still take over as a pinch gesture.
         const [first, second] = [...touchPoints.current.values()];
         pinchRef.current = {
           distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
@@ -1635,26 +1784,30 @@ export default function MindMapCanvas({
       }
     }
 
+    const collapseHitRadius = (event.pointerType === 'touch' ? 18 : 10) / cameraRef.current.scale;
+    for (let index = canvasZOrder.length - 1; index >= 0; index -= 1) {
+      const nodeId = canvasZOrder[index];
+      if (!visibleNodeIds.has(nodeId)) continue;
+      const node = document.nodes[nodeId];
+      if (!node || !(treeChildrenById.get(nodeId)?.length)) continue;
+      const marker = collapseHandlePoint(node, cameraRef.current.scale);
+      if (Math.hypot(world.x - marker.x, world.y - marker.y) <= collapseHitRadius) {
+        updateNode(node.id, { collapsed: !node.collapsed });
+        return;
+      }
+    }
+
     const connectionHandleNodes = [...new Set([
       hoveredNodeId,
       selectedNodeIds.length === 1 ? selectedNodeIds[0] : null,
       connectionSource?.type === 'node' ? connectionSource.id : null,
     ].filter((id): id is string => Boolean(id)))];
-    for (const nodeId of connectionHandleNodes) {
-      const node = document.nodes[nodeId];
-      const hasChildren = Boolean(treeChildrenById.get(nodeId)?.length);
-      const marker = node && { x: node.x - node.width / 2 - 10, y: node.y };
-      if (node && hasChildren && marker && Math.hypot(world.x - marker.x, world.y - marker.y) <= 9 / cameraRef.current.scale) {
-        updateNode(node.id, { collapsed: !node.collapsed });
-        return;
-      }
-    }
     const tolerance = 10 / cameraRef.current.scale;
     for (const nodeId of connectionHandleNodes) {
       const node = document.nodes[nodeId];
       if (!node || cameraRef.current.scale < 0.4) continue;
-      const childPoint = childHandlePoint(node);
-      const morePoint = moreHandlePoint(node);
+      const childPoint = childHandlePoint(node, cameraRef.current.scale);
+      const morePoint = moreHandlePoint(node, cameraRef.current.scale);
       const touchRadius = 18 / cameraRef.current.scale;
       if (Math.hypot(world.x - childPoint.x, world.y - childPoint.y) <= touchRadius) {
         setSelectedNodeIds([node.id]);
@@ -1669,7 +1822,8 @@ export default function MindMapCanvas({
     }
     for (const nodeId of connectionHandleNodes) {
       const object = resolveConnectableObject(document, { type: 'node', id: nodeId });
-      const connectPoint = object && relationHandlePoint(object);
+      const node = document.nodes[nodeId];
+      const connectPoint = object && node && relationHandlePointForNode(node, cameraRef.current.scale);
       if (object && connectPoint && Math.hypot(world.x - connectPoint.x, world.y - connectPoint.y) <= 16 / cameraRef.current.scale) {
           setSelectedNodeIds([nodeId]);
           setSelectedEdgeIds([]);
@@ -1682,9 +1836,9 @@ export default function MindMapCanvas({
     if (selectedNodeIds.length === 1) {
       const selected = document.nodes[selectedNodeIds[0]];
       if (selected) {
-        const resizeHandle = resizePoints(selected).find(({ point }) => (
+        const resizeHandle = nodeSupportsManualResize(selected) ? resizePoints(selected).find(({ point }) => (
           Math.hypot(world.x - point.x, world.y - point.y) <= tolerance
-        ));
+        )) : undefined;
         if (resizeHandle) {
           canvas.setPointerCapture(event.pointerId);
           setInteraction({
@@ -1836,7 +1990,11 @@ export default function MindMapCanvas({
     const world = viewToWorld(view, cameraRef.current);
     publishCursor(world);
     const activeInteraction = interactionRef.current;
-    if (!activeInteraction && event.pointerType !== 'touch') setHoveredNodeId(hitIndexedNode(world)?.id ?? null);
+    if (!activeInteraction && event.pointerType !== 'touch') {
+      const hoveredNode = hitIndexedNode(world);
+      setHoveredNodeId(hoveredNode?.id ?? null);
+      setHoveredEdgeId(hoveredNode ? null : hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection)?.id ?? null);
+    }
     if (event.pointerType === 'touch' && touchPoints.current.has(event.pointerId)) {
       touchPoints.current.set(event.pointerId, view);
       const pinch = pinchRef.current;
@@ -2145,6 +2303,22 @@ export default function MindMapCanvas({
       });
     }
     setInteraction(null);
+  };
+
+  const openProjectReferenceMenu = (reference: ProjectReferenceCard, clientX: number, clientY: number) => {
+    const surface = surfaceRef.current?.getBoundingClientRect();
+    if (!surface) return;
+    setSelectedProjectReferenceId(reference.id);
+    setSelectedTimelineId(null);
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setSelectedSectionId(null);
+    setContextMenu({
+      x: Math.min(clientX - surface.left, Math.max(0, size.width - 190)),
+      y: Math.min(clientY - surface.top, Math.max(0, size.height - 180)),
+      world: { x: reference.x, y: reference.y },
+      projectReferenceId: reference.id,
+    });
   };
 
   const handleTimelinePointerDown = (event: ReactPointerEvent<HTMLDivElement>, timeline: TimelineSection) => {
@@ -2728,6 +2902,8 @@ export default function MindMapCanvas({
     setSelectedNodeIds(result.kind === 'node' ? [result.id] : []);
     setSelectedEdgeIds(result.kind === 'edge' ? [result.id] : []);
     setSelectedSectionId(null);
+    setSelectedProjectReferenceId(null);
+    setSelectedTimelineId(null);
     setCommandSearch('');
     setCommandOpen(false);
     const scale = cameraRef.current.scale;
@@ -2754,11 +2930,12 @@ export default function MindMapCanvas({
     }
     return [{ node, html: cached.html }];
   });
+  const inspectorOpen = Boolean(selectedNode || selectedEdge || selectedSection || selectedProjectReference || selectedTimeline || selectedNodeIds.length > 1) && !editing;
 
   return (
     <div
       ref={surfaceRef}
-      className={styles.surface}
+      className={`${styles.surface} ${inspectorOpen ? styles.surfaceWithInspector : ''}`}
       data-renderer={webglActive ? 'webgl' : 'canvas2d'}
       tabIndex={0}
       aria-label="思维导图画布"
@@ -2791,21 +2968,21 @@ export default function MindMapCanvas({
         onPointerLeave={() => {
           if (!interaction) {
             setHoveredNodeId(null);
+            setHoveredEdgeId(null);
             publishCursor(null, true);
           }
         }}
       />
-      {(connectionMode || hoveredNodeId) && (
+      {connectionMode && (
         <div className={styles.connectionHint} role="status">
-          {connectionMode
-            ? connectionSource
-              ? '已选择起点，请点击终点对象；按 Esc 取消'
-              : '连线模式：先点击起点对象，再点击终点对象'
-            : '拖动节点或项目引用的 ↗ 到另一个对象，可创建关联'}
+          {connectionSource
+            ? '已选择起点，请点击终点对象；按 Esc 取消'
+            : '连线模式：先点击起点对象，再点击终点对象'}
         </div>
       )}
       {richPreviews.map(({ node, html }) => {
         const preview = previewNode(node, interaction);
+        const presentation = nodePresentationById.get(node.id);
         const topLeft = worldToView({ x: preview.x - preview.width / 2, y: preview.y - preview.height / 2 }, camera);
         return (
           <div
@@ -2817,8 +2994,8 @@ export default function MindMapCanvas({
               top: topLeft.y + 8 * camera.scale,
               width: Math.max(1, (preview.width - 24) * camera.scale),
               height: Math.max(1, (preview.height - 16) * camera.scale),
-              fontSize: Math.max(8, node.style.fontSize * camera.scale),
-              color: node.style.textColor,
+              fontSize: Math.max(8, (presentation?.fontSize ?? node.style.fontSize) * camera.scale),
+              color: presentation?.text ?? node.style.textColor,
               transform: `rotate(${preview.rotation}deg)`,
             }}
             dangerouslySetInnerHTML={{ __html: html }}
@@ -3110,7 +3287,7 @@ export default function MindMapCanvas({
               width: Math.max(1, reference.width * camera.scale),
               height: Math.max(1, reference.height * camera.scale),
               borderRadius: Math.max(4, 12 * camera.scale),
-              padding: `${Math.max(4, 12 * camera.scale)}px ${Math.max(5, 14 * camera.scale)}px`,
+              padding: `${Math.max(4, 10 * camera.scale)}px ${Math.max(5, 12 * camera.scale)}px`,
               fontSize: Math.max(8, 14 * camera.scale),
             }}
             onPointerDown={(event) => handleProjectReferencePointerDown(event, reference)}
@@ -3128,7 +3305,7 @@ export default function MindMapCanvas({
                   ...current,
                   projectReferences: {
                     ...current.projectReferences,
-                    [reference.id]: { ...currentReference, display: compact ? 'expanded' : 'compact', height: compact ? Math.max(120, currentReference.height) : Math.min(96, currentReference.height), updatedAt: Date.now() },
+                    [reference.id]: { ...currentReference, display: compact ? 'expanded' : 'compact', height: compact ? Math.max(118, currentReference.height) : Math.min(84, currentReference.height), updatedAt: Date.now() },
                   },
                 } : current;
               });
@@ -3136,35 +3313,42 @@ export default function MindMapCanvas({
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              setSelectedProjectReferenceId(reference.id);
-              setSelectedTimelineId(null);
-              setSelectedNodeIds([]);
-              setSelectedEdgeIds([]);
-              setSelectedSectionId(null);
-              const surface = surfaceRef.current?.getBoundingClientRect();
-              if (!surface) return;
-              setContextMenu({
-                x: Math.min(event.clientX - surface.left, Math.max(0, size.width - 190)),
-                y: Math.min(event.clientY - surface.top, Math.max(0, size.height - 180)),
-                world: { x: reference.x, y: reference.y },
-                projectReferenceId: reference.id,
-              });
+              openProjectReferenceMenu(reference, event.clientX, event.clientY);
             }}
           >
             <span className={styles.projectReferenceAccent} style={{ backgroundColor: snapshot?.color ?? '#9ca3af' }} />
             {(selectedProjectReferenceId === reference.id || hoveredProjectReferenceId === reference.id) && (
-              <button
-                type="button"
-                className={styles.projectReferenceRelationHandle}
-                aria-label="创建关联"
-                title="拖动以创建关联"
-                onPointerDown={(event) => handleProjectReferenceRelationPointerDown(event, reference)}
-                onPointerMove={handleProjectReferenceRelationPointerMove}
-                onPointerUp={finishProjectReferenceRelation}
-                onPointerCancel={finishProjectReferenceRelation}
-              >↗</button>
+              <span className={styles.projectReferenceActions}>
+                <button
+                  type="button"
+                  aria-label="创建关联"
+                  title="拖动以创建关联"
+                  onPointerDown={(event) => handleProjectReferenceRelationPointerDown(event, reference)}
+                  onPointerMove={handleProjectReferenceRelationPointerMove}
+                  onPointerUp={finishProjectReferenceRelation}
+                  onPointerCancel={finishProjectReferenceRelation}
+                >↗</button>
+                <button
+                  type="button"
+                  aria-label="项目引用更多操作"
+                  title="更多操作"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openProjectReferenceMenu(reference, event.clientX, event.clientY);
+                  }}
+                ><MoreHorizontal size={13} aria-hidden="true" /></button>
+              </span>
             )}
-            <strong className={styles.projectReferenceTitle}>{snapshot?.title ?? '引用已失效'}</strong>
+            <span className={styles.projectReferenceHeader}>
+              <span className={styles.projectReferenceKind} aria-hidden="true">▣</span>
+              <strong className={styles.projectReferenceTitle}>{snapshot?.title ?? '引用已失效'}</strong>
+              {snapshot?.progress !== undefined && <span className={styles.projectReferenceProgressValue}>{Math.round(snapshot.progress)}%</span>}
+            </span>
             <span className={styles.projectReferenceSubtitle}>
               {snapshot?.subtitle ?? '源项目、任务或里程碑已不存在'}
             </span>
@@ -3506,13 +3690,13 @@ export default function MindMapCanvas({
           <span>空白处拖动平移，Shift 拖动框选，滚轮缩放</span>
         </div>
       )}
-      {(selectedNode || selectedEdge || selectedSection || selectedProjectReference || selectedTimeline || selectedNodeIds.length > 1) && !editing && (
+      {inspectorOpen && (
         <aside
           className={styles.inspector}
           aria-label={selectedTimeline ? '时间线属性' : selectedProjectReference ? '项目引用属性' : selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : '多选排列'}
         >
           <div className={styles.inspectorHeader}>
-            <strong>{selectedTimeline ? '时间线' : selectedProjectReference ? '项目引用' : selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : `排列 ${selectedNodeIds.length} 个节点`}</strong>
+            <strong>{selectedTimeline ? '时间线' : selectedProjectReference ? '项目引用' : selectedNode ? '节点' : selectedEdge ? '连线' : selectedSection ? '区域' : `排列 ${selectedNodeIds.length} 个节点`}</strong>
             <button
               type="button"
               aria-label="关闭属性面板"
@@ -3891,246 +4075,88 @@ export default function MindMapCanvas({
           )}
           {selectedNode && (
             <div className={styles.inspectorFields}>
-              <label className={styles.checkboxField}>
-                <input
-                  type="checkbox"
-                  aria-label="节点自动适应文字"
-                  checked={selectedNode.sizeMode === 'auto'}
-                  onChange={(event) => updateNode(selectedNode.id, event.target.checked
-                    ? { ...measuredNodeSize(selectedNode.text, selectedNode), sizeMode: 'auto' }
-                    : { sizeMode: 'manual' })}
-                />
-                <span>自动适应文字</span>
-              </label>
-              {treeChildrenById.get(selectedNode.id)?.length ? (
-                <label className={styles.checkboxField}>
-                  <input
-                    type="checkbox"
-                    aria-label="折叠子分支"
-                    checked={selectedNode.collapsed}
-                    onChange={(event) => updateNode(selectedNode.id, { collapsed: event.target.checked })}
-                  />
-                  <span>折叠子分支</span>
-                </label>
-              ) : null}
-              <label>
-                <span>宽度</span>
-                <input
-                  key={`${selectedNode.id}-width-${Math.round(selectedNode.width)}`}
-                  type="number"
-                  aria-label="节点宽度"
-                  min={MIND_MAP_VISUAL_TOKENS.node.minWidth}
-                  max="1600"
-                  defaultValue={Math.round(selectedNode.width)}
-                  onBlur={(event) => updateNode(selectedNode.id, {
-                    width: Math.max(MIND_MAP_VISUAL_TOKENS.node.minWidth, Math.min(1600, Number(event.target.value) || MIND_MAP_VISUAL_TOKENS.node.preferredWidth)),
-                    sizeMode: 'manual',
-                  })}
-                />
-              </label>
-              <label>
-                <span>高度</span>
-                <input
-                  key={`${selectedNode.id}-height-${Math.round(selectedNode.height)}`}
-                  type="number"
-                  aria-label="节点高度"
-                  min="40"
-                  max="1200"
-                  defaultValue={Math.round(selectedNode.height)}
-                  onBlur={(event) => updateNode(selectedNode.id, {
-                    height: Math.max(40, Math.min(1200, Number(event.target.value) || 40)),
-                    sizeMode: 'manual',
-                  })}
-                />
-              </label>
-              <label>
-                <span>类型</span>
-                <select
-                  aria-label="节点类型"
-                  value={selectedNode.type}
-                  onChange={(event) => {
-                    const type = event.target.value as MindMapNodeType;
-                    updateNode(selectedNode.id, {
-                      type,
-                      ...(type === 'image' ? { width: Math.max(240, selectedNode.width), height: Math.max(160, selectedNode.height), sizeMode: 'manual' as const } : {}),
-                    });
-                  }}
-                >
-                  <option value="text">文本</option>
-                  <option value="markdown">Markdown</option>
-                  <option value="latex">LaTeX</option>
-                  <option value="url">URL</option>
-                  <option value="image">图片</option>
-                </select>
-              </label>
-              {selectedNode.type === 'url' && (
+              <section className={styles.inspectorGroup}>
+                <h3>节点</h3>
                 <label>
-                  <span>链接</span>
-                  <input
-                    type="url"
-                    aria-label="节点链接"
-                    defaultValue={selectedNode.link ?? ''}
-                    placeholder="https://"
-                    onBlur={(event) => updateNode(selectedNode.id, { link: sanitizeMindMapResourceUrl(event.target.value) })}
-                  />
+                  <span>类型</span>
+                  <select aria-label="节点类型" value={selectedNode.type} onChange={(event) => {
+                    const type = event.target.value as MindMapNodeType;
+                    updateNode(selectedNode.id, { type, ...(type === 'image' ? { width: Math.max(240, selectedNode.width), height: Math.max(160, selectedNode.height), sizeMode: 'manual' as const } : {}) });
+                  }}>
+                    <option value="text">文本</option><option value="markdown">Markdown</option><option value="latex">LaTeX</option><option value="url">URL</option><option value="image">图片</option>
+                  </select>
                 </label>
-              )}
-              {selectedNode.type === 'image' && (
-                <>
-                  <label>
-                    <span>上传</span>
-                    <input
-                      type="file"
-                      aria-label="上传节点图片"
-                      accept="image/png,image/jpeg,image/gif,image/webp"
-                      onChange={async (event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = '';
-                        if (!file) return;
-                        const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-                        const currentBytes = Object.values(document.nodes).reduce((sum, node) => sum + (node.imageSrc?.startsWith('data:') ? node.imageSrc.length : 0), 0);
-                        if (!allowed.includes(file.type) || file.size > 2 * 1024 * 1024) {
-                          setResourceError('仅支持 PNG、JPEG、GIF、WebP，单张图片不能超过 2 MiB。');
-                          return;
-                        }
-                        if (currentBytes + Math.ceil(file.size * 4 / 3) > 20 * 1024 * 1024) {
-                          setResourceError('当前导图的本地图片总量不能超过 20 MiB。');
-                          return;
-                        }
-                        try {
-                          const asset = await mindMapRepository.saveImageAsset(file);
-                          setResourceError(null);
-                          setFailedImageIds((current) => {
-                            const next = new Set(current);
-                            next.delete(selectedNode.id);
-                            return next;
-                          });
-                          updateNode(selectedNode.id, { imageAssetId: asset.id, imageSrc: null });
-                        } catch (error) {
-                          setResourceError(error instanceof Error ? error.message : '图片保存失败，当前节点没有改变。');
-                        }
-                      }}
-                    />
-                  </label>
-                  <label>
-                    <span>HTTPS</span>
-                    <input
-                      type="url"
-                      aria-label="节点图片地址"
-                      defaultValue={selectedNode.imageSrc?.startsWith('data:') ? '' : selectedNode.imageSrc ?? ''}
-                      placeholder="https://"
-                      onBlur={(event) => {
-                        if (!event.target.value.trim()) return;
-                        const imageSrc = sanitizeMindMapResourceUrl(event.target.value, true);
-                        if (!imageSrc) {
-                          setResourceError('外部图片必须使用 HTTPS 地址。');
-                          return;
-                        }
-                        setResourceError(null);
-                        updateNode(selectedNode.id, { imageSrc, imageAssetId: null });
-                      }}
-                    />
-                  </label>
-                  <small>上传图片以独立 Blob 保存在当前设备；外部 HTTPS 图片仅保存地址。</small>
+                <label>
+                  <span>文本</span>
+                  <input type="text" aria-label="节点文本" defaultValue={selectedNode.text} maxLength={10_000} onBlur={(event) => {
+                    const text = event.target.value;
+                    if (text === selectedNode.text) return;
+                    updateNode(selectedNode.id, { text, ...(selectedNode.sizeMode === 'auto' ? measuredNodeSize(text, selectedNode) : {}) });
+                  }} />
+                </label>
+                {treeChildrenById.get(selectedNode.id)?.length ? <label className={styles.checkboxField}><input type="checkbox" aria-label="折叠子分支" checked={selectedNode.collapsed} onChange={(event) => updateNode(selectedNode.id, { collapsed: event.target.checked })} /><span>折叠子分支</span></label> : null}
+                {selectedNode.type === 'url' && <label><span>链接</span><input type="url" aria-label="节点链接" defaultValue={selectedNode.link ?? ''} placeholder="https://" onBlur={(event) => updateNode(selectedNode.id, { link: sanitizeMindMapResourceUrl(event.target.value) })} /></label>}
+                {selectedNode.type === 'image' && <>
+                  <label><span>上传</span><input type="file" aria-label="上传节点图片" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => {
+                    const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+                    const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+                    const currentBytes = Object.values(document.nodes).reduce((sum, node) => sum + (node.imageSrc?.startsWith('data:') ? node.imageSrc.length : 0), 0);
+                    if (!allowed.includes(file.type) || file.size > 2 * 1024 * 1024) { setResourceError('仅支持 PNG、JPEG、GIF、WebP，单张图片不能超过 2 MiB。'); return; }
+                    if (currentBytes + Math.ceil(file.size * 4 / 3) > 20 * 1024 * 1024) { setResourceError('当前导图的本地图片总量不能超过 20 MiB。'); return; }
+                    try {
+                      const asset = await mindMapRepository.saveImageAsset(file); setResourceError(null);
+                      setFailedImageIds((current) => { const next = new Set(current); next.delete(selectedNode.id); return next; });
+                      updateNode(selectedNode.id, { imageAssetId: asset.id, imageSrc: null });
+                    } catch (error) { setResourceError(error instanceof Error ? error.message : '图片保存失败，当前节点没有改变。'); }
+                  }} /></label>
+                  <label><span>HTTPS</span><input type="url" aria-label="节点图片地址" defaultValue={selectedNode.imageSrc?.startsWith('data:') ? '' : selectedNode.imageSrc ?? ''} placeholder="https://" onBlur={(event) => {
+                    if (!event.target.value.trim()) return; const imageSrc = sanitizeMindMapResourceUrl(event.target.value, true);
+                    if (!imageSrc) { setResourceError('外部图片必须使用 HTTPS 地址。'); return; }
+                    setResourceError(null); updateNode(selectedNode.id, { imageSrc, imageAssetId: null });
+                  }} /></label>
+                  <small>上传图片保存在当前设备；外部图片仅保存 HTTPS 地址。</small>
                   {resourceError && <div className={styles.resourceError} role="alert">{resourceError}</div>}
-                </>
-              )}
-              <label>
-                <span>填充</span>
-                <input
-                  type="color"
-                  aria-label="节点填充颜色"
-                  defaultValue={selectedNode.style.fill}
-                  onChange={(event) => updateNode(selectedNode.id, {
-                    style: { ...selectedNode.style, fill: event.target.value },
-                  })}
-                />
-              </label>
-              <label>
-                <span>文字</span>
-                <input
-                  type="color"
-                  aria-label="节点文字颜色"
-                  defaultValue={selectedNode.style.textColor}
-                  onChange={(event) => updateNode(selectedNode.id, {
-                    style: { ...selectedNode.style, textColor: event.target.value },
-                  })}
-                />
-              </label>
-              <label>
-                <span>字号</span>
-                <input
-                  type="number"
-                  aria-label="节点字号"
-                  min="8"
-                  max="96"
-                  defaultValue={selectedNode.style.fontSize}
-                  onBlur={(event) => updateNode(selectedNode.id, {
-                    style: {
-                      ...selectedNode.style,
-                      fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 15)),
-                    },
-                  })}
-                />
-              </label>
-              <label>
-                <span>旋转</span>
-                <input
-                  type="number"
-                  aria-label="节点旋转角度"
-                  min="-180"
-                  max="180"
-                  defaultValue={selectedNode.rotation}
-                  onBlur={(event) => updateNode(selectedNode.id, {
-                    rotation: Math.max(-180, Math.min(180, Number(event.target.value) || 0)),
-                  })}
-                />
-              </label>
-              <div className={styles.layerActions}>
-                <button type="button" onClick={() => execute('节点置顶', (current) => ({
-                  ...current,
-                  zOrder: [...current.zOrder.filter((id) => id !== selectedNode.id), selectedNode.id],
-                }))}>置顶</button>
-                <button type="button" onClick={() => execute('节点置底', (current) => ({
-                  ...current,
-                  zOrder: [selectedNode.id, ...current.zOrder.filter((id) => id !== selectedNode.id)],
-                }))}>置底</button>
-              </div>
-              <label className={styles.checkboxField}>
-                <input
-                  type="checkbox"
-                  aria-label="锁定节点"
-                  checked={selectedNode.locked}
-                  onChange={(event) => updateNode(selectedNode.id, { locked: event.target.checked })}
-                />
-                <span>锁定节点</span>
-              </label>
-              {selectedNode.link && (
-                <a className={styles.linkAction} href={selectedNode.link} target="_blank" rel="noreferrer">打开链接</a>
-              )}
-              {(selectedNode.parentSectionId || selectedNode.groupId) && (
-                <button className={styles.secondaryAction} type="button" onClick={() => {
-                  execute('移出容器', (current) => {
-                    const node = current.nodes[selectedNode.id];
-                    if (!node) return current;
-                    const groups = node.groupId
-                      ? Object.fromEntries(Object.entries(current.groups).flatMap(([id, group]) => {
-                          if (id !== node.groupId) return [[id, group]];
-                          const memberIds = group.memberIds.filter((memberId) => memberId !== node.id);
-                          return memberIds.length ? [[id, { ...group, memberIds, updatedAt: Date.now() }]] : [];
-                        }))
-                      : current.groups;
-                    return {
-                      ...current,
-                      groups,
-                      nodes: {
-                        ...current.nodes,
-                        [node.id]: { ...node, parentSectionId: null, groupId: null, updatedAt: Date.now() },
-                      },
-                    };
-                  });
-                }}>移出区域/分组</button>
-              )}
+                </>}
+                {selectedNode.link && <a className={styles.linkAction} href={selectedNode.link} target="_blank" rel="noreferrer">打开链接</a>}
+              </section>
+
+              <section className={styles.inspectorGroup}>
+                <h3>外观</h3>
+                <label><span>填充</span><input type="color" aria-label="节点填充颜色" defaultValue={selectedNode.style.fill} onChange={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, fill: event.target.value } })} /></label>
+                <label><span>文字</span><input type="color" aria-label="节点文字颜色" defaultValue={selectedNode.style.textColor} onChange={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, textColor: event.target.value } })} /></label>
+                <label><span>字号</span><input type="number" aria-label="节点字号" min="8" max="96" defaultValue={selectedNode.style.fontSize} onBlur={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 15)) } })} /></label>
+              </section>
+
+              <section className={styles.inspectorGroup}>
+                <h3>尺寸</h3>
+                <label className={styles.checkboxField}><input type="checkbox" aria-label="节点自动适应文字" checked={selectedNode.sizeMode === 'auto'} onChange={(event) => updateNode(selectedNode.id, event.target.checked ? { ...measuredNodeSize(selectedNode.text, selectedNode), sizeMode: 'auto' } : { sizeMode: 'manual' })} /><span>自动适应文字</span></label>
+                {selectedNode.sizeMode === 'auto' ? <div className={styles.automaticSizeSummary}><span>宽度 <strong>自动</strong></span><span>高度 <strong>自动</strong></span></div> : <>
+                  <label><span>宽度</span><input key={`${selectedNode.id}-width-${Math.round(selectedNode.width)}`} type="number" aria-label="节点宽度" min={MIND_MAP_VISUAL_TOKENS.node.minWidth} max="1600" defaultValue={Math.round(selectedNode.width)} onBlur={(event) => updateNode(selectedNode.id, { width: Math.max(MIND_MAP_VISUAL_TOKENS.node.minWidth, Math.min(1600, Number(event.target.value) || MIND_MAP_VISUAL_TOKENS.node.preferredWidth)), sizeMode: 'manual' })} /></label>
+                  <label><span>高度</span><input key={`${selectedNode.id}-height-${Math.round(selectedNode.height)}`} type="number" aria-label="节点高度" min="40" max="1200" defaultValue={Math.round(selectedNode.height)} onBlur={(event) => updateNode(selectedNode.id, { height: Math.max(40, Math.min(1200, Number(event.target.value) || 40)), sizeMode: 'manual' })} /></label>
+                </>}
+              </section>
+
+              <section className={styles.inspectorGroup}>
+                <h3>排列</h3>
+                <label><span>旋转</span><input type="number" aria-label="节点旋转角度" min="-180" max="180" defaultValue={selectedNode.rotation} onBlur={(event) => updateNode(selectedNode.id, { rotation: Math.max(-180, Math.min(180, Number(event.target.value) || 0)) })} /></label>
+                <div className={styles.layerActions}>
+                  <button type="button" onClick={() => execute('节点置顶', (current) => ({ ...current, zOrder: [...current.zOrder.filter((id) => id !== selectedNode.id), selectedNode.id] }))}>置顶</button>
+                  <button type="button" onClick={() => execute('节点置底', (current) => ({ ...current, zOrder: [selectedNode.id, ...current.zOrder.filter((id) => id !== selectedNode.id)] }))}>置底</button>
+                </div>
+              </section>
+
+              <section className={styles.inspectorGroup}>
+                <h3>状态</h3>
+                <label className={styles.checkboxField}><input type="checkbox" aria-label="锁定节点" checked={selectedNode.locked} onChange={(event) => updateNode(selectedNode.id, { locked: event.target.checked })} /><span>锁定节点</span></label>
+                {(selectedNode.parentSectionId || selectedNode.groupId) && <button className={styles.secondaryAction} type="button" onClick={() => execute('移出容器', (current) => {
+                  const node = current.nodes[selectedNode.id]; if (!node) return current;
+                  const groups = node.groupId ? Object.fromEntries(Object.entries(current.groups).flatMap(([id, group]) => {
+                    if (id !== node.groupId) return [[id, group]]; const memberIds = group.memberIds.filter((memberId) => memberId !== node.id);
+                    return memberIds.length ? [[id, { ...group, memberIds, updatedAt: Date.now() }]] : [];
+                  })) : current.groups;
+                  return { ...current, groups, nodes: { ...current.nodes, [node.id]: { ...node, parentSectionId: null, groupId: null, updatedAt: Date.now() } } };
+                })}>移出区域/分组</button>}
+              </section>
             </div>
           )}
           {selectedEdge && (

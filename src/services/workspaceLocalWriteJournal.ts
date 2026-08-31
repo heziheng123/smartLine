@@ -27,10 +27,11 @@ function isUnifiedWorkspaceConfigured(): boolean {
 }
 
 /**
- * Wraps the set function received by a store config inside the Liveblocks
- * middleware. Local actions pass through this wrapper, while Liveblocks remote
- * hydration uses its outer set function and therefore is never journaled as a
- * local user edit.
+ * Wraps Zustand's raw api.setState inside a store config. Local actions update
+ * the local store and enter the durable workspace queue, but deliberately skip
+ * the Liveblocks middleware's immediate storage write. Liveblocks still owns
+ * remote hydration/subscriptions; the durable queue is the single normal cloud
+ * writer and can therefore confirm a revision before deleting it.
  */
 export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
   setState: SetStateLike<TState>,

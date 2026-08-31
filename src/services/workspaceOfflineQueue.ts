@@ -17,6 +17,7 @@ import {
   isWorkspaceConnectionMutationCaptureActive,
   isWorkspaceQueueSuppressed,
   listWorkspaceConflicts,
+  markWorkspaceConflictResolved,
   queueWorkspaceFields,
   removeWorkspaceConflict,
   replaceWorkspaceConflictPending,
@@ -32,6 +33,7 @@ export {
   clearPendingWorkspaceSync,
   getPendingWorkspaceSyncToken,
   listWorkspaceConflicts,
+  markWorkspaceConflictResolved,
   preserveWorkspaceConflict,
   queueWorkspaceFields,
   readPendingWorkspaceSync,
@@ -171,7 +173,7 @@ export async function restoreWorkspaceConflict(id: string): Promise<void> {
     bypassSuppression: true,
     forceFields: fields,
   });
-  await removeWorkspaceConflict(id);
+  await markWorkspaceConflictResolved(id, 'manual');
 }
 
 export async function restoreWorkspaceConflictFields(
@@ -217,8 +219,10 @@ export async function restoreWorkspaceConflictFields(
  * cloud storage, or pending upload queue. */
 export async function discardWorkspaceConflict(id: string): Promise<void> {
   const conflicts = await listWorkspaceConflicts();
-  if (!conflicts.some((item) => item.id === id)) return;
-  await removeWorkspaceConflict(id);
+  const conflict = conflicts.find((item) => item.id === id);
+  if (!conflict) return;
+  if (conflict.status === 'active') await markWorkspaceConflictResolved(id, 'current');
+  else await removeWorkspaceConflict(id);
   window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
 }
 

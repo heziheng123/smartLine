@@ -78,6 +78,7 @@ test('a text card can be resized from every corner and by exact dimensions', asy
   expect(box).not.toBeNull();
 
   await canvas.click({ position: { x: before.x, y: before.y } });
+  await page.getByLabel('节点自动适应文字').uncheck();
   await page.mouse.move(box!.x + before.x - before.width / 2, box!.y + before.y - before.height / 2);
   await page.mouse.down();
   await page.mouse.move(box!.x + before.x - before.width / 2 - 70, box!.y + before.y - before.height / 2 - 50, { steps: 5 });
@@ -108,6 +109,61 @@ test('wheel zoom is centered on the canvas and updates only the local viewport',
   await page.mouse.move(box!.x + 300, box!.y + 220);
   await page.mouse.wheel(0, -500);
   await expect(page.locator('footer').getByText(/%/)).not.toHaveText('100%');
+});
+
+test('node action handles keep screen-space spacing after zooming out', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 320, y: 240 } });
+  await page.getByLabel('新节点文本').fill('缩放按钮');
+  await page.getByLabel('新节点文本').press('Enter');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + 320, box!.y + 240);
+  const initialScale = (await graphState(page)).viewport.scale;
+  await page.mouse.wheel(0, 285);
+  await expect.poll(async () => (await graphState(page)).viewport.scale).toBeLessThan(initialScale);
+
+  const state = await graphState(page);
+  const node = Object.values(state.nodes)[0];
+  const moreButton = {
+    x: node.x * state.viewport.scale + state.viewport.x + 24,
+    y: node.y * state.viewport.scale + state.viewport.y - node.height * state.viewport.scale / 2 - 16,
+  };
+  await canvas.click({ position: moreButton });
+  await expect(page.getByRole('menu', { name: '节点菜单' })).toBeVisible();
+});
+
+test('two touch pointers pinch-zoom the canvas after the first pointer starts panning', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  const before = (await graphState(page)).viewport;
+
+  await canvas.evaluate((element) => {
+    Object.assign(element, {
+      setPointerCapture: () => undefined,
+      hasPointerCapture: () => false,
+      releasePointerCapture: () => undefined,
+    });
+    const rect = element.getBoundingClientRect();
+    const emit = (type: string, pointerId: number, clientX: number) => element.dispatchEvent(new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId,
+      pointerType: 'touch',
+      button: 0,
+      clientX,
+      clientY: rect.top + rect.height / 2,
+    }));
+    const centerX = rect.left + rect.width / 2;
+    emit('pointerdown', 1, centerX - 30);
+    emit('pointerdown', 2, centerX + 30);
+    emit('pointermove', 2, centerX + 100);
+    emit('pointerup', 1, centerX - 30);
+    emit('pointerup', 2, centerX + 100);
+  });
+
+  await expect.poll(async () => (await graphState(page)).viewport.scale).toBeGreaterThan(before.scale);
 });
 
 test('editing existing text keeps a caret instead of selecting the whole node', async ({ page }) => {

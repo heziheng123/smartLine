@@ -142,8 +142,8 @@ const persistence = createCoalescedPersistence<LifeMapData>({
 
 export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
   liveblocks(
-    (setState, get) => {
-      const set = createWorkspaceTrackedSet(setState, get, LIFE_MAP_FIELDS);
+    (_setState, get, api) => {
+      const set = createWorkspaceTrackedSet(api.setState, get, LIFE_MAP_FIELDS);
       const sync = loadSyncSettings();
       const initial = createEmptyLifeMapData();
       const updateCollection = <K extends keyof LifeMapData>(key: K, id: string, updates: Record<string, unknown>) => {

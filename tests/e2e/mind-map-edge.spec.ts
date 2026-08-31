@@ -53,7 +53,8 @@ test('connection handles create an edge whose type direction and label can be ed
   expect(box).not.toBeNull();
 
   await canvas.click({ position: { x: 220, y: 220 } });
-  await page.mouse.move(box!.x + 280, box!.y + 220);
+  const source = Object.values((await graphState(page)).nodes).find((node) => node.text === '前端')!;
+  await page.mouse.move(box!.x + source.x, box!.y + source.y - source.height / 2 - 16);
   await page.mouse.down();
   await page.mouse.move(box!.x + 460, box!.y + 220, { steps: 5 });
   await page.mouse.up();
@@ -81,7 +82,8 @@ test('the unified relation handle and toolbar connection mode create edges', asy
   expect(box).not.toBeNull();
 
   await canvas.click({ position: { x: 220, y: 220 } });
-  await page.mouse.move(box!.x + 288, box!.y + 220);
+  const source = Object.values((await graphState(page)).nodes).find((node) => node.text === '起点')!;
+  await page.mouse.move(box!.x + source.x, box!.y + source.y - source.height / 2 - 16);
   await page.mouse.down();
   await page.mouse.move(box!.x + 460, box!.y + 360, { steps: 5 });
   await page.mouse.up();
@@ -157,7 +159,8 @@ test('an edge endpoint can be reconnected without creating a dangling edge', asy
   expect(box).not.toBeNull();
 
   await canvas.click({ position: { x: 220, y: 220 } });
-  await page.mouse.move(box!.x + 280, box!.y + 220);
+  const source = Object.values((await graphState(page)).nodes).find((node) => node.text === 'A')!;
+  await page.mouse.move(box!.x + source.x, box!.y + source.y - source.height / 2 - 16);
   await page.mouse.down();
   await page.mouse.move(box!.x + 460, box!.y + 220);
   await page.mouse.up();

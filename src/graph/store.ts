@@ -177,8 +177,8 @@ interface GraphStore extends GraphData {
 
 export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
   liveblocks(
-    (setState, get) => {
-      const set = createWorkspaceTrackedSet(setState, get, ['nodes']);
+    (_setState, get, api) => {
+      const set = createWorkspaceTrackedSet(api.setState, get, ['nodes']);
       const initial = getInitialGraphData();
       const initialSync = loadGraphSyncSettings();
 

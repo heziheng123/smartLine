@@ -218,14 +218,14 @@ export function workspaceValuesEqual(left: unknown, right: unknown): boolean {
 /** A later successful full-workspace verification turns an unresolved conflict
  * into a recovery copy. It may still contain useful old local edits, but it no
  * longer describes the current local/cloud synchronization state. */
-export function isWorkspaceConflictHistorical(
-  detectedAt: string,
-  lastVerifiedAt?: string,
-): boolean {
-  if (!lastVerifiedAt) return false;
-  const detected = Date.parse(detectedAt);
-  const verified = Date.parse(lastVerifiedAt);
-  return Number.isFinite(detected) && Number.isFinite(verified) && verified > detected;
+export function buildWorkspaceInitializationFields(
+  current: Record<string, unknown>,
+  desired: Record<string, unknown>,
+  overwriteExisting: boolean,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(desired).filter(([field]) => (
+    overwriteExisting || !Object.prototype.hasOwnProperty.call(current, field)
+  )));
 }
 
 export function hasWorkspaceFieldSnapshotChanged(
@@ -360,6 +360,34 @@ export function mergeWorkspaceFieldChanges(
     conflicts.push(...result.conflicts);
   }
   return { fields: mergedFields, conflicts };
+}
+
+export interface WorkspaceMigrationPendingFields {
+  fields: Record<string, unknown>;
+  baseFields?: Record<string, unknown>;
+  forceFields?: string[];
+}
+
+/**
+ * Builds the exact source root for a legacy-to-unified migration. Pending
+ * local edits are merged over the latest legacy snapshot, while an explicit
+ * user override applies only to the fields the user confirmed.
+ */
+export function mergePendingWorkspaceMigrationFields(
+  remote: Record<string, unknown>,
+  pending: WorkspaceMigrationPendingFields,
+): { root: Record<string, unknown>; conflicts: string[] } {
+  const merged = mergeWorkspaceFieldChanges(pending.fields, pending.baseFields ?? {}, remote);
+  const forcedFields = new Set(pending.forceFields ?? []);
+  for (const field of forcedFields) {
+    if (Object.prototype.hasOwnProperty.call(pending.fields, field)) {
+      merged.fields[field] = pending.fields[field];
+    }
+  }
+  return {
+    root: { ...remote, ...merged.fields },
+    conflicts: merged.conflicts.filter((path) => !forcedFields.has(path.split(/[.[]/, 1)[0])),
+  };
 }
 
 export async function hashWorkspaceValue(value: unknown): Promise<string> {

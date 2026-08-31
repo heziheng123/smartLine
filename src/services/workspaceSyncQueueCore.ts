@@ -28,9 +28,32 @@ export interface WorkspaceConflictRecord {
   id: string;
   detectedAt: string;
   remoteUpdatedAt: string;
+  /** Missing on legacy records; listWorkspaceConflicts normalizes it to active. */
+  status?: 'active' | 'resolved' | 'discarded';
+  resolvedAt?: string;
+  resolution?: 'current' | 'manual';
   pending: PendingWorkspaceSync;
   remoteFields?: Partial<Record<WorkspaceStorageField, unknown>>;
   conflictingFields?: WorkspaceStorageField[];
+}
+
+const MAX_RESOLVED_CONFLICT_RECORDS = 50;
+
+function normalizedConflict(record: WorkspaceConflictRecord): WorkspaceConflictRecord {
+  return {
+    ...record,
+    status: record.status === 'resolved' || record.status === 'discarded'
+      ? record.status
+      : 'active',
+  };
+}
+
+function retainWorkspaceConflictRecords(records: WorkspaceConflictRecord[]): WorkspaceConflictRecord[] {
+  const normalized = records.map(normalizedConflict).filter((record) => record.status !== 'discarded');
+  return [
+    ...normalized.filter((record) => record.status === 'active'),
+    ...normalized.filter((record) => record.status === 'resolved').slice(0, MAX_RESOLVED_CONFLICT_RECORDS),
+  ];
 }
 
 export interface QueueWorkspaceFieldOptions {
@@ -418,21 +441,37 @@ export async function preserveWorkspaceConflict(
       id: crypto.randomUUID(),
       detectedAt: new Date().toISOString(),
       remoteUpdatedAt,
+      status: 'active',
       pending,
       remoteFields,
       conflictingFields,
     };
-    // Unresolved edits are user data. Never silently evict an older conflict
-    // merely because more conflicts were detected later. Cap at 50 to prevent
-    // unbounded IndexedDB growth from long-running sessions with many conflicts.
-    const MAX_CONFLICT_RECORDS = 50;
-    await queueStorage.setItem(CONFLICTS_KEY, [record, ...conflicts].slice(0, MAX_CONFLICT_RECORDS));
+    // Active conflicts are user data and are never evicted. Only explicitly
+    // resolved recovery copies are capped.
+    await queueStorage.setItem(CONFLICTS_KEY, retainWorkspaceConflictRecords([record, ...conflicts]));
   });
   await clearPendingWorkspaceSync(pending);
 }
 
 export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[]> {
-  return await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
+  return retainWorkspaceConflictRecords(
+    await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [],
+  );
+}
+
+export async function markWorkspaceConflictResolved(
+  id: string,
+  resolution: NonNullable<WorkspaceConflictRecord['resolution']>,
+): Promise<void> {
+  await withQueueStorageLock(async () => {
+    const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
+    const resolvedAt = new Date().toISOString();
+    await queueStorage.setItem(CONFLICTS_KEY, retainWorkspaceConflictRecords(conflicts.map((item) => (
+      item.id === id
+        ? { ...item, status: 'resolved', resolvedAt, resolution }
+        : item
+    ))));
+  });
 }
 
 export async function removeWorkspaceConflict(id: string): Promise<void> {
@@ -448,11 +487,13 @@ export async function replaceWorkspaceConflictPending(
 ): Promise<void> {
   await withQueueStorageLock(async () => {
     const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
-    await queueStorage.setItem(
-      CONFLICTS_KEY,
-      pending
-        ? conflicts.map((item) => item.id === id ? { ...item, pending } : item)
-        : conflicts.filter((item) => item.id !== id),
-    );
+    const resolvedAt = new Date().toISOString();
+    await queueStorage.setItem(CONFLICTS_KEY, retainWorkspaceConflictRecords(
+      conflicts.map((item) => item.id !== id
+        ? item
+        : pending
+          ? { ...item, pending }
+          : { ...item, status: 'resolved', resolvedAt, resolution: 'manual' }),
+    ));
   });
 }

@@ -58,8 +58,8 @@ test('the node + action creates a tree child without a keyboard', async ({ page 
   await addNode(page, 260, 240, '英语');
   await canvas.click({ position: { x: 260, y: 240 } });
   const state = await graphState(page);
-  const parent = Object.values(state.document?.nodes ?? {})[0] as { x: number; y: number; width: number };
-  await canvas.click({ position: { x: parent.x + parent.width / 2 + 12, y: parent.y - 26 } });
+  const parent = Object.values(state.document?.nodes ?? {})[0] as { x: number; y: number; height: number };
+  await canvas.click({ position: { x: parent.x - 24, y: parent.y - parent.height / 2 - 16 } });
   await expect(page.getByLabel('新节点文本')).toBeVisible();
   await page.getByLabel('新节点文本').fill('阅读');
   await page.getByLabel('新节点文本').press('Enter');
@@ -67,6 +67,23 @@ test('the node + action creates a tree child without a keyboard', async ({ page 
   const edge = Object.values(after.document?.edges ?? {})[0] as { relationship: string; sourceId: string };
   expect(edge.relationship).toBe('tree');
   expect(edge.sourceId).toBe(Object.keys(after.document?.nodes ?? {}).find((id) => (after.document?.nodes[id] as { text: string }).text === '英语'));
+});
+
+test('the visible collapse control works before its node is selected', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await addNode(page, 260, 240, '考研规划');
+  await canvas.click({ position: { x: 260, y: 240 } });
+  await page.keyboard.press('Tab');
+  await page.getByLabel('新节点文本').fill('英语');
+  await page.getByLabel('新节点文本').press('Enter');
+
+  const state = await graphState(page);
+  const rootEntry = Object.entries(state.document?.nodes ?? {}).find(([, node]) => (node as { text: string }).text === '考研规划');
+  expect(rootEntry).toBeTruthy();
+  const [rootId, root] = rootEntry! as [string, { x: number; y: number; width: number }];
+  await canvas.click({ position: { x: root.x - root.width / 2 - 14, y: root.y } });
+  await expect.poll(async () => (await graphState(page)).document?.nodes[rootId]?.collapsed).toBe(true);
 });
 
 test('JSON import, layout, search, JSON export and PNG export stay inside the page', async ({ page }) => {
@@ -103,6 +120,7 @@ test('JSON import, layout, search, JSON export and PNG export stay inside the pa
 
   await expect(page.getByTestId('mind-map-title')).toHaveValue('导入的产品图');
   await expect.poll(async () => Object.keys((await graphState(page)).document?.nodes ?? {}).length).toBe(2);
+  await page.getByTestId('mind-map-layout-menu').click();
   await page.getByTestId('mind-map-layout-tree').click();
   await expect.poll(async () => (await graphState(page)).document?.nodes.root.x ?? 0).toBeLessThan(200);
   const laidOut = (await graphState(page)).document!;

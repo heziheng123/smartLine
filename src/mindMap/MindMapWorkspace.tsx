@@ -2,6 +2,7 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import {
   Cloud,
   CalendarRange,
+  ChevronDown,
   Copy,
   Download,
   FilePlus2,
@@ -18,6 +19,7 @@ import {
   Trash2,
   Undo2,
   Upload,
+  Plus,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAuth } from '@/auth/AuthContext';
@@ -113,6 +115,7 @@ const MindMapWorkspace = () => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const canvasSectionRef = useRef<HTMLElement>(null);
   const moreMenuRef = useRef<HTMLDetailsElement>(null);
+  const layoutMenuRef = useRef<HTMLDetailsElement>(null);
   const syncSessionRef = useRef<MindMapSyncSession | null>(null);
   const catalogSessionRef = useRef<MindMapCatalogSession | null>(null);
   const documentRef = useRef(document);
@@ -313,6 +316,12 @@ const MindMapWorkspace = () => {
   };
 
   const runTreeLayout = useCallback(() => setTreeLayoutRequest((request) => request + 1), []);
+
+  const runTreeLayoutInDirection = (direction: TreeDirection) => {
+    setTreeDirection(direction);
+    setTreeLayoutRequest((request) => request + 1);
+    if (layoutMenuRef.current) layoutMenuRef.current.open = false;
+  };
 
   const closeMoreMenu = () => {
     if (moreMenuRef.current) moreMenuRef.current.open = false;
@@ -593,24 +602,25 @@ const MindMapWorkspace = () => {
               <option value="image">图片</option>
             </select>
           </label>
-          <span className={styles.toolDivider} aria-hidden="true" />
-          <label className={`${styles.creationTool} ${styles.referenceTool}`}>
-            <span>引用</span>
-            <select
-              aria-label="选择项目规划引用"
-              value={referenceTarget}
-              disabled={referenceOptions.length === 0}
-              onChange={(event) => setReferenceTarget(event.target.value)}
-            >
-              <option value="">选择项目或任务</option>
-              {referenceOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-          <button className={styles.referenceCreateButton} type="button" disabled={!referenceTarget} onClick={createProjectReference}>
-            <Link2 size={15} aria-hidden="true" />放入画布
-          </button>
+          <span className={styles.referenceGroup}>
+            <label className={`${styles.creationTool} ${styles.referenceTool}`}>
+              <span>引用</span>
+              <select
+                aria-label="选择项目规划引用"
+                value={referenceTarget}
+                disabled={referenceOptions.length === 0}
+                onChange={(event) => setReferenceTarget(event.target.value)}
+              >
+                <option value="">选择项目或任务</option>
+                {referenceOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <button className={styles.referenceCreateButton} type="button" aria-label="将引用放入画布" title="将引用放入画布" disabled={!referenceTarget} onClick={createProjectReference}>
+              <Plus size={15} aria-hidden="true" />
+            </button>
+          </span>
           <button type="button" onClick={createTimeline} disabled={!document}>
-            <CalendarRange size={15} aria-hidden="true" />时间线
+            <CalendarRange size={15} aria-hidden="true" />时间规划
           </button>
           <button type="button" onClick={() => {
             if (!document) return;
@@ -619,27 +629,6 @@ const MindMapWorkspace = () => {
           }} disabled={!document}>
             <CalendarRange size={15} aria-hidden="true" />人生规划
           </button>
-          <span className={styles.toolDivider} aria-hidden="true" />
-          <button
-            type="button"
-            data-testid="mind-map-layout-tree"
-            disabled={layoutRunning || !document || Object.keys(document.nodes).length < 2}
-            onClick={runTreeLayout}
-          >
-            <GitFork size={15} aria-hidden="true" />
-            {layoutRunning ? '布局中…' : selectedNodeCount === 1 ? '整理分支' : '布局'}
-          </button>
-          <select
-            className={styles.directionSelect}
-            aria-label="树形布局方向"
-            value={treeDirection}
-            onChange={(event) => setTreeDirection(event.target.value as TreeDirection)}
-          >
-            <option value="left-right">→</option>
-            <option value="right-left">←</option>
-            <option value="top-bottom">↓</option>
-            <option value="bottom-top">↑</option>
-          </select>
           <button
             type="button"
             className={connectionMode ? styles.toolActive : undefined}
@@ -650,16 +639,35 @@ const MindMapWorkspace = () => {
           >
             <Link2 size={15} aria-hidden="true" />连线
           </button>
-          <button
-            className={styles.iconTool}
-            type="button"
-            aria-label="适合画布"
-            title="适合画布"
-            disabled={!hasCanvasContent}
-            onClick={() => setFitRequest((value) => value + 1)}
-          >
-            <Maximize2 size={15} aria-hidden="true" />
-          </button>
+          <details ref={layoutMenuRef} className={styles.layoutMenu}>
+            <summary data-testid="mind-map-layout-menu">
+              <GitFork size={15} aria-hidden="true" />
+              {layoutRunning ? '布局中…' : '布局'}
+              <ChevronDown size={13} aria-hidden="true" />
+            </summary>
+            <div className={styles.layoutMenuPanel} role="menu" aria-label="布局菜单">
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="mind-map-layout-tree"
+                disabled={layoutRunning || !document || Object.keys(document.nodes).length < 2}
+                onClick={() => {
+                  runTreeLayout();
+                  if (layoutMenuRef.current) layoutMenuRef.current.open = false;
+                }}
+              >{selectedNodeCount === 1 ? '整理当前分支' : '整理全部节点'}</button>
+              <span className={styles.menuDivider} aria-hidden="true" />
+              <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('left-right')}>左 → 右</button>
+              <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('right-left')}>右 → 左</button>
+              <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('top-bottom')}>上 → 下</button>
+              <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('bottom-top')}>下 → 上</button>
+              <span className={styles.menuDivider} aria-hidden="true" />
+              <button type="button" role="menuitem" disabled={!hasCanvasContent} onClick={() => {
+                setFitRequest((value) => value + 1);
+                if (layoutMenuRef.current) layoutMenuRef.current.open = false;
+              }}><Maximize2 size={14} aria-hidden="true" />适合画布</button>
+            </div>
+          </details>
         </nav>
         {!isHydrated ? (
           <div className={styles.loading} role="status">正在加载独立思维导图…</div>
@@ -699,29 +707,20 @@ const MindMapWorkspace = () => {
 
       <footer className={styles.statusBar}>
         <span>{Math.round(scale * 100)}%</span>
-        <span>{document ? Object.keys(document.nodes).length : 0} 个节点</span>
-        <span>{document ? Object.keys(document.projectReferences).length : 0} 个项目引用</span>
-        <span>{document ? Object.keys(document.timelineSections).length : 0} 个时间线</span>
         <span data-testid="mind-map-save-status">{SAVE_LABEL[saveStatus]}</span>
-        <span
-          className={styles.syncStatus}
-          data-testid="mind-map-sync-status"
-          title={syncState.roomId || undefined}
-        >
-          <Cloud size={12} aria-hidden="true" />
-          {SYNC_LABEL[assetSyncError ? 'error' : syncState.status]}
-        </span>
-        {syncState.others.length > 0 && <span>{syncState.others.length + 1} 人在线</span>}
-        {(syncState.status === 'offline' || syncState.status === 'error' || assetSyncError) && (
-          <button
-            className={styles.syncRetry}
-            type="button"
-            aria-label="重试思维导图云同步"
-            onClick={() => setSyncRetry((value) => value + 1)}
-          >
-            <RefreshCw size={12} aria-hidden="true" />
-          </button>
-        )}
+        <details className={styles.statusDetails}>
+          <summary aria-label="查看地图状态详情" title="查看地图状态详情"><MoreHorizontal size={14} aria-hidden="true" /></summary>
+          <div>
+            <span>{document ? Object.keys(document.nodes).length : 0} 个节点</span>
+            <span>{document ? Object.keys(document.projectReferences).length : 0} 个项目引用</span>
+            <span>{document ? Object.keys(document.timelineSections).length : 0} 个时间规划</span>
+            <span className={styles.syncStatus} data-testid="mind-map-sync-status" title={syncState.roomId || undefined}>
+              <Cloud size={12} aria-hidden="true" />{SYNC_LABEL[assetSyncError ? 'error' : syncState.status]}
+            </span>
+            {syncState.others.length > 0 && <span>{syncState.others.length + 1} 人在线</span>}
+            {(syncState.status === 'offline' || syncState.status === 'error' || assetSyncError) && <button className={styles.syncRetry} type="button" aria-label="重试思维导图云同步" onClick={() => setSyncRetry((value) => value + 1)}><RefreshCw size={12} aria-hidden="true" /></button>}
+          </div>
+        </details>
       </footer>
     </main>
   );

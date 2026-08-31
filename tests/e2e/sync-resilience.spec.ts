@@ -1,8 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
+test.setTimeout(60_000);
+
 async function waitForApp(page: Page): Promise<void> {
   await page.goto('/');
-  await expect(page.locator('.tl-dock')).toBeVisible();
+  await expect(page.locator('.tl-dock')).toBeVisible({ timeout: 30_000 });
   await expect.poll(() => page.evaluate(async () => {
     const stores = await import('/src/testing/workspaceStoreAccess.ts');
     return [
@@ -143,7 +145,7 @@ test('restoring an old conflict marks only selected fields for one-way cloud rep
   });
 });
 
-test('a verified old conflict is shown as a harmless recovery copy and can be discarded without changing data', async ({ page }) => {
+test('verification never hides an active conflict; only an explicit choice creates a recovery copy', async ({ page }) => {
   await waitForApp(page);
 
   const before = await page.evaluate(async () => {
@@ -185,14 +187,22 @@ test('a verified old conflict is shown as a harmless recovery copy and can be di
     return JSON.stringify(currentTasks);
   });
 
-  await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'connected');
+  await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'error');
   await page.getByRole('button', { name: /打开同步与备份/ }).click();
   const dialog = page.getByRole('dialog', { name: '云同步与完整备份' });
-  await expect(dialog.getByText('统一工作区已同步', { exact: true })).toBeVisible();
-  await expect(dialog.getByText(/当前冲突：0 · 历史恢复副本：1/)).toBeVisible();
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  const activeConflict = dialog.getByRole('region', { name: '当前同步冲突' });
+  await expect(activeConflict).toContainText('尚未解决的当前冲突');
+  await expect(dialog.getByRole('region', { name: '历史恢复副本' })).toHaveCount(0);
+
+  await activeConflict.getByRole('button', { name: '保留当前版本，标记已解决' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: '继续' }).click();
+  await expect(dialog.getByText(/历史副本 1/)).toBeVisible();
+  await expect(dialog.getByRole('region', { name: '当前同步冲突' })).toHaveCount(0);
   const recovery = dialog.getByRole('region', { name: '历史恢复副本' });
   await expect(recovery).toContainText('不代表当前仍有同步故障');
   await expect(recovery.getByRole('checkbox')).toHaveCount(0);
+  await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'connected');
 
   await recovery.getByRole('button', { name: '当前内容正常，删除此副本' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: '确认执行' }).click();

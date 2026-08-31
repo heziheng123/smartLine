@@ -11,7 +11,7 @@
        → /api/auth/* GitHub OAuth
        → /api/liveblocks-auth 房间令牌
        → Liveblocks 统一工作区及思维导图图片文件
-       → /api/archives/*（可选 R2）
+       → /api/workspace-history/*、/api/archives/*（可选 R2）
 ```
 
 不要把 `LIVEBLOCKS_SECRET_KEY`、GitHub Client Secret 或 session secret 暴露为 `VITE_` 变量。只有 Public Key 可以进入浏览器构建。
@@ -38,7 +38,7 @@
 
 ### 2.3 R2
 
-R2 仅用于可选的月度历史归档。需要该功能时创建 Production 和 Preview 两个不同 bucket，并在 Pages 项目中以 `SMARTLINE_R2` 绑定；不使用月度归档可不创建、不绑定，也不影响思维导图及图片同步。
+R2 用于可选的每日完整恢复点和月度历史归档。需要该功能时创建 Production 和 Preview 两个不同 bucket，并在 Pages 项目中以 `SMARTLINE_R2` 绑定；不使用云端历史备份可不创建、不绑定，也不影响实时同步、思维导图及图片同步。
 
 ## 3. Cloudflare Pages 配置
 
@@ -98,7 +98,7 @@ Preview 环境使用独立 secrets 和 R2 bucket；不得复用 Production Secre
 6. 在两个标签页修改不同数据域，确认字段都保留。
 7. 断网修改后恢复网络，确认离线队列清空且无冲突副本。
 8. 检查响应头 CSP、frame deny、nosniff 和 Service Worker no-cache。
-9. 如启用 R2，测试首次 PUT、带 ETag 更新和错误 ETag 的 409。
+9. 如启用 R2，确认当天完整恢复点可下载和恢复，并测试首次 PUT、带 ETag 更新和错误 ETag 的 409。
 10. 在设备 A 上传思维导图图片，确认 Liveblocks Files 中出现文件、设备 B 能下载并刷新恢复；断网失败时本机图片不得被删除。
 11. 导出完整 JSON，并实际验证一次本地快照恢复流程。
 
@@ -112,9 +112,11 @@ Preview 环境使用独立 secrets 和 R2 bucket；不得复用 Production Secre
 - 至少观察 30 天再停用 Public Key fallback；
 - 任一端有不同非空数据时，不允许自动覆盖。
 
-## 6. 云端文件与 R2 归档
+## 6. 云端文件与 R2 历史备份
 
-思维导图图片使用 Liveblocks LiveFile，文件引用保存在所属导图房间；`/api/mind-map-files/{documentId}/{fileId}` 仅为当前登录账号代理下载，随后写入本机 IndexedDB 缓存。R2 只用于可选月度归档。
+思维导图图片使用 Liveblocks LiveFile，文件引用保存在所属导图房间；`/api/mind-map-files/{documentId}/{fileId}` 仅为当前登录账号代理下载，随后写入本机 IndexedDB 缓存。R2 不参与实时同步，只保存可选的每日完整恢复点和月度归档。
+
+每日完整恢复点 API 路径为 `/api/workspace-history/{YYYY-MM-DD}`，支持 GET、HEAD、PUT。客户端在当天首次完成云端校验后写入一次完整工作区快照，并可在同步对话框按日期下载或恢复。恢复前仍会创建本机安全快照。
 
 月度归档 API 路径为 `/api/archives/{YYYY-MM}`，支持 GET、HEAD、PUT：
 
@@ -125,7 +127,7 @@ Preview 环境使用独立 secrets 和 R2 bucket；不得复用 Production Secre
 - 对象按 GitHub 用户 ID 隔离；
 - 已存在对象的更新必须携带当前 ETag，否则返回 409。
 
-R2 不是 Liveblocks 的替代品，也不是实时备份；它仅用于长期历史归档。
+两类 R2 对象都按 GitHub 用户 ID 隔离、最大 10 MiB，并使用 ETag 条件写入避免设备间静默覆盖。R2 不是 Liveblocks 的替代品，也不是逐笔实时日志。
 
 ## 7. 回滚
 
@@ -136,7 +138,7 @@ R2 不是 Liveblocks 的替代品，也不是实时备份；它仅用于长期�
 1. 暂停多设备编辑；
 2. 从当前版本导出完整备份；
 3. 保留当前 Pages deployment；
-4. 验证待回滚版本支持当前 schema 7；任何只支持 schema 6 或更早版本的客户端都不能写入已升级的生产工作区；
+4. 验证待回滚版本支持当前 schema 8；任何只支持 schema 7 或更早版本的客户端都不能写入已升级的生产工作区；
 5. 回滚静态部署但不删除 Liveblocks 数据或可选的 R2 归档；
 6. 登录、hydrate、离线队列和导出全部验证后恢复使用。
 

@@ -13,8 +13,13 @@ import {
   WORKSPACE_QUEUE_EVENT,
 } from '@/services/workspaceOfflineQueue';
 import type { WorkspaceQueueErrorDetail, WorkspaceQueueErrorKind } from '@/services/workspaceSyncQueueCore';
-import { readWorkspaceSyncSettings, WORKSPACE_VERIFIED_EVENT } from '@/services/workspaceSync';
-import { isWorkspaceConflictHistorical } from '@/services/workspaceSyncCore';
+import {
+  readWorkspaceSyncRuntimeState,
+  readWorkspaceSyncSettings,
+  WORKSPACE_SYNC_RUNTIME_EVENT,
+  WORKSPACE_VERIFIED_EVENT,
+  type WorkspaceSyncRuntimeState,
+} from '@/services/workspaceSync';
 import { liveblocksAuthMode } from '@/auth/config';
 import {
   deriveSyncIndicatorState,
@@ -72,6 +77,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   const [unifiedArchitecture, setUnifiedArchitecture] = useState(
     () => readWorkspaceSyncSettings().architecture === 'unified',
   );
+  const [runtimeState, setRuntimeState] = useState(readWorkspaceSyncRuntimeState);
 
   const modules = useMemo<ModuleSyncState[]>(
     () => [timeline, ebb, daily, graph, lifeMap],
@@ -88,11 +94,8 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
         listWorkspaceConflicts(),
       ]);
       const verification = readLastVerifiedWorkspace();
-      const currentRoomId = readWorkspaceSyncSettings().unifiedRoomId ?? null;
-      const verificationMatchesRoom = !verification.roomId || verification.roomId === currentRoomId;
       setPendingCount(pending ? Object.keys(pending.fields ?? {}).length : 0);
-      const activeConflicts = conflicts.filter((conflict) => !verificationMatchesRoom
-        || !isWorkspaceConflictHistorical(conflict.detectedAt, verification.at ?? undefined));
+      const activeConflicts = conflicts.filter((conflict) => conflict.status !== 'resolved');
       setActiveConflictCount(activeConflicts.length);
       setHistoricalConflictCount(conflicts.length - activeConflicts.length);
       setLastConnectedAt(verification.at);
@@ -129,6 +132,9 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       setUnifiedArchitecture(readWorkspaceSyncSettings().architecture === 'unified');
       void refreshQueueState();
     };
+    const handleRuntime = (event: Event) => {
+      setRuntimeState((event as CustomEvent<WorkspaceSyncRuntimeState>).detail ?? readWorkspaceSyncRuntimeState());
+    };
     const interval = window.setInterval(() => void refreshQueueState(), 15_000);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -136,6 +142,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     window.addEventListener(WORKSPACE_VERIFIED_EVENT, handleVerified);
     window.addEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
     window.addEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
+    window.addEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, handleRuntime);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener('online', handleOnline);
@@ -144,6 +151,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       window.removeEventListener(WORKSPACE_VERIFIED_EVENT, handleVerified);
       window.removeEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
       window.removeEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
+      window.removeEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, handleRuntime);
     };
   }, [refreshQueueState]);
 
@@ -155,6 +163,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       pendingCount,
       conflictCount: activeConflictCount,
       queueError: queueErrorKind !== null,
+      runtimePhase: runtimeState.phase,
     });
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && !unifiedArchitecture;
   const indicatorState = requiresUnifiedMigration && derivedIndicatorState === 'connected'
@@ -181,12 +190,12 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     : requiresUnifiedMigration
       ? '旧同步架构已连接，需要迁移到统一工作区'
       : indicatorState === 'connecting'
-      ? `正在同步 ${connectedCount}/${enabledModules.length} 个数据模块`
+      ? runtimeState.message || `正在同步 ${connectedCount}/${enabledModules.length} 个数据模块`
       : indicatorState === 'connected'
         ? `已同步 ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
         : indicatorState === 'pending'
           ? `${online ? '等待上传' : '网络离线'}${pendingCount > 0 ? ` · ${pendingCount} 个数据字段待同步` : ''}`
-          : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项需要处理` : ''}${errorHint ? ` · ${errorHint}` : ''}${historicalHint}`;
+          : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项需要处理` : ''}${errorHint || runtimeState.error ? ` · ${errorHint ?? runtimeState.error}` : ''}${historicalHint}`;
 
   return (
     <button

@@ -327,8 +327,8 @@ function genScheduleId(): string {
 
 export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>()(
   liveblocks(
-    (setState, get) => {
-      const set = createWorkspaceTrackedSet(setState, get, ['schedules', 'retrospectives']);
+    (_setState, get, api) => {
+      const set = createWorkspaceTrackedSet(api.setState, get, ['schedules', 'retrospectives']);
       const initialSyncSettings = loadSyncSettings();
 
       return {

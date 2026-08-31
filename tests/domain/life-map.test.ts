@@ -113,8 +113,8 @@ test('主计划与月度阶段沿用目标集合并过滤悬空阶段', () => {
 });
 
 test('schema 7 保留全局关键日期并清理无效领域和计划引用', () => {
-  assert.equal(WORKSPACE_SCHEMA_VERSION, 7);
-  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(WORKSPACE_SCHEMA_VERSION, 8);
+  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7, 8]);
 
   const data = normalizeLifeMapData({
     lifeMapGoals: [

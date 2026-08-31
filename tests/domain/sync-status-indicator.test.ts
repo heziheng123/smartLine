@@ -69,3 +69,23 @@ test('a partially enabled workspace is not reported as fully synchronized', () =
     queueError: false,
   }), 'pending');
 });
+
+test('runtime phases prevent a green status while initialization is still running', () => {
+  assert.equal(deriveSyncIndicatorState({
+    modules: [connected, connected],
+    online: true,
+    pendingCount: 0,
+    conflictCount: 0,
+    queueError: false,
+    runtimePhase: 'initializing',
+  }), 'connecting');
+
+  assert.equal(deriveSyncIndicatorState({
+    modules: [connected, connected],
+    online: true,
+    pendingCount: 0,
+    conflictCount: 0,
+    queueError: false,
+    runtimePhase: 'error',
+  }), 'error');
+});

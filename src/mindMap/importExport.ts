@@ -6,6 +6,7 @@ import {
 import { buildEdgeRoute } from './canvas/edgeRouting';
 import { edgeConnectableObjects } from './canvas/connectableObjects';
 import { mindMapRepository } from './repository';
+import { resolveBranchThemeColors, resolveTreeEdgeColor } from './visualTheme';
 
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
 
@@ -95,6 +96,7 @@ export function serializeMindMapSvg(document: MindMapDocument) {
     '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs>',
     `<rect x="${left - margin}" y="${top - margin}" width="${right - left + margin * 2}" height="${bottom - top + margin * 2}" fill="${document.settings.background}"/>`,
   ];
+  const branchColors = resolveBranchThemeColors(document);
   for (const section of sections) {
     parts.push(`<rect x="${section.x - section.width / 2}" y="${section.y - section.height / 2}" width="${section.width}" height="${section.collapsed ? 42 : section.height}" rx="14" fill="#f2f2ff" stroke="#7775df" stroke-dasharray="8 5"/>`);
     parts.push(`<text x="${section.x - section.width / 2 + 14}" y="${section.y - section.height / 2 + 24}" font-family="sans-serif" font-size="13" font-weight="600" fill="#4a48b8">${escapeXml(section.title)}</text>`);
@@ -117,7 +119,8 @@ export function serializeMindMapSvg(document: MindMapDocument) {
     }
     const markerStart = edge.direction === 'backward' || edge.direction === 'both' ? ' marker-start="url(#arrow)"' : '';
     const markerEnd = edge.direction === 'forward' || edge.direction === 'both' ? ' marker-end="url(#arrow)"' : '';
-    parts.push(`<path d="${path}" fill="none" stroke="${edge.relationship === 'reference' ? '#b2bac6' : edge.style.color}" stroke-width="${edge.style.width}"${edge.relationship === 'reference' || edge.style.dash === 'dashed' ? ' stroke-dasharray="7 5"' : ''}${markerStart}${markerEnd}/>`);
+    const edgeColor = edge.relationship === 'reference' ? '#b2bac6' : resolveTreeEdgeColor(edge, branchColors);
+    parts.push(`<path d="${path}" fill="none" stroke="${edgeColor}" stroke-width="${edge.style.width}"${edge.relationship === 'reference' || edge.style.dash === 'dashed' ? ' stroke-dasharray="7 5"' : ''}${markerStart}${markerEnd}/>`);
     if (edge.label) parts.push(`<text x="${(points.start.x + points.end.x) / 2}" y="${(points.start.y + points.end.y) / 2 - 7}" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#4a4a4f">${escapeXml(edge.label)}</text>`);
   }
   for (const node of nodes) {
@@ -238,6 +241,7 @@ export function downloadMindMapPng(
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.setTransform(scale, 0, 0, scale, (-left + margin) * scale, (-top + margin) * scale);
 
+  const branchColors = resolveBranchThemeColors(document);
   for (const edge of edges) {
     const routeForExport = edgeRouteForExport(edge, document);
     if (!routeForExport) continue;
@@ -262,16 +266,17 @@ export function downloadMindMapPng(
     } else {
       context.lineTo(points.end.x, points.end.y);
     }
-    context.strokeStyle = edge.relationship === 'reference' ? '#b2bac6' : edge.style.color;
+    const edgeColor = edge.relationship === 'reference' ? '#b2bac6' : resolveTreeEdgeColor(edge, branchColors);
+    context.strokeStyle = edgeColor;
     context.lineWidth = edge.style.width;
     context.setLineDash(edge.relationship === 'reference' || edge.style.dash === 'dashed' ? [7, 5] : []);
     context.stroke();
     context.setLineDash([]);
     if (edge.direction === 'forward' || edge.direction === 'both') {
-      drawArrow(context, forwardFrom, points.end, edge.style.color);
+      drawArrow(context, forwardFrom, points.end, edgeColor);
     }
     if (edge.direction === 'backward' || edge.direction === 'both') {
-      drawArrow(context, backwardFrom, points.start, edge.style.color);
+      drawArrow(context, backwardFrom, points.start, edgeColor);
     }
     if (edge.label) {
       const midpoint = {

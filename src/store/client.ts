@@ -6,7 +6,7 @@ import {
   liveblocksPublicKeyFallbackDisabled,
 } from '@/auth/config';
 
-function createLiveblocksClient() {
+export function createLiveblocksClient() {
   if (liveblocksAuthEndpoint) {
     if (!liveblocksAuthEndpoint.startsWith('/') && !liveblocksAuthEndpoint.startsWith('https://')) {
       throw new Error('[Liveblocks] VITE_LIVEBLOCKS_AUTH_ENDPOINT must be a same-origin path or HTTPS URL.');

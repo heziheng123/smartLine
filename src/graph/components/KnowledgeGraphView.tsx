@@ -34,7 +34,7 @@ import { isRetrospectiveEntryCurrentlyCompleted } from '@/domain/dailyRetrospect
 import { takeKnowledgeNodeFocus } from '@/services/actionBridge';
 
 import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
-import { zoom, zoomIdentity, ZoomBehavior } from 'd3-zoom';
+import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
 import { select } from 'd3-selection';
 import { arc } from 'd3-shape';
 import 'd3-transition';
@@ -197,6 +197,10 @@ export const KnowledgeGraphView: React.FC = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const zoomFrameRef = useRef<number | null>(null);
+  const pendingZoomTransformRef = useRef<ZoomTransform | null>(null);
+  const userZoomInProgressRef = useRef(false);
+  const viewportShiftedRef = useRef(false);
 
   // Hover states
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
@@ -551,10 +555,7 @@ export const KnowledgeGraphView: React.FC = () => {
           .id(d => d.id)
           .parentId(d => (d as any).parentId)(flatData);
 
-        root.sum(d => {
-          const hasChildren = allNodes.some(n => n.parentId === d.id);
-          return hasChildren ? 0 : 1;
-        });
+        root.sum(d => childrenMap.has(d.id) ? 0 : 1);
         root.sort((a, b) => (b.value || 0) - (a.value || 0));
 
         const partitionLayout = partition<ViewNode>().size([2 * Math.PI, baseRadius]);
@@ -580,7 +581,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     return { islands, allFlatNodes };
-  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, getNodeVisualState, dimensions.width, dimensions.height, allNodes, activationStates, radiusMode]);
+  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, getNodeVisualState, dimensions.width, dimensions.height, activationStates, radiusMode]);
 
   const arcGenerator = useMemo(() => {
     return arc<HierarchyRectangularNode<ViewNode>>()
@@ -680,12 +681,36 @@ export const KnowledgeGraphView: React.FC = () => {
     const svg = select(svgRef.current);
     zoomBehaviorRef.current = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
+      .on('start', (event) => {
+        if (!event.sourceEvent) return;
+        userZoomInProgressRef.current = true;
+        gRef.current?.setAttribute('data-zooming', 'true');
+      })
       .on('zoom', (event) => {
-        select(gRef.current).attr('transform', event.transform);
-        if (event.sourceEvent) setIsViewportShifted(true);
+        pendingZoomTransformRef.current = event.transform;
+        if (zoomFrameRef.current !== null) return;
+        zoomFrameRef.current = requestAnimationFrame(() => {
+          zoomFrameRef.current = null;
+          const transform = pendingZoomTransformRef.current;
+          if (transform && gRef.current) gRef.current.setAttribute('transform', transform.toString());
+        });
+      })
+      .on('end', () => {
+        if (!userZoomInProgressRef.current) return;
+        userZoomInProgressRef.current = false;
+        gRef.current?.removeAttribute('data-zooming');
+        if (!viewportShiftedRef.current) {
+          viewportShiftedRef.current = true;
+          setIsViewportShifted(true);
+        }
       });
     svg.call(zoomBehaviorRef.current);
     return () => {
+      if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+      zoomFrameRef.current = null;
+      pendingZoomTransformRef.current = null;
+      userZoomInProgressRef.current = false;
+      gRef.current?.removeAttribute('data-zooming');
       svg.on('.zoom', null);
     };
   }, [isHydrated]);
@@ -693,6 +718,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const zoomToFit = useCallback(() => {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
     const svg = select(svgRef.current);
+    viewportShiftedRef.current = false;
     setIsViewportShifted(false);
     
     if (islandsData.islands.length > 1) {
@@ -1295,7 +1321,7 @@ export const KnowledgeGraphView: React.FC = () => {
                   fontSize={16}
                   fontWeight={700}
                   fill="#64748b"
-                  className="pointer-events-none select-none opacity-50"
+                  className="kg-zoom-label pointer-events-none select-none opacity-50"
                 >
                   {island.root?.data.name}
                 </text>
@@ -1435,7 +1461,7 @@ export const KnowledgeGraphView: React.FC = () => {
                           fontWeight={node.depth === 0 || isSelected ? 700 : 500}
                           fill={textFill}
                           pointerEvents="none"
-                          className="select-none"
+                          className="kg-zoom-label select-none"
                           style={{ transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
                         >
                           {displayName}

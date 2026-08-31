@@ -34,16 +34,17 @@ import {
   resolveUnifiedWorkspaceConflict,
   resetToLegacyArchitecture,
   isWorkspaceConnectionInProgress,
-  WORKSPACE_CONNECTION_PROGRESS_EVENT,
-  WORKSPACE_CONNECTION_STATE_EVENT,
+  readWorkspaceSyncRuntimeState,
+  WORKSPACE_SYNC_RUNTIME_EVENT,
   WORKSPACE_CONFLICT_EVENT,
   WORKSPACE_VERIFIED_EVENT,
   UnifiedWorkspaceConflictError,
   type WorkspaceMigrationReport,
+  type WorkspaceSyncRuntimeState,
 } from '@/services/workspaceSync';
 import { discardWorkspaceConflict, listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
-import { isWorkspaceConflictHistorical } from '@/services/workspaceSyncCore';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
+import { currentWorkspaceHistoryDate, loadWorkspaceDailyHistory } from '@/services/workspaceHistory';
 import { createCurrentWorkspaceAuditReport, downloadCurrentWorkspaceAuditReport } from '@/services/workspaceAudit';
 import type { WorkspaceAuditReport } from '@/services/workspaceAuditCore';
 import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
@@ -371,6 +372,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [pendingFieldCount, setPendingFieldCount] = useState<number | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<WorkspaceConflictRecord[]>([]);
   const [connectionBusy, setConnectionBusy] = useState(isWorkspaceConnectionInProgress);
+  const [runtimeState, setRuntimeState] = useState(readWorkspaceSyncRuntimeState);
   const [activationConflict, setActivationConflict] = useState<{
     roomCode: string;
     remoteSource: 'unified' | 'legacy';
@@ -378,6 +380,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [selectedConflictFields, setSelectedConflictFields] = useState<WorkspaceStorageField[]>([]);
   const [showConflictRecovery, setShowConflictRecovery] = useState(false);
   const [archivePeriod, setArchivePeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const [historyDate, setHistoryDate] = useState(currentWorkspaceHistoryDate);
   const [dataPanelOpen, setDataPanelOpen] = useState(false);
   const supportsWebLocks = typeof navigator !== 'undefined' && 'locks' in navigator;
   const [auditBusy, setAuditBusy] = useState(false);
@@ -518,20 +521,21 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, []);
 
   useEffect(() => {
-    const handleConnectionState = (event: Event) => {
-      const busy = (event as CustomEvent<{ busy?: boolean }>).detail?.busy;
-      if (typeof busy === 'boolean') {
-        setConnectionBusy(busy);
-        if (!busy) {
-          const pendingConflict = readPendingWorkspaceActivationConflict();
-          setActivationConflict(pendingConflict);
-          if (pendingConflict) setRoomCode((current) => current || pendingConflict.roomCode);
-        }
+    const refreshRuntime = (event?: Event) => {
+      const next = (event as CustomEvent<WorkspaceSyncRuntimeState | undefined> | undefined)?.detail
+        ?? readWorkspaceSyncRuntimeState();
+      setRuntimeState(next);
+      setConnectionBusy(['connecting', 'initializing', 'migrating', 'flushing', 'verifying'].includes(next.phase));
+      if (next.message) setRestoreMessage(next.message);
+      if (!['connecting', 'initializing', 'migrating', 'flushing', 'verifying'].includes(next.phase)) {
+        const pendingConflict = readPendingWorkspaceActivationConflict();
+        setActivationConflict(pendingConflict);
+        if (pendingConflict) setRoomCode((current) => current || pendingConflict.roomCode);
       }
     };
-    setConnectionBusy(isWorkspaceConnectionInProgress());
-    window.addEventListener(WORKSPACE_CONNECTION_STATE_EVENT, handleConnectionState);
-    return () => window.removeEventListener(WORKSPACE_CONNECTION_STATE_EVENT, handleConnectionState);
+    refreshRuntime();
+    window.addEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, refreshRuntime);
+    return () => window.removeEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, refreshRuntime);
   }, []);
 
   useEffect(() => {
@@ -552,15 +556,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     };
   }, []);
 
-  useEffect(() => {
-    const handleProgress = (event: Event) => {
-      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
-      if (message) setRestoreMessage(message);
-    };
-    window.addEventListener(WORKSPACE_CONNECTION_PROGRESS_EVENT, handleProgress);
-    return () => window.removeEventListener(WORKSPACE_CONNECTION_PROGRESS_EVENT, handleProgress);
-  }, []);
-
   const modules = useMemo(() => [
     { key: 'timeline' as const, label: '时间轴与项目文档', enabled: timeline.syncEnabled, status: timeline.syncStatus as DisplayStatus },
     { key: 'ebb' as const, label: 'EBB 复习', enabled: ebb.syncEnabled, status: ebb.syncStatus as DisplayStatus },
@@ -573,20 +568,20 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const enabledCount = modules.filter((module) => module.enabled).length;
   const connectedCount = modules.filter((module) => module.enabled && module.status === 'connected').length;
   const allConnected = enabledCount === 5 && connectedCount === 5;
-  const verificationMatchesRoom = !lastConnected.workspaceRoomId
-    || lastConnected.workspaceRoomId === architecture.unifiedRoomId;
-  const activeConflicts = syncConflicts.filter((conflict) => !verificationMatchesRoom
-    || !isWorkspaceConflictHistorical(conflict.detectedAt, lastConnected.workspace));
-  const historicalConflicts = syncConflicts.filter((conflict) => verificationMatchesRoom
-    && isWorkspaceConflictHistorical(conflict.detectedAt, lastConnected.workspace));
+  const activeConflicts = syncConflicts.filter((conflict) => conflict.status !== 'resolved');
+  const historicalConflicts = syncConflicts.filter((conflict) => conflict.status === 'resolved');
   const latestConflict = activeConflicts[0] ?? historicalConflicts[0];
   const historicalConflict = Boolean(latestConflict && historicalConflicts.some((item) => item.id === latestConflict.id));
   const activeConflictCount = activeConflicts.length;
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && architecture.architecture !== 'unified';
+  const runtimeBusy = ['connecting', 'initializing', 'migrating', 'flushing', 'verifying'].includes(runtimeState.phase);
+  const runtimeProblem = runtimeState.phase === 'error' || runtimeState.phase === 'conflict';
   const fullySynchronized = allConnected
     && pendingFieldCount === 0
     && activeConflictCount === 0
-    && !requiresUnifiedMigration;
+    && !requiresUnifiedMigration
+    && !runtimeBusy
+    && !runtimeProblem;
 
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
@@ -959,6 +954,33 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     }
   }, [archivePeriod]);
 
+  const handleDownloadWorkspaceHistory = useCallback(async () => {
+    try {
+      const history = await loadWorkspaceDailyHistory(historyDate);
+      const blob = new Blob([JSON.stringify(history.backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url; anchor.download = `smart-line-workspace-history-${historyDate}.json`; anchor.click();
+      URL.revokeObjectURL(url);
+      setRestoreMessage(`${historyDate} 完整工作区历史已下载。`);
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '工作区历史读取失败。');
+    }
+  }, [historyDate]);
+
+  const handleRestoreWorkspaceHistory = useCallback(async () => {
+    try {
+      const history = await loadWorkspaceDailyHistory(historyDate);
+      const validation = validateWorkspaceBackup(history.backup);
+      if (validation.errors.length > 0) throw new Error(validation.errors.join('；'));
+      if (!await requestConfirmation(`确定恢复 ${historyDate} 的完整工作区吗？当前内容会先自动保存本地恢复点。`)) return;
+      await restoreWorkspaceBackup(history.backup);
+      setRestoreMessage(`${historyDate} 工作区历史已恢复，本机修改正在进入安全补传队列。`);
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '工作区历史恢复失败。');
+    }
+  }, [historyDate]);
+
   return (
     <div className="tl-dialog-overlay" onClick={onClose}>
       <div className="tl-dialog tl-dialog--wide" role="dialog" aria-modal="true" aria-label="云同步与完整备份" onClick={(event) => event.stopPropagation()}>
@@ -971,7 +993,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         <div className="tl-sync-status" style={{ flexDirection: 'column', alignItems: 'stretch', padding: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span className="tl-sync-dot" style={{ backgroundColor: fullySynchronized ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
-            <strong style={{ fontSize: 14, color: '#111827' }}>{fullySynchronized
+            <strong style={{ fontSize: 14, color: '#111827' }}>{runtimeBusy
+              ? runtimeState.message
+              : runtimeProblem && activeConflictCount === 0
+                ? runtimeState.message || '同步运行异常，请重新连接'
+              : fullySynchronized
               ? (architecture.architecture === 'unified' ? '统一工作区已同步' : '旧房间同步 5/5')
               : allConnected && requiresUnifiedMigration
                 ? '旧架构已连接，尚未进入统一工作区'
@@ -1142,17 +1168,17 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         {latestConflict && <section className="tl-sync-conflict-fields" aria-label={historicalConflict ? '历史恢复副本' : '当前同步冲突'}>
           <strong>{historicalConflict ? '历史恢复副本' : '当前同步冲突'} · {formatTime(latestConflict.detectedAt)}</strong>
           <small>{historicalConflict
-            ? `此副本早于 ${formatTime(lastConnected.workspace)} 的成功云端校验，不代表当前仍有同步故障。若两台设备现在内容正常，直接删除即可；删除不会修改本机或云端数据。`
+            ? `此冲突已于 ${formatTime(latestConflict.resolvedAt)} 明确处理，不代表当前仍有同步故障。若不再需要恢复其中的旧数据，可以直接删除；删除不会修改本机或云端数据。`
             : '这是尚未解决的当前冲突。保持未选择不会上传任何旧数据；只有确认确实需要找回的字段才应手动恢复。'}</small>
           {!showConflictRecovery && <div className="tl-sync-backup-actions">
             <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={async () => {
               if (!await requestConfirmation(historicalConflict
                 ? '仅删除这份历史恢复副本吗？当前本机数据、云端数据和待上传队列都不会改变。'
-                : '保留当前已经加载的本机/云端版本，并放弃这份冲突副本吗？不会上传副本中的旧字段。')) return;
+                : '确认保留当前已经加载的本机/云端版本，并将此冲突标记为已解决吗？旧数据会保留为历史恢复副本，不会自动上传。')) return;
               void discardWorkspaceConflict(latestConflict.id)
-                .then(() => { setRestoreMessage('冲突副本已删除；当前本机和云端数据均未修改。'); setSelectedConflictFields([]); })
+                .then(() => { setRestoreMessage(historicalConflict ? '历史恢复副本已删除；当前本机和云端数据均未修改。' : '已明确保留当前版本；冲突已转为历史恢复副本。'); setSelectedConflictFields([]); })
                 .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '删除历史恢复副本失败。'));
-            }}><Check size={14} />{historicalConflict ? '当前内容正常，删除此副本' : '保留当前版本，不恢复副本'}</button>
+            }}><Check size={14} />{historicalConflict ? '当前内容正常，删除此副本' : '保留当前版本，标记已解决'}</button>
             <button type="button" className="tl-sync-backup-btn" onClick={() => setShowConflictRecovery(true)}><RefreshCw size={14} />需要从旧副本找回数据</button>
           </div>}
           {showConflictRecovery && <>
@@ -1207,8 +1233,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         <div className="tl-sync-info" style={{ marginTop: 12 }}>
           <div className="tl-sync-info-row" style={{ flexDirection: 'column', alignItems: 'stretch', padding: '12px 14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>房间号</span>
+              <label htmlFor="workspace-room-code" style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>房间号</label>
               <input
+                id="workspace-room-code"
                 className="tl-dialog-input"
                 style={{ flex: 1 }}
                 type={showRoomCode ? 'text' : 'password'}
@@ -1364,14 +1391,21 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 </span>
               </div>
               {r2Configured && (
-                <div style={{ padding: '10px 14px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <input className="tl-dialog-input" type="month" value={archivePeriod} onChange={(event) => setArchivePeriod(event.target.value)} style={{ maxWidth: 150 }} />
-                  <button type="button" className="tl-sync-backup-btn" onClick={() => void handleArchivePeriod()}><Upload size={14} />保存月度归档</button>
-                  <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadArchive()}><Download size={14} />下载月度归档</button>
-                </div>
+                <>
+                  <div style={{ padding: '10px 14px 4px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input className="tl-dialog-input" type="date" value={historyDate} onChange={(event) => setHistoryDate(event.target.value)} style={{ maxWidth: 150 }} />
+                    <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadWorkspaceHistory()}><Download size={14} />下载完整历史</button>
+                    <button type="button" className="tl-sync-backup-btn" onClick={() => void handleRestoreWorkspaceHistory()}><RefreshCw size={14} />恢复该日历史</button>
+                  </div>
+                  <div style={{ padding: '4px 14px 10px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input className="tl-dialog-input" type="month" value={archivePeriod} onChange={(event) => setArchivePeriod(event.target.value)} style={{ maxWidth: 150 }} />
+                    <button type="button" className="tl-sync-backup-btn" onClick={() => void handleArchivePeriod()}><Upload size={14} />保存月度归档</button>
+                    <button type="button" className="tl-sync-backup-btn" onClick={() => void handleDownloadArchive()}><Download size={14} />下载月度归档</button>
+                  </div>
+                </>
               )}
               <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#6B7280' }}>
-                {r2Configured ? '已绑定 SMARTLINE_R2；月度归档可用。' : '绑定 SMARTLINE_R2 后可保存月度归档。'}
+                {r2Configured ? '同步校验成功后每天自动保存一份完整恢复点；月度归档仍可手动保存。' : '绑定 SMARTLINE_R2 后可使用每日完整历史和月度归档。'}
               </small>
             </div>
           )}

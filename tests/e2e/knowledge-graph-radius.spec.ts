@@ -101,3 +101,17 @@ test('knowledge graph keeps the app dock navigation-only and moves page controls
   await page.getByLabel('视角归中').click();
   await expect(page.getByLabel('视角归中')).toBeHidden();
 });
+
+test('knowledge graph temporarily hides labels while the user is zooming', async ({ page }) => {
+  const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  const label = canvas.locator('[data-node-id="radius-leaf"] text');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 30, box!.y + box!.height / 2 + 30);
+  await expect(label).toBeHidden();
+  await page.mouse.up();
+  await expect(label).toBeVisible();
+});

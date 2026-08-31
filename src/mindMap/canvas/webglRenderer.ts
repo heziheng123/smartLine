@@ -4,6 +4,7 @@ import { MIND_MAP_VISUAL_TOKENS } from '../styles/visualTokens';
 import { edgeIsHiddenInsideCollapsedSection } from './geometry';
 import { edgeConnectableObjects } from './connectableObjects';
 import { buildEdgeRoute, pointOnRoute } from './edgeRouting';
+import { resolveBranchThemeColors, resolveTreeEdgeColor } from '../visualTheme';
 
 const vertexSource = `
 attribute vec2 a_position;
@@ -131,13 +132,16 @@ class Renderer {
     ) return;
     const edgeData: number[] = [];
     const routingDocument = routingNodes === document.nodes ? document : { ...document, nodes: routingNodes };
+    const branchColors = resolveBranchThemeColors(document);
     for (const edge of Object.values(document.edges)) {
       if (edgeIsHiddenInsideCollapsedSection(edge, document)) continue;
       const source = edgeSourceRef(edge);
       const target = edgeTargetRef(edge);
       if ((source.type === 'node' && hiddenNodeIds.has(source.id))
         || (target.type === 'node' && hiddenNodeIds.has(target.id))) continue;
-      const rgba = color(edge.style.color, 0.7);
+      const rgba = edge.relationship === 'reference'
+        ? color('#b2bac6', 0.58)
+        : color(resolveTreeEdgeColor(edge, branchColors), 0.78);
       const points = edgePolyline(edge, routingDocument, treeDirection);
       for (let index = 1; index < points.length; index += 1) {
         pushVertex(edgeData, points[index - 1].x, points[index - 1].y, rgba);
@@ -200,6 +204,8 @@ class Renderer {
     gl.clearColor(background[0], background[1], background[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.program);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.uniform2f(this.resolution, size.width, size.height);
     gl.uniform3f(this.camera, camera.x, camera.y, camera.scale);
     gl.enableVertexAttribArray(this.position);

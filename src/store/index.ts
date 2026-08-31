@@ -222,8 +222,8 @@ interface TimelineStore extends TimelineData {
 
 export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
   liveblocks(
-    (setState, get) => {
-      const set = createWorkspaceTrackedSet(setState, get, [
+    (_setState, get, api) => {
+      const set = createWorkspaceTrackedSet(api.setState, get, [
         'tasks',
         'groups',
         'notes',

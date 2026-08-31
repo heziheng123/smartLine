@@ -1,5 +1,4 @@
 import { createWorkspaceBackup, validateWorkspaceBackup } from './workspaceBackup';
-import { isWorkspaceConflictHistorical } from './workspaceSyncCore';
 import { readWorkspaceSyncSettings } from './workspaceSync';
 import { listWorkspaceConflicts, readPendingWorkspaceSync } from './workspaceOfflineQueue';
 import { createWorkspaceAuditReport, type WorkspaceAuditReport } from './workspaceAuditCore';
@@ -26,8 +25,8 @@ export async function createCurrentWorkspaceAuditReport(): Promise<WorkspaceAudi
   ]);
   const architecture = readWorkspaceSyncSettings();
   const lastConnected = readLastConnected();
-  const historicalConflicts = conflicts.filter((item) => isWorkspaceConflictHistorical(item.detectedAt, lastConnected.workspace));
-  const activeConflicts = conflicts.filter((item) => !isWorkspaceConflictHistorical(item.detectedAt, lastConnected.workspace));
+  const historicalConflicts = conflicts.filter((item) => item.status === 'resolved');
+  const activeConflicts = conflicts.filter((item) => item.status !== 'resolved');
 
   return await createWorkspaceAuditReport(backup, {
     validationErrors: validation.errors,

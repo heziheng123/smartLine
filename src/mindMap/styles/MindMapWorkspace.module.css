@@ -135,7 +135,7 @@
 
 .iconAction:focus-visible,
 .moreMenu > summary:focus-visible,
-.floatingToolbar :is(button, select):focus-visible {
+.floatingToolbar :is(button, select, summary):focus-visible {
   outline: 2px solid var(--mm-accent);
   outline-offset: 1px;
 }
@@ -444,22 +444,22 @@
   left: 50%;
   z-index: 8;
   display: flex;
-  height: 38px;
+  height: 42px;
   box-sizing: border-box;
   align-items: center;
-  gap: 2px;
-  padding: 3px;
+  gap: 3px;
+  padding: 4px;
   border: 1px solid var(--mm-border);
   border-radius: var(--mm-radius-panel);
   background: var(--mm-surface);
-  box-shadow: var(--mm-shadow-floating);
+  box-shadow: 0 5px 16px rgb(27 31 39 / 8%);
   transform: translateX(-50%);
 }
 
 .floatingToolbar button {
   display: inline-flex;
   min-width: max-content;
-  height: 30px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   gap: 5px;
@@ -470,6 +470,7 @@
   background: transparent;
   font: inherit;
   font-size: var(--mm-font-small);
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -491,12 +492,13 @@
 
 .creationTool {
   display: flex;
-  height: 30px;
+  height: 32px;
   align-items: center;
   gap: 4px;
   padding-left: var(--mm-space-sm);
   color: var(--mm-text-muted);
   font-size: var(--mm-font-small);
+  white-space: nowrap;
 }
 
 .creationTool select,
@@ -516,7 +518,77 @@
 }
 
 .referenceTool select {
-  max-width: 180px;
+  max-width: 164px;
+}
+
+.referenceGroup {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  border-radius: var(--mm-radius-control);
+}
+
+.referenceGroup:hover {
+  background: var(--mm-surface-muted);
+}
+
+.referenceGroup .referenceCreateButton {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.layoutMenu {
+  position: relative;
+}
+
+.layoutMenu > summary {
+  display: inline-flex;
+  height: 32px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 5px;
+  padding: 0 var(--mm-space-sm);
+  border-radius: var(--mm-radius-control);
+  color: var(--mm-text-muted);
+  font-size: var(--mm-font-small);
+  white-space: nowrap;
+  list-style: none;
+  cursor: pointer;
+}
+
+.layoutMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.layoutMenu > summary:hover,
+.layoutMenu[open] > summary {
+  color: var(--mm-text);
+  background: var(--mm-surface-muted);
+}
+
+.layoutMenuPanel {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  width: 172px;
+  gap: 2px;
+  padding: var(--mm-space-xs);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-panel);
+  background: var(--mm-surface);
+  box-shadow: var(--mm-shadow-floating);
+}
+
+.layoutMenuPanel button {
+  width: 100%;
+  min-height: 32px;
+  justify-content: flex-start;
+  padding: 0 10px;
+  text-align: left;
 }
 
 .directionSelect {
@@ -659,14 +731,58 @@
   display: flex;
   min-height: 26px;
   align-items: center;
-  gap: var(--mm-space-md);
+  gap: 9px;
   padding: 0 var(--mm-space-sm);
   border: 1px solid var(--mm-border);
   border-radius: var(--mm-radius-control);
   color: var(--mm-text-muted);
   background: var(--mm-surface);
+  box-shadow: var(--mm-shadow-node);
+  font-size: 11px;
+  opacity: 0.78;
+  transition: opacity 120ms ease;
+}
+
+.statusBar:hover,
+.statusBar:focus-within {
+  opacity: 1;
+}
+
+.statusDetails {
+  position: relative;
+}
+
+.statusDetails > summary {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 6px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.statusDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+.statusDetails > summary:hover,
+.statusDetails[open] > summary {
+  background: var(--mm-surface-muted);
+}
+
+.statusDetails > div {
+  position: absolute;
+  bottom: 31px;
+  left: -8px;
+  display: grid;
+  width: 164px;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-panel);
+  background: var(--mm-surface);
   box-shadow: var(--mm-shadow-floating);
-  font-size: var(--mm-font-small);
 }
 
 .syncStatus,
@@ -697,9 +813,15 @@
     padding: 0 6px;
   }
 
-  .statusBar span:nth-child(2),
-  .statusBar span:nth-child(3) {
-    display: none;
+}
+
+@media (pointer: coarse) {
+  .floatingToolbar {
+    height: 44px;
+  }
+
+  .floatingToolbar :is(button, select, summary) {
+    min-height: 36px;
   }
 }
 

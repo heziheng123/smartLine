@@ -5,6 +5,7 @@ import {
   assertWorkspaceSchemaSupported,
   buildUnifiedRoomCandidates,
   buildUnifiedRoomId,
+  buildWorkspaceInitializationFields,
   buildWorkspaceBindingRoomId,
   collectWorkspaceFieldChanges,
   commitWorkspaceQueueRevisionSafely,
@@ -16,17 +17,28 @@ import {
   hashWorkspaceBackup,
   hashWorkspaceValue,
   isBundledDemoWorkspace,
-  isWorkspaceConflictHistorical,
   hasWorkspaceFieldSnapshotChanged,
   isWorkspaceStoreStorageReady,
   isWorkspaceRevisionSuperseded,
+  mergePendingWorkspaceMigrationFields,
   mergeWorkspaceFieldChanges,
   shouldBackfillLegacyLifeMapSync,
   withTimeout,
 } from '../../src/services/workspaceSyncCore.ts';
+import {
+  beginWorkspaceSyncActivity,
+  readWorkspaceSyncRuntimeState,
+  setWorkspaceSyncRuntimeOutcome,
+} from '../../src/services/workspaceSyncRuntime.ts';
 import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
 import { createEmptyLifeMapData } from '../../src/lifeMap/data.ts';
 import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from '../../src/services/workspaceSchema.ts';
+import {
+  WORKSPACE_ENTITY_STORAGE_VERSION,
+  buildWorkspaceEntityInitializationWrites,
+  buildWorkspaceEntityWrites,
+  materializeWorkspaceEntityRoot,
+} from '../../src/services/workspaceEntityStorage.ts';
 
 function backup(): WorkspaceBackup {
   return {
@@ -71,12 +83,50 @@ test('first unified connection never overlays two different non-empty workspaces
 });
 
 test('future cloud schemas are rejected before the room can hydrate local stores', () => {
-  assert.equal(WORKSPACE_SCHEMA_VERSION, 7);
-  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7]);
-  assert.doesNotThrow(() => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 7 } }, 7));
+  assert.equal(WORKSPACE_SCHEMA_VERSION, 8);
+  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.doesNotThrow(() => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 8 } }, 8));
   assert.throws(
-    () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 7 } }, 6),
-    /7/,
+    () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 8 } }, 7),
+    /8/,
+  );
+});
+
+test('entity storage preserves concurrent edits to different tasks when the array projection loses one write', () => {
+  const initialTasks = [
+    { id: 'one', title: 'before' },
+    { id: 'two', title: 'before' },
+  ];
+  const root = {
+    metadata: { entityStorageVersion: WORKSPACE_ENTITY_STORAGE_VERSION },
+    tasks: initialTasks,
+    ...buildWorkspaceEntityInitializationWrites({ tasks: initialTasks }, 'seed'),
+  };
+  const deviceA = [{ id: 'one', title: 'device-a' }, { id: 'two', title: 'before' }];
+  const deviceB = [{ id: 'one', title: 'before' }, { id: 'two', title: 'device-b' }];
+  const materialized = materializeWorkspaceEntityRoot({
+    ...root,
+    tasks: deviceB,
+    ...buildWorkspaceEntityWrites(root, { tasks: deviceA }, 'a'),
+    ...buildWorkspaceEntityWrites(root, { tasks: deviceB }, 'b'),
+  });
+  assert.deepEqual(materialized.tasks, [
+    { id: 'one', title: 'device-a' },
+    { id: 'two', title: 'device-b' },
+  ]);
+});
+
+test('entity tombstones prevent a stale array projection from resurrecting deleted data', () => {
+  const tasks = [{ id: 'keep', title: 'keep' }, { id: 'deleted', title: 'old' }];
+  const root = {
+    metadata: { entityStorageVersion: WORKSPACE_ENTITY_STORAGE_VERSION },
+    tasks,
+    ...buildWorkspaceEntityInitializationWrites({ tasks }, 'seed'),
+  };
+  const deletion = buildWorkspaceEntityWrites(root, { tasks: [tasks[0]] }, 'delete', '2026-08-30T00:00:00.000Z');
+  assert.deepEqual(
+    materializeWorkspaceEntityRoot({ ...root, tasks, ...deletion }).tasks,
+    [{ id: 'keep', title: 'keep' }],
   );
 });
 
@@ -288,6 +338,95 @@ test('offline collections merge disjoint entity edits and report only same-prope
   assert.deepEqual(conflicting.conflicts, ['tasks[one].title']);
 });
 
+test('two clients from the same revision preserve disjoint edits and stop same-property overwrites', () => {
+  const baseTasks = [{ id: 'one', title: 'before', date: '2026-08-30' }];
+  const clientA = [{ id: 'one', title: 'device-a', date: '2026-08-30' }];
+  const clientB = [{ id: 'one', title: 'before', date: '2026-09-01' }];
+
+  const firstCommit = mergeWorkspaceFieldChanges(
+    { tasks: clientA },
+    { tasks: baseTasks },
+    { tasks: baseTasks },
+  );
+  assert.deepEqual(firstCommit.conflicts, []);
+
+  const secondCommit = mergeWorkspaceFieldChanges(
+    { tasks: clientB },
+    { tasks: baseTasks },
+    firstCommit.fields,
+  );
+  assert.deepEqual(secondCommit.conflicts, []);
+  assert.deepEqual(secondCommit.fields.tasks, [
+    { id: 'one', title: 'device-a', date: '2026-09-01' },
+  ]);
+
+  const samePropertyCommit = mergeWorkspaceFieldChanges(
+    { tasks: [{ id: 'one', title: 'device-b', date: '2026-08-30' }] },
+    { tasks: baseTasks },
+    firstCommit.fields,
+  );
+  assert.deepEqual(samePropertyCommit.conflicts, ['tasks[one].title']);
+});
+
+test('sync runtime keeps nested phases ordered and ignores stale completions', () => {
+  setWorkspaceSyncRuntimeOutcome('idle', '');
+  const connection = beginWorkspaceSyncActivity('connecting', 'connecting');
+  assert.equal(readWorkspaceSyncRuntimeState().phase, 'connecting');
+
+  const flush = beginWorkspaceSyncActivity('flushing', 'flushing');
+  connection.update('initializing', 'initializing');
+  assert.equal(readWorkspaceSyncRuntimeState().phase, 'flushing');
+
+  flush.finish('connected', 'flushed');
+  assert.equal(readWorkspaceSyncRuntimeState().phase, 'initializing');
+  connection.finish('connected', 'verified');
+  assert.equal(readWorkspaceSyncRuntimeState().phase, 'connected');
+
+  connection.update('error', 'stale');
+  assert.equal(readWorkspaceSyncRuntimeState().phase, 'connected');
+  assert.equal(readWorkspaceSyncRuntimeState().message, 'verified');
+});
+
+test('legacy migration merges pending edits over the latest cloud snapshot without hiding conflicts', () => {
+  const baseTasks = [
+    { id: 'one', title: 'before' },
+    { id: 'two', title: 'before' },
+  ];
+  const result = mergePendingWorkspaceMigrationFields(
+    {
+      tasks: [
+        { id: 'one', title: 'before' },
+        { id: 'two', title: 'remote' },
+      ],
+      notes: [{ id: 'cloud-note' }],
+    },
+    {
+      fields: {
+        tasks: [
+          { id: 'one', title: 'local' },
+          { id: 'two', title: 'before' },
+        ],
+      },
+      baseFields: { tasks: baseTasks },
+    },
+  );
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.root.tasks, [
+    { id: 'one', title: 'local' },
+    { id: 'two', title: 'remote' },
+  ]);
+  assert.deepEqual(result.root.notes, [{ id: 'cloud-note' }]);
+
+  const conflict = mergePendingWorkspaceMigrationFields(
+    { tasks: [{ id: 'one', title: 'remote' }] },
+    {
+      fields: { tasks: [{ id: 'one', title: 'local' }] },
+      baseFields: { tasks: [{ id: 'one', title: 'before' }] },
+    },
+  );
+  assert.deepEqual(conflict.conflicts, ['tasks[one].title']);
+});
+
 test('an absent cloud field initializes from local data instead of creating a false deletion conflict', () => {
   const baseTasks = [{ id: 'one', title: 'before' }];
   const localTasks = [{ id: 'one', title: 'offline edit' }];
@@ -301,17 +440,11 @@ test('an absent cloud field initializes from local data instead of creating a fa
   assert.deepEqual(result.fields.tasks, localTasks);
 });
 
-test('a later successful convergence verification demotes an old conflict to a recovery copy', () => {
-  assert.equal(
-    isWorkspaceConflictHistorical('2026-08-12T11:26:05.000Z', '2026-08-12T14:58:23.000Z'),
-    true,
-  );
-  assert.equal(
-    isWorkspaceConflictHistorical('2026-08-12T15:00:00.000Z', '2026-08-12T14:58:23.000Z'),
-    false,
-  );
-  assert.equal(isWorkspaceConflictHistorical('invalid', '2026-08-12T14:58:23.000Z'), false);
-  assert.equal(isWorkspaceConflictHistorical('2026-08-12T11:26:05.000Z'), false);
+test('room initialization overwrites only for a confirmed new workspace', () => {
+  const current = { tasks: [], metadata: { schemaVersion: 7 } };
+  const desired = { tasks: [{ id: 'local' }], nodes: [] };
+  assert.deepEqual(buildWorkspaceInitializationFields(current, desired, false), { nodes: [] });
+  assert.deepEqual(buildWorkspaceInitializationFields(current, desired, true), desired);
 });
 
 test('schema 6 project and key-date relationships participate in entity-level merges', () => {

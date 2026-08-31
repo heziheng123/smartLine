@@ -29,6 +29,10 @@ export function archiveKey(userId: string, period: string): string {
   return `users/${userId}/archives/${period}.json`;
 }
 
+export function workspaceHistoryKey(userId: string, date: string): string {
+  return `users/${userId}/workspace-history/${date}.json`;
+}
+
 export async function readLimitedBody(body: ReadableStream<Uint8Array>, maxBytes: number): Promise<Uint8Array | null> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];

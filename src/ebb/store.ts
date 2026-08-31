@@ -181,8 +181,8 @@ interface EbbStore extends EbbData {
 
 export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
   liveblocks(
-    (setState, get) => {
-      const set = createWorkspaceTrackedSet(setState, get, [
+    (_setState, get, api) => {
+      const set = createWorkspaceTrackedSet(api.setState, get, [
         'reviewTasks',
         'inboxItems',
         'outlineNodes',

@@ -2096,7 +2096,7 @@ try {
       targetDate: '2026-09-30',
     });
     const backup = backupModule.createWorkspaceBackup();
-    assert.equal(backup.schemaVersion, 7);
+    assert.equal(backup.schemaVersion, 8);
     assert.equal(backup.lifeMap.lifeMapGoals.length, 1);
     assert.equal(backup.lifeMap.lifeMapPlanGroups.length, 3);
     assert.equal(backup.timeline.tasks[0].planningAreaId, 'health');
@@ -2110,7 +2110,7 @@ try {
     schemaFourBackup.lifeMap.lifeMapAreas.forEach((area) => { delete area.planGroupId; });
     const schemaSixUpgrade = backupModule.validateWorkspaceBackup(schemaFourBackup);
     assert.equal(schemaSixUpgrade.errors.length, 0);
-    assert.equal(schemaSixUpgrade.backup.schemaVersion, 7);
+    assert.equal(schemaSixUpgrade.backup.schemaVersion, 8);
     assert.deepEqual(schemaSixUpgrade.backup.lifeMap.lifeMapPlanGroups.map(({ id, placement }) => ({ id, placement })), [
       { id: 'learning', placement: 'above' },
       { id: 'work', placement: 'below' },
@@ -2122,7 +2122,7 @@ try {
     schemaSixBackup.schemaVersion = 6;
     const schemaSevenUpgrade = backupModule.validateWorkspaceBackup(schemaSixBackup);
     assert.equal(schemaSevenUpgrade.errors.length, 0);
-    assert.equal(schemaSevenUpgrade.backup.schemaVersion, 7);
+    assert.equal(schemaSevenUpgrade.backup.schemaVersion, 8);
     assert.equal(schemaSevenUpgrade.backup.timeline.tasks[0].planningAreaId, 'health');
 
     const oldBackup = structuredClone(backup);
@@ -2130,7 +2130,7 @@ try {
     delete oldBackup.lifeMap;
     const upgraded = backupModule.validateWorkspaceBackup(oldBackup);
     assert.equal(upgraded.errors.length, 0);
-    assert.equal(upgraded.backup.schemaVersion, 7);
+    assert.equal(upgraded.backup.schemaVersion, 8);
     assert.equal(upgraded.summary.lifeMapItems, 0);
   });
 

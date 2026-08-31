@@ -71,7 +71,7 @@ test('a device can forget the current room and enter a different workspace code'
   const dialog = page.getByRole('dialog', { name: '云同步与完整备份' });
   await dialog.getByRole('button', { name: '更换工作区' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: '确认执行' }).click();
-  await expect(dialog.getByLabel('房间号（仍然只输入一个）')).toBeEditable();
+  await expect(dialog.getByLabel('房间号', { exact: true })).toBeEditable();
   await expect(dialog.getByRole('button', { name: '一键连接五个模块' })).toBeDisabled();
   await expect.poll(() => page.evaluate(() => localStorage.getItem('smart-line-sync-auto-discovery-paused-v1'))).toBe('true');
 });

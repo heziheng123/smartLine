@@ -4,6 +4,10 @@ import { createSessionCookie, SESSION_COOKIE } from '../../functions/_lib/sessio
 import { onRequestHead as inspectArchive, onRequestPut as saveArchive } from '../../functions/api/archives/[period].ts';
 import { onRequestGet as loadMindMapFile } from '../../functions/api/mind-map-files/[documentId]/[fileId].ts';
 import { onRequestGet as inspectStorage } from '../../functions/api/storage/status.ts';
+import {
+  onRequestHead as inspectWorkspaceHistory,
+  onRequestPut as saveWorkspaceHistory,
+} from '../../functions/api/workspace-history/[date].ts';
 import type { StorageEnv, SmartLineR2Bucket } from '../../functions/_lib/r2.ts';
 
 const sessionEnv = {
@@ -224,6 +228,69 @@ test('R2 archives use etags to reject stale writes from another device', async (
     request: new Request('https://smartline.example/api/archives/2026-07', {
       method: 'PUT', headers: { ...headers, 'If-Match': '"archive-v1"' },
       body: JSON.stringify({ version: 1, period: '2026-07', data: { device: 'B' } }),
+    }),
+  });
+  assert.equal(stale.status, 409);
+});
+
+test('daily workspace history is owner-scoped and rejects a stale full-backup write', async () => {
+  let currentEtag = '"history-v1"';
+  let writtenKey = '';
+  const env: StorageEnv = {
+    ...sessionEnv,
+    SMARTLINE_R2: {
+      async get() {
+        return {
+          body: new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }),
+          httpEtag: currentEtag,
+        };
+      },
+      async put(key, _value, options) {
+        writtenKey = key;
+        const onlyIf = options?.onlyIf;
+        const expected = onlyIf instanceof Headers ? onlyIf.get('If-Match') : onlyIf?.etagMatches;
+        if (expected !== currentEtag) return null;
+        currentEtag = '"history-v2"';
+        return {};
+      },
+      async delete() { return undefined; },
+    },
+  };
+  const sessionCookie = await cookie();
+  const baseHeaders = {
+    Cookie: `${SESSION_COOKIE}=${sessionCookie}`,
+    Origin: 'https://smartline.example',
+    'Content-Type': 'application/json',
+  };
+  const payload = JSON.stringify({
+    version: 1,
+    date: '2026-08-30',
+    savedAt: '2026-08-30T00:00:00.000Z',
+    hash: 'workspace-hash',
+    backup: { kind: 'smart-line-workspace', schemaVersion: 8 },
+  });
+  const head = await inspectWorkspaceHistory({
+    env,
+    params: { date: '2026-08-30' },
+    request: new Request('https://smartline.example/api/workspace-history/2026-08-30', { method: 'HEAD', headers: baseHeaders }),
+  });
+  assert.equal(head.headers.get('ETag'), '"history-v1"');
+
+  const first = await saveWorkspaceHistory({
+    env,
+    params: { date: '2026-08-30' },
+    request: new Request('https://smartline.example/api/workspace-history/2026-08-30', {
+      method: 'PUT', headers: { ...baseHeaders, 'If-Match': '"history-v1"' }, body: payload,
+    }),
+  });
+  assert.equal(first.status, 200);
+  assert.equal(writtenKey, 'users/12345/workspace-history/2026-08-30.json');
+
+  const stale = await saveWorkspaceHistory({
+    env,
+    params: { date: '2026-08-30' },
+    request: new Request('https://smartline.example/api/workspace-history/2026-08-30', {
+      method: 'PUT', headers: { ...baseHeaders, 'If-Match': '"history-v1"' }, body: payload,
     }),
   });
   assert.equal(stale.status, 409);
