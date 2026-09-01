@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 for (const count of [500, 2_000, 5_000]) {
   test(`${count} nodes open save zoom and locate in the real workspace`, async ({ page }) => {
+    test.setTimeout(count === 5_000 ? 60_000 : 30_000);
     await page.goto('/');
   await page.getByTitle('地图工作区').click();
     await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
@@ -27,11 +28,12 @@ for (const count of [500, 2_000, 5_000]) {
 
     if (count === 5_000) {
       await expect(page.getByTestId('mind-map-canvas')).toHaveAttribute('data-renderer', 'webgl');
+      await page.getByTestId('mind-map-layout-menu').click();
       const layoutWorker = page.waitForEvent('worker');
       await page.getByTestId('mind-map-layout-tree').click();
       expect((await layoutWorker).url()).toContain('layout.worker');
-      await expect(page.getByTestId('mind-map-layout-tree')).toHaveText('布局中…');
-      await expect(page.getByTestId('mind-map-layout-tree')).toHaveText('布局', { timeout: 20_000 });
+      await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('布局中…');
+      await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('布局', { timeout: 20_000 });
       await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
     }
 
@@ -41,6 +43,15 @@ for (const count of [500, 2_000, 5_000]) {
     await expect(page.getByLabel('节点属性')).toBeVisible();
 
     const canvas = page.getByTestId('mind-map-canvas');
+    if (count === 5_000) {
+      const beforePreview = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL());
+      await canvas.evaluate((element) => (element.parentElement as HTMLElement).focus());
+      await page.keyboard.press('Tab');
+      await expect(page.getByLabel('新节点文本')).toBeVisible();
+      await expect(canvas).toHaveAttribute('data-renderer', 'webgl');
+      await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).not.toBe(beforePreview);
+      await page.getByLabel('新节点文本').press('Escape');
+    }
     const box = await canvas.boundingBox();
     expect(box).not.toBeNull();
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);

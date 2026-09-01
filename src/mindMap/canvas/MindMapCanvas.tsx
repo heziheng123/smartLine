@@ -717,6 +717,7 @@ export default function MindMapCanvas({
   const [selectedProjectReferenceId, setSelectedProjectReferenceId] = useState<string | null>(null);
   const [hoveredProjectReferenceId, setHoveredProjectReferenceId] = useState<string | null>(null);
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
+  const [focusedBranchRootId, setFocusedBranchRootId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [connectionSource, setConnectionSource] = useState<CanvasObjectRef | null>(null);
@@ -784,6 +785,42 @@ export default function MindMapCanvas({
     }
     return children;
   }, [document.edges]);
+  const branchNodeIds = useCallback((rootId: string) => {
+    const ids: string[] = [];
+    const pending = [rootId];
+    const seen = new Set<string>();
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (seen.has(id) || !document.nodes[id]) continue;
+      seen.add(id);
+      ids.push(id);
+      pending.push(...(treeChildrenById.get(id) ?? []));
+    }
+    return ids;
+  }, [document.nodes, treeChildrenById]);
+  const focusedBranchNodeIds = useMemo(() => focusedBranchRootId
+    ? new Set(branchNodeIds(focusedBranchRootId))
+    : null, [branchNodeIds, focusedBranchRootId]);
+  const renderDocument = useMemo(() => {
+    if (!focusedBranchNodeIds) return document;
+    const nodes = Object.fromEntries(Object.entries(document.nodes).filter(([id]) => focusedBranchNodeIds.has(id)));
+    const edges = Object.fromEntries(Object.entries(document.edges).filter(([, edge]) => {
+      const source = edgeSourceRef(edge);
+      const target = edgeTargetRef(edge);
+      return source.type === 'node' && target.type === 'node'
+        && focusedBranchNodeIds.has(source.id) && focusedBranchNodeIds.has(target.id);
+    }));
+    return {
+      ...document,
+      nodes,
+      edges,
+      zOrder: document.zOrder.filter((id) => focusedBranchNodeIds.has(id)),
+      groups: {},
+      sections: {},
+      projectReferences: {},
+      timelineSections: {},
+    };
+  }, [document, focusedBranchNodeIds]);
   const hiddenNodeIds = useMemo(() => {
     const hidden = new Set(Object.values(document.nodes)
       .filter((node) => node.parentSectionId && document.sections[node.parentSectionId]?.collapsed)
@@ -815,6 +852,29 @@ export default function MindMapCanvas({
     return depths;
   }, [document.nodes, treeChildrenById]);
   const branchThemeColors = useMemo(() => resolveBranchThemeColors(document), [document]);
+  const treeEdgePreview = useMemo(() => {
+    if (!editing?.connectFromId || editing.nodeId) return null;
+    const source = document.nodes[editing.connectFromId];
+    if (!source) return null;
+    const edge = createMindMapEdge(source.id, '__tree-edge-preview__', {
+      id: '__tree-edge-preview__',
+      now: 0,
+      relationship: 'tree',
+    });
+    return {
+      source,
+      edge,
+      color: (nodeDepthById.get(source.id) ?? 0) === 0
+        ? MIND_MAP_VISUAL_TOKENS.color.accent
+        : branchThemeColors.get(source.id) ?? edge.style.color,
+      target: {
+        x: editing.x - editing.width / 2,
+        y: editing.y - editing.height / 2,
+        width: editing.width,
+        height: editing.height,
+      },
+    };
+  }, [branchThemeColors, document.nodes, editing?.connectFromId, editing?.height, editing?.nodeId, editing?.width, editing?.x, editing?.y, nodeDepthById]);
   const nodePresentationById = useMemo(() => {
     const presentations = new Map<string, NodePresentation>();
     for (const node of Object.values(document.nodes)) {
@@ -828,8 +888,8 @@ export default function MindMapCanvas({
     return presentations;
   }, [branchThemeColors, document.nodes, nodeDepthById]);
   const canvasNodes = useMemo(() => Object.fromEntries(
-    Object.entries(document.nodes).filter(([id]) => !hiddenNodeIds.has(id)),
-  ), [document.nodes, hiddenNodeIds]);
+    Object.entries(renderDocument.nodes).filter(([id]) => !hiddenNodeIds.has(id)),
+  ), [hiddenNodeIds, renderDocument.nodes]);
   const visualCanvasNodes = useMemo(() => Object.fromEntries(Object.entries(canvasNodes).map(([id, node]) => {
     const presentation = nodePresentationById.get(id);
     return [id, presentation ? {
@@ -843,10 +903,10 @@ export default function MindMapCanvas({
       },
     } : node];
   })), [canvasNodes, nodePresentationById]);
-  const edgeNodes = useMemo(() => edgeRenderNodes(document), [document]);
+  const edgeNodes = useMemo(() => edgeRenderNodes(renderDocument), [renderDocument]);
   const canvasZOrder = useMemo(
-    () => document.zOrder.filter((id) => !hiddenNodeIds.has(id)),
-    [document.zOrder, hiddenNodeIds],
+    () => renderDocument.zOrder.filter((id) => !hiddenNodeIds.has(id)),
+    [hiddenNodeIds, renderDocument.zOrder],
   );
   const spatialIndex = useMemo(() => new MindMapSpatialIndex(Object.values(canvasNodes)), [canvasNodes]);
   const visibleNodes = useMemo(() => spatialIndex.query(visibleWorldRect(size, camera)), [camera, size, spatialIndex]);
@@ -854,22 +914,22 @@ export default function MindMapCanvas({
   const visibleZOrder = useMemo(() => canvasZOrder.filter((id) => visibleNodeIds.has(id)), [canvasZOrder, visibleNodeIds]);
   const visibleProjectReferences = useMemo(() => {
     const viewport = visibleWorldRect(size, camera);
-    return Object.values(document.projectReferences).filter((reference) => rectIntersectsRect(viewport, {
+    return Object.values(renderDocument.projectReferences).filter((reference) => rectIntersectsRect(viewport, {
       x: reference.x - reference.width / 2,
       y: reference.y - reference.height / 2,
       width: reference.width,
       height: reference.height,
     }));
-  }, [camera, document.projectReferences, size]);
+  }, [camera, renderDocument.projectReferences, size]);
   const visibleTimelines = useMemo(() => {
     const viewport = visibleWorldRect(size, camera);
-    return Object.values(document.timelineSections).filter((timeline) => rectIntersectsRect(viewport, {
+    return Object.values(renderDocument.timelineSections).filter((timeline) => rectIntersectsRect(viewport, {
       x: timeline.x - timeline.width / 2,
       y: timeline.y - timeline.height / 2,
       width: timeline.width,
       height: timeline.collapsed ? 46 : timeline.height,
     }));
-  }, [camera, document.timelineSections, size]);
+  }, [camera, renderDocument.timelineSections, size]);
   const hitIndexedNode = useCallback((point: Point) => {
     const candidates = spatialIndex.query({ x: point.x - 1, y: point.y - 1, width: 2, height: 2 });
     const ids = new Set(candidates.map((node) => node.id));
@@ -883,7 +943,7 @@ export default function MindMapCanvas({
       if (!node || (node.type !== 'markdown' && node.type !== 'latex')) cache.delete(id);
     }
   }, [document.nodes]);
-  const connectables = useMemo(() => connectableObjects(document), [document]);
+  const connectables = useMemo(() => connectableObjects(renderDocument), [renderDocument]);
   const hitConnectable = useCallback((point: Point) => hitConnectableObject(connectables, point), [connectables]);
 
   useEffect(() => {
@@ -969,10 +1029,15 @@ export default function MindMapCanvas({
     setSelectedSectionId(null);
     setSelectedProjectReferenceId(null);
     setSelectedTimelineId(null);
+    setFocusedBranchRootId(null);
     setInteraction(null);
     setEditing(null);
     onScaleChange?.(next.scale);
   }, [document.id, document.viewport, onScaleChange, setInteraction]);
+
+  useEffect(() => {
+    if (focusedBranchRootId && !document.nodes[focusedBranchRootId]) setFocusedBranchRootId(null);
+  }, [document.nodes, focusedBranchRootId]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -1113,8 +1178,8 @@ export default function MindMapCanvas({
       setWebglActive(false);
       return;
     }
-    setWebglActive(renderMindMapWebGl(canvas, document, visualCanvasNodes, edgeNodes, hiddenNodeIds, treeDirection, camera, size));
-  }, [camera, canvasNodes, document, edgeNodes, hiddenNodeIds, size, treeDirection, visualCanvasNodes]);
+    setWebglActive(renderMindMapWebGl(canvas, renderDocument, visualCanvasNodes, edgeNodes, hiddenNodeIds, treeDirection, camera, size));
+  }, [camera, canvasNodes, edgeNodes, hiddenNodeIds, renderDocument, size, treeDirection, visualCanvasNodes]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1179,7 +1244,7 @@ export default function MindMapCanvas({
         || interaction?.type === 'section-drag'
         || interaction?.type === 'section-resize';
       const previewEdgeNodes = previewsNodeGeometry
-        ? edgeRenderNodes({ ...document, nodes: { ...document.nodes, ...previewNodes } })
+        ? edgeRenderNodes({ ...renderDocument, nodes: { ...renderDocument.nodes, ...previewNodes } })
         : edgeNodes;
       const movingReference = interaction?.type === 'project-reference-drag'
         ? document.projectReferences[interaction.referenceId]
@@ -1187,14 +1252,14 @@ export default function MindMapCanvas({
       const previewReference = movingReference ? previewProjectReference(movingReference, interaction) : null;
       const edgeDocument = (previewsNodeGeometry || previewReference)
         ? {
-            ...document,
-            nodes: { ...document.nodes, ...previewEdgeNodes },
-            projectReferences: previewReference ? { ...document.projectReferences, [previewReference.id]: previewReference } : document.projectReferences,
+            ...renderDocument,
+            nodes: { ...renderDocument.nodes, ...previewEdgeNodes },
+            projectReferences: previewReference ? { ...renderDocument.projectReferences, [previewReference.id]: previewReference } : renderDocument.projectReferences,
           }
-        : document;
+        : renderDocument;
       const visible = visibleWorldRect(size, camera);
 
-      for (const section of Object.values(document.sections)) {
+      for (const section of Object.values(renderDocument.sections)) {
         const rect = sectionRect(section, interaction);
         if (!rectIntersectsRect(visible, rect)) continue;
         const topLeft = worldToView({ x: rect.x, y: rect.y }, camera);
@@ -1231,7 +1296,7 @@ export default function MindMapCanvas({
         context.strokeRect(handle.x - 6, handle.y - 6, 12, 12);
       }
 
-      for (const group of Object.values(document.groups)) {
+      for (const group of Object.values(renderDocument.groups)) {
         const members = group.memberIds.map((id) => previewNodes[id]).filter((node): node is MindMapNode => Boolean(node));
         if (members.length === 0) continue;
         const left = Math.min(...members.map((node) => node.x - node.width / 2)) - 14;
@@ -1255,7 +1320,7 @@ export default function MindMapCanvas({
         context.restore();
       }
 
-      for (const edge of webglActive ? [] : Object.values(document.edges)) {
+      for (const edge of webglActive ? [] : Object.values(renderDocument.edges)) {
         if (edgeIsHiddenInsideCollapsedSection(edge, document)) continue;
         if ((edgeSourceRef(edge).type === 'node' && hiddenNodeIds.has(edgeSourceRef(edge).id))
           || (edgeTargetRef(edge).type === 'node' && hiddenNodeIds.has(edgeTargetRef(edge).id))) continue;
@@ -1339,6 +1404,29 @@ export default function MindMapCanvas({
           context.textBaseline = 'middle';
           context.fillText(edge.label, midpoint.x, midpoint.y - 2);
         }
+      }
+
+      if (treeEdgePreview && !hiddenNodeIds.has(treeEdgePreview.source.id)) {
+        const route = buildEdgeRoute(nodeRect(treeEdgePreview.source), treeEdgePreview.target, {
+          kind: 'hierarchy',
+          hierarchyDirection: treeDirection,
+        });
+        const start = worldToView(route.start, camera);
+        const control1 = worldToView(route.control1, camera);
+        const control2 = worldToView(route.control2, camera);
+        const end = worldToView(route.end, camera);
+        context.save();
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+        context.strokeStyle = treeEdgePreview.color;
+        const edgeWidth = treeEdgePreview.edge.style.width === 2
+          ? MIND_MAP_VISUAL_TOKENS.edge.width
+          : treeEdgePreview.edge.style.width;
+        context.lineWidth = Math.max(1, edgeWidth * camera.scale);
+        context.setLineDash(treeEdgePreview.edge.style.dash === 'dashed' ? [4, 5] : []);
+        context.stroke();
+        context.restore();
       }
 
       if (interaction?.type === 'connect') {
@@ -1581,7 +1669,7 @@ export default function MindMapCanvas({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [branchThemeColors, camera, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredEdgeId, hoveredNodeId, interaction, nodeDepthById, nodePresentationById, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, visibleNodeIds, visibleZOrder, webglActive]);
+  }, [branchThemeColors, camera, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredEdgeId, hoveredNodeId, interaction, nodeDepthById, nodePresentationById, renderDocument, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, treeEdgePreview, visibleNodeIds, visibleZOrder, webglActive]);
 
   const startEditingNode = (node: MindMapNode) => {
     setEditing({
@@ -1598,12 +1686,12 @@ export default function MindMapCanvas({
     window.requestAnimationFrame(() => surfaceRef.current?.focus());
   };
 
-  const treeParentId = (nodeId: string) => Object.values(document.edges).find((edge) => (
+  const treeParentId = (nodeId: string, sourceDocument = document) => Object.values(sourceDocument.edges).find((edge) => (
     edge.relationship === 'tree' && edgeTargetRef(edge).type === 'node' && edgeTargetRef(edge).id === nodeId
   ))?.sourceId ?? null;
 
-  const suggestedChildPosition = (parent: MindMapNode) => {
-    const siblings = Object.values(document.edges).filter((edge) => edge.relationship === 'tree' && edge.sourceId === parent.id).length;
+  const suggestedChildPosition = (parent: MindMapNode, sourceDocument = document) => {
+    const siblings = Object.values(sourceDocument.edges).filter((edge) => edge.relationship === 'tree' && edge.sourceId === parent.id).length;
     const cross = (siblings - 0.5) * 76;
     if (treeDirection === 'right-left') return { x: parent.x - parent.width / 2 - 186, y: parent.y + cross };
     if (treeDirection === 'top-bottom') return { x: parent.x + cross, y: parent.y + parent.height / 2 + 88 };
@@ -1611,18 +1699,18 @@ export default function MindMapCanvas({
     return { x: parent.x + parent.width / 2 + 186, y: parent.y + cross };
   };
 
-  const createChildNode = (parentId: string, position?: Point) => {
-    const parent = document.nodes[parentId];
+  const createChildNode = (parentId: string, position?: Point, sourceDocument = document) => {
+    const parent = sourceDocument.nodes[parentId];
     if (!parent || parent.locked) return;
-    const next = position ?? suggestedChildPosition(parent);
+    const next = position ?? suggestedChildPosition(parent, sourceDocument);
     setEditing({ nodeId: null, connectFromId: parentId, treePlacement: position ? 'manual' : 'auto', x: next.x, y: next.y, width: 180, height: 56, draft: '' });
   };
 
-  const createSiblingNode = (nodeId: string) => {
-    const node = document.nodes[nodeId];
+  const createSiblingNode = (nodeId: string, sourceDocument = document) => {
+    const node = sourceDocument.nodes[nodeId];
     if (!node || node.locked) return;
-    const parentId = treeParentId(nodeId);
-    if (parentId) createChildNode(parentId);
+    const parentId = treeParentId(nodeId, sourceDocument);
+    if (parentId) createChildNode(parentId, undefined, sourceDocument);
     else setEditing({ nodeId: null, x: node.x, y: node.y + node.height / 2 + 88, width: 180, height: 56, draft: '' });
   };
 
@@ -1649,13 +1737,27 @@ export default function MindMapCanvas({
     });
   };
 
-  const commitEditing = (restoreFocus = false) => {
+  const commitEditing = (restoreFocus = false, next?: 'child' | 'sibling') => {
     const session = editing;
     if (!session) return;
     setEditing(null);
-    if (restoreFocus) restoreCanvasFocus();
+    const continueFrom = (nodeId: string) => {
+      if (!next) {
+        if (restoreFocus) restoreCanvasFocus();
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        const latest = useMindMapStore.getState().document;
+        if (!latest?.nodes[nodeId]) return;
+        if (next === 'child') createChildNode(nodeId, undefined, latest);
+        else createSiblingNode(nodeId, latest);
+      });
+    };
     if (!session.nodeId) {
-      if (!session.draft.trim()) return;
+      if (!session.draft.trim()) {
+        if (restoreFocus) restoreCanvasFocus();
+        return;
+      }
       const nodeType = session.newNodeType ?? 'text';
       if (session.connectFromId && document.nodes[session.connectFromId]) {
         const node = createMindMapNode({ x: session.x, y: session.y }, nodeType, { text: session.draft });
@@ -1666,10 +1768,14 @@ export default function MindMapCanvas({
         });
         setSelectedNodeIds([node.id]);
         setSelectedEdgeIds([]);
+        continueFrom(node.id);
       } else {
         if (nodeType === 'text') {
           const id = createNode({ x: session.x, y: session.y }, session.draft);
-          if (id) setSelectedNodeIds([id]);
+          if (id) {
+            setSelectedNodeIds([id]);
+            continueFrom(id);
+          }
         } else {
           const node = createMindMapNode({ x: session.x, y: session.y }, nodeType, { text: session.draft });
           execute('创建高级节点', (current) => ({
@@ -1678,14 +1784,18 @@ export default function MindMapCanvas({
             zOrder: [...current.zOrder, node.id],
           }));
           setSelectedNodeIds([node.id]);
+          continueFrom(node.id);
         }
       }
       return;
     }
     const node = document.nodes[session.nodeId];
-    if (!node || node.text === session.draft) return;
-    const measured = node.sizeMode === 'auto' ? measuredNodeSize(session.draft, node) : {};
-    updateNode(node.id, { text: session.draft, ...measured });
+    if (!node) return;
+    if (node.text !== session.draft) {
+      const measured = node.sizeMode === 'auto' ? measuredNodeSize(session.draft, node) : {};
+      updateNode(node.id, { text: session.draft, ...measured });
+    }
+    continueFrom(node.id);
   };
 
   const cancelEditing = (restoreFocus = false) => {
@@ -2610,7 +2720,7 @@ export default function MindMapCanvas({
     const view = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const world = viewToWorld(view, cameraRef.current);
     const node = hitIndexedNode(world);
-    const edge = node ? null : hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection);
+    const edge = node ? null : hitEdge(world, renderDocument, 7 / cameraRef.current.scale, treeDirection);
     if (node) {
       if (!selectedSet.has(node.id)) setSelectedNodeIds([node.id]);
       setSelectedEdgeIds([]);
@@ -2622,7 +2732,7 @@ export default function MindMapCanvas({
     }
     setContextMenu({
       x: Math.min(view.x, Math.max(0, size.width - 190)),
-      y: Math.min(view.y, Math.max(0, size.height - 260)),
+      y: Math.min(view.y, Math.max(0, size.height - (node ? 360 : 260))),
       world,
       nodeId: node?.id,
       edgeId: edge?.id,
@@ -2634,9 +2744,38 @@ export default function MindMapCanvas({
     if (next) updateCamera(next, true);
   }, [size, updateCamera]);
   const fitAll = useCallback(() => {
-    const next = fitMindMapDocument(document, size);
+    const next = fitMindMapDocument(renderDocument, size);
     if (next) updateCamera(next, true);
-  }, [document, size, updateCamera]);
+  }, [renderDocument, size, updateCamera]);
+  const selectBranch = (rootId: string) => {
+    setSelectedNodeIds(branchNodeIds(rootId));
+    setSelectedEdgeIds([]);
+    setSelectedSectionId(null);
+    setSelectedProjectReferenceId(null);
+    setSelectedTimelineId(null);
+    setContextMenu(null);
+  };
+  const focusBranch = (rootId: string) => {
+    const ids = branchNodeIds(rootId);
+    if (ids.length === 0) return;
+    setFocusedBranchRootId(rootId);
+    setSelectedNodeIds([rootId]);
+    setSelectedEdgeIds([]);
+    setSelectedSectionId(null);
+    setSelectedProjectReferenceId(null);
+    setSelectedTimelineId(null);
+    setContextMenu(null);
+    requestAnimationFrame(() => fit(ids.map((id) => document.nodes[id]).filter((node): node is MindMapNode => Boolean(node))));
+    restoreCanvasFocus();
+  };
+  const exitBranchFocus = () => {
+    setFocusedBranchRootId(null);
+    requestAnimationFrame(() => {
+      const next = fitMindMapDocument(document, size);
+      if (next) updateCamera(next, true);
+    });
+    restoreCanvasFocus();
+  };
   const runTreeLayout = useCallback(async () => {
     const rootId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
     if (rootId) {
@@ -2711,7 +2850,7 @@ export default function MindMapCanvas({
     }
     if (modifier && event.key.toLowerCase() === 'a') {
       event.preventDefault();
-      setSelectedNodeIds(Object.keys(document.nodes));
+      setSelectedNodeIds(Object.keys(canvasNodes));
       setSelectedEdgeIds([]);
       setSelectedSectionId(null);
       setSelectedProjectReferenceId(null);
@@ -2743,6 +2882,7 @@ export default function MindMapCanvas({
     }
     if (event.key === 'Escape') {
       event.preventDefault();
+      if (focusedBranchRootId) exitBranchFocus();
       setContextMenu(null);
       setInteraction(null);
       setSelectedNodeIds([]);
@@ -2858,10 +2998,10 @@ export default function MindMapCanvas({
   const normalizedSearch = commandSearch.trim().toLocaleLowerCase();
   const searchResults = normalizedSearch
     ? [
-        ...Object.values(document.nodes)
+        ...Object.values(renderDocument.nodes)
           .filter((node) => node.text.toLocaleLowerCase().includes(normalizedSearch))
           .map((node) => ({ kind: 'node' as const, id: node.id, label: node.text || '空节点', x: node.x, y: node.y })),
-        ...Object.values(document.edges)
+        ...Object.values(renderDocument.edges)
           .filter((edge) => edge.label.toLocaleLowerCase().includes(normalizedSearch))
           .map((edge) => {
             const sourceRef = edgeSourceRef(edge);
@@ -2978,6 +3118,12 @@ export default function MindMapCanvas({
           {connectionSource
             ? '已选择起点，请点击终点对象；按 Esc 取消'
             : '连线模式：先点击起点对象，再点击终点对象'}
+        </div>
+      )}
+      {focusedBranchRootId && focusedBranchNodeIds && document.nodes[focusedBranchRootId] && (
+        <div className={styles.branchFocusHint} role="status" data-testid="mind-map-branch-focus" style={{ top: connectionMode ? 104 : 60 }}>
+          <span>正在聚焦：{document.nodes[focusedBranchRootId].text || '空节点'} · {focusedBranchNodeIds.size} 个节点</span>
+          <button type="button" aria-label="退出分支聚焦" onClick={exitBranchFocus}>退出</button>
         </div>
       )}
       {richPreviews.map(({ node, html }) => {
@@ -3509,6 +3655,8 @@ export default function MindMapCanvas({
                 createSiblingNode(contextMenu.nodeId!);
                 setContextMenu(null);
               }}>创建同级节点</button>
+              <button type="button" role="menuitem" onClick={() => selectBranch(contextMenu.nodeId!)}>选择整个分支</button>
+              <button type="button" role="menuitem" onClick={() => focusBranch(contextMenu.nodeId!)}>仅查看此分支</button>
               <button type="button" role="menuitem" onClick={() => {
                 const nodeId = contextMenu.nodeId!;
                 const candidate = window.prompt('输入目标父节点名称');
@@ -3551,6 +3699,10 @@ export default function MindMapCanvas({
           )}
           {!contextMenu.projectReferenceId && !contextMenu.nodeId && !contextMenu.edgeId && (
             <>
+              {focusedBranchRootId && <button type="button" role="menuitem" onClick={() => {
+                exitBranchFocus();
+                setContextMenu(null);
+              }}>退出分支聚焦</button>}
               <button type="button" role="menuitem" onClick={() => {
                 setEditing({
                   nodeId: null,
@@ -3674,9 +3826,12 @@ export default function MindMapCanvas({
             if (event.key === 'Escape') {
               event.preventDefault();
               cancelEditing(true);
+            } else if (event.key === 'Tab' && !composing.current) {
+              event.preventDefault();
+              commitEditing(false, 'child');
             } else if (event.key === 'Enter' && !event.shiftKey && !composing.current) {
               event.preventDefault();
-              commitEditing(true);
+              commitEditing(false, 'sibling');
             }
           }}
         />

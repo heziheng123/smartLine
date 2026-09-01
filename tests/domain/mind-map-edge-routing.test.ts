@@ -22,9 +22,18 @@ test('relation routing updates when a connected node is moved', () => {
 });
 
 test('hierarchy router follows layout direction and arrows follow the target tangent', () => {
-  const route = buildEdgeRoute(source, { x: 120, y: 300, width: 100, height: 40 }, { kind: 'hierarchy', hierarchyDirection: 'top-bottom' });
-  assert.deepEqual([route.sourceSide, route.targetSide], ['bottom', 'top']);
-  assert.ok(routeTargetTangent(route).y > 0);
+  const target = { x: 120, y: 300, width: 100, height: 40 };
+  const directions = {
+    'left-right': ['right', 'left'],
+    'right-left': ['left', 'right'],
+    'top-bottom': ['bottom', 'top'],
+    'bottom-top': ['top', 'bottom'],
+  } as const;
+  for (const [direction, sides] of Object.entries(directions)) {
+    const route = buildEdgeRoute(source, target, { kind: 'hierarchy', hierarchyDirection: direction as keyof typeof directions });
+    assert.deepEqual([route.sourceSide, route.targetSide], sides);
+  }
+  assert.ok(routeTargetTangent(buildEdgeRoute(source, target, { kind: 'hierarchy', hierarchyDirection: 'top-bottom' })).y > 0);
 });
 
 test('new relation edges retain the weak, arrowless default semantics', () => {

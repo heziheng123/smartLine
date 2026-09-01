@@ -26,30 +26,92 @@ const addNode = async (page: Page, x: number, y: number, text: string) => {
   await canvas.dblclick({ position: { x, y } });
   await page.getByLabel('新节点文本').fill(text);
   await page.getByLabel('新节点文本').press('Enter');
+  await expect(page.getByLabel('新节点文本')).toHaveValue('');
+  await page.getByLabel('新节点文本').press('Escape');
 };
 
-test('Tab creates a child and Enter creates its sibling as atomic graph commands', async ({ page }) => {
+test('the node editor continuously creates children and siblings as atomic graph commands', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
   await addNode(page, 260, 240, '根节点');
   await canvas.click({ position: { x: 260, y: 240 } });
 
+  const canvasBeforeChildPreview = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL());
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('新节点文本')).toBeVisible();
+  await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).not.toBe(canvasBeforeChildPreview);
+  await expect.poll(async () => Object.keys((await graphState(page)).document?.edges ?? {}).length).toBe(0);
   await page.getByLabel('新节点文本').fill('子节点');
+  const canvasBeforeSiblingPreview = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL());
   await page.getByLabel('新节点文本').press('Enter');
+  await expect(page.getByLabel('新节点文本')).toHaveValue('');
+  await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).not.toBe(canvasBeforeSiblingPreview);
   await expect.poll(async () => Object.keys((await graphState(page)).document?.edges ?? {}).length).toBe(1);
 
-  await page.keyboard.press('Enter');
-  await expect(page.getByLabel('新节点文本')).toBeVisible();
   await page.getByLabel('新节点文本').fill('同级节点');
+  const canvasBeforeGrandchildPreview = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL());
+  await page.getByLabel('新节点文本').press('Tab');
+  await expect(page.getByLabel('新节点文本')).toHaveValue('');
+  await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).not.toBe(canvasBeforeGrandchildPreview);
+  await expect.poll(async () => Object.keys((await graphState(page)).document?.edges ?? {}).length).toBe(2);
+  await page.getByLabel('新节点文本').fill('孙节点');
+  await page.getByLabel('新节点文本').press('Shift+Enter');
+  await expect(page.getByLabel('新节点文本')).toHaveValue('孙节点\n');
   await page.getByLabel('新节点文本').press('Enter');
+  await expect.poll(async () => Object.keys((await graphState(page)).document?.edges ?? {}).length).toBe(3);
+  await page.getByLabel('新节点文本').press('Escape');
 
   const state = await graphState(page);
-  expect(Object.keys(state.document?.nodes ?? {})).toHaveLength(3);
-  expect(Object.keys(state.document?.edges ?? {})).toHaveLength(2);
+  expect(Object.keys(state.document?.nodes ?? {})).toHaveLength(4);
+  expect(Object.keys(state.document?.edges ?? {})).toHaveLength(3);
   const edges = Object.values(state.document?.edges ?? {});
   expect(edges[0].sourceId).toBe(edges[1].sourceId);
+  expect(edges[2].sourceId).toBe(edges[1].targetId);
+});
+
+test('tree edge previews follow every layout direction and remain visible after zooming', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await addNode(page, 360, 280, '方向根节点');
+  await canvas.click({ position: { x: 360, y: 280 } });
+
+  for (const direction of [
+    { label: '左 → 右', axis: 'x', sign: 1 },
+    { label: '右 → 左', axis: 'x', sign: -1 },
+    { label: '上 → 下', axis: 'y', sign: 1 },
+    { label: '下 → 上', axis: 'y', sign: -1 },
+  ] as const) {
+    await page.getByTestId('mind-map-layout-menu').click();
+    await page.getByRole('menuitem', { name: direction.label, exact: true }).click();
+    await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('布局');
+    await canvas.evaluate((element) => (element.parentElement as HTMLElement).focus());
+    const before = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL());
+    await page.keyboard.press('Tab');
+    const editor = page.getByLabel('新节点文本');
+    await expect(editor).toBeVisible();
+    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).not.toBe(before);
+
+    const [editorBox, canvasBox, state] = await Promise.all([editor.boundingBox(), canvas.boundingBox(), graphState(page)]);
+    expect(editorBox && canvasBox && state.document).toBeTruthy();
+    const root = Object.values(state.document!.nodes)[0];
+    const rootView = {
+      x: canvasBox!.x + root.x * state.document!.viewport.scale + state.document!.viewport.x,
+      y: canvasBox!.y + root.y * state.document!.viewport.scale + state.document!.viewport.y,
+    };
+    const editorCenter = { x: editorBox!.x + editorBox!.width / 2, y: editorBox!.y + editorBox!.height / 2 };
+    expect(Math.sign(editorCenter[direction.axis] - rootView[direction.axis])).toBe(direction.sign);
+    await editor.press('Escape');
+  }
+
+  await canvas.evaluate((element) => (element.parentElement as HTMLElement).focus());
+  await page.keyboard.press('-');
+  await page.keyboard.press('-');
+  await expect(page.locator('footer').getByText(/%/)).not.toHaveText('100%');
+  const beforeZoomedPreview = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL());
+  await page.keyboard.press('Tab');
+  await expect(page.getByLabel('新节点文本')).toBeVisible();
+  await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).not.toBe(beforeZoomedPreview);
+  await page.getByLabel('新节点文本').press('Escape');
 });
 
 test('the node + action creates a tree child without a keyboard', async ({ page }) => {
@@ -84,6 +146,59 @@ test('the visible collapse control works before its node is selected', async ({ 
   const [rootId, root] = rootEntry! as [string, { x: number; y: number; width: number }];
   await canvas.click({ position: { x: root.x - root.width / 2 - 14, y: root.y } });
   await expect.poll(async () => (await graphState(page)).document?.nodes[rootId]?.collapsed).toBe(true);
+});
+
+test('a branch can be selected as a whole and focused without changing the document', async ({ page }) => {
+  await openMindMap(page);
+  const imported = {
+    kind: 'smart-line-mind-map',
+    schemaVersion: 1,
+    id: 'branch-focus-map',
+    title: '分支聚焦测试',
+    createdAt: 1,
+    updatedAt: 1,
+    nodes: {
+      root: { id: 'root', type: 'text', x: 240, y: 220, text: '目标分支' },
+      child: { id: 'child', type: 'text', x: 480, y: 180, text: '分支子节点' },
+      grandchild: { id: 'grandchild', type: 'text', x: 720, y: 180, text: '分支孙节点' },
+      other: { id: 'other', type: 'text', x: 240, y: 480, text: '其他根节点' },
+    },
+    edges: {
+      childEdge: { id: 'childEdge', sourceId: 'root', targetId: 'child', relationship: 'tree' },
+      grandchildEdge: { id: 'grandchildEdge', sourceId: 'child', targetId: 'grandchild', relationship: 'tree' },
+    },
+    zOrder: ['root', 'child', 'grandchild', 'other'],
+    viewport: { x: 0, y: 0, scale: 1 },
+    settings: { grid: 'dots', background: '#f9f9fb', selectionMode: 'contain' },
+  };
+  await page.getByLabel('选择思维导图 JSON 文件').setInputFiles({
+    name: 'branch-focus-map.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(imported)),
+  });
+  await expect.poll(async () => Object.keys((await graphState(page)).document?.nodes ?? {}).length).toBe(4);
+
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.click({ button: 'right', position: { x: 240, y: 220 } });
+  await page.getByRole('menuitem', { name: '选择整个分支' }).click();
+  await expect(page.getByLabel('多选排列')).toContainText('排列 3 个节点');
+
+  await page.getByLabel('关闭属性面板').click();
+  await canvas.click({ button: 'right', position: { x: 240, y: 220 } });
+  await page.getByRole('menuitem', { name: '仅查看此分支' }).click();
+  await expect(page.getByTestId('mind-map-branch-focus')).toContainText('目标分支 · 3 个节点');
+
+  await page.getByRole('button', { name: '搜索或命令' }).click();
+  await page.getByLabel('搜索思维导图').fill('其他根节点');
+  await expect(page.getByRole('option', { name: /其他根节点/ })).toHaveCount(0);
+  await page.getByLabel('搜索思维导图').press('Escape');
+
+  await page.getByLabel('退出分支聚焦').click();
+  await expect(page.getByTestId('mind-map-branch-focus')).toHaveCount(0);
+  await page.getByRole('button', { name: '搜索或命令' }).click();
+  await page.getByLabel('搜索思维导图').fill('其他根节点');
+  await expect(page.getByRole('option', { name: /其他根节点/ })).toBeVisible();
+  expect(Object.keys((await graphState(page)).document?.nodes ?? {})).toHaveLength(4);
 });
 
 test('JSON import, layout, search, JSON export and PNG export stay inside the page', async ({ page }) => {

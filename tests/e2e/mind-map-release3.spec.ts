@@ -309,12 +309,10 @@ test('two browser contexts converge through the independent document room', asyn
         };
       }).__mindMapLiveSync!.session;
       const snapshot = session.root.toJSON();
-      const fileKey = Object.keys(snapshot).find((key) => (
-        Boolean(snapshot[key] && typeof snapshot[key] === 'object'
-          && String((snapshot[key] as { id?: string }).id).startsWith('fl_'))
-      ));
-      if (!fileKey) throw new Error('第二个浏览器没有收到 LiveFile 引用。');
-      return session.room.getFileUrl(session.root.get(fileKey));
+      const fileKey = Object.keys(snapshot).find((key) => key.startsWith('asset:'));
+      const file = fileKey ? session.root.get(fileKey) : null;
+      if (!file) throw new Error('第二个浏览器没有收到 LiveFile 引用。');
+      return session.room.getFileUrl(file);
     });
     await second.route('**/api/mind-map-files/**', async (route) => {
       const response = await request.get(liveFileUrl);

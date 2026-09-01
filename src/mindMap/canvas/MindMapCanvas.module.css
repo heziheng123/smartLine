@@ -77,6 +77,35 @@
   line-height: 1.35;
 }
 
+.branchFocusHint {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: var(--mm-space-sm);
+  padding: 4px 5px 4px var(--mm-space-md);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-panel);
+  color: var(--mm-text);
+  background: var(--mm-surface);
+  box-shadow: var(--mm-shadow-floating);
+  font-size: var(--mm-font-small);
+  transform: translateX(-50%);
+}
+
+.branchFocusHint button {
+  min-height: 26px;
+  padding: 0 var(--mm-space-sm);
+  border: 0;
+  border-radius: var(--mm-radius-control);
+  color: var(--mm-accent);
+  background: var(--mm-surface-muted);
+  cursor: pointer;
+}
+
 .projectReference {
   position: absolute;
   z-index: 3;
@@ -826,6 +855,8 @@
   z-index: 8;
   display: grid;
   width: 178px;
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
   gap: 2px;
   padding: var(--mm-space-xs);
   border: 1px solid var(--mm-border);

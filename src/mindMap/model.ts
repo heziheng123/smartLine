@@ -950,7 +950,7 @@ export function duplicateMindMapDocument(
     const targetRef = remapEndpoint(edgeTargetRef(edge));
     if (!sourceRef || !targetRef) continue;
     const id = createMindMapId();
-    edges[id] = { ...edge, id, controlPoints: edge.controlPoints.map((point) => ({ ...point })), source: sourceRef, target: targetRef, sourceId: sourceRef.id, targetId: targetRef.id, createdAt: now, updatedAt: now };
+    edges[id] = { ...edge, id, controlPoints: (edge.controlPoints ?? []).map((point) => ({ ...point })), source: sourceRef, target: targetRef, sourceId: sourceRef.id, targetId: targetRef.id, createdAt: now, updatedAt: now };
   }
   const timelineSections: Record<string, TimelineSection> = {};
   for (const timeline of Object.values(source.timelineSections)) {
