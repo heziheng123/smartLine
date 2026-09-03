@@ -20,7 +20,10 @@ import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, activeLifeMapItems, normalizeLifeMapData, validateLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
 import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
-import { setWorkspaceSystemMutationSuppressed } from './workspaceSyncQueueCore';
+import {
+  runWorkspaceMutationWithOrigin,
+  type WorkspaceMutationOrigin,
+} from './workspaceMutationOrigin';
 
 export { WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
 const snapshotStorage = createScopedStorage('workspace_snapshots');
@@ -740,23 +743,21 @@ export async function getSnapshotStorageStats(): Promise<SnapshotStorageStats> {
 
 export async function restoreWorkspaceBackup(
   backup: WorkspaceBackup,
-  options: { suppressSyncJournal?: boolean } = {},
+  options: { suppressSyncJournal?: boolean; origin?: WorkspaceMutationOrigin } = {},
 ): Promise<void> {
   await createLocalSnapshot('恢复完整工作区前');
   const before = createWorkspaceBackup();
   const apply = async (source: WorkspaceBackup) => {
     const safe = deepClone(source);
-    if (options.suppressSyncJournal) setWorkspaceSystemMutationSuppressed(true);
-    try {
+    const origin = options.origin ?? (options.suppressSyncJournal ? 'remote-hydration' : 'restore');
+    runWorkspaceMutationWithOrigin(origin, () => {
       useTimelineStore.getState().replaceData(safe.timeline);
       useLifeMapStore.getState().replaceLifeMapData(safe.lifeMap);
       useEbbStore.getState().replaceEbbData(safe.ebb);
       useGraphStore.getState().replaceGraphData(safe.graph);
       useDailyScheduleStore.getState().replaceSchedules(safe.daily.schedules);
       useDailyScheduleStore.getState().replaceRetrospectives(safe.daily.retrospectives);
-    } finally {
-      if (options.suppressSyncJournal) setWorkspaceSystemMutationSuppressed(false);
-    }
+    });
     await Promise.all([
       persistTimelineData({
         tasks: useTimelineStore.getState().tasks,

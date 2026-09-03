@@ -258,7 +258,7 @@ export async function createWorkspaceAuditReport(
     deduplicatedFindings.push({ severity: 'warning', code: 'pending-sync', message: `当前设备仍有 ${sync.pendingFieldCount} 个字段等待补传。` });
   }
   if (sync.activeConflictCount > 0) {
-    deduplicatedFindings.push({ severity: 'blocker', code: 'active-conflict', message: `当前设备仍有 ${sync.activeConflictCount} 个待处理同步冲突。` });
+    deduplicatedFindings.push({ severity: 'blocker', code: 'active-conflict', message: `当前设备仍有 ${sync.activeConflictCount} 个同步分支等待自动归档。` });
   }
 
   const finalBlockerCount = deduplicatedFindings.filter((item) => item.severity === 'blocker').length;

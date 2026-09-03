@@ -118,6 +118,37 @@ export function createScopedStorage(storeName: string) {
   };
 }
 
+export interface ScopedStorageWrite {
+  storeName: string;
+  key: IDBValidKey;
+  value: unknown;
+}
+
+/** Writes already-computed values to multiple stores in one IndexedDB transaction. */
+export async function setScopedStorageItemsAtomically(writes: ScopedStorageWrite[]): Promise<void> {
+  if (typeof indexedDB === 'undefined') throw new Error('IndexedDB 不可用，已停止原子写入。');
+  for (const write of writes) storageSchemaStores.add(write.storeName);
+  storageSchemaReady = null;
+  await ensureStorageSchema();
+  const database = await openCurrentDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(
+        [...new Set(writes.map((write) => write.storeName))],
+        'readwrite',
+      );
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB 原子事务失败。'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB 原子事务已回滚。'));
+      for (const write of writes) {
+        transaction.objectStore(write.storeName).put(write.value, write.key);
+      }
+    });
+  } finally {
+    database.close();
+  }
+}
+
 /**
  * Creates a dataset in its own IndexedDB database. Use this for domains that
  * must remain physically independent from the main application database.

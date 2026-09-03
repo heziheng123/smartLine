@@ -109,6 +109,22 @@ export function materializeWorkspaceEntityRoot(root: Record<string, unknown>): R
   return result;
 }
 
+export function extractWorkspaceEntitySidecar(root: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(root).filter(([key]) => key.startsWith(ENTITY_KEY_PREFIX)));
+}
+
+/** Both schema-8 projections must contain the submitted value before dequeue. */
+export function workspaceFieldsMatchEntityProjection(
+  rawRoot: Record<string, unknown>,
+  fields: Partial<Record<WorkspaceStorageField, unknown>>,
+): boolean {
+  const materialized = materializeWorkspaceEntityRoot(rawRoot);
+  return Object.entries(fields).every(([field, value]) => (
+    workspaceValuesEqual(rawRoot[field], value)
+    && workspaceValuesEqual(materialized[field], value)
+  ));
+}
+
 export function buildWorkspaceEntityWrites(
   before: Record<string, unknown>,
   fields: Record<string, unknown>,
