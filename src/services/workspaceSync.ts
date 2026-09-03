@@ -22,10 +22,11 @@ import {
   WORKSPACE_QUEUE_EVENT,
   WORKSPACE_QUEUE_ERROR_EVENT,
   acknowledgeAppliedWorkspaceSync,
+  acknowledgeWorkspaceSyncFields,
   clearPendingWorkspaceSync,
   getPendingWorkspaceSyncToken,
   listWorkspaceConflicts,
-  preserveWorkspaceConflict,
+  markWorkspaceConflictResolved,
   readPendingWorkspaceSync,
   setWorkspaceConnectionMutationCapture,
   setWorkspaceQueueSuppressed,
@@ -48,9 +49,10 @@ import {
   findWorkspaceFieldMismatches,
   hasWorkspaceFieldSnapshotChanged,
   hashWorkspaceBackup,
+  hashWorkspaceValue,
   isBundledDemoWorkspace,
   mergePendingWorkspaceMigrationFields,
-  mergeWorkspaceFieldChanges,
+  mergeWorkspaceFieldChangesDetailed,
   shouldBackfillLegacyLifeMapSync,
   withTimeout,
   workspaceHasUserContent,
@@ -71,6 +73,18 @@ import {
   type WorkspaceSyncActivity,
   type WorkspaceSyncRuntimePhase,
 } from './workspaceSyncRuntime';
+import {
+  buildWorkspaceAlternateRecords,
+  persistWorkspaceAlternates,
+  verifyWorkspaceAlternatesPersisted,
+} from './workspaceAlternateHistory';
+import {
+  confirmTimelineBlocksRepair,
+  createTimelineBlocksRepairPlan,
+  executePreparedTimelineBlocksRepair,
+  prepareTimelineBlocksRepair,
+  timelineBlocksNeedRepair,
+} from './workspaceTimelineRepair';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 export {
   readWorkspaceSyncRuntimeState,
@@ -1207,7 +1221,7 @@ function startWorkspaceVerificationMonitor(roomId: string): void {
         (outcome) => runtimeActivity.finish(
           outcome === 'conflict' ? 'conflict' : outcome === 'pending' ? 'idle' : 'connected',
           outcome === 'conflict'
-            ? '云端校验完成，但仍有需要用户处理的同步冲突。'
+            ? '云端校验完成，但修复或自动归档门禁尚未通过。'
             : outcome === 'pending'
               ? '本机仍有修改等待补传。'
               : '周期性云端一致性校验已完成。',
@@ -1307,7 +1321,7 @@ async function ensureUnifiedWorkspaceConvergence(targetRoomId: string): Promise<
 
     // A populated cloud field is authoritative once the durable local queue is
     // empty. Rehydrate stale Zustand slices from that exact cloud snapshot.
-    applyWorkspaceFields(remoteFields);
+    applyWorkspaceFields(remoteFields, 'convergence');
     await Promise.resolve();
 
     // Normalizers can repair legacy values (for example group task copies)
@@ -1414,7 +1428,9 @@ export function flushWorkspaceQueue(): Promise<{ applied: number; conflict: bool
       if (queueFlushInFlight === operation) queueFlushInFlight = null;
       runtimeActivity?.finish(
         result.conflict ? 'conflict' : 'connected',
-        result.conflict ? '检测到需要用户处理的同步冲突。' : '本机待同步修改已由云端确认。',
+        result.conflict
+          ? '安全字段已同步，修复或自动归档门禁未通过的字段保持暂停。'
+          : '本机待同步修改已由云端确认。',
       );
     },
     (error) => {
@@ -1426,38 +1442,180 @@ export function flushWorkspaceQueue(): Promise<{ applied: number; conflict: bool
 }
 
 async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied: number; conflict: boolean }> {
-  const pending = await readPendingWorkspaceSync();
-  if (!pending) return { applied: 0, conflict: false };
   const room = useTimelineStore.getState().liveblocks?.room;
   if (!room || room.getStatus() !== 'connected') return { applied: 0, conflict: false };
   const { root } = await room.getStorage();
+  let timelineRepairBlocked = false;
+  try {
+    const localBeforeRepair = createWorkspaceBackup();
+    const diagnosticPlan = await createTimelineBlocksRepairPlan(localBeforeRepair);
+    if (timelineBlocksNeedRepair(diagnosticPlan)) {
+      const rawRemoteBeforeRepair = root.toJSON() as Record<string, unknown>;
+      const remoteBeforeRepair = materializeWorkspaceEntityRoot(rawRemoteBeforeRepair);
+      const remoteMatchesSource = (
+        (!Object.prototype.hasOwnProperty.call(remoteBeforeRepair, 'tasks')
+          || workspaceValuesEqual(remoteBeforeRepair.tasks, localBeforeRepair.timeline.tasks))
+        && (!Object.prototype.hasOwnProperty.call(remoteBeforeRepair, 'groups')
+          || workspaceValuesEqual(remoteBeforeRepair.groups, localBeforeRepair.timeline.groups))
+      );
+      if (!remoteMatchesSource) {
+        throw new Error('timeline.blocks 修复源与云端当前值不同，已暂停该字段并保留双方数据。');
+      }
+      const prepared = await prepareTimelineBlocksRepair({
+        workspaceId: room.id,
+        local: localBeforeRepair,
+        remoteRoot: rawRemoteBeforeRepair,
+      });
+      const repaired = await executePreparedTimelineBlocksRepair(localBeforeRepair, prepared);
+      const repairRevision = 'schema8-repair:' + prepared.plan.repairId;
+      const repairFields = {
+        tasks: repaired.backup.timeline.tasks,
+        groups: repaired.backup.timeline.groups,
+      };
+      const entityWrites = buildWorkspaceEntityWrites(
+        remoteBeforeRepair,
+        repairFields,
+        repairRevision,
+      );
+      const remoteMetadata = isJsonRecord(remoteBeforeRepair.metadata) ? remoteBeforeRepair.metadata : {};
+      room.batch(() => {
+        root.set('tasks', repairFields.tasks as unknown as Json);
+        root.set('groups', repairFields.groups as unknown as Json);
+        for (const [key, value] of Object.entries(entityWrites)) root.set(key, value as unknown as Json);
+        root.set('metadata', workspaceProtocolMetadata({
+          ...remoteMetadata,
+          queueRevision: repairRevision,
+        }));
+      });
+      await waitForRoomStorageSynchronized(room);
+      const confirmedRepair = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
+      const confirmedMetadata = isJsonRecord(confirmedRepair.metadata) ? confirmedRepair.metadata : {};
+      const confirmedHash = await hashWorkspaceValue(
+        (confirmedRepair.tasks as Array<{ id: string; blocks: unknown[] }>).map((task) => ({
+          id: task.id,
+          blocks: task.blocks,
+        })),
+      );
+      if (!workspaceValuesEqual(confirmedRepair.tasks, repairFields.tasks)
+        || !workspaceValuesEqual(confirmedRepair.groups, repairFields.groups)
+        || confirmedMetadata.queueRevision !== repairRevision
+        || confirmedHash !== repaired.resultHash) {
+        throw new Error('timeline.blocks 修复云端回读校验失败，已保留修复记录并停止出队。');
+      }
+      await confirmTimelineBlocksRepair(prepared.plan.repairId, confirmedHash);
+      const pendingBeforeRepair = await readPendingWorkspaceSync();
+      if (pendingBeforeRepair) {
+        const repairedPendingFields = (['tasks', 'groups'] as WorkspaceStorageField[])
+          .filter((field) => Object.prototype.hasOwnProperty.call(pendingBeforeRepair.fields, field));
+        if (repairedPendingFields.length
+          && !await acknowledgeWorkspaceSyncFields(pendingBeforeRepair, repairedPendingFields)) {
+          throw new Error('timeline.blocks 修复后队列版本已变化，已保留新队列。');
+        }
+      }
+    }
+  } catch (error) {
+    timelineRepairBlocked = true;
+    console.warn('[workspace-repair] timeline.blocks 修复暂停：', error);
+  }
+  let recoveredApplied = 0;
+  const activeConflicts = (await listWorkspaceConflicts()).filter((conflict) => conflict.status !== 'resolved');
+  for (const conflict of activeConflicts) {
+    const conflictKeys = Object.keys(conflict.pending.fields) as WorkspaceStorageField[];
+    if (conflictKeys.some((key) =>
+      !Object.prototype.hasOwnProperty.call(conflict.pending.baseFields ?? {}, key)
+      && !(conflict.pending.forceFields ?? []).includes(key))) {
+      continue;
+    }
+    const currentRemote = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
+    const currentMetadata = isJsonRecord(currentRemote.metadata) ? currentRemote.metadata : {};
+    const resolved = await mergeWorkspaceFieldChangesDetailed(
+      conflict.pending.fields,
+      conflict.pending.baseFields ?? {},
+      currentRemote,
+    );
+    for (const key of conflict.pending.forceFields ?? []) {
+      if (Object.prototype.hasOwnProperty.call(conflict.pending.fields, key)) {
+        resolved.fields[key] = conflict.pending.fields[key];
+        resolved.alternates = resolved.alternates.filter((alternate) =>
+          alternate.path.split(/[.[]/, 1)[0] !== key);
+      }
+    }
+    const alternateRecords = buildWorkspaceAlternateRecords(
+      conflict.pending,
+      resolved.alternates,
+      typeof currentMetadata.queueRevision === 'string' ? currentMetadata.queueRevision : undefined,
+    );
+    await persistWorkspaceAlternates(alternateRecords);
+    const recoveryIds = alternateRecords.map((record) => record.recoveryId);
+    const submittedHash = await hashWorkspaceValue(resolved.fields);
+    const resolutionRevision = 'schema8-auto-resolution:' + conflict.id;
+    const entityWrites = buildWorkspaceEntityWrites(
+      currentRemote,
+      resolved.fields,
+      resolutionRevision,
+      conflict.pending.updatedAt,
+    );
+    const latestRemote = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
+    if (hasWorkspaceFieldSnapshotChanged(
+      currentRemote,
+      latestRemote,
+      [...conflictKeys, 'metadata'],
+    )) {
+      throw new Error('旧冲突裁决期间云端已变化，已保留原冲突记录等待重试。');
+    }
+    room.batch(() => {
+      for (const [key, value] of Object.entries(resolved.fields)) root.set(key, value as Json);
+      for (const [key, value] of Object.entries(entityWrites)) root.set(key, value as unknown as Json);
+      root.set('metadata', workspaceProtocolMetadata({
+        ...currentMetadata,
+        queueRevision: resolutionRevision,
+      }));
+    });
+    await waitForRoomStorageSynchronized(room);
+    const confirmed = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
+    const confirmedMetadata = isJsonRecord(confirmed.metadata) ? confirmed.metadata : {};
+    const confirmedFields = Object.fromEntries(conflictKeys.map((key) => [key, confirmed[key]]));
+    if (!conflictKeys.every((key) => workspaceValuesEqual(confirmed[key], resolved.fields[key]))
+      || await hashWorkspaceValue(confirmedFields) !== submittedHash
+      || confirmedMetadata.queueRevision !== resolutionRevision
+      || !await verifyWorkspaceAlternatesPersisted(recoveryIds)) {
+      throw new Error('旧冲突自动归档未能通过云端回读，已保留原冲突记录。');
+    }
+    applyWorkspaceFields(
+      resolved.fields as Partial<Record<WorkspaceStorageField, unknown>>,
+      'remote-hydration',
+    );
+    await markWorkspaceConflictResolved(conflict.id, 'current');
+    recoveredApplied += conflictKeys.length;
+  }
+  const unresolvedActiveConflict = (await listWorkspaceConflicts())
+    .some((conflict) => conflict.status !== 'resolved');
+
+  const pending = await readPendingWorkspaceSync();
+  if (!pending) {
+    return {
+      applied: recoveredApplied,
+      conflict: timelineRepairBlocked || unresolvedActiveConflict,
+    };
+  }
   const rootJson = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
   const pendingKeys = Object.keys(pending.fields) as WorkspaceStorageField[];
   const forcedKeys = new Set(pending.forceFields ?? []);
-  const protectedKeys = pendingKeys.filter((key) => !forcedKeys.has(key));
   const metadata = isJsonRecord(rootJson.metadata) ? rootJson.metadata : {};
   assertWorkspaceSchemaSupported(rootJson, WORKSPACE_SCHEMA_VERSION);
-  const remoteUpdatedAt = typeof metadata.updatedAt === 'string' ? metadata.updatedAt : '';
   const remoteDeviceId = typeof metadata.deviceId === 'string' ? metadata.deviceId : '';
-  const merged = mergeWorkspaceFieldChanges(
-    pending.fields,
-    pending.baseFields ?? {},
-    rootJson,
-  );
   const legacyFields = Object.fromEntries(
     Object.entries(pending.fields).filter(([key]) =>
       !Object.prototype.hasOwnProperty.call(pending.baseFields ?? {}, key),
     ),
   );
-  const fieldConflicts = [
-    ...merged.conflicts,
-    ...await findWorkspaceFieldConflicts(
-    legacyFields,
-    pending.baseHashes ?? {},
-    rootJson,
-    ),
-  ].filter((path) => !forcedKeys.has(path.split(/[.[]/, 1)[0] as WorkspaceStorageField));
-  const fieldsWithoutBaseline = protectedKeys.filter((key) => !pending.baseHashes?.[key]);
+  const legacyConflictFields = await findWorkspaceFieldConflicts(
+     legacyFields,
+     pending.baseHashes ?? {},
+     rootJson,
+    );
+  const fieldsWithoutBaseline = pendingKeys.filter((key) =>
+    !forcedKeys.has(key) && !pending.baseHashes?.[key]);
   // A clock-based metadataConflict is unreliable: device clocks can be skewed,
   // and "remoteUpdatedAt > pending.updatedAt" can be false even when the remote
   // legitimately wrote a new field. Instead, conflict if the remote already has
@@ -1470,6 +1628,26 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
     && remoteHasNoBaselineField
     && remoteDeviceId
     && remoteDeviceId !== pending.deviceId;
+  const blockedKeys = new Set<WorkspaceStorageField>([
+    ...legacyConflictFields.map((path) => path.split(/[.[]/, 1)[0] as WorkspaceStorageField),
+    ...(metadataConflict ? fieldsWithoutBaseline : []),
+  ].filter((key) => !forcedKeys.has(key)));
+  if (timelineRepairBlocked) {
+    if (pendingKeys.includes('tasks')) blockedKeys.add('tasks');
+    if (pendingKeys.includes('groups')) blockedKeys.add('groups');
+  }
+  const flushKeys = pendingKeys.filter((key) => !blockedKeys.has(key));
+  const flushFields = Object.fromEntries(flushKeys.map((key) => [key, pending.fields[key]]));
+  const flushBaseFields = Object.fromEntries(flushKeys.flatMap((key) =>
+    Object.prototype.hasOwnProperty.call(pending.baseFields ?? {}, key)
+      ? [[key, pending.baseFields?.[key]]]
+      : []));
+  const merged = await mergeWorkspaceFieldChangesDetailed(flushFields, flushBaseFields, rootJson);
+  for (const key of forcedKeys) {
+    if (flushKeys.includes(key)) merged.fields[key] = pending.fields[key];
+  }
+  merged.alternates = merged.alternates.filter((alternate) =>
+    !forcedKeys.has(alternate.path.split(/[.[]/, 1)[0] as WorkspaceStorageField));
   // Conflict hashing awaits Web Crypto and gives newer user actions time to
   // enter the queue. Re-read immediately before the synchronous room batch;
   // if the queue revision changed, restart with the newest snapshot instead
@@ -1495,19 +1673,21 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
     return flushWorkspaceQueueInternal(restartCount + 1);
   }
 
-  if (fieldConflicts.length > 0 || metadataConflict) {
-    const remoteFields = Object.fromEntries(pendingKeys.map((key) => [key, rootJson[key]])) as Partial<Record<WorkspaceStorageField, unknown>>;
-    const conflictingFields = [...new Set(fieldConflicts.map((path) => path.split(/[.[]/, 1)[0] as WorkspaceStorageField))];
-    await preserveWorkspaceConflict(pending, remoteUpdatedAt, remoteFields, metadataConflict ? protectedKeys : conflictingFields);
-    setWorkspaceSyncRuntimeOutcome('conflict', '检测到两台设备修改了同一数据，已停止自动覆盖。');
-    window.dispatchEvent(new CustomEvent(WORKSPACE_CONFLICT_EVENT));
-    window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
-    return { applied: 0, conflict: true };
+  if (flushKeys.length === 0) {
+    throw new Error('同步暂停：旧队列缺少可恢复的完整 base，已保留原队列且未覆盖云端。');
   }
 
   setWorkspaceQueueSuppressed(true);
   try {
     const queueRevision = getPendingWorkspaceSyncToken(pending);
+    const alternateRecords = buildWorkspaceAlternateRecords(
+      pending,
+      merged.alternates,
+      typeof metadata.queueRevision === 'string' ? metadata.queueRevision : undefined,
+    );
+    await persistWorkspaceAlternates(alternateRecords);
+    const recoveryIds = alternateRecords.map((record) => record.recoveryId);
+    const submittedHash = await hashWorkspaceValue(merged.fields);
     const entityWrites = buildWorkspaceEntityWrites(
       rootJson,
       merged.fields,
@@ -1534,16 +1714,26 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
         const confirmedMetadata = confirmed.metadata && typeof confirmed.metadata === 'object'
           ? confirmed.metadata as Record<string, unknown>
           : {};
-        const fieldsConfirmed = pendingKeys.every((key) => workspaceValuesEqual(confirmed[key], merged.fields[key]));
-        if (!fieldsConfirmed || confirmedMetadata.queueRevision !== queueRevision) {
+        const confirmedFields = Object.fromEntries(flushKeys.map((key) => [key, confirmed[key]]));
+        const fieldsConfirmed = flushKeys.every((key) => workspaceValuesEqual(confirmed[key], merged.fields[key]));
+        const alternatesConfirmed = await verifyWorkspaceAlternatesPersisted(recoveryIds);
+        if (!fieldsConfirmed
+          || await hashWorkspaceValue(confirmedFields) !== submittedHash
+          || confirmedMetadata.queueRevision !== queueRevision
+          || !alternatesConfirmed) {
           throw new Error('云端在本次提交期间发生变化，已保留本机队列并停止清除，请重试同步。');
         }
       },
       // Keep tracking suppressed until the exact queue revision applied above
       // is durably removed. Releasing suppression first lets the Liveblocks
       // echo recreate an identical pending record while IndexedDB is clearing.
-      clear: () => clearPendingWorkspaceSync(pending),
+      clear: async () => {
+        if (!await acknowledgeWorkspaceSyncFields(pending, flushKeys)) {
+          throw new Error('本机队列版本已变化，已保留新版本并停止出队。');
+        }
+      },
     });
+    applyWorkspaceFields(merged.fields as Partial<Record<WorkspaceStorageField, unknown>>, 'remote-hydration');
     // A newer local revision may have landed after the last pre-batch check.
     // Never report a successful flush while a journal entry is still pending:
     // keep suppression active and immediately drain the newest revision. This
@@ -1553,7 +1743,7 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
     if (remaining && await acknowledgeAppliedWorkspaceSync(pending.fields)) {
       remaining = await readPendingWorkspaceSync();
     }
-    if (remaining) {
+    if (remaining && blockedKeys.size === 0) {
       if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) {
         throw Object.assign(new Error('本机仍有新的修改等待同步，请稍后重试。'), { workspaceQueueErrorKind: 'flush_restart_exhausted' as WorkspaceQueueErrorKind });
       }
@@ -1563,7 +1753,10 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
   }
   window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
-  return { applied: Object.keys(merged.fields).length, conflict: false };
+  return {
+    applied: recoveredApplied + Object.keys(merged.fields).length,
+    conflict: timelineRepairBlocked || blockedKeys.size > 0 || unresolvedActiveConflict,
+  };
 }
 
 function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> {

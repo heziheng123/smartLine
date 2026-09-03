@@ -85,7 +85,7 @@ test('tabs without Web Locks serialize simultaneous offline queue writes', async
       await queue.queueWorkspaceFields(
         { tasks: [{ id: 'fallback-lock-task', name: '来自标签页 A' }] },
         { tasks: [] },
-        { bypassSuppression: true },
+        { bypassSuppression: true, origin: 'user' },
       );
     }),
     second.evaluate(async () => {
@@ -93,7 +93,7 @@ test('tabs without Web Locks serialize simultaneous offline queue writes', async
       await queue.queueWorkspaceFields(
         { nodes: [{ id: 'fallback-lock-node', title: '来自标签页 B' }] },
         { nodes: [] },
-        { bypassSuppression: true },
+        { bypassSuppression: true, origin: 'user' },
       );
     }),
   ]);
@@ -117,7 +117,7 @@ test('restoring an old conflict marks only selected fields for one-way cloud rep
         nodes: [{ id: 'unselected-node', title: '暂不处理' }],
       },
       { tasks: [], nodes: [] },
-      { bypassSuppression: true },
+      { bypassSuppression: true, origin: 'user' },
     );
     const pending = await queue.readPendingWorkspaceSync();
     if (!pending) throw new Error('测试冲突队列创建失败');
@@ -139,13 +139,13 @@ test('restoring an old conflict marks only selected fields for one-way cloud rep
   });
 
   expect(result).toEqual({
-    pendingKeys: ['tasks'],
+    pendingKeys: ['nodes', 'tasks'],
     forceFields: ['tasks'],
     remainingKeys: ['nodes'],
   });
 });
 
-test('verification never hides an active conflict; only an explicit choice creates a recovery copy', async ({ page }) => {
+test('ordinary UI never asks users to choose a conflict or delete its recovery copy', async ({ page }) => {
   await waitForApp(page);
 
   const before = await page.evaluate(async () => {
@@ -173,7 +173,7 @@ test('verification never hides an active conflict; only an explicit choice creat
     await queue.queueWorkspaceFields(
       { tasks: [{ id: 'old-recovery-task', name: '旧恢复副本' }] },
       { tasks: currentTasks },
-      { bypassSuppression: true },
+      { bypassSuppression: true, origin: 'user' },
     );
     const pending = await queue.readPendingWorkspaceSync();
     if (!pending) throw new Error('测试冲突队列创建失败');
@@ -191,33 +191,42 @@ test('verification never hides an active conflict; only an explicit choice creat
   await page.getByRole('button', { name: /打开同步与备份/ }).click();
   const dialog = page.getByRole('dialog', { name: '云同步与完整备份' });
   await expect(dialog).toBeVisible({ timeout: 30_000 });
-  const activeConflict = dialog.getByRole('region', { name: '当前同步冲突' });
-  await expect(activeConflict).toContainText('尚未解决的当前冲突');
+  await expect(dialog.getByText(/旧冲突归档待重试 1/)).toBeVisible();
+  await expect(dialog.getByRole('region', { name: '当前同步冲突' })).toHaveCount(0);
   await expect(dialog.getByRole('region', { name: '历史恢复副本' })).toHaveCount(0);
 
-  await activeConflict.getByRole('button', { name: '保留当前版本，标记已解决' }).click();
-  await page.getByRole('alertdialog').getByRole('button', { name: '继续' }).click();
+  await page.evaluate(async () => {
+    const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+    const active = (await queue.listWorkspaceConflicts()).find((item) => item.status !== 'resolved');
+    if (!active) throw new Error('测试活动冲突不存在');
+    await queue.markWorkspaceConflictResolved(active.id, 'current');
+    window.dispatchEvent(new CustomEvent(queue.WORKSPACE_QUEUE_EVENT));
+  });
   await expect(dialog.getByText(/历史副本 1/)).toBeVisible();
-  await expect(dialog.getByRole('region', { name: '当前同步冲突' })).toHaveCount(0);
   const recovery = dialog.getByRole('region', { name: '历史恢复副本' });
   await expect(recovery).toContainText('不代表当前仍有同步故障');
   await expect(recovery.getByRole('checkbox')).toHaveCount(0);
-  await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'connected');
-
-  await recovery.getByRole('button', { name: '当前内容正常，删除此副本' }).click();
-  await page.getByRole('alertdialog').getByRole('button', { name: '确认执行' }).click();
-  await expect(recovery).toHaveCount(0);
+  await expect(recovery.getByRole('button', { name: '需要从旧副本找回数据' })).toBeVisible();
+  await expect(recovery.getByRole('button', { name: /删除/ })).toHaveCount(0);
+  await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'pending');
 
   const after = await page.evaluate(async () => {
     const stores = await import('/src/testing/workspaceStoreAccess.ts');
     const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+    const pending = await queue.readPendingWorkspaceSync();
     return {
       tasks: JSON.stringify(stores.useTimelineStore.getState().tasks),
-      pending: await queue.readPendingWorkspaceSync(),
+      pendingFields: Object.keys(pending?.fields ?? {}),
+      pendingOrigin: pending?.origin,
       conflictCount: (await queue.listWorkspaceConflicts()).length,
     };
   });
-  expect(after).toEqual({ tasks: before, pending: null, conflictCount: 0 });
+  expect(after).toEqual({
+    tasks: before,
+    pendingFields: ['tasks'],
+    pendingOrigin: 'user',
+    conflictCount: 1,
+  });
 });
 
 test('recovering an old field creates a complete snapshot before replacing current data', async ({ page }) => {
@@ -232,7 +241,7 @@ test('recovering an old field creates a complete snapshot before replacing curre
     await queue.queueWorkspaceFields(
       { tasks: [{ id: 'old-recovery-task', name: '需要找回的旧任务' }] },
       { tasks: currentTasks },
-      { bypassSuppression: true },
+      { bypassSuppression: true, origin: 'user' },
     );
     const pending = await queue.readPendingWorkspaceSync();
     if (!pending) throw new Error('测试冲突队列创建失败');

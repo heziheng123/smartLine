@@ -7,6 +7,8 @@ const EXPECTED_STORES = [
   'life_map_data',
   'local-forage-detect-blob-support',
   'timeline_data',
+  'workspace_alternates_v8',
+  'workspace_repairs',
   'workspace_snapshot_chunks',
   'workspace_snapshots',
   'workspace_sync_queue',
@@ -58,7 +60,7 @@ test('simultaneous offline edits from two tabs preserve every changed workspace 
       await queue.queueWorkspaceFields(
         { tasks: [{ id: 'tab-a-task', name: 'tab-a-task' }] },
         { tasks: [] },
-        { bypassSuppression: true },
+        { bypassSuppression: true, origin: 'user' },
       );
     }),
     second.evaluate(async () => {
@@ -66,7 +68,7 @@ test('simultaneous offline edits from two tabs preserve every changed workspace 
       await queue.queueWorkspaceFields(
         { nodes: [{ id: 'tab-b-node', title: 'tab-b-node' }] },
         { nodes: [] },
-        { bypassSuppression: true },
+        { bypassSuppression: true, origin: 'user' },
       );
     }),
   ]);

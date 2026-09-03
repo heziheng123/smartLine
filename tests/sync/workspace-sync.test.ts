@@ -527,7 +527,7 @@ test('a unified connection is successful only after its local queue is fully dra
   );
   assert.throws(
     () => assertWorkspaceQueueDrained({ pendingFieldCount: 0, conflictDetected: true }),
-    /多设备同步冲突/,
+    /自动归档门禁未通过/,
   );
 });
 

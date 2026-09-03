@@ -242,12 +242,17 @@ test('real Liveblocks transport preserves offline disjoint edits and surfaces a 
         return error instanceof Error ? error.message : String(error);
       }
     }, { owner: identity });
-    expect(conflictMessage).toContain('冲突');
+    expect(conflictMessage).toBe('');
     await expect.poll(() => pageB.evaluate(async () => {
       const queue = await import('/src/services/workspaceOfflineQueue.ts');
       return (await queue.listWorkspaceConflicts()).filter((item) => item.status === 'active').length;
+    })).toBe(0);
+    await expect.poll(() => pageB.evaluate(async () => {
+      const history = await import('/src/services/workspaceAlternateHistory.ts');
+      return (await history.listWorkspaceAlternates()).filter((item) => item.path === 'tasks[shared-task].name').length;
     })).toBe(1);
     await expect.poll(() => taskNames(pageA)).toMatchObject({ 'shared-task': 'device-a-conflict' });
+    await expect.poll(() => taskNames(pageB)).toMatchObject({ 'shared-task': 'device-a-conflict' });
   } finally {
     await Promise.all([contextA.close(), contextB.close()]);
   }

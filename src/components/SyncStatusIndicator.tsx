@@ -172,11 +172,13 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
 
   const issueCount = activeConflictCount + errorCount;
   const historicalHint = historicalConflictCount > 0
-    ? `（另有 ${historicalConflictCount} 项历史冲突可清理）`
+    ? `（另有 ${historicalConflictCount} 项可恢复历史）`
     : '';
   const errorHint = queueErrorMessage ?? (
       queueErrorKind === 'storage_write_failed'
         ? '本机写入暂时降级，请勿关闭页面并尽快重试。'
+        : queueErrorKind === 'system_origin_blocked'
+          ? '系统更新已被阻止进入用户同步队列，请导出诊断并重试。'
         : queueErrorKind === 'flush_restart_exhausted'
           ? '本机同步队列持续变化，请稍候片刻。'
           : queueErrorKind === 'cloud_drift_exhausted'
@@ -195,7 +197,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
         ? `已同步 ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
         : indicatorState === 'pending'
           ? `${online ? '等待上传' : '网络离线'}${pendingCount > 0 ? ` · ${pendingCount} 个数据字段待同步` : ''}`
-          : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项需要处理` : ''}${errorHint || runtimeState.error ? ` · ${errorHint ?? runtimeState.error}` : ''}${historicalHint}`;
+          : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项已暂停并保留` : ''}${errorHint || runtimeState.error ? ` · ${errorHint ?? runtimeState.error}` : ''}${historicalHint}`;
 
   return (
     <button

@@ -109,6 +109,10 @@ export function materializeWorkspaceEntityRoot(root: Record<string, unknown>): R
   return result;
 }
 
+export function extractWorkspaceEntitySidecar(root: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(root).filter(([key]) => key.startsWith(ENTITY_KEY_PREFIX)));
+}
+
 export function buildWorkspaceEntityWrites(
   before: Record<string, unknown>,
   fields: Record<string, unknown>,
