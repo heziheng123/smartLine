@@ -13,13 +13,18 @@ import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
 import { createLocalSnapshot } from './workspaceBackup';
 import {
+  canWorkspaceMutationEnqueue,
+  currentWorkspaceMutationOrigin,
+  runWorkspaceMutationWithOrigin,
+  type WorkspaceMutationOrigin,
+} from './workspaceMutationOrigin';
+import {
   broadcastWorkspaceFields,
   isWorkspaceConnectionMutationCaptureActive,
   isWorkspaceQueueSuppressed,
   listWorkspaceConflicts,
   markWorkspaceConflictResolved,
   queueWorkspaceFields,
-  removeWorkspaceConflict,
   replaceWorkspaceConflictPending,
   setWorkspaceQueueSuppressed,
   setWorkspaceSystemMutationSuppressed,
@@ -46,7 +51,11 @@ export {
 } from './workspaceSyncQueueCore';
 export { acknowledgeAppliedWorkspaceSync } from './workspaceSyncQueueCore';
 
-export function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageField, unknown>>): void {
+export function applyWorkspaceFields(
+  fields: Partial<Record<WorkspaceStorageField, unknown>>,
+  origin: WorkspaceMutationOrigin,
+): void {
+  runWorkspaceMutationWithOrigin(origin, () => {
   const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones', 'lifeStages']
     .some((key) => fields[key as WorkspaceStorageField] !== undefined);
   if (hasTimelineFields) {
@@ -100,6 +109,7 @@ export function applyWorkspaceFields(fields: Partial<Record<WorkspaceStorageFiel
   if (fields.nodes !== undefined) {
     useGraphStore.setState({ nodes: normalizeGraphNodes(fields.nodes) });
   }
+  });
 }
 
 function isWorkspaceMessage(value: unknown): value is {
@@ -143,7 +153,7 @@ export function startWorkspaceCrossTabDataSync(): () => void {
     setWorkspaceSystemMutationSuppressed(true);
     setWorkspaceQueueSuppressed(true);
     try {
-      applyWorkspaceFields(event.data.fields);
+      applyWorkspaceFields(event.data.fields, 'broadcast');
     } finally {
       window.setTimeout(() => {
         setWorkspaceQueueSuppressed(false);
@@ -163,7 +173,7 @@ export async function restoreWorkspaceConflict(id: string): Promise<void> {
 
   setWorkspaceQueueSuppressed(true);
   try {
-    applyWorkspaceFields(conflict.pending.fields);
+    applyWorkspaceFields(conflict.pending.fields, 'restore');
   } finally {
     setWorkspaceQueueSuppressed(false);
   }
@@ -172,6 +182,7 @@ export async function restoreWorkspaceConflict(id: string): Promise<void> {
   await queueWorkspaceFields(conflict.pending.fields, {}, {
     bypassSuppression: true,
     forceFields: fields,
+    origin: 'restore',
   });
   await markWorkspaceConflictResolved(id, 'manual');
 }
@@ -193,13 +204,14 @@ export async function restoreWorkspaceConflictFields(
   await createLocalSnapshot(`恢复冲突副本前 · ${conflict.detectedAt}`);
   setWorkspaceQueueSuppressed(true);
   try {
-    applyWorkspaceFields(pickedFields);
+    applyWorkspaceFields(pickedFields, 'restore');
   } finally {
     setWorkspaceQueueSuppressed(false);
   }
   await queueWorkspaceFields(pickedFields, {}, {
     bypassSuppression: true,
     forceFields: [...selectedSet],
+    origin: 'restore',
   });
 
   const remainingFields = Object.fromEntries(Object.entries(conflict.pending.fields).filter(([key]) => !selectedSet.has(key as WorkspaceStorageField))) as Partial<Record<WorkspaceStorageField, unknown>>;
@@ -222,7 +234,7 @@ export async function discardWorkspaceConflict(id: string): Promise<void> {
   const conflict = conflicts.find((item) => item.id === id);
   if (!conflict) return;
   if (conflict.status === 'active') await markWorkspaceConflictResolved(id, 'current');
-  else await removeWorkspaceConflict(id);
+  else return;
   window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
 }
 
@@ -273,6 +285,14 @@ export function startWorkspaceQueueTracking(): () => void {
     (isUnifiedWorkspaceConfigured() || isWorkspaceConnectionMutationCaptureActive())
     && !isWorkspaceStorageReady()
   );
+  const queueTrackedFields = (
+    changed: Partial<Record<WorkspaceStorageField, unknown>>,
+    base: Partial<Record<WorkspaceStorageField, unknown>>,
+  ) => {
+    const origin = currentWorkspaceMutationOrigin();
+    if (!canWorkspaceMutationEnqueue(origin)) return;
+    void queueWorkspaceFields(changed, base, { preservePendingFields: true, origin });
+  };
   const broadcastHydratedFields = (fields: Partial<Record<WorkspaceStorageField, unknown>>) => {
     if (!isWorkspaceQueueSuppressed() && !shouldQueue()) broadcastWorkspaceFields(fields);
   };
@@ -307,7 +327,7 @@ export function startWorkspaceQueueTracking(): () => void {
         && shouldQueue()
         && Object.keys(changed).length
       ) {
-        queueWorkspaceFields(changed, base, { preservePendingFields: true });
+        queueTrackedFields(changed, base);
       }
       if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),
@@ -336,7 +356,7 @@ export function startWorkspaceQueueTracking(): () => void {
         && shouldQueue()
         && Object.keys(changed).length
       ) {
-        queueWorkspaceFields(changed, base, { preservePendingFields: true });
+        queueTrackedFields(changed, base);
       }
       if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),
@@ -358,11 +378,7 @@ export function startWorkspaceQueueTracking(): () => void {
         && shouldQueue()
         && Object.keys(changed).length
       ) {
-        queueWorkspaceFields(
-          changed,
-          base,
-          { preservePendingFields: true },
-        );
+        queueTrackedFields(changed, base);
       }
       if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),
@@ -374,11 +390,7 @@ export function startWorkspaceQueueTracking(): () => void {
         && shouldQueue()
         && state.nodes !== previous.nodes
       ) {
-        queueWorkspaceFields(
-          { nodes: state.nodes },
-          { nodes: previous.nodes },
-          { preservePendingFields: true },
-        );
+        queueTrackedFields({ nodes: state.nodes }, { nodes: previous.nodes });
       }
       if (state.nodes !== previous.nodes) broadcastHydratedFields({ nodes: state.nodes });
     }),
@@ -394,7 +406,7 @@ export function startWorkspaceQueueTracking(): () => void {
         }
       });
       if (!isWorkspaceQueueSuppressed() && shouldQueue() && Object.keys(changed).length) {
-        queueWorkspaceFields(changed, base, { preservePendingFields: true });
+        queueTrackedFields(changed, base);
       }
       if (Object.keys(changed).length) broadcastHydratedFields(changed);
     }),

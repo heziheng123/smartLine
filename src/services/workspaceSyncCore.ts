@@ -137,7 +137,7 @@ export function isBundledDemoWorkspace(backup: WorkspaceBackup): boolean {
 
 export function assertWorkspaceQueueDrained(state: WorkspaceQueueDrainState): void {
   if (state.conflictDetected) {
-    throw new Error('检测到多设备同步冲突，本机修改已保留。请在同步设置中处理冲突副本。');
+    throw new Error('修复或自动归档门禁未通过，本机修改和可恢复历史已保留。请保持页面开启后重试。');
   }
   if (state.pendingFieldCount > 0) {
     throw new Error(`云端已连接，但仍有 ${state.pendingFieldCount} 个数据字段等待补传。请保持页面开启并重试。`);
@@ -283,9 +283,29 @@ function isEntityArray(value: unknown): value is Array<Record<string, unknown> &
   );
 }
 
+export interface WorkspaceMergeAlternate {
+  path: string;
+  baseValue: unknown;
+  localValue: unknown;
+  remoteValue: unknown;
+  baseHash: string;
+  localHash: string;
+  remoteHash: string;
+  resolution: 'remote-current';
+}
+
+interface RawWorkspaceMergeAlternate {
+  path: string;
+  baseValue: unknown;
+  localValue: unknown;
+  remoteValue: unknown;
+}
+
 interface ThreeWayMergeResult {
   value: unknown;
   conflicts: string[];
+  appliedPaths: string[];
+  alternates: RawWorkspaceMergeAlternate[];
 }
 
 function mergeWorkspaceValue(
@@ -294,9 +314,9 @@ function mergeWorkspaceValue(
   remote: unknown,
   path: string,
 ): ThreeWayMergeResult {
-  if (workspaceValuesEqual(local, base)) return { value: remote, conflicts: [] };
+  if (workspaceValuesEqual(local, base)) return { value: remote, conflicts: [], appliedPaths: [path], alternates: [] };
   if (workspaceValuesEqual(remote, base) || workspaceValuesEqual(remote, local)) {
-    return { value: local, conflicts: [] };
+    return { value: local, conflicts: [], appliedPaths: [path], alternates: [] };
   }
 
   if (isEntityArray(base) && isEntityArray(local) && isEntityArray(remote)) {
@@ -306,6 +326,8 @@ function mergeWorkspaceValue(
     const orderedIds = [...new Set([...remote.map((item) => item.id), ...local.map((item) => item.id), ...base.map((item) => item.id)])];
     const merged: unknown[] = [];
     const conflicts: string[] = [];
+    const appliedPaths: string[] = [];
+    const alternates: RawWorkspaceMergeAlternate[] = [];
     for (const id of orderedIds) {
       const result = mergeWorkspaceValue(
         baseById.get(id),
@@ -314,24 +336,35 @@ function mergeWorkspaceValue(
         `${path}[${id}]`,
       );
       conflicts.push(...result.conflicts);
+      appliedPaths.push(...result.appliedPaths);
+      alternates.push(...result.alternates);
       if (result.value !== undefined) merged.push(result.value);
     }
-    return { value: merged, conflicts };
+    return { value: merged, conflicts, appliedPaths, alternates };
   }
 
   if (isPlainRecord(base) && isPlainRecord(local) && isPlainRecord(remote)) {
     const merged: Record<string, unknown> = {};
     const conflicts: string[] = [];
+    const appliedPaths: string[] = [];
+    const alternates: RawWorkspaceMergeAlternate[] = [];
     const keys = new Set([...Object.keys(base), ...Object.keys(remote), ...Object.keys(local)]);
     for (const key of keys) {
       const result = mergeWorkspaceValue(base[key], local[key], remote[key], `${path}.${key}`);
       conflicts.push(...result.conflicts);
+      appliedPaths.push(...result.appliedPaths);
+      alternates.push(...result.alternates);
       if (result.value !== undefined) merged[key] = result.value;
     }
-    return { value: merged, conflicts };
+    return { value: merged, conflicts, appliedPaths, alternates };
   }
 
-  return { value: local, conflicts: [path] };
+  return {
+    value: remote,
+    conflicts: [path],
+    appliedPaths: [],
+    alternates: [{ path, baseValue: base, localValue: local, remoteValue: remote }],
+  };
 }
 
 export function mergeWorkspaceFieldChanges(
@@ -360,6 +393,39 @@ export function mergeWorkspaceFieldChanges(
     conflicts.push(...result.conflicts);
   }
   return { fields: mergedFields, conflicts };
+}
+
+export async function mergeWorkspaceFieldChangesDetailed(
+  fields: Record<string, unknown>,
+  baseFields: Record<string, unknown>,
+  remote: Record<string, unknown>,
+): Promise<{ fields: Record<string, unknown>; appliedPaths: string[]; alternates: WorkspaceMergeAlternate[] }> {
+  const mergedFields: Record<string, unknown> = {};
+  const appliedPaths: string[] = [];
+  const rawAlternates: RawWorkspaceMergeAlternate[] = [];
+  for (const [key, localValue] of Object.entries(fields)) {
+    if (!Object.prototype.hasOwnProperty.call(remote, key)
+      || !Object.prototype.hasOwnProperty.call(baseFields, key)) {
+      mergedFields[key] = localValue;
+      appliedPaths.push(key);
+      continue;
+    }
+    const result = mergeWorkspaceValue(baseFields[key], localValue, remote[key], key);
+    mergedFields[key] = result.value;
+    appliedPaths.push(...result.appliedPaths);
+    rawAlternates.push(...result.alternates);
+  }
+  return {
+    fields: mergedFields,
+    appliedPaths,
+    alternates: await Promise.all(rawAlternates.map(async (alternate) => ({
+      ...alternate,
+      baseHash: await hashWorkspaceValue(alternate.baseValue),
+      localHash: await hashWorkspaceValue(alternate.localValue),
+      remoteHash: await hashWorkspaceValue(alternate.remoteValue),
+      resolution: 'remote-current' as const,
+    }))),
+  };
 }
 
 export interface WorkspaceMigrationPendingFields {

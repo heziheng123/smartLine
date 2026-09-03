@@ -1,5 +1,9 @@
 import { createScopedStorage } from '@/utils/persistence';
 import { hashWorkspaceValue, isWorkspaceRevisionSuperseded } from './workspaceSyncCore';
+import {
+  canWorkspaceMutationEnqueue,
+  type WorkspaceMutationOrigin,
+} from './workspaceMutationOrigin';
 
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones' | 'lifeStages'
@@ -22,6 +26,8 @@ export interface PendingWorkspaceSync {
   baseFields?: Partial<Record<WorkspaceStorageField, unknown>>;
   /** Fields the user explicitly confirmed should replace the cloud version. */
   forceFields?: WorkspaceStorageField[];
+  /** Explicit source of the queue-producing mutation. */
+  origin?: 'user' | 'restore';
 }
 
 export interface WorkspaceConflictRecord {
@@ -37,8 +43,6 @@ export interface WorkspaceConflictRecord {
   conflictingFields?: WorkspaceStorageField[];
 }
 
-const MAX_RESOLVED_CONFLICT_RECORDS = 50;
-
 function normalizedConflict(record: WorkspaceConflictRecord): WorkspaceConflictRecord {
   return {
     ...record,
@@ -49,14 +53,11 @@ function normalizedConflict(record: WorkspaceConflictRecord): WorkspaceConflictR
 }
 
 function retainWorkspaceConflictRecords(records: WorkspaceConflictRecord[]): WorkspaceConflictRecord[] {
-  const normalized = records.map(normalizedConflict).filter((record) => record.status !== 'discarded');
-  return [
-    ...normalized.filter((record) => record.status === 'active'),
-    ...normalized.filter((record) => record.status === 'resolved').slice(0, MAX_RESOLVED_CONFLICT_RECORDS),
-  ];
+  return records.map(normalizedConflict);
 }
 
 export interface QueueWorkspaceFieldOptions {
+  origin: WorkspaceMutationOrigin;
   /**
    * Local user actions must still be journaled while remote hydration is
    * suppressing subscription-based tracking.
@@ -84,6 +85,8 @@ const QUEUE_FALLBACK_SETTLE_MS = 32;
 export type WorkspaceQueueErrorKind =
   /** IndexedDB 写入失败，已降级到 emergency 存储，数据未丢失但需要页面保持开启。 */
   | 'storage_write_failed'
+  /** A non-user mutation attempted to enter the user outbox and was rejected. */
+  | 'system_origin_blocked'
   /** 待同步数据补传失败（flush 异常），巡检机制会自动重试。 */
   | 'flush_failed'
   /** 同步队列持续变化（多源写入竞争），暂停并需要用户等待。 */
@@ -284,8 +287,20 @@ function deviceId(): string {
 export function queueWorkspaceFields(
   fields: Partial<Record<WorkspaceStorageField, unknown>>,
   baseFields: Partial<Record<WorkspaceStorageField, unknown>> = {},
-  options: QueueWorkspaceFieldOptions = {},
+  options: QueueWorkspaceFieldOptions,
 ): Promise<void> {
+  if (!canWorkspaceMutationEnqueue(options.origin)) {
+    const message = 'System mutation origin "' + options.origin + '" was blocked from the user sync queue.';
+    const isDevelopment = import.meta.env?.DEV === true
+      || (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production');
+    if (isDevelopment) return Promise.reject(new Error(message));
+    console.warn('[workspace-queue]', message);
+    window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, {
+      detail: { kind: 'system_origin_blocked', message } satisfies WorkspaceQueueErrorDetail,
+    }));
+    return Promise.resolve();
+  }
+  const queueOrigin = options.origin;
   if (isWorkspaceQueueSuppressed() && !options.bypassSuppression) return Promise.resolve();
   if (Object.keys(fields).length === 0) return Promise.resolve();
 
@@ -321,6 +336,7 @@ export function queueWorkspaceFields(
         ...(existing?.forceFields ?? []),
         ...(options.forceFields ?? []),
       ])],
+      origin: queueOrigin,
     };
     attemptedPending = next;
     await queueStorage.setItem(QUEUE_KEY, next);
@@ -446,11 +462,10 @@ export async function preserveWorkspaceConflict(
       remoteFields,
       conflictingFields,
     };
-    // Active conflicts are user data and are never evicted. Only explicitly
-    // resolved recovery copies are capped.
+    // Conflict records are recovery data. Keep active and resolved entries;
+    // retention cleanup requires a later, explicitly accepted policy stage.
     await queueStorage.setItem(CONFLICTS_KEY, retainWorkspaceConflictRecords([record, ...conflicts]));
   });
-  await clearPendingWorkspaceSync(pending);
 }
 
 export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[]> {
@@ -555,10 +570,7 @@ export async function markWorkspaceConflictResolved(
 }
 
 export async function removeWorkspaceConflict(id: string): Promise<void> {
-  await withQueueStorageLock(async () => {
-    const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
-    await queueStorage.setItem(CONFLICTS_KEY, conflicts.filter((item) => item.id !== id));
-  });
+  throw new Error('Schema 8 恢复记录处于保留期，已阻止删除：' + id);
 }
 
 export async function replaceWorkspaceConflictPending(

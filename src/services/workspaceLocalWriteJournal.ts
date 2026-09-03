@@ -9,6 +9,10 @@ import {
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
 import type { StoreApi } from 'zustand';
+import {
+  canWorkspaceMutationEnqueue,
+  currentWorkspaceMutationOrigin,
+} from './workspaceMutationOrigin';
 
 type WorkspaceState = WorkspaceStoreReadiness;
 type SetStateLike<TState> = StoreApi<TState>['setState'];
@@ -46,6 +50,7 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
       setState(partial, false);
     }
     const after = getState();
+    const origin = currentWorkspaceMutationOrigin();
 
     // Initial IndexedDB hydration establishes the local baseline; it is not a
     // user mutation and must never overwrite a newer cloud workspace.
@@ -54,6 +59,7 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
     // previously verified snapshot. They are system mutations, not new local
     // edits, and must not recreate the queue that the operation is resolving.
     if (isWorkspaceSystemMutationSuppressed()) return;
+    if (!canWorkspaceMutationEnqueue(origin)) return;
     if (!isUnifiedWorkspaceConfigured() && !isWorkspaceConnectionMutationCaptureActive()) return;
     const { fields, baseFields } = collectWorkspaceFieldChanges(
       before as Record<string, unknown>,
@@ -68,7 +74,7 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
     queueWorkspaceFields(
       fields as Partial<Record<WorkspaceStorageField, unknown>>,
       baseFields as Partial<Record<WorkspaceStorageField, unknown>>,
-      { bypassSuppression: true },
+      { bypassSuppression: true, origin },
     );
   };
   return trackedSet as SetStateLike<TState>;

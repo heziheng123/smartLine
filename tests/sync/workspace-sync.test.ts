@@ -38,6 +38,7 @@ import {
   buildWorkspaceEntityInitializationWrites,
   buildWorkspaceEntityWrites,
   materializeWorkspaceEntityRoot,
+  workspaceFieldsMatchEntityProjection,
 } from '../../src/services/workspaceEntityStorage.ts';
 
 function backup(): WorkspaceBackup {
@@ -128,6 +129,23 @@ test('entity tombstones prevent a stale array projection from resurrecting delet
     materializeWorkspaceEntityRoot({ ...root, tasks, ...deletion }).tasks,
     [{ id: 'keep', title: 'keep' }],
   );
+});
+
+test('schema 8 acknowledgement requires both top-level and entity projections', () => {
+  const tasks = [{ id: 'task-1', name: 'confirmed' }];
+  const root = {
+    metadata: { entityStorageVersion: WORKSPACE_ENTITY_STORAGE_VERSION },
+    tasks,
+    ...buildWorkspaceEntityInitializationWrites({ tasks }, 'write-1'),
+  };
+  assert.equal(workspaceFieldsMatchEntityProjection(root, { tasks }), true);
+  assert.equal(workspaceFieldsMatchEntityProjection({ ...root, tasks: [] }, { tasks }), false);
+
+  const staleSidecar = {
+    ...root,
+    ...buildWorkspaceEntityInitializationWrites({ tasks: [{ id: 'task-1', name: 'stale' }] }, 'write-0'),
+  };
+  assert.equal(workspaceFieldsMatchEntityProjection(staleSidecar, { tasks }), false);
 });
 
 test('unified room names are stable and contain only safe characters', () => {
@@ -527,7 +545,7 @@ test('a unified connection is successful only after its local queue is fully dra
   );
   assert.throws(
     () => assertWorkspaceQueueDrained({ pendingFieldCount: 0, conflictDetected: true }),
-    /多设备同步冲突/,
+    /自动归档门禁未通过/,
   );
 });
 
