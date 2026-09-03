@@ -106,6 +106,13 @@
   cursor: pointer;
 }
 
+@media (max-width: 820px) {
+  .branchFocusHint {
+    top: 112px !important;
+    z-index: 9;
+  }
+}
+
 .projectReference {
   position: absolute;
   z-index: 3;

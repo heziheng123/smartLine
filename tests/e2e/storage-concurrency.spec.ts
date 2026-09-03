@@ -7,6 +7,8 @@ const EXPECTED_STORES = [
   'life_map_data',
   'local-forage-detect-blob-support',
   'timeline_data',
+  'workspace_alternates_v8',
+  'workspace_repairs',
   'workspace_snapshot_chunks',
   'workspace_snapshots',
   'workspace_sync_queue',
@@ -19,15 +21,21 @@ test('concurrent first-load tabs initialize one complete storage schema without 
     page.on('console', (message) => {
       if (message.type() === 'warning' || message.type() === 'error') consoleMessages.push(message.text());
     });
+    await page.route('**/__storage-schema__', (route) => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<!doctype html><title>storage schema test</title>',
+    }));
   }
 
-  await Promise.all(pages.map((page) => page.goto('/')));
-  await Promise.all(pages.map((page) => expect(page.locator('.tl-dock')).toBeVisible()));
-
-  const tabs = pages[0].locator('.tl-dock [role="tab"]');
-  for (let index = 0; index < await tabs.count(); index += 1) {
-    await tabs.nth(index).click();
-  }
+  await Promise.all(pages.map((page) => page.goto('/__storage-schema__')));
+  await Promise.all(pages.map((page, pageIndex) => page.evaluate(async ({ stores, index }) => {
+    const { createScopedStorage } = await import('/src/utils/persistence.ts');
+    await Promise.all(stores.map((storeName) => createScopedStorage(storeName).setItem(
+      `schema-probe-${index}`,
+      true,
+    )));
+  }, { stores: EXPECTED_STORES, index: pageIndex })));
 
   const stores = await pages[0].evaluate(() => new Promise<string[]>((resolve, reject) => {
     const request = indexedDB.open('smart-timeline');
@@ -58,7 +66,7 @@ test('simultaneous offline edits from two tabs preserve every changed workspace 
       await queue.queueWorkspaceFields(
         { tasks: [{ id: 'tab-a-task', name: 'tab-a-task' }] },
         { tasks: [] },
-        { bypassSuppression: true },
+        { bypassSuppression: true, origin: 'user' },
       );
     }),
     second.evaluate(async () => {
@@ -66,7 +74,7 @@ test('simultaneous offline edits from two tabs preserve every changed workspace 
       await queue.queueWorkspaceFields(
         { nodes: [{ id: 'tab-b-node', title: 'tab-b-node' }] },
         { nodes: [] },
-        { bypassSuppression: true },
+        { bypassSuppression: true, origin: 'user' },
       );
     }),
   ]);

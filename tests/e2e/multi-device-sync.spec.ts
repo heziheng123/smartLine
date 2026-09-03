@@ -65,7 +65,7 @@ test.describe('isolated two-client workspace commits', () => {
     ]);
   });
 
-  test('clients editing the same property preserve the second queue as a conflict', async () => {
+  test('clients editing the same property keep remote current and preserve a conflict alternate', async () => {
     const baseTasks = [{ id: 'task-1', title: 'before', date: '2026-08-30' }];
     const base = { tasks: baseTasks };
     const localA = { tasks: [{ id: 'task-1', title: 'device-a', date: '2026-08-30' }] };
@@ -75,7 +75,7 @@ test.describe('isolated two-client workspace commits', () => {
 
     expect(commitA.conflicts).toEqual([]);
     expect(commitB.conflicts).toEqual(['tasks[task-1].title']);
-    expect(commitB.fields.tasks).toEqual(localB.tasks);
+    expect(commitB.fields.tasks).toEqual(commitA.fields.tasks);
   });
 
   test('a deletion racing a modification is never silently accepted', async () => {

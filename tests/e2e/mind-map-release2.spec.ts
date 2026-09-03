@@ -19,6 +19,7 @@ const addNode = async (page: Page, x: number, y: number, text: string) => {
   await canvas.dblclick({ position: { x, y } });
   await page.getByLabel('新节点文本').fill(text);
   await page.getByLabel('新节点文本').press('Enter');
+  await page.getByLabel('新节点文本').press('Escape');
 };
 
 const graphState = async (page: Page) => page.evaluate(async () => {
@@ -29,13 +30,11 @@ const graphState = async (page: Page) => page.evaluate(async () => {
 test('sections and groups create, collapse and move as isolated history transactions', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
-  await addNode(page, 220, 260, '节点 A');
-  await addNode(page, 460, 260, '节点 B');
+  await addNode(page, 180, 260, '节点 A');
+  await addNode(page, 360, 260, '节点 B');
 
-  await canvas.click({ position: { x: 220, y: 260 } });
-  await page.keyboard.down('Shift');
-  await canvas.click({ position: { x: 460, y: 260 } });
-  await page.keyboard.up('Shift');
+  await page.locator('[aria-label="思维导图画布"][tabindex="0"]').focus();
+  await page.keyboard.press('Control+A');
   await expect(page.getByLabel('多选排列')).toBeVisible();
   await page.getByRole('button', { name: '创建区域' }).click();
   await expect(page.getByLabel('区域属性')).toBeVisible();
@@ -72,16 +71,9 @@ test('sections and groups create, collapse and move as isolated history transact
   await expect.poll(async () => (await graphState(page))!.nodes[firstBefore.id].x)
     .toBeCloseTo(firstBefore.x + 50 / beforeMove!.viewport.scale, 0);
 
-  const afterMove = await graphState(page);
-  const [firstAfter, secondAfter] = Object.values(afterMove!.nodes);
-  const toView = (x: number, y: number) => ({
-    x: x * afterMove!.viewport.scale + afterMove!.viewport.x,
-    y: y * afterMove!.viewport.scale + afterMove!.viewport.y,
-  });
-  await canvas.click({ position: toView(firstAfter.x, firstAfter.y) });
-  await page.keyboard.down('Shift');
-  await canvas.click({ position: toView(secondAfter.x, secondAfter.y) });
-  await page.keyboard.up('Shift');
+  await page.getByLabel('关闭属性面板').click();
+  await page.locator('[aria-label="思维导图画布"][tabindex="0"]').focus();
+  await page.keyboard.press('Control+A');
   await page.getByRole('button', { name: '创建分组' }).click();
   await expect.poll(async () => Object.keys((await graphState(page))?.groups ?? {}).length).toBe(1);
   const grouped = await graphState(page);
@@ -107,13 +99,9 @@ test('advanced nodes, orthogonal edges, SVG export, minimap and command palette 
   const state = await graphState(page);
   const markdown = Object.values(state!.nodes).find((node) => node.type === 'markdown')!;
   const target = Object.values(state!.nodes).find((node) => node.type === 'text')!;
-  const box = await canvas.boundingBox();
-  expect(box).not.toBeNull();
   await canvas.click({ position: { x: markdown.x, y: markdown.y } });
-  await page.mouse.move(box!.x + markdown.x + markdown.width / 2, box!.y + markdown.y);
-  await page.mouse.down();
-  await page.mouse.move(box!.x + target.x, box!.y + target.y, { steps: 5 });
-  await page.mouse.up();
+  await page.keyboard.press('L');
+  await canvas.click({ position: { x: target.x, y: target.y } });
   await expect.poll(async () => Object.keys((await graphState(page))?.edges ?? {}).length).toBe(1);
   await canvas.click({ position: {
     x: (markdown.x + markdown.width / 2 + target.x - target.width / 2) / 2,

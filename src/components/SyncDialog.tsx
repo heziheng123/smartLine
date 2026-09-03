@@ -42,7 +42,7 @@ import {
   type WorkspaceMigrationReport,
   type WorkspaceSyncRuntimeState,
 } from '@/services/workspaceSync';
-import { discardWorkspaceConflict, listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
+import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { currentWorkspaceHistoryDate, loadWorkspaceDailyHistory } from '@/services/workspaceHistory';
 import { createCurrentWorkspaceAuditReport, downloadCurrentWorkspaceAuditReport } from '@/services/workspaceAudit';
@@ -570,8 +570,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const allConnected = enabledCount === 5 && connectedCount === 5;
   const activeConflicts = syncConflicts.filter((conflict) => conflict.status !== 'resolved');
   const historicalConflicts = syncConflicts.filter((conflict) => conflict.status === 'resolved');
-  const latestConflict = activeConflicts[0] ?? historicalConflicts[0];
-  const historicalConflict = Boolean(latestConflict && historicalConflicts.some((item) => item.id === latestConflict.id));
+  const latestConflict = historicalConflicts[0];
   const activeConflictCount = activeConflicts.length;
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && architecture.architecture !== 'unified';
   const runtimeBusy = ['connecting', 'initializing', 'migrating', 'flushing', 'verifying'].includes(runtimeState.phase);
@@ -1002,7 +1001,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               : allConnected && requiresUnifiedMigration
                 ? '旧架构已连接，尚未进入统一工作区'
               : allConnected && activeConflictCount > 0
-                ? `已连接，存在 ${activeConflictCount} 个待处理冲突`
+                ? `同步暂停，正在自动归档 ${activeConflictCount} 个旧冲突`
                 : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
                   ? `已连接，等待补传 ${pendingFieldCount} 个字段`
                   : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}</strong>
@@ -1026,7 +1025,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           </div>
           {(activeConflictCount > 0 || (pendingFieldCount ?? 0) > 0 || historicalConflicts.length > 0) && (
             <div style={{ display: 'flex', gap: 8, marginTop: 8, fontSize: 12, color: '#374151' }}>
-              {activeConflictCount > 0 && <span style={{ color: '#991B1B', fontWeight: 600 }}>● {activeConflictCount} 个冲突</span>}
+              {activeConflictCount > 0 && <span style={{ color: '#991B1B', fontWeight: 600 }}>● 旧冲突归档待重试 {activeConflictCount}</span>}
               {(pendingFieldCount ?? 0) > 0 && <span style={{ color: '#92400E' }}>● 待补传 {pendingFieldCount}</span>}
               {historicalConflicts.length > 0 && <span style={{ color: '#6B7280' }}>● 历史副本 {historicalConflicts.length}</span>}
             </div>
@@ -1165,20 +1164,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           </section>
         )}
         {restoreMessage && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{restoreMessage}</p>}
-        {latestConflict && <section className="tl-sync-conflict-fields" aria-label={historicalConflict ? '历史恢复副本' : '当前同步冲突'}>
-          <strong>{historicalConflict ? '历史恢复副本' : '当前同步冲突'} · {formatTime(latestConflict.detectedAt)}</strong>
-          <small>{historicalConflict
-            ? `此冲突已于 ${formatTime(latestConflict.resolvedAt)} 明确处理，不代表当前仍有同步故障。若不再需要恢复其中的旧数据，可以直接删除；删除不会修改本机或云端数据。`
-            : '这是尚未解决的当前冲突。保持未选择不会上传任何旧数据；只有确认确实需要找回的字段才应手动恢复。'}</small>
+        {latestConflict && <section className="tl-sync-conflict-fields" aria-label="历史恢复副本">
+          <strong>历史恢复副本 · {formatTime(latestConflict.detectedAt)}</strong>
+          <small>此冲突已于 {formatTime(latestConflict.resolvedAt)} 自动归档，不代表当前仍有同步故障。恢复会生成新的明确用户写入，并先保存当前完整快照。</small>
           {!showConflictRecovery && <div className="tl-sync-backup-actions">
-            <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={async () => {
-              if (!await requestConfirmation(historicalConflict
-                ? '仅删除这份历史恢复副本吗？当前本机数据、云端数据和待上传队列都不会改变。'
-                : '确认保留当前已经加载的本机/云端版本，并将此冲突标记为已解决吗？旧数据会保留为历史恢复副本，不会自动上传。')) return;
-              void discardWorkspaceConflict(latestConflict.id)
-                .then(() => { setRestoreMessage(historicalConflict ? '历史恢复副本已删除；当前本机和云端数据均未修改。' : '已明确保留当前版本；冲突已转为历史恢复副本。'); setSelectedConflictFields([]); })
-                .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '删除历史恢复副本失败。'));
-            }}><Check size={14} />{historicalConflict ? '当前内容正常，删除此副本' : '保留当前版本，标记已解决'}</button>
             <button type="button" className="tl-sync-backup-btn" onClick={() => setShowConflictRecovery(true)}><RefreshCw size={14} />需要从旧副本找回数据</button>
           </div>}
           {showConflictRecovery && <>

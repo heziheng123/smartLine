@@ -27,6 +27,11 @@ const mapLifeStage = async (page: Page, name: string) => page.evaluate(async (st
   return item ? { id: item.id, start: item.start, end: item.end } : null;
 }, name);
 
+const fitCanvas = async (page: Page) => {
+  await page.getByTestId('mind-map-layout-menu').click();
+  await page.getByRole('menuitem', { name: '适合画布' }).click();
+};
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
@@ -61,7 +66,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('project task bars update canonical dates and offer compensation undo', async ({ page }) => {
-  await page.getByRole('button', { name: '时间线', exact: true }).click();
+  await page.getByRole('button', { name: '时间规划', exact: true }).click();
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();
   for (const name of ['时间线开始日期', '时间线结束日期']) {
@@ -96,7 +101,7 @@ test('project task bars update canonical dates and offer compensation undo', asy
 });
 
 test('moving or deleting a timeline never mutates its projected project data', async ({ page }) => {
-  await page.getByRole('button', { name: '时间线', exact: true }).click();
+  await page.getByRole('button', { name: '时间规划', exact: true }).click();
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();
   await page.getByLabel('时间线来源').selectOption('project:map-project');
@@ -123,7 +128,7 @@ test('life map migration downloads a backup and creates stable timeline projecti
   await page.getByRole('menuitem', { name: '迁移人生地图' }).click();
   await expect((await download).suggestedFilename()).toMatch(/^smartline-life-map-backup-\d{4}-\d{2}-\d{2}\.json$/);
 
-  await page.getByTitle('适合画布').click();
+  await fitCanvas(page);
   await expect(page.getByTestId('mind-map-timeline-life-area:area-e2e')).toBeVisible();
   await page.getByLabel('更多操作', { exact: true }).click();
   await expect(page.getByRole('menuitem', { name: '从旧人生地图恢复' })).toBeVisible();
@@ -148,7 +153,7 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
   await expect(panel.getByText('地图人生阶段（已编辑）', { exact: true })).toBeVisible();
   await panel.getByRole('button', { name: '关闭人生规划' }).click();
 
-  await page.getByRole('button', { name: '时间线', exact: true }).click();
+  await page.getByRole('button', { name: '时间规划', exact: true }).click();
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   const timelineTestId = await timeline.getAttribute('data-testid');
   if (!timelineTestId) throw new Error('Timeline test id was not available.');

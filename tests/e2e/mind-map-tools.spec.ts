@@ -193,7 +193,8 @@ test('a branch can be selected as a whole and focused without changing the docum
   await expect(page.getByRole('option', { name: /其他根节点/ })).toHaveCount(0);
   await page.getByLabel('搜索思维导图').press('Escape');
 
-  await page.getByLabel('退出分支聚焦').click();
+  await canvas.click();
+  await page.keyboard.press('Escape');
   await expect(page.getByTestId('mind-map-branch-focus')).toHaveCount(0);
   await page.getByRole('button', { name: '搜索或命令' }).click();
   await page.getByLabel('搜索思维导图').fill('其他根节点');
@@ -281,6 +282,7 @@ test('selection and full PNG export plus the local context menu remain functiona
   await page.getByRole('menuitem', { name: '锁定节点' }).click();
   await expect.poll(async () => Object.values((await graphState(page)).document?.nodes ?? {})[0]?.locked).toBe(true);
 
+  await page.getByLabel('关闭属性面板').click();
   await canvas.click({ button: 'right', position: { x: 600, y: 450 } });
   await expect(page.getByRole('menu', { name: '画布菜单' })).toBeVisible();
   await page.getByRole('menuitem', { name: '创建节点' }).click();

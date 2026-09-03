@@ -76,8 +76,8 @@ test('knowledge graph keeps the app dock navigation-only and moves page controls
   const viewportWidth = page.viewportSize()?.width ?? 0;
 
   await expect(dockActions.getByRole('button')).toHaveCount(5);
-  await expect.poll(async () => (await dockActions.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
-    .toBeLessThanOrEqual(240);
+  await expect(page.getByRole('banner', { name: '知识大盘工作区' }).getByTestId('knowledge-graph-page-actions')).toBeVisible();
+  await expect(dock.getByTestId('knowledge-graph-page-actions')).toHaveCount(0);
   await expect.poll(async () => (await dock.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
     .toBeLessThanOrEqual(viewportWidth - 16);
 

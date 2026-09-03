@@ -74,7 +74,8 @@ test('timeline remains readable across annual, season, month, and week ranges', 
 
   const timeline = page.getByTestId('mind-map-timeline-timeline-visual');
   await expect(timeline).toBeVisible();
-  await page.getByTitle('适合画布').click();
+  await page.getByTestId('mind-map-layout-menu').click();
+  await page.getByRole('menuitem', { name: '适合画布' }).click();
   await expect(timeline).toBeInViewport();
   const setZoom = async (target: number) => {
     const current = await page.evaluate(async () => {
