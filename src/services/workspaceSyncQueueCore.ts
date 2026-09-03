@@ -459,6 +459,86 @@ export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[
   );
 }
 
+export function buildPendingWorkspaceSyncRemainder(
+  pending: PendingWorkspaceSync,
+  acknowledgedFields: WorkspaceStorageField[],
+  writeId = crypto.randomUUID(),
+): PendingWorkspaceSync | null {
+  const acknowledged = new Set(acknowledgedFields);
+  const fields = Object.fromEntries(Object.entries(pending.fields)
+    .filter(([field]) => !acknowledged.has(field as WorkspaceStorageField)));
+  if (Object.keys(fields).length === 0) return null;
+  const keep = <T>(values: Partial<Record<WorkspaceStorageField, T>> | undefined) =>
+    Object.fromEntries(Object.entries(values ?? {})
+      .filter(([field]) => !acknowledged.has(field as WorkspaceStorageField)));
+  return {
+    ...pending,
+    writeId,
+    fields,
+    baseFields: keep(pending.baseFields),
+    baseHashes: keep(pending.baseHashes) as Partial<Record<WorkspaceStorageField, string>>,
+    forceFields: pending.forceFields?.filter((field) => !acknowledged.has(field)),
+  };
+}
+
+/** Removes only confirmed fields from the exact queue version that was read for this flush. */
+export async function acknowledgeWorkspaceSyncFields(
+  expected: PendingWorkspaceSync,
+  fields: WorkspaceStorageField[],
+): Promise<boolean> {
+  const acknowledged = new Set(fields);
+  if (acknowledged.size === 0) return true;
+  const expectedToken = getPendingWorkspaceSyncToken(expected);
+  const operation = writeChain.then(() => withQueueStorageLock(async () => {
+    const remainderWriteId = crypto.randomUUID();
+    const emergency = volatilePending ?? readEmergencyPending();
+    if (emergency && getPendingWorkspaceSyncToken(emergency) !== expectedToken) return false;
+    const durable = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
+    if (durable && getPendingWorkspaceSyncToken(durable) !== expectedToken) return false;
+
+    if (emergency) {
+      const remaining = buildPendingWorkspaceSyncRemainder(emergency, [...acknowledged], remainderWriteId);
+      volatilePending = remaining;
+      try {
+        if (remaining) localStorage.setItem(EMERGENCY_QUEUE_KEY, JSON.stringify(remaining));
+        else localStorage.removeItem(EMERGENCY_QUEUE_KEY);
+      } catch {
+        // The in-memory emergency record remains authoritative for this page.
+      }
+    }
+    if (durable) {
+      const remaining = buildPendingWorkspaceSyncRemainder(durable, [...acknowledged], remainderWriteId);
+      if (remaining) await queueStorage.setItem(QUEUE_KEY, remaining);
+      else await queueStorage.removeItem(QUEUE_KEY);
+    }
+    return true;
+  }));
+  writeChain = operation.then(() => undefined, () => undefined);
+  return await operation;
+}
+
+export interface WorkspaceQueueSafetySnapshot {
+  durablePending: PendingWorkspaceSync | null;
+  emergencyPending: PendingWorkspaceSync | null;
+  conflicts: WorkspaceConflictRecord[];
+}
+
+/** Read-only raw snapshot used by repair manifests; it never reconciles or clears records. */
+export async function readWorkspaceQueueSafetySnapshot(): Promise<WorkspaceQueueSafetySnapshot> {
+  await writeChain;
+  let durablePending: PendingWorkspaceSync | null = null;
+  try {
+    durablePending = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
+  } catch {
+    // The emergency copy is still returned below.
+  }
+  return {
+    durablePending,
+    emergencyPending: volatilePending ?? readEmergencyPending(),
+    conflicts: await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [],
+  };
+}
+
 export async function markWorkspaceConflictResolved(
   id: string,
   resolution: NonNullable<WorkspaceConflictRecord['resolution']>,
