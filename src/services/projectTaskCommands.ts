@@ -1,4 +1,4 @@
-import { useTimelineStore } from '@/store';
+import { useTimelineStore, type ProjectTaskHeaderUpdateOptions } from '@/store';
 import type { SmartTaskBlock, SmartTaskHeader, Task } from '@/types';
 import { requiresTaskStartDate } from '@/domain/taskRules';
 import {
@@ -112,6 +112,7 @@ export function updateProjectTask(
     operation: 'update',
     summary: '已更新任务并刷新相关规划视图',
   },
+  options?: ProjectTaskHeaderUpdateOptions,
 ): ProjectTaskCommandResult {
   const current = resolveProjectTask(taskId, blockId);
   if (!current) return { ok: false, error: '任务已经不存在或不再是项目任务。' };
@@ -129,7 +130,7 @@ export function updateProjectTask(
   if (validationError) return { ok: false, error: validationError };
   let commit;
   try {
-    commit = useTimelineStore.getState().updateBlockHeader(taskId, blockId, effectivePatch);
+    commit = useTimelineStore.getState().updateBlockHeader(taskId, blockId, effectivePatch, options);
   } catch (error) {
     console.error('[smart-timeline] 项目任务联动失败：', error);
     return {
@@ -206,6 +207,7 @@ export function setProjectTaskCompletion(
   blockId: string,
   completed: boolean,
   completedDate?: string,
+  options?: ProjectTaskHeaderUpdateOptions,
 ): ProjectTaskCommandResult {
   const current = resolveProjectTask(taskId, blockId);
   if (!current) return { ok: false, error: '任务已经不存在或不再是项目任务。' };
@@ -221,7 +223,7 @@ export function setProjectTaskCompletion(
   }, {
     operation: 'complete',
     summary: completed ? '已完成任务并同步相关模块' : '已取消完成并恢复相关模块状态',
-  });
+  }, options);
 }
 
 export function toggleProjectTaskCompletion(
@@ -248,6 +250,7 @@ export function recordQuantityProgress(
   blockId: string,
   date: string,
   amount: number,
+  options?: ProjectTaskHeaderUpdateOptions,
 ): ProjectTaskCommandResult {
   const current = resolveProjectTask(taskId, blockId);
   if (!current) return { ok: false, error: '数量任务已经不存在。' };
@@ -281,7 +284,7 @@ export function recordQuantityProgress(
   }, {
     operation: 'record-progress',
     summary: `已记录 ${date} 的数量进度并刷新每日安排`,
-  });
+  }, options);
 }
 
 export function removeVocabularyProgress(

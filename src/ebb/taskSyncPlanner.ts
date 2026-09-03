@@ -109,6 +109,25 @@ export function planEbbTaskSync({
   }
 
   if (action === 'remove') {
+    const generatedBySource = !!sourceTaskId && !!sourceBlockId && existingTasks.some((task) =>
+      task.scheduleSourceTaskId === sourceTaskId
+      && task.scheduleSourceBlockId === sourceBlockId,
+    );
+    const generatedByProjectTask = existingTasks.some((task) =>
+      Boolean(task.scheduleSourceTaskId) && Boolean(task.scheduleSourceBlockId),
+    );
+    const isRelearnedChain = existingTasks.some((task) =>
+      task.cycleOrigin === 'project-task-relearn',
+    );
+    // A later manual uncompletion must not erase a restarted cycle that may
+    // already have real progress. The immediate unified undo is the safe way
+    // to roll the whole relearn operation back.
+    if (isRelearnedChain) return unchanged(reviewTasks);
+    // Do not delete a pre-existing or manually created chain merely because a
+    // task that did not create it is later unchecked.
+    if (sourceTaskId && sourceBlockId && !generatedBySource && !generatedByProjectTask) {
+      return unchanged(reviewTasks);
+    }
     if (existingTasks.some((task) => task.isCompleted) || existingTasks.length === 0) {
       return unchanged(reviewTasks);
     }

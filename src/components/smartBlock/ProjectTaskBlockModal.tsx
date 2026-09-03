@@ -147,6 +147,7 @@ const ProjectTaskBlockModal: React.FC = () => {
             block={block}
             expandOverride
             onUpdateHeader={updateHeader}
+            onCommandError={(message) => setBacklogNotice(message ? { text: message } : null)}
             onUpdateBody={(blockId, body) => updateBlockBody(task.id, blockId, body)}
             onDelete={(blockId) => {
               const result = deleteProjectTask(task.id, blockId);

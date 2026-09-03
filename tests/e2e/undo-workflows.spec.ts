@@ -80,7 +80,7 @@ test('permanent task deletion requires confirmation and leaves no recycle entry'
   const project = page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first();
   await expect(project).toBeVisible();
   await project.click({ button: 'right' });
-  await page.locator('.tl-context-menu').getByRole('button', { name: '删除', exact: true }).click();
+  await page.locator('.tl-context-menu').getByRole('menuitem', { name: '删除', exact: true }).click();
 
   const dialog = page.getByRole('alertdialog', { name: '永久删除任务' });
   await expect(dialog).toContainText('删除后无法从回收站恢复');
@@ -88,7 +88,7 @@ test('permanent task deletion requires confirmation and leaves no recycle entry'
   await expect(project).toBeVisible();
 
   await project.click({ button: 'right' });
-  await page.locator('.tl-context-menu').getByRole('button', { name: '删除', exact: true }).click();
+  await page.locator('.tl-context-menu').getByRole('menuitem', { name: '删除', exact: true }).click();
   await dialog.getByRole('button', { name: '永久删除' }).click();
   await expect(project).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => localStorage.getItem('line-recycle-bin-v1'))).toBeNull();
@@ -201,7 +201,8 @@ test('multiple operations never surface a central history list', async ({ page }
 
 test('EBB completion remains committed without a global undo library', async ({ page }) => {
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('tab', { name: '复习计划' }).click();
+  const libraryTab = page.getByRole('tab', { name: '复习计划' });
+  if (await libraryTab.count()) await libraryTab.click();
   await page.locator('.eb-topic-row-main').filter({ hasText: 'E2E复习撤销' }).click();
   const toggle = page.getByLabel('标记第 1 轮完成');
   await expect(toggle).toBeVisible();
@@ -210,7 +211,8 @@ test('EBB completion remains committed without a global undo library', async ({ 
   await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
   await page.reload();
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('tab', { name: '复习计划' }).click();
+  const refreshedLibraryTab = page.getByRole('tab', { name: '复习计划' });
+  if (await refreshedLibraryTab.count()) await refreshedLibraryTab.click();
   await page.locator('.eb-topic-row-main').filter({ hasText: 'E2E复习撤销' }).click();
   await expect(page.getByLabel('取消第 1 轮完成')).toBeVisible();
 });

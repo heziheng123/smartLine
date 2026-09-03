@@ -188,6 +188,18 @@ export function normalizeEbbData(value: unknown): EbbData {
       completionSourceBlockId: task.isCompleted && typeof task.completionSourceBlockId === 'string'
         ? task.completionSourceBlockId
         : undefined,
+      archivedReason: task.isArchived && task.archivedReason === 'relearned'
+        ? task.archivedReason
+        : undefined,
+      archivedAt: task.isArchived ? normalizeIsoTimestamp(task.archivedAt) : undefined,
+      cycleTotalRounds: task.isArchived
+        && Number.isInteger(task.cycleTotalRounds)
+        && task.cycleTotalRounds! > 0
+        ? task.cycleTotalRounds
+        : undefined,
+      cycleOrigin: !task.isArchived && task.cycleOrigin === 'project-task-relearn'
+        ? task.cycleOrigin
+        : undefined,
       previousSchedule: task.isCompleted && Array.isArray(task.previousSchedule)
         ? task.previousSchedule.filter((entry) =>
             !!entry

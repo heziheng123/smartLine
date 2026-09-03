@@ -2,6 +2,8 @@ import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
 import type { ProjectTaskEffectPlan } from '@/domain/projectTaskEffects';
 import { useEbbStore } from '@/ebb/store';
+import type { ProjectTaskEbbCommitReport } from '@/ebb/store';
+import type { ProjectTaskEbbBatchPlan } from '@/ebb/projectTaskSyncBatch';
 import { isLeafGraphNode } from '@/graph/activation';
 import { useGraphStore } from '@/graph/store';
 import type { SmartTaskHeader } from '@/types';
@@ -14,6 +16,7 @@ export interface ProjectTaskEffectCommitReport {
   ebbCommandCount: number;
   activatedGraphNodeIds: string[];
   deactivatedGraphNodeIds: string[];
+  ebbCommit?: ProjectTaskEbbCommitReport;
 }
 
 interface ProjectTaskEffectCommitInput {
@@ -22,6 +25,7 @@ interface ProjectTaskEffectCommitInput {
   currentHeader: SmartTaskHeader;
   nextHeader: SmartTaskHeader;
   effectPlan: ProjectTaskEffectPlan;
+  ebbPlan?: ProjectTaskEbbBatchPlan;
 }
 
 export const EMPTY_PROJECT_TASK_EFFECT_COMMIT: ProjectTaskEffectCommitReport = {
@@ -43,6 +47,7 @@ export function commitProjectTaskEffects({
   currentHeader,
   nextHeader,
   effectPlan,
+  ebbPlan,
 }: ProjectTaskEffectCommitInput): ProjectTaskEffectCommitReport {
   const affectedDomains = new Set<AppDomain>();
   let dailyScheduleAction: ProjectTaskEffectCommitReport['dailyScheduleAction'] = 'none';
@@ -81,13 +86,9 @@ export function commitProjectTaskEffects({
     affectedDomains.add('knowledge-graph');
   }
 
-  effectPlan.ebbPayloads.forEach((payload) => {
-    useEbbStore.getState().syncTaskToEbb({
-      ...payload,
-      sourceTaskId: taskId,
-      sourceBlockId: blockId,
-    });
-  });
+  const ebbCommit = ebbPlan
+    ? useEbbStore.getState().applyProjectTaskSyncPlan(ebbPlan)
+    : undefined;
   if (effectPlan.ebbPayloads.length > 0) affectedDomains.add('ebb');
 
   const activatedGraphNodeIds: string[] = [];
@@ -114,5 +115,6 @@ export function commitProjectTaskEffects({
     ebbCommandCount: effectPlan.ebbPayloads.length,
     activatedGraphNodeIds,
     deactivatedGraphNodeIds,
+    ebbCommit,
   };
 }

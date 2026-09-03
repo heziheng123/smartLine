@@ -15,6 +15,7 @@ const GRAPH_STORAGE_KEY = 'line-graph-storage';
 const GRAPH_SYNC_SETTINGS_KEY = 'line-graph-liveblocks';
 const GRAPH_STORAGE_MIRROR_KEY = `${GRAPH_STORAGE_KEY}:mirror`;
 const graphStorage = createScopedStorage('graph_data');
+let graphHydrationPromise: Promise<void> | null = null;
 
 interface GraphSyncSettings {
   roomCode: string;
@@ -185,35 +186,42 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
       return {
         ...initial,
         isHydrated: false,
-        hydrateStore: async () => {
-          try {
-            let raw = readJsonStorage<GraphData>(GRAPH_STORAGE_MIRROR_KEY)
-              ?? await graphStorage.getItem<GraphData>(GRAPH_STORAGE_KEY);
-            if (!raw) {
-              const lsRaw = readJsonStorage<GraphData>(GRAPH_STORAGE_KEY);
-              if (lsRaw) {
-                raw = lsRaw;
-                await graphStorage.setItem(GRAPH_STORAGE_KEY, raw);
-                localStorage.removeItem(GRAPH_STORAGE_KEY);
+        hydrateStore: () => {
+          if (get().isHydrated) return Promise.resolve();
+          if (graphHydrationPromise) return graphHydrationPromise;
+          graphHydrationPromise = (async () => {
+            try {
+              let raw = readJsonStorage<GraphData>(GRAPH_STORAGE_MIRROR_KEY)
+                ?? await graphStorage.getItem<GraphData>(GRAPH_STORAGE_KEY);
+              if (!raw) {
+                const lsRaw = readJsonStorage<GraphData>(GRAPH_STORAGE_KEY);
+                if (lsRaw) {
+                  raw = lsRaw;
+                  await graphStorage.setItem(GRAPH_STORAGE_KEY, raw);
+                  localStorage.removeItem(GRAPH_STORAGE_KEY);
+                }
+              } else if (typeof raw === 'string') {
+                raw = JSON.parse(raw) as GraphData;
               }
-            } else if (typeof raw === 'string') {
-              raw = JSON.parse(raw) as GraphData;
-            }
 
-            if (raw) {
-              const nodes = normalizeGraphNodes(
-                Array.isArray(raw.nodes) ? raw.nodes.filter(isValidGraphNode) : [],
-              );
-              set({
-                nodes,
-                isHydrated: true,
-              });
-              return;
+              if (raw) {
+                const nodes = normalizeGraphNodes(
+                  Array.isArray(raw.nodes) ? raw.nodes.filter(isValidGraphNode) : [],
+                );
+                set({
+                  nodes,
+                  isHydrated: true,
+                });
+                return;
+              }
+            } catch (e) {
+              console.warn('[smart-graph] IndexedDB数据加载失败：', e);
             }
-          } catch (e) {
-            console.warn('[smart-graph] IndexedDB数据加载失败：', e);
-          }
-          set({ isHydrated: true });
+            set({ isHydrated: true });
+          })().finally(() => {
+            graphHydrationPromise = null;
+          });
+          return graphHydrationPromise;
         },
         syncEnabled: initialSync.enabled,
         syncRoomCode: initialSync.roomCode,

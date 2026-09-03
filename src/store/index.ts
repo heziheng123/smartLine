@@ -21,7 +21,7 @@ import {
   useDailyScheduleStore,
   type DailySourceSnapshot,
 } from '@/components/dailySchedule/store';
-import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
+import { getProjectBlockSourceId, getReviewSourceId } from '@/components/dailySchedule/sourceIds';
 import { todayStr } from '@/utils/dateSafe';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
 import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
@@ -29,6 +29,10 @@ import {
   planProjectTaskEffects,
   type CompletedTaskBindingStrategy,
 } from '@/domain/projectTaskEffects';
+import type { ProjectTaskCompletionReviewDecision } from '@/domain/projectTaskCompletion';
+import { useEbbStore } from '@/ebb/store';
+import { planProjectTaskEbbBatch } from '@/ebb/projectTaskSyncBatch';
+import { serializeReviewTasks } from '@/ebb/dataNormalization';
 import {
   commitProjectTaskEffects,
   EMPTY_PROJECT_TASK_EFFECT_COMMIT,
@@ -141,7 +145,16 @@ export interface ProjectTaskHeaderUpdateResult extends ProjectTaskEffectCommitRe
 
 export interface ProjectTaskHeaderUpdateOptions {
   bindingStrategy?: CompletedTaskBindingStrategy;
+  completionReviewDecision?: ProjectTaskCompletionReviewDecision;
 }
+
+const serializeDailySnapshots = (snapshots: DailySourceSnapshot[]): string => JSON.stringify(
+  [...snapshots].sort((left, right) => {
+    const leftId = left.kind === 'item' ? left.item.id : left.block.id;
+    const rightId = right.kind === 'item' ? right.item.id : right.block.id;
+    return `${left.date}:${left.kind}:${leftId}`.localeCompare(`${right.date}:${right.kind}:${rightId}`);
+  }),
+);
 
 interface TimelineStore extends TimelineData {
   lifeStages: LifeStage[];
@@ -603,7 +616,59 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             nextHeader,
             graphNodes: useGraphStore.getState().nodes,
             bindingStrategy: options?.bindingStrategy,
+            completionReviewDecision: options?.completionReviewDecision,
           });
+          const ebbStateBefore = useEbbStore.getState();
+          const ebbPlan = planProjectTaskEbbBatch({
+            reviewTasks: ebbStateBefore.reviewTasks,
+            ebbSettings: ebbStateBefore.ebbSettings,
+            payloads: effectPlan.ebbPayloads.map((payload) => ({
+              ...payload,
+              sourceTaskId: taskId,
+              sourceBlockId: blockId,
+            })),
+            createdAt: now,
+          });
+          if (ebbPlan.error) {
+            return {
+              ...EMPTY_PROJECT_TASK_EFFECT_COMMIT,
+              changed: false,
+              error: ebbPlan.error,
+            };
+          }
+          const relearnRequested = effectPlan.ebbPayloads.some(
+            (payload) => payload.completionMode === 'relearn',
+          );
+          const completionSnapshotRequested = !currentBlock.header.isCompleted
+            && nextHeader.isCompleted
+            && Boolean(options?.completionReviewDecision);
+          const relearnNodeIds = [...new Set(
+            [
+              ...ebbPlan.nodeResults.map((result) => result.graphNodeId),
+              ...effectPlan.graphNodeIdsToActivate,
+            ],
+          )];
+          const relearnNodeSet = new Set(relearnNodeIds);
+          const relearnPreviousTasks = ebbPlan.baseReviewTasks.filter(
+            (task) => task.graphNodeId && relearnNodeSet.has(task.graphNodeId),
+          );
+          const relearnExpectedTasks = ebbPlan.reviewTasks.filter(
+            (task) => task.graphNodeId && relearnNodeSet.has(task.graphNodeId),
+          );
+          const relearnSourceIds = [...new Set([
+            getProjectBlockSourceId(taskId, blockId),
+            ...relearnPreviousTasks.map((task) => getReviewSourceId(task.id)),
+            ...relearnExpectedTasks.map((task) => getReviewSourceId(task.id)),
+          ])];
+          const relearnDailyBefore = completionSnapshotRequested
+            ? captureDailySourceSnapshots(useDailyScheduleStore.getState().schedules, relearnSourceIds)
+            : [];
+          const graphStatusBefore = completionSnapshotRequested
+            ? Object.fromEntries(relearnNodeIds.map((nodeId) => [
+                nodeId,
+                useGraphStore.getState().nodes.find((node) => node.id === nodeId)?.status,
+              ]))
+            : {};
 
           set((state) => {
             const tasks = state.tasks.map((task) =>
@@ -630,6 +695,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             currentHeader: currentBlock.header,
             nextHeader,
             effectPlan,
+            ebbPlan: effectPlan.ebbPayloads.length > 0 ? ebbPlan : undefined,
           });
 
           if (!isOperationRecordingSuppressed()) {
@@ -674,6 +740,83 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               for (const key of changedProgressKeys) {
                 Object.assign(previousPatch, { [key]: currentBlock.header[key] });
                 Object.assign(expected, { [key]: headerPatch[key] });
+              }
+              if (completionSnapshotRequested) {
+                const relearnDailyExpected = captureDailySourceSnapshots(
+                  useDailyScheduleStore.getState().schedules,
+                  relearnSourceIds,
+                );
+                const graphStatusExpected = Object.fromEntries(relearnNodeIds.map((nodeId) => [
+                  nodeId,
+                  useGraphStore.getState().nodes.find((node) => node.id === nodeId)?.status,
+                ]));
+                recordOperation({
+                  label: relearnRequested
+                    ? `完成并重启“${currentBlock.header.title}”的复习周期`
+                    : `完成“${currentBlock.header.title}”`,
+                  detail: relearnRequested
+                    ? '任务、旧周期、新周期、每日安排与知识节点将作为一次操作统一恢复'
+                    : '任务、本次复习处理、每日安排与知识节点将作为一次操作统一恢复',
+                  modules: ['项目文档', '每日安排', 'EBB', '知识大盘'],
+                }, () => {
+                  const latestTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
+                  const latestBlock = (Array.isArray(latestTask?.blocks) ? latestTask.blocks : [])
+                    .find((block) => block.id === blockId);
+                  if (latestBlock?.type !== 'smart-task') return '任务已经不存在';
+                  if (Object.entries(expected).some(([key, value]) =>
+                    !headerValueEquals(latestBlock.header[key as keyof SmartTaskHeader], value))) {
+                    return '任务在此操作后又被修改';
+                  }
+                  const currentReviews = useEbbStore.getState().reviewTasks.filter(
+                    (task) => task.graphNodeId && relearnNodeSet.has(task.graphNodeId),
+                  );
+                  if (serializeReviewTasks(currentReviews) !== serializeReviewTasks(relearnExpectedTasks)) {
+                    return '相关复习周期在此操作后又被修改';
+                  }
+                  const graphState = useGraphStore.getState();
+                  if (relearnNodeIds.some((nodeId) =>
+                    graphState.nodes.find((node) => node.id === nodeId)?.status !== graphStatusExpected[nodeId])) {
+                    return '知识节点在此操作后又被修改';
+                  }
+                  const currentDaily = captureDailySourceSnapshots(
+                    useDailyScheduleStore.getState().schedules,
+                    relearnSourceIds,
+                  );
+                  if (serializeDailySnapshots(currentDaily) !== serializeDailySnapshots(relearnDailyExpected)) {
+                    return '相关每日安排在此操作后又被修改';
+                  }
+
+                  const restoredAt = new Date().toISOString();
+                  set((state) => {
+                    const restoreHeader = (task: Task) => task.id === taskId
+                      ? {
+                          ...task,
+                          blocks: updateBlockHeader(task.blocks, blockId, previousPatch),
+                          blocksUpdatedAt: restoredAt,
+                        }
+                      : task;
+                    const tasks = state.tasks.map(restoreHeader);
+                    const groups = state.groups.map((group) => ({
+                      ...group,
+                      children: group.children.map(restoreHeader),
+                    }));
+                    const restored = { ...state, tasks, groups };
+                    saveData(restored);
+                    return restored;
+                  });
+                  useEbbStore.getState().replaceProjectTaskReviewTasks(
+                    relearnNodeIds,
+                    relearnPreviousTasks,
+                  );
+                  const dailyState = useDailyScheduleStore.getState();
+                  dailyState.removeBySourceIds(relearnSourceIds);
+                  dailyState.restoreSourceSnapshots(relearnDailyBefore);
+                  const latestGraphState = useGraphStore.getState();
+                  relearnNodeIds.forEach((nodeId) => {
+                    latestGraphState.updateNode(nodeId, { status: graphStatusBefore[nodeId] });
+                  });
+                });
+                return { ...commitReport, changed: true };
               }
               recordOperation({
                 label: progressChanged

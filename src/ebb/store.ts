@@ -58,8 +58,11 @@ import {
 export { normalizeEbbData } from './dataNormalization';
 import { loadEbbData, loadEbbSyncSettings, saveEbbData, saveEbbSyncSettings } from './persistence';
 import { planEbbTaskSync } from './taskSyncPlanner';
+import type { ProjectTaskEbbBatchPlan, ProjectTaskEbbNodeResult } from './projectTaskSyncBatch';
 
 // ── 数据加载/保存 ───────────────────────────────────────────
+
+let ebbHydrationPromise: Promise<void> | null = null;
 
 function getInitialEbbData(): EbbData {
   return getDefaultEbbData();
@@ -84,6 +87,16 @@ interface DailyReviewPlanUndoPayload {
   expectedTasks: ReviewTask[];
   dateChangedTaskIds: string[];
   dailySnapshots: DailySourceSnapshot[];
+}
+
+export interface ProjectTaskEbbCommitReport {
+  changed: boolean;
+  affectedGraphNodeIds: string[];
+  previousTasks: ReviewTask[];
+  expectedTasks: ReviewTask[];
+  dailySourceIdsToRemove: string[];
+  dailySnapshots: DailySourceSnapshot[];
+  nodeResults: ProjectTaskEbbNodeResult[];
 }
 
 export type FinalReviewRoundDecision = 'finish' | 'append';
@@ -173,6 +186,10 @@ interface EbbStore extends EbbData {
 
   // 新增：自动同步任务到 Ebb 复习流
   syncTaskToEbb: (payload: SyncTaskToEbbPayload) => void;
+  /** Commit a fully planned multi-node project-task sync with one EBB write. */
+  applyProjectTaskSyncPlan: (plan: ProjectTaskEbbBatchPlan) => ProjectTaskEbbCommitReport;
+  /** Replace only the named graph-node chains; used by guarded unified undo. */
+  replaceProjectTaskReviewTasks: (graphNodeIds: string[], tasks: ReviewTask[]) => void;
   // 新增：同步大盘节点名称修改
   updateTopicNameByGraphNodeId: (graphNodeId: string, newTopicName: string) => void;
 }
@@ -195,21 +212,28 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         ...initial,
         ebbSettings: ensureTagColors(initial.reviewTasks, initial.ebbSettings),
         isHydrated: false,
-        hydrateStore: async () => {
-          try {
-            const normalized = await loadEbbData();
-            if (normalized) {
-              set({
-                ...normalized,
-                isHydrated: true,
-              });
-              saveEbbData(normalized);
-              return;
+        hydrateStore: () => {
+          if (get().isHydrated) return Promise.resolve();
+          if (ebbHydrationPromise) return ebbHydrationPromise;
+          ebbHydrationPromise = (async () => {
+            try {
+              const normalized = await loadEbbData();
+              if (normalized) {
+                set({
+                  ...normalized,
+                  isHydrated: true,
+                });
+                saveEbbData(normalized);
+                return;
+              }
+            } catch (e) {
+              console.warn('[smart-ebb] IndexedDB 数据解析失败：', e);
             }
-          } catch (e) {
-            console.warn('[smart-ebb] IndexedDB 数据解析失败：', e);
-          }
-          set({ isHydrated: true });
+            set({ isHydrated: true });
+          })().finally(() => {
+            ebbHydrationPromise = null;
+          });
+          return ebbHydrationPromise;
         },
         syncEnabled: initialSync.enabled,
         syncRoomCode: initialSync.roomCode,
@@ -1345,6 +1369,66 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               useDailyScheduleStore.getState().removeBySourceIds(plan.dailySourceIdsToRemove);
             }, 0);
           }
+        },
+
+        applyProjectTaskSyncPlan: (plan) => {
+          const affectedGraphNodeIds = [...new Set(plan.nodeResults.map((result) => result.graphNodeId))];
+          const affected = new Set(affectedGraphNodeIds);
+          const previousTasks = plan.baseReviewTasks.filter(
+            (task) => task.graphNodeId && affected.has(task.graphNodeId),
+          );
+          const expectedTasks = plan.reviewTasks.filter(
+            (task) => task.graphNodeId && affected.has(task.graphNodeId),
+          );
+          const dailyState = useDailyScheduleStore.getState();
+          const dailySnapshots = captureDailySourceSnapshots(
+            dailyState.schedules,
+            plan.dailySourceIdsToRemove,
+          );
+
+          if (plan.changed) {
+            set((state) => {
+              const newData: EbbData = {
+                reviewTasks: plan.reviewTasks,
+                inboxItems: state.inboxItems,
+                outlineNodes: state.outlineNodes,
+                ebbSettings: state.ebbSettings,
+              };
+              saveEbbData(newData);
+              return newData;
+            });
+          }
+          if (plan.dailySourceIdsToRemove.length > 0) {
+            dailyState.removeBySourceIds(plan.dailySourceIdsToRemove);
+          }
+          return {
+            changed: plan.changed,
+            affectedGraphNodeIds,
+            previousTasks,
+            expectedTasks,
+            dailySourceIdsToRemove: plan.dailySourceIdsToRemove,
+            dailySnapshots,
+            nodeResults: plan.nodeResults,
+          };
+        },
+
+        replaceProjectTaskReviewTasks: (graphNodeIds, tasks) => {
+          const affected = new Set(graphNodeIds);
+          set((state) => {
+            const newData: EbbData = {
+              reviewTasks: [
+                ...state.reviewTasks.filter(
+                  (task) => !task.graphNodeId || !affected.has(task.graphNodeId),
+                ),
+                ...tasks,
+              ],
+              inboxItems: state.inboxItems,
+              outlineNodes: state.outlineNodes,
+              ebbSettings: state.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
         },
       };
     },

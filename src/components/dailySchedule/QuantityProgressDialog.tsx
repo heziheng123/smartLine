@@ -8,7 +8,8 @@ import {
   getQuantityTotal,
   getQuantityUnit,
 } from '@/utils/blocks';
-import { recordQuantityProgress, removeQuantityProgress } from '@/services/projectTaskCommands';
+import { removeQuantityProgress } from '@/services/projectTaskCommands';
+import { requestQuantityProgress } from '@/services/projectTaskCompletion';
 import { todayStr } from '@/utils/dateSafe';
 import '@/styles/daily-schedule.css';
 
@@ -31,17 +32,26 @@ const QuantityProgressDialog: React.FC<QuantityProgressDialogProps> = ({ taskId,
   const suggestion = getQuantityDailySuggestion(header, date);
   const [value, setValue] = useState(currentRecord ? String(currentRecord) : '');
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const remaining = useMemo(() => Math.max(0, total - progress), [progress, total]);
   const dayLabel = date === todayStr() ? '今日' : '当日';
 
-  const save = (event: React.FormEvent) => {
+  const save = async (event: React.FormEvent) => {
     event.preventDefault();
     const amount = Number(value);
     if (!Number.isInteger(amount) || amount <= 0) return setError('请输入大于 0 的整数。');
     if (amount > maxForDate) return setError(`最多还能记录 ${maxForDate} ${unit}。`);
-    const result = recordQuantityProgress(taskId, block.id, date, amount);
-    if ('error' in result) return setError(result.error);
-    onClose();
+    setSaving(true);
+    try {
+      const result = await requestQuantityProgress(taskId, block.id, date, amount);
+      if (!result.ok) {
+        if ('cancelled' in result) return;
+        return setError(result.error);
+      }
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   const remove = () => {
@@ -77,7 +87,7 @@ const QuantityProgressDialog: React.FC<QuantityProgressDialogProps> = ({ taskId,
           <div className="ds-vocab-form-actions">
             {currentRecord && <button type="button" className="ds-vocab-danger-btn" onClick={remove}>撤销{dayLabel}记录</button>}
             <button type="button" className="ds-vocab-secondary-btn" onClick={onClose}>取消</button>
-            <button type="submit" className="ds-vocab-primary-btn">{currentRecord ? '更新记录' : '完成记录'}</button>
+            <button type="submit" className="ds-vocab-primary-btn" disabled={saving}>{saving ? '处理中…' : currentRecord ? '更新记录' : '完成记录'}</button>
           </div>
         </form>
       </section>

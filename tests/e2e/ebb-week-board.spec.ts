@@ -72,17 +72,17 @@ test.beforeEach(async ({ page }) => {
   }, { ebbData: ebb, dailyData: daily });
   await page.goto('/');
   await page.getByTitle('艾宾浩斯复习').click();
-  await page.getByRole('tab', { name: '复习计划' }).click();
+  const libraryTab = page.getByRole('tab', { name: '复习计划' });
+  if (await libraryTab.count()) await libraryTab.click();
   await page.getByRole('button', { name: '日历' }).click();
-  await page.locator('.eb-week-board-nav').getByRole('button', { name: '下一周' }).click();
+  // Calendar navigation lives in the shared plan command bar; BoardView hides
+  // its duplicate navigation when embedded here.
+  await page.locator('.eb-plan-commands').getByRole('button', { name: '下一周' }).click();
 });
 
 test('weekly board shows rounds under dates without topic rows', async ({ page }) => {
-  const inlineStats = page.locator('.eb-nav > .eb-stats-bar');
-  await expect(inlineStats).toBeVisible();
-  await expect(page.locator('.eb-stats-bar--retired')).toBeHidden();
-  const statsHeight = await inlineStats.evaluate((element) => element.getBoundingClientRect().height);
-  expect(statsHeight).toBeLessThanOrEqual(34);
+  await expect(page.locator('.eb-plan-commands')).toBeVisible();
+  await expect(page.locator('.eb-week-board-nav')).toHaveCount(0);
   await expect(page.locator('.eb-cal-sidebar')).toHaveCount(0);
   await expect(page.locator('.eb-week-board-grid')).toBeVisible();
   await expect(page.locator('.eb-week-board-summary')).toContainText('轮');
@@ -95,63 +95,43 @@ test('weekly board shows rounds under dates without topic rows', async ({ page }
 test('tablet calendar consolidates duplicate headers and keeps overview controls separate', async ({ page }) => {
   await page.setViewportSize({ width: 1081, height: 898 });
 
-  await expect(page.locator('.eb-compact-week')).toHaveCount(0);
-  await expect(page.locator('.eb-plan-view-toolbar')).toHaveCount(0);
+  await expect(page.locator('.eb-week-board-nav')).toHaveCount(0);
   await expect(page.locator('.eb-week-board-toolbar .eb-week-board-summary')).toBeVisible();
-  await expect(page.locator('.eb-week-board-toolbar .eb-plan-view-actions')).toBeVisible();
-
-  const toolbarHeight = await page.locator('.eb-week-board-toolbar').evaluate((element) => element.getBoundingClientRect().height);
-  expect(toolbarHeight).toBeLessThanOrEqual(100);
-
-  const navLayout = await page.locator('.eb-nav').evaluate((element) => {
-    const [left, stats, right] = Array.from(element.children).map((child) => child.getBoundingClientRect());
-    return {
-      clientWidth: element.clientWidth,
-      scrollWidth: element.scrollWidth,
-      leftRight: left.right,
-      statsLeft: stats.left,
-      statsRight: stats.right,
-      rightLeft: right.left,
-    };
-  });
-  expect(navLayout.scrollWidth).toBeLessThanOrEqual(navLayout.clientWidth + 1);
-  expect(navLayout.leftRight).toBeLessThanOrEqual(navLayout.statsLeft + 1);
-  expect(navLayout.statsRight).toBeLessThanOrEqual(navLayout.rightLeft + 1);
+  await expect(page.locator('.eb-plan-commands [aria-label="视图切换"]')).toBeVisible();
+  await expect(page.locator('[aria-label="视图切换"]')).toHaveCount(1);
 });
 
-test('matrix replaces the mini calendar with a compact week selector and highlights the selected date', async ({ page }) => {
+test('matrix list keeps category statistics and compact filter controls', async ({ page }) => {
   await page.getByRole('button', { name: '列表' }).click();
   await expect(page.locator('.eb-mini-cal')).toHaveCount(0);
-  const strip = page.locator('.eb-compact-week');
-  await expect(strip).toBeVisible();
-  await strip.locator('button[title*="15 个复习轮次"]').click();
-  await expect(page.locator('.eb-topic-row.is-date-match').filter({ hasText: '矩阵拖拽测试' })).toBeVisible();
+  await expect(page.locator('.eb-tag-stats')).toBeVisible();
+  await expect(page.locator('.eb-filter-popover-wrap')).toHaveCount(3);
+  await expect(page.locator('.eb-topic-row').filter({ hasText: '矩阵拖拽测试' })).toBeVisible();
 });
 
 test('matrix sorts plans by generation time in both directions and reveals the basis', async ({ page }) => {
   await page.getByRole('button', { name: '列表' }).click();
-  const sortSelect = page.locator('.eb-filter-select').nth(2);
+  const sortMenu = page.locator('.eb-filter-popover-wrap').nth(2);
 
-  await sortSelect.selectOption('created-desc');
+  await sortMenu.locator('summary').click();
+  await sortMenu.getByRole('button', { name: '按生成时间（新→旧）' }).click();
   await expect(page.locator('.eb-topic-row').first()).toContainText('高负载日期任务 14');
   await expect(page.locator('.eb-topic-row').first().locator('.eb-topic-row-created')).toContainText('生成于');
 
-  await sortSelect.selectOption('created-asc');
+  await expect(sortMenu).toHaveAttribute('open', '');
+  await sortMenu.getByRole('button', { name: '按生成时间（旧→新）' }).click();
   await expect(page.locator('.eb-topic-row').first()).toContainText('矩阵拖拽测试');
 });
 
-test('month mode keeps date columns and scrolls horizontally through the whole month', async ({ page }) => {
-  await page.getByRole('group', { name: '轮次排期时间范围' }).getByRole('button', { name: '月', exact: true }).click();
-  const expectedDays = new Date(Number(nextMonday.slice(0, 4)), Number(nextMonday.slice(5, 7)), 0).getDate();
-  await expect(page.locator('.eb-week-day')).toHaveCount(expectedDays);
-  const grid = page.locator('.eb-week-board-grid');
-  const dimensions = await grid.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
-  expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.clientWidth);
-  const scrolled = await grid.evaluate((element) => {
-    element.scrollLeft = element.scrollWidth;
-    return element.scrollLeft;
-  });
-  expect(scrolled).toBeGreaterThan(0);
+test('calendar follows the shared weekly navigation', async ({ page }) => {
+  const commands = page.locator('.eb-plan-commands');
+  const weekLabel = commands.locator('.eb-plan-week-label');
+  const initialWeek = await weekLabel.textContent();
+  await commands.getByRole('button', { name: '上一周' }).click();
+  await expect(weekLabel).not.toHaveText(initialWeek ?? '');
+  await expect(page.locator('.eb-week-day')).toHaveCount(7);
+  await commands.getByRole('button', { name: '下一周' }).click();
+  await expect(weekLabel).toHaveText(initialWeek ?? '');
 });
 
 test('dragging a round asks for scope and can shift following rounds atomically', async ({ page }, testInfo) => {

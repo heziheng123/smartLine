@@ -8,7 +8,8 @@ import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
 import { resolveTaskCategoryTheme } from '@/utils/taskCategoryTheme';
 import { isTaskOverdueOnDate } from '@/domain/taskRules';
-import { resolveProjectTask, rescheduleProjectTask, setProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { resolveProjectTask, rescheduleProjectTask } from '@/services/projectTaskCommands';
+import { requestProjectTaskCompletion } from '@/services/projectTaskCompletion';
 import { scheduleBacklogTaskToDate } from '@/services/backlogCommands';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
@@ -358,10 +359,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
   }, [clearDragState]);
 
   const handleToggle = useCallback(
-    (taskId: string, blockId: string, isCompleted: boolean) => {
+    async (taskId: string, blockId: string, isCompleted: boolean) => {
       const now = todayStr();
-      const result = setProjectTaskCompletion(taskId, blockId, !isCompleted, now);
-      if ('error' in result) showToast(result.error);
+      const result = await requestProjectTaskCompletion(taskId, blockId, !isCompleted, now);
+      if (!result.ok && !('cancelled' in result)) showToast(result.error);
     },
     [showToast],
   );
@@ -971,12 +972,13 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
                             <button
                               type="button"
                               className={`wmv-check ${quantityTask ? 'wmv-check--quantity' : ''} ${header.isCompleted ? 'wmv-check--done' : ''}`}
+                              onPointerDown={(event) => event.stopPropagation()}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 if (quantityTask) {
                                   openProjectTaskModal(block._taskId, block.id, { source: 'week-matrix', sourceDate: header.date });
                                 } else {
-                                  handleToggle(block._taskId, block.id, header.isCompleted);
+                                  void handleToggle(block._taskId, block.id, header.isCompleted);
                                 }
                               }}
                               title={quantityTask ? '打开任务并记录数量进度' : header.isCompleted ? '取消完成' : '标记完成'}

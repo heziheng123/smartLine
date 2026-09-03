@@ -3,6 +3,7 @@ import { isLeafGraphNode } from '@/graph/activation';
 import type { GraphNode } from '@/graph/types';
 import type { SmartTaskHeader, Task } from '@/types';
 import { getValidGraphNodeIds, shouldAutoSyncEbb } from '@/utils/blocks';
+import type { ProjectTaskCompletionReviewDecision } from './projectTaskCompletion';
 
 export interface ProjectTaskEffectPlan {
   ebbPayloads: SyncTaskToEbbPayload[];
@@ -23,6 +24,7 @@ interface ProjectTaskEffectInput {
   nextHeader: SmartTaskHeader;
   graphNodes: GraphNode[];
   bindingStrategy?: CompletedTaskBindingStrategy;
+  completionReviewDecision?: ProjectTaskCompletionReviewDecision;
 }
 
 const emptyPlan = (): ProjectTaskEffectPlan => ({
@@ -43,6 +45,7 @@ export function planProjectTaskEffects({
   nextHeader,
   graphNodes,
   bindingStrategy = 'transfer',
+  completionReviewDecision,
 }: ProjectTaskEffectInput): ProjectTaskEffectPlan {
   const plan = emptyPlan();
   const graphNodeById = new Map(
@@ -64,16 +67,21 @@ export function planProjectTaskEffects({
     });
 
   const addNode = (nodeId: string, syncEbb = true) => {
+    const node = graphNodeById.get(nodeId);
+    if (!node || node.isArchived) return;
     plan.graphNodeIdsToActivate.push(nodeId);
     if (!syncEbb) return;
-    const node = graphNodeById.get(nodeId);
-    if (!node) return;
+    const relearnNodeIds = new Set(completionReviewDecision?.relearnNodeIds ?? []);
     plan.ebbPayloads.push({
       action: 'add',
       graphNodeId: nodeId,
       topicName: node.name,
       complexity: nextHeader.complexity ?? 'normal',
       triggerSchedule: shouldAutoSyncEbb(nextHeader) && isLeafGraphNode(graphNodes, nodeId),
+      completionMode: completionReviewDecision?.mode === 'relearn' && relearnNodeIds.has(nodeId)
+        ? 'relearn'
+        : 'continue',
+      completedDate: nextHeader.completedDate,
     });
   };
 
@@ -94,7 +102,8 @@ export function planProjectTaskEffects({
   const newlyCompleted = !currentHeader.isCompleted && nextHeader.isCompleted;
   const newlyUncompleted = currentHeader.isCompleted && !nextHeader.isCompleted;
   if (newlyCompleted) {
-    nextNodeIds.forEach((nodeId) => addNode(nodeId));
+    const syncEbb = completionReviewDecision?.mode !== 'task-only';
+    nextNodeIds.forEach((nodeId) => addNode(nodeId, syncEbb));
   } else if (newlyUncompleted) {
     currentNodeIds.forEach((nodeId) => removeNode(nodeId));
   } else if (currentHeader.isCompleted && nextHeader.isCompleted) {

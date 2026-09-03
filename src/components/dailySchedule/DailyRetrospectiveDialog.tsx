@@ -308,7 +308,8 @@ const DailyRetrospectiveDialog: React.FC<DailyRetrospectiveDialogProps> = ({
                   )}
                   {linkedEntries.filter((entry) => entry.linkedProjectSourceId === activeEntry.sourceId).map((entry) => (
                     <div key={entry.id} className={styles.linkedNotice}>
-                      同时联动完成：{entry.title}第 {entry.round ?? 1} 轮复习
+                      同时联动完成：{entry.title}第 {entry.round ?? 1}/{entry.totalRounds ?? 1} 轮复习
+                      {entry.restartedNextDueDate ? `；已重启完整周期，下一轮 ${entry.restartedNextDueDate}` : ''}
                     </div>
                   ))}
                 </div>

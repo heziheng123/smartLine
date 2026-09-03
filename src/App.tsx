@@ -20,6 +20,7 @@ import ViewErrorBoundary from '@/components/ViewErrorBoundary';
 import ConfirmationDialogHost from '@/components/ConfirmationDialogHost';
 import ChoiceDialogHost from '@/components/ChoiceDialogHost';
 import FinalReviewRoundDialogHost from '@/components/FinalReviewRoundDialogHost';
+import ProjectTaskCompletionDialogHost from '@/components/ProjectTaskCompletionDialogHost';
 import { useIceboxMonitor } from '@/hooks/useIceboxMonitor';
 import { isPhoneLayoutViewport, usePhoneLayout } from '@/hooks/usePhoneLayout';
 import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer-motion';
@@ -1303,6 +1304,7 @@ const App: React.FC = () => {
       <ConfirmationDialogHost />
       <ChoiceDialogHost />
       <FinalReviewRoundDialogHost />
+      <ProjectTaskCompletionDialogHost />
     </div>
   );
 };

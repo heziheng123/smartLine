@@ -37,6 +37,7 @@ import { getReviewRoundDuration } from '@/ebb/duration';
 import { buildBalancedDailyReviewPlan } from '@/ebb/dailyReviewPlanning';
 import { planReviewRoundReschedule } from '@/ebb/reschedulePlanning';
 import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
+import { requestProjectTaskCompletion } from '@/services/projectTaskCompletion';
 import { useLifeMapStore } from '@/lifeMap/store';
 import { activeLifeMapItems } from '@/lifeMap/data';
 import { currentSystemStats } from '@/lifeMap/metrics';
@@ -216,7 +217,6 @@ const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPr
   const addScheduledItem = useDailyScheduleStore((state) => state.addScheduledItem);
   const updateScheduledItem = useDailyScheduleStore((state) => state.updateScheduledItem);
   const updateTimeBlock = useDailyScheduleStore((state) => state.updateTimeBlock);
-  const updateBlockHeader = useTimelineStore((state) => state.updateBlockHeader);
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
   const dailyTimeSlots = useEbbStore((state) => state.ebbSettings.dailyTimeSlots);
   const slotConfigs = useMemo(() => normalizeTimeSlotConfigs(dailyTimeSlots), [dailyTimeSlots]);
@@ -253,10 +253,12 @@ const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPr
         onOpenProject(source.task.id, source.block.id);
         return;
       }
-      updateBlockHeader(source.task.id, source.block.id, {
-        isCompleted: !source.block.header.isCompleted,
-        completedDate: source.block.header.isCompleted ? undefined : selectedDate,
-      });
+      await requestProjectTaskCompletion(
+        source.task.id,
+        source.block.id,
+        !source.block.header.isCompleted,
+        source.block.header.isCompleted ? undefined : selectedDate,
+      );
       return;
     }
     if (parsed?.source === 'review') {
@@ -386,7 +388,7 @@ const PhoneWeekView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPro
       <div className="phone-card-list">
         {selected.map(({ task, block }) => (
           <article key={`${task.id}:${block.id}`} className={`phone-card phone-week-task ${block.header.isCompleted ? 'is-completed' : ''}`}>
-            <button type="button" className="phone-check-button" onClick={() => updateBlockHeader(task.id, block.id, { isCompleted: !block.header.isCompleted, completedDate: block.header.isCompleted ? undefined : selectedDate })} aria-label={`${block.header.isCompleted ? '取消完成' : '完成'}${block.header.title}`}>
+            <button type="button" className="phone-check-button" onClick={() => { void requestProjectTaskCompletion(task.id, block.id, !block.header.isCompleted, block.header.isCompleted ? undefined : selectedDate); }} aria-label={`${block.header.isCompleted ? '取消完成' : '完成'}${block.header.title}`}>
               {block.header.isCompleted ? <Check size={16} /> : <Circle size={16} />}
             </button>
             <button type="button" className="phone-task-main" onClick={() => onOpenProject(task.id, block.id)}>

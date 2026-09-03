@@ -935,6 +935,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                                           onUpdateHeader={handleUpdateHeader}
                                           onUpdateBody={handleUpdateBody}
                                           onDelete={handleDeleteBlock}
+                                          onCommandError={setOperationError}
                                           expandOverride={expandAll}
                                         />
                                       </div>

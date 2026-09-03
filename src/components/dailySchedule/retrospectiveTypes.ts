@@ -34,6 +34,8 @@ export interface RetrospectiveEntry {
   linkedProjectSourceId?: string;
   round?: number;
   totalRounds?: number;
+  /** Present when this completed old round was archived by a relearn restart. */
+  restartedNextDueDate?: string;
   quantityActual?: number;
   quantityCompleted?: number;
   quantityTotal?: number;
@@ -77,6 +79,7 @@ export interface CompletedActivity {
   linkedProjectSourceId?: string;
   round?: number;
   totalRounds?: number;
+  restartedNextDueDate?: string;
   quantityActual?: number;
   quantityCompleted?: number;
   quantityTotal?: number;

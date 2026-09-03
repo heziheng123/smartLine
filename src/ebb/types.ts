@@ -45,6 +45,14 @@ export interface ReviewTask {
   durationOverrideMinutes?: number;
   smStatus?: SmStatus;
   isArchived?: boolean;   // 是否已归档（冷数据区）
+  /** 旧周期因一次“重新学习”结束；仅用于历史展示和审计。 */
+  archivedReason?: 'relearned';
+  /** 旧周期被归档的时间。 */
+  archivedAt?: string;
+  /** 归档前所属周期的总轮数，避免被新周期的轮数干扰。 */
+  cycleTotalRounds?: number;
+  /** 当前周期由项目任务的“重新学习”操作创建。 */
+  cycleOrigin?: 'project-task-relearn';
   /** 项目任务完成所触发的计划创建日期，用于避免同节点同日连续消耗轮次。 */
   scheduleCreatedDate?: string;
   scheduleSourceTaskId?: string;
@@ -72,6 +80,10 @@ export interface SyncTaskToEbbPayload {
   triggerSchedule?: boolean;
   sourceTaskId?: string;
   sourceBlockId?: string;
+  /** 本次项目任务完成应如何处理已有复习链；缺省保持旧行为。 */
+  completionMode?: 'continue' | 'relearn';
+  /** 重新学习时作为新周期 R0 的项目任务完成日期。 */
+  completedDate?: string;
 }
 
 /** 收件箱项 */

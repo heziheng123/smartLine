@@ -44,6 +44,7 @@ import { useTimelineStore } from '@/store';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
 import QuantityProgressDialog from '@/components/dailySchedule/QuantityProgressDialog';
+import { requestProjectTaskCompletion, requestProjectTaskUpdate } from '@/services/projectTaskCompletion';
 
 interface SmartTaskBlockCardProps {
   parentTaskId: string;
@@ -51,6 +52,7 @@ interface SmartTaskBlockCardProps {
   onUpdateHeader: (blockId: string, patch: Partial<SmartTaskHeader>) => void;
   onUpdateBody: (blockId: string, body: string) => void;
   onDelete: (blockId: string) => void;
+  onCommandError?: (message: string | null) => void;
   /** 是否在矩阵/每日视图中使用（折叠模式） */
   compact?: boolean;
   /** 强制展开/折叠：true=展开，false=折叠，null=自动 */
@@ -65,6 +67,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   onUpdateHeader,
   onUpdateBody,
   onDelete,
+  onCommandError,
   compact = false,
   expandOverride = null,
 }) => {
@@ -99,6 +102,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showGraphPicker, setShowGraphPicker] = useState(false);
   const [showQuantityProgress, setShowQuantityProgress] = useState(false);
+  const [completionPending, setCompletionPending] = useState(false);
   const graphBindingStrategyRef = useRef<CompletedTaskBindingStrategy | null>(null);
   const startGraphBinding = useGraphBindingStore((state) => state.start);
   const [showTagPicker, setShowTagPicker] = useState(false);
@@ -192,14 +196,22 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   }, [titleDraft]);
 
   // 完成切换
-  const handleToggle = useCallback(() => {
-    if (isQuantity) return;
-    const now = todayStr();
-    onUpdateHeader(block.id, {
-      isCompleted: !header.isCompleted,
-      completedDate: !header.isCompleted ? now : undefined,
-    });
-  }, [block.id, header.isCompleted, isQuantity, onUpdateHeader]);
+  const handleToggle = useCallback(async () => {
+    if (isQuantity || completionPending) return;
+    setCompletionPending(true);
+    try {
+      const result = await requestProjectTaskCompletion(
+        parentTaskId,
+        block.id,
+        !header.isCompleted,
+        !header.isCompleted ? todayStr() : undefined,
+      );
+      if (!result.ok && !('cancelled' in result)) onCommandError?.(result.error);
+      else onCommandError?.(null);
+    } finally {
+      setCompletionPending(false);
+    }
+  }, [block.id, completionPending, header.isCompleted, isQuantity, onCommandError, parentTaskId]);
 
   const hasQuantityStarted = Boolean(header.date && header.date <= today);
   const canEditTodayQuantity = isQuantity && hasQuantityStarted && (!header.isCompleted || todayQuantity > 0);
@@ -308,34 +320,48 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     if (Number.isInteger(value) && value > 0 && value >= quantityCompleted) {
       const completed = quantityCompleted >= value;
       if (value !== quantityTotal) {
-        onUpdateHeader(block.id, {
+        const patch: Partial<SmartTaskHeader> = {
           ...(isLegacyVocabulary ? { vocabularyTotalWords: value } : { quantityTotal: value }),
           isCompleted: completed,
           completedDate: completed ? (header.completedDate ?? today) : undefined,
-        });
+        };
+        if (!header.isCompleted && completed) {
+          void requestProjectTaskUpdate(parentTaskId, block.id, patch).then((result) => {
+            if (!result.ok && !('cancelled' in result)) onCommandError?.(result.error);
+          });
+        } else {
+          onUpdateHeader(block.id, patch);
+        }
       }
       setQuantityTotalDraft(String(value));
       return;
     }
     setQuantityTotalDraft(String(quantityTotal));
-  }, [block.id, header.completedDate, isLegacyVocabulary, onUpdateHeader, quantityCompleted, quantityTotal, quantityTotalDraft, today]);
+  }, [block.id, header.completedDate, header.isCompleted, isLegacyVocabulary, onCommandError, onUpdateHeader, parentTaskId, quantityCompleted, quantityTotal, quantityTotalDraft, today]);
 
   const commitQuantityCompleted = useCallback(() => {
     const value = Number(quantityCompletedDraft);
     const nextInitial = value - quantityRecordTotal;
     if (Number.isInteger(value) && nextInitial >= 0 && value <= quantityTotal) {
       if (value !== quantityCompleted) {
-        onUpdateHeader(block.id, {
+        const patch: Partial<SmartTaskHeader> = {
           ...(isLegacyVocabulary ? { vocabularyInitialCompletedWords: nextInitial } : { quantityInitialCompleted: nextInitial }),
           isCompleted: value >= quantityTotal,
           completedDate: value >= quantityTotal ? today : undefined,
-        });
+        };
+        if (!header.isCompleted && value >= quantityTotal) {
+          void requestProjectTaskUpdate(parentTaskId, block.id, patch).then((result) => {
+            if (!result.ok && !('cancelled' in result)) onCommandError?.(result.error);
+          });
+        } else {
+          onUpdateHeader(block.id, patch);
+        }
       }
       setQuantityCompletedDraft(String(value));
       return;
     }
     setQuantityCompletedDraft(String(quantityCompleted));
-  }, [block.id, isLegacyVocabulary, onUpdateHeader, quantityCompleted, quantityCompletedDraft, quantityRecordTotal, quantityTotal, today]);
+  }, [block.id, header.isCompleted, isLegacyVocabulary, onCommandError, onUpdateHeader, parentTaskId, quantityCompleted, quantityCompletedDraft, quantityRecordTotal, quantityTotal, today]);
 
   const handleQuantityDeadlineChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -391,7 +417,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             }}
             title={isQuantity ? quantityProgressLabel : header.isCompleted ? '取消完成' : '标记完成'}
             aria-label={isQuantity ? quantityProgressLabel : header.isCompleted ? '取消完成' : '标记完成'}
-            disabled={isQuantity && !canEditTodayQuantity}
+            disabled={completionPending || (isQuantity && !canEditTodayQuantity)}
           >
             {isQuantity
               ? <Hash size={11} strokeWidth={2.5} />
@@ -469,7 +495,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           onClick={isQuantity ? handleOpenQuantityProgress : handleToggle}
           title={isQuantity ? quantityProgressLabel : header.isCompleted ? '标记未完成' : '标记完成'}
           aria-label={isQuantity ? quantityProgressLabel : header.isCompleted ? '取消完成' : '标记完成'}
-          disabled={isQuantity && !canEditTodayQuantity}
+          disabled={completionPending || (isQuantity && !canEditTodayQuantity)}
         >
           {isQuantity
             ? <Hash size={11} strokeWidth={2.5} />

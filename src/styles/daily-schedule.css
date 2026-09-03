@@ -2524,10 +2524,10 @@
 
 .ds-pool-item-main {
   display: flex;
-  min-height: 49px;
+  min-height: 48px;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 10px 6px;
+  padding: 8px 10px 5px;
 }
 
 .ds-pool-timing {

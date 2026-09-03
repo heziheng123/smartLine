@@ -6,9 +6,14 @@ import { computeTopicStats, generateTasks } from '../../src/ebb/scheduler.ts';
 import { normalizeEbbData } from '../../src/ebb/dataNormalization.ts';
 import { buildBalancedDailyReviewPlan, planDailyReviewSelection } from '../../src/ebb/dailyReviewPlanning.ts';
 import { planBatchReviewAdjustment } from '../../src/ebb/batchAdjust.ts';
+import { planProjectTaskEbbBatch } from '../../src/ebb/projectTaskSyncBatch.ts';
+import { planEbbTaskSync } from '../../src/ebb/taskSyncPlanner.ts';
 import type { ReviewTask } from '../../src/ebb/types.ts';
 import type { Task } from '../../src/types/index.ts';
 import { isValidCalendarDate, makeLocalDayjs } from '../../src/utils/dateSafe.ts';
+import { analyzeProjectTaskCompletion } from '../../src/domain/projectTaskCompletion.ts';
+import { collectCompletedActivities } from '../../src/domain/dailyRetrospective.ts';
+import { planProjectTaskEffects } from '../../src/domain/projectTaskEffects.ts';
 
 const task = (id: string, date: string, patch: Record<string, unknown> = {}): Task => ({
   id,
@@ -92,6 +97,390 @@ test('legacy review creation time is restored deterministically from generated i
   });
 
   assert.equal(normalized.reviewTasks[0].createdAt, '2025-03-04T05:06:07.000Z');
+});
+
+test('relearning completes only the due old round, archives the old chain and creates a full new cycle', () => {
+  let sequence = 0;
+  const plan = planProjectTaskEbbBatch({
+    reviewTasks: [
+      review('old-r1', '极限', '2026-08-20', 1, { graphNodeId: 'limit', isCompleted: true, completedDate: '2026-08-20' }),
+      review('old-r2', '极限', '2026-09-01', 2, { graphNodeId: 'limit' }),
+      review('old-r3', '极限', '2026-09-02', 3, { graphNodeId: 'limit' }),
+    ],
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    payloads: [{
+      graphNodeId: 'limit',
+      topicName: '极限',
+      complexity: 'normal',
+      completionMode: 'relearn',
+      completedDate: '2026-09-01',
+      sourceTaskId: 'project',
+      sourceBlockId: 'lesson',
+    }],
+    today: '2026-09-01',
+    createdAt: '2026-09-01T12:00:00.000Z',
+    createReviewTaskId: () => `new-r${++sequence}`,
+  });
+
+  assert.equal(plan.error, undefined);
+  assert.equal(plan.changed, true);
+  const oldRounds = plan.reviewTasks.filter((item) => item.id.startsWith('old-'));
+  assert.equal(oldRounds.every((item) => item.isArchived && item.archivedReason === 'relearned'), true);
+  assert.equal(oldRounds.every((item) => item.cycleTotalRounds === 3), true);
+  assert.equal(oldRounds.find((item) => item.id === 'old-r2')?.isCompleted, true);
+  assert.equal(oldRounds.find((item) => item.id === 'old-r2')?.completionSource, 'project-task');
+  assert.equal(oldRounds.find((item) => item.id === 'old-r3')?.isCompleted, false);
+  const newRounds = plan.reviewTasks.filter((item) => item.id.startsWith('new-'));
+  assert.equal(newRounds.length, DEFAULT_EBB_SETTINGS.complexityConfigs.normal.intervals.length);
+  assert.equal(newRounds.every((item) => item.cycleOrigin === 'project-task-relearn'), true);
+  assert.deepEqual(newRounds.map((item) => item.dueDate), ['2026-09-02', '2026-09-03', '2026-09-05', '2026-09-08', '2026-09-16', '2026-10-01', '2026-10-31']);
+  assert.equal(newRounds.every((item) => item.scheduleCreatedDate === '2026-09-01'), true);
+});
+
+test('relearning after a manual review on the same day does not consume the next old round', () => {
+  const plan = planProjectTaskEbbBatch({
+    reviewTasks: [
+      review('manual-today', '导数', '2026-09-01', 1, {
+        graphNodeId: 'derivative',
+        isCompleted: true,
+        completedDate: '2026-09-01',
+        completionSource: 'manual',
+      }),
+      review('next-old', '导数', '2026-08-30', 2, { graphNodeId: 'derivative' }),
+    ],
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    payloads: [{
+      graphNodeId: 'derivative',
+      topicName: '导数',
+      completionMode: 'relearn',
+      completedDate: '2026-09-01',
+      sourceTaskId: 'project',
+      sourceBlockId: 'lesson',
+    }],
+    today: '2026-09-01',
+    createReviewTaskId: (() => { let id = 0; return () => `manual-new-${++id}`; })(),
+  });
+
+  assert.equal(plan.reviewTasks.find((item) => item.id === 'manual-today')?.completionSource, 'manual');
+  assert.equal(plan.reviewTasks.find((item) => item.id === 'next-old')?.isCompleted, false);
+  assert.deepEqual(plan.nodeResults[0].completedOldRoundIds, []);
+});
+
+test('same-node same-day task restart is idempotent', () => {
+  const fresh = [
+    review('fresh-r1', '连续性', '2026-09-02', 1, {
+      graphNodeId: 'continuity',
+      scheduleCreatedDate: '2026-09-01',
+      scheduleSourceTaskId: 'first-project',
+      scheduleSourceBlockId: 'first-task',
+    }),
+    review('fresh-r2', '连续性', '2026-09-03', 2, {
+      graphNodeId: 'continuity',
+      scheduleCreatedDate: '2026-09-01',
+      scheduleSourceTaskId: 'first-project',
+      scheduleSourceBlockId: 'first-task',
+    }),
+  ];
+  const plan = planProjectTaskEbbBatch({
+    reviewTasks: fresh,
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    payloads: [{
+      graphNodeId: 'continuity',
+      topicName: '连续性',
+      completionMode: 'relearn',
+      completedDate: '2026-09-01',
+      sourceTaskId: 'second-project',
+      sourceBlockId: 'second-task',
+    }],
+    today: '2026-09-01',
+  });
+
+  assert.equal(plan.changed, false);
+  assert.equal(plan.reviewTasks, fresh);
+  assert.equal(plan.nodeResults[0].skippedSameDayRestart, true);
+});
+
+test('invalid relearn intervals reject the whole batch without changing reviews', () => {
+  const original = [review('invalid-r1', '无效间隔', '2026-09-01', 1, { graphNodeId: 'invalid-node' })];
+  const plan = planProjectTaskEbbBatch({
+    reviewTasks: original,
+    ebbSettings: {
+      ...DEFAULT_EBB_SETTINGS,
+      complexityConfigs: {
+        ...DEFAULT_EBB_SETTINGS.complexityConfigs,
+        normal: { ...DEFAULT_EBB_SETTINGS.complexityConfigs.normal, intervals: [] },
+      },
+    },
+    payloads: [{
+      graphNodeId: 'invalid-node',
+      topicName: '无效间隔',
+      completionMode: 'relearn',
+      completedDate: '2026-09-01',
+    }],
+    today: '2026-09-01',
+  });
+
+  assert.match(plan.error ?? '', /间隔/);
+  assert.equal(plan.reviewTasks, original);
+  assert.equal(plan.changed, false);
+});
+
+test('later manual task uncompletion keeps a relearned cycle intact', () => {
+  const tasks = [
+    review('archived-old', '极限', '2026-09-01', 1, {
+      graphNodeId: 'limit',
+      isArchived: true,
+      archivedReason: 'relearned',
+      archivedAt: '2026-09-01T12:00:00.000Z',
+      cycleTotalRounds: 1,
+    }),
+    review('active-new', '极限', '2026-09-02', 1, {
+      graphNodeId: 'limit',
+      scheduleCreatedDate: '2026-09-01',
+      scheduleSourceTaskId: 'project',
+      scheduleSourceBlockId: 'lesson',
+      cycleOrigin: 'project-task-relearn',
+    }),
+  ];
+  const plan = planEbbTaskSync({
+    reviewTasks: tasks,
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    payload: {
+      action: 'remove',
+      graphNodeId: 'limit',
+      topicName: '极限',
+      sourceTaskId: 'project',
+      sourceBlockId: 'lesson',
+    },
+    today: '2026-09-05',
+  });
+
+  assert.equal(plan.changed, false);
+  assert.equal(plan.reviewTasks, tasks);
+});
+
+test('completion impact prompts only for active chains on non-archived leaf nodes', () => {
+  const header = task('impact-project', '2026-09-01', {
+    autoSyncEbb: true,
+    graphNodeIds: ['leaf', 'parent', 'archived', 'empty-leaf'],
+  }).blocks[0];
+  assert.equal(header.type, 'smart-task');
+  if (header.type !== 'smart-task') return;
+  const impact = analyzeProjectTaskCompletion({
+    header: header.header,
+    completedDate: '2026-09-01',
+    graphNodes: [
+      { id: 'parent', name: '父节点', parentId: null, createdAt: 1 },
+      { id: 'leaf', name: '叶子节点', parentId: 'parent', createdAt: 2 },
+      { id: 'archived', name: '归档节点', parentId: null, createdAt: 3, isArchived: true },
+      { id: 'empty-leaf', name: '无计划节点', parentId: null, createdAt: 4 },
+    ],
+    reviewTasks: [
+      review('leaf-r1', '叶子节点', '2026-09-01', 1, { graphNodeId: 'leaf' }),
+      review('parent-r1', '父节点', '2026-09-01', 1, { graphNodeId: 'parent' }),
+      review('archived-r1', '归档节点', '2026-09-01', 1, { graphNodeId: 'archived' }),
+    ],
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    today: '2026-09-01',
+  });
+
+  assert.deepEqual(impact.nodes.map((node) => node.nodeId), ['leaf']);
+  assert.equal(impact.nodes[0].linkedRoundOrder, 1);
+  assert.equal(impact.nodes[0].newRoundCount, 7);
+});
+
+test('past completion previews overdue new rounds while future completion disables relearn', () => {
+  const block = task('date-impact', '2026-08-01', {
+    autoSyncEbb: true,
+    graphNodeIds: ['date-node'],
+  }).blocks[0];
+  assert.equal(block.type, 'smart-task');
+  if (block.type !== 'smart-task') return;
+  const graphNodes = [{ id: 'date-node', name: '日期节点', parentId: null, createdAt: 1 }];
+  const reviewTasks = [review('date-old', '日期节点', '2026-08-01', 1, { graphNodeId: 'date-node' })];
+  const past = analyzeProjectTaskCompletion({
+    header: block.header,
+    completedDate: '2026-08-01',
+    graphNodes,
+    reviewTasks,
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    today: '2026-09-01',
+  });
+  const future = analyzeProjectTaskCompletion({
+    header: block.header,
+    completedDate: '2026-09-02',
+    graphNodes,
+    reviewTasks,
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    today: '2026-09-01',
+  });
+
+  assert.equal(past.nodes[0].canRelearn, true);
+  assert.equal(past.nodes[0].overdueNewRoundCount > 0, true);
+  assert.equal(future.nodes[0].canRelearn, false);
+  assert.match(future.nodes[0].relearnBlockedReason ?? '', /未来/);
+});
+
+test('daily retrospective keeps the linked old round after relearn archival', () => {
+  const project = task('reflection-project', '2026-09-01', {
+    title: '极限强化课',
+    isCompleted: true,
+    completedDate: '2026-09-01',
+    graphNodeIds: ['reflection-node'],
+  });
+  const oldRound = review('reflection-old', '极限', '2026-09-01', 2, {
+    graphNodeId: 'reflection-node',
+    isCompleted: true,
+    completedDate: '2026-09-01',
+    completionSource: 'project-task',
+    completionSourceTaskId: 'reflection-project',
+    completionSourceBlockId: 'reflection-project-block',
+    isArchived: true,
+    archivedReason: 'relearned',
+    archivedAt: '2026-09-01T12:00:00.000Z',
+    cycleTotalRounds: 7,
+  });
+  const nextRound = review('reflection-new', '极限', '2026-09-02', 1, {
+    graphNodeId: 'reflection-node',
+    scheduleCreatedDate: '2026-09-01',
+    scheduleSourceTaskId: 'reflection-project',
+    scheduleSourceBlockId: 'reflection-project-block',
+  });
+  const activities = collectCompletedActivities(
+    '2026-09-01',
+    [project],
+    [],
+    [oldRound, nextRound],
+    [{ id: 'reflection-node', name: '极限', parentId: null, createdAt: 1 }],
+  );
+  const linked = activities.find((activity) => activity.reviewTaskId === 'reflection-old');
+
+  assert.equal(linked?.completionSource, 'project-task');
+  assert.equal(linked?.round, 2);
+  assert.equal(linked?.totalRounds, 7);
+  assert.equal(linked?.restartedNextDueDate, '2026-09-02');
+});
+
+test('multi-node completion restarts only selected nodes and continues the others', () => {
+  const source = task('multi-project', '2026-09-01', {
+    autoSyncEbb: true,
+    graphNodeIds: ['restart-node', 'continue-node'],
+  });
+  const block = source.blocks[0];
+  assert.equal(block.type, 'smart-task');
+  if (block.type !== 'smart-task') return;
+  const graphNodes = [
+    { id: 'restart-node', name: '重学节点', parentId: null, createdAt: 1 },
+    { id: 'continue-node', name: '衔接节点', parentId: null, createdAt: 2 },
+  ];
+  const effects = planProjectTaskEffects({
+    tasks: [source],
+    taskId: source.id,
+    blockId: block.id,
+    currentHeader: block.header,
+    nextHeader: { ...block.header, isCompleted: true, completedDate: '2026-09-01' },
+    graphNodes,
+    completionReviewDecision: { mode: 'relearn', relearnNodeIds: ['restart-node'] },
+  });
+  assert.deepEqual(effects.ebbPayloads.map((payload) => [payload.graphNodeId, payload.completionMode]), [
+    ['restart-node', 'relearn'],
+    ['continue-node', 'continue'],
+  ]);
+
+  let id = 0;
+  const plan = planProjectTaskEbbBatch({
+    reviewTasks: [
+      review('restart-old', '重学节点', '2026-09-01', 1, { graphNodeId: 'restart-node' }),
+      review('continue-old', '衔接节点', '2026-09-01', 1, { graphNodeId: 'continue-node' }),
+    ],
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    payloads: effects.ebbPayloads.map((payload) => ({
+      ...payload,
+      sourceTaskId: source.id,
+      sourceBlockId: block.id,
+    })),
+    today: '2026-09-01',
+    createReviewTaskId: () => `multi-new-${++id}`,
+  });
+  assert.equal(plan.reviewTasks.find((item) => item.id === 'restart-old')?.isArchived, true);
+  assert.equal(plan.reviewTasks.find((item) => item.id === 'continue-old')?.isArchived, undefined);
+  assert.equal(plan.reviewTasks.find((item) => item.id === 'continue-old')?.isCompleted, true);
+  assert.equal(plan.reviewTasks.filter((item) => !item.isArchived && item.graphNodeId === 'restart-node').length, 7);
+});
+
+test('relearning an all-complete final cycle creates a new cycle without a supplemental round', () => {
+  const plan = planProjectTaskEbbBatch({
+    reviewTasks: [review('finished-final', '终轮', '2026-08-31', 1, {
+      graphNodeId: 'final-node',
+      isCompleted: true,
+      completedDate: '2026-08-31',
+    })],
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    payloads: [{
+      graphNodeId: 'final-node',
+      topicName: '终轮',
+      completionMode: 'relearn',
+      completedDate: '2026-09-01',
+      sourceTaskId: 'final-project',
+      sourceBlockId: 'final-task',
+    }],
+    today: '2026-09-01',
+    createReviewTaskId: (() => { let id = 0; return () => `final-new-${++id}`; })(),
+  });
+
+  assert.equal(plan.reviewTasks.find((item) => item.id === 'finished-final')?.isArchived, true);
+  const active = plan.reviewTasks.filter((item) => !item.isArchived);
+  assert.equal(active.length, 7);
+  assert.equal(active.some((item) => item.isSupplemental), false);
+});
+
+test('a missing active chain with invalid intervals blocks completion planning', () => {
+  const original: ReviewTask[] = [];
+  const plan = planProjectTaskEbbBatch({
+    reviewTasks: original,
+    ebbSettings: {
+      ...DEFAULT_EBB_SETTINGS,
+      complexityConfigs: {
+        ...DEFAULT_EBB_SETTINGS.complexityConfigs,
+        normal: { ...DEFAULT_EBB_SETTINGS.complexityConfigs.normal, intervals: [] },
+      },
+    },
+    payloads: [{
+      graphNodeId: 'empty-node',
+      topicName: '空计划',
+      complexity: 'normal',
+      completionMode: 'continue',
+      triggerSchedule: true,
+    }],
+    today: '2026-09-01',
+  });
+
+  assert.match(plan.error ?? '', /间隔/);
+  assert.equal(plan.reviewTasks, original);
+});
+
+test('concurrent relearn planners generate the same round ids for one node and date', () => {
+  const input = {
+    reviewTasks: [review('concurrent-old', '并发节点', '2026-09-01', 1, { graphNodeId: 'concurrent-node' })],
+    ebbSettings: DEFAULT_EBB_SETTINGS,
+    payloads: [{
+      graphNodeId: 'concurrent-node',
+      topicName: '并发节点',
+      completionMode: 'relearn' as const,
+      completedDate: '2026-09-01',
+      sourceTaskId: 'project',
+      sourceBlockId: 'lesson',
+    }],
+    today: '2026-09-01',
+  };
+  const first = planProjectTaskEbbBatch({ ...input, createdAt: '2026-09-01T10:00:00.000Z' });
+  const second = planProjectTaskEbbBatch({ ...input, createdAt: '2026-09-01T10:00:01.000Z' });
+  const activeIds = (plan: typeof first) => plan.reviewTasks
+    .filter((item) => !item.isArchived)
+    .map((item) => item.id);
+
+  assert.deepEqual(activeIds(first), activeIds(second));
+  assert.equal(new Set(activeIds(first)).size, 7);
 });
 
 test('strict calendar validation rejects normalized and reversed-looking input', () => {

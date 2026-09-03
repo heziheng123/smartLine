@@ -86,7 +86,8 @@ const openReviewTopic = async (page: Page, topicName: string) => {
   await page.getByTitle('艾宾浩斯复习').click();
   // 主题行（.eb-topic-row-main）位于「复习库」标签页的矩阵视图中，
   // 「今日复习」标签页不渲染主题行，因此需要先切换到「复习库」。
-  await page.getByRole('tab', { name: /复习计划/ }).click();
+  const libraryTab = page.getByRole('tab', { name: /复习计划/ });
+  if (await libraryTab.count()) await libraryTab.click();
   const row = page.locator('.eb-topic-row-main').filter({ hasText: topicName });
   await expect(row).toBeVisible();
   await row.click();

@@ -70,7 +70,8 @@ export function collectCompletedActivities(
 
   const { roundMap, totalRoundsMap } = computeRounds(reviewTasks);
   for (const review of reviewTasks) {
-    if (review.isArchived || !review.isCompleted || review.completedDate !== date) continue;
+    if (!review.isCompleted || review.completedDate !== date) continue;
+    if (review.isArchived && review.archivedReason !== 'relearned') continue;
     const sourceId = getReviewSourceId(review.id);
     const linkedProjectSourceId = review.completionSource === 'project-task'
       && review.completionSourceTaskId
@@ -78,6 +79,22 @@ export function collectCompletedActivities(
       ? getProjectBlockSourceId(review.completionSourceTaskId, review.completionSourceBlockId)
       : undefined;
     const nodeIds = review.graphNodeId ? [review.graphNodeId] : [];
+    const restartedNextDueDate = review.isArchived
+      && review.archivedReason === 'relearned'
+      && review.graphNodeId
+      ? reviewTasks
+          .filter((task) =>
+            !task.isArchived
+            && task.graphNodeId === review.graphNodeId
+            && task.scheduleCreatedDate === date
+            && task.scheduleSourceTaskId === review.completionSourceTaskId
+            && task.scheduleSourceBlockId === review.completionSourceBlockId,
+          )
+          .sort((left, right) =>
+            (left.roundOrder ?? Number.MAX_SAFE_INTEGER) - (right.roundOrder ?? Number.MAX_SAFE_INTEGER)
+            || left.dueDate.localeCompare(right.dueDate),
+          )[0]?.dueDate
+      : undefined;
     result.push({
       id: `${date}:${sourceId}`,
       sourceId,
@@ -88,7 +105,8 @@ export function collectCompletedActivities(
       completionSource: review.completionSource ?? 'manual',
       linkedProjectSourceId,
       round: roundMap.get(review.id) ?? review.roundOrder ?? 1,
-      totalRounds: totalRoundsMap.get(getReviewTopicKey(review)) ?? 1,
+      totalRounds: review.cycleTotalRounds ?? totalRoundsMap.get(getReviewTopicKey(review)) ?? 1,
+      restartedNextDueDate,
       nodeIds,
       nodeSnapshots: nodeIds.map((id) => ({ id, name: nodeNameById.get(id) ?? '已删除知识节点' })),
     });

@@ -60,7 +60,8 @@ import {
   resolveProjectAppearance,
 } from './projectAppearance';
 import { recordOperation, useOperationHistory } from '@/services/operationHistory';
-import { recordQuantityProgress, removeQuantityProgress, setProjectTaskCompletion } from '@/services/projectTaskCommands';
+import { removeQuantityProgress } from '@/services/projectTaskCommands';
+import { requestProjectTaskCompletion, requestQuantityProgress } from '@/services/projectTaskCompletion';
 import { returnProjectTaskToBacklog, scheduleBacklogTaskToDate, scheduleBacklogTaskToSlot } from '@/services/backlogCommands';
 import { collectBacklogTasks, type BacklogTask } from '@/domain/taskBacklog';
 import { requestConfirmation } from '@/services/confirmation';
@@ -885,20 +886,21 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
   }, [handleDragEnd]);
 
   // ── 完成/删除 操作（时段模式） ──────────────────────────
-  const syncProjectTaskCompletion = useCallback((sourceId: string, completed?: boolean) => {
+  const syncProjectTaskCompletion = useCallback(async (sourceId: string, completed?: boolean) => {
     const parsed = parseSourceId(sourceId);
     if (!parsed || parsed.source !== 'project') return false;
     if (!parsed.blockId) return false;
     const projectSource = getProjectBlockFromSource(sourceId);
     if (!projectSource) return false;
     const desired = completed ?? !projectSource.block.header.isCompleted;
-    const result = setProjectTaskCompletion(
+    const result = await requestProjectTaskCompletion(
       parsed.parentTaskId,
       parsed.blockId,
       desired,
       desired ? todayStr() : undefined,
     );
-    if ('error' in result) setOperationError(result.error);
+    if (!result.ok && !('cancelled' in result)) setOperationError(result.error);
+    else if (result.ok) setOperationError(null);
     return result.ok;
   }, [getProjectBlockFromSource]);
 
@@ -916,7 +918,7 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
         if ('error' in result) setOperationError(result.error);
         return;
       }
-      syncProjectTaskCompletion(sourceId, false);
+      void syncProjectTaskCompletion(sourceId, false);
       return;
     }
     if (source === 'review') {
@@ -939,7 +941,7 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
           const reviewId = block.sourceId.replace('review-', '');
           void toggleReviewWithFeedback(reviewId);
         } else if (block.source === 'project') {
-          syncProjectTaskCompletion(block.sourceId);
+          void syncProjectTaskCompletion(block.sourceId);
         } else if (block.source === 'free') {
           updateTimeBlock(selectedDate, block.id, {
             completed: block.completedDate !== selectedDate,
@@ -961,7 +963,7 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
         if (projectSource && isQuantityTask(projectSource.block.header)) {
           setProgressTask({ taskId: projectSource.taskId, block: projectSource.block });
         } else {
-          syncProjectTaskCompletion(item.sourceId);
+          void syncProjectTaskCompletion(item.sourceId);
         }
       } else if (item.source === 'free') {
         updateScheduledItem(selectedDate, item.id, {
@@ -979,8 +981,11 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
     if (!item || item.source !== 'project' || !Number.isInteger(target) || target <= 0) return;
     const projectSource = getProjectBlockFromSource(item.sourceId);
     if (!projectSource || !isQuantityTask(projectSource.block.header)) return;
-    const result = recordQuantityProgress(projectSource.taskId, projectSource.block.id, selectedDate, target);
-    if ('error' in result) setOperationError(result.error);
+    void requestQuantityProgress(projectSource.taskId, projectSource.block.id, selectedDate, target)
+      .then((result) => {
+        if (!result.ok && !('cancelled' in result)) setOperationError(result.error);
+        else if (result.ok) setOperationError(null);
+      });
   }, [daySchedule.items, getProjectBlockFromSource, selectedDate]);
 
   const handleRemoveItem = useCallback(
