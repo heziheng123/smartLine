@@ -193,7 +193,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dockControlsRef = useRef<HTMLDivElement>(null);
   const dockPanelRef = useRef<HTMLDivElement>(null);
-  const recenterButtonRef = useRef<HTMLButtonElement>(null);
+  const recenterButtonRef = useRef<HTMLButtonElement | null>(null);
   const viewportShiftedRef = useRef(false);
   const setRecenterButtonRef = useCallback((button: HTMLButtonElement | null) => {
     recenterButtonRef.current = button;
@@ -1254,7 +1254,7 @@ export const KnowledgeGraphView: React.FC = () => {
           <button
             ref={setRecenterButtonRef}
             type="button"
-            onClick={zoomToFit}
+            onClick={() => zoomToFit()}
             className="tl-dock-btn overflow-hidden text-slate-500 hover:text-blue-600"
             title="视角归中"
             aria-label="视角归中"
