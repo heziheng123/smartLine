@@ -137,6 +137,7 @@ export const KnowledgeGraphView: React.FC = () => {
     })),
   );
   const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const childrenByParent = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const node of nodes) {
@@ -147,22 +148,24 @@ export const KnowledgeGraphView: React.FC = () => {
     }
     return map;
   }, [nodes]);
-  const descendantsByNode = useMemo(() => {
-    const cache = new Map<string, string[]>();
-    const collect = (id: string, path = new Set<string>()): string[] => {
-      if (cache.has(id)) return cache.get(id)!;
-      if (path.has(id)) return [];
-      const nextPath = new Set(path).add(id);
-      const descendants: string[] = [];
-      for (const childId of childrenByParent.get(id) ?? []) {
-        descendants.push(childId, ...collect(childId, nextPath));
-      }
-      cache.set(id, descendants);
-      return descendants;
-    };
-    nodes.forEach((node) => collect(node.id));
-    return cache;
-  }, [childrenByParent, nodes]);
+  const getSubtreeNodeIds = useCallback((rootId: string): string[] => {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const stack = [rootId];
+    while (stack.length > 0) {
+      const nodeId = stack.pop()!;
+      if (seen.has(nodeId)) continue;
+      seen.add(nodeId);
+      ids.push(nodeId);
+      const childIds = childrenByParent.get(nodeId) ?? [];
+      for (let index = childIds.length - 1; index >= 0; index -= 1) stack.push(childIds[index]);
+    }
+    return ids;
+  }, [childrenByParent]);
+  const getDescendants = useCallback(
+    (nodeId: string) => getSubtreeNodeIds(nodeId).slice(1),
+    [getSubtreeNodeIds],
+  );
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
   const { retrospectives, schedules } = useDailyScheduleStore(useShallow((state) => ({
     retrospectives: state.retrospectives,
@@ -187,10 +190,15 @@ export const KnowledgeGraphView: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeDockPanel, setActiveDockPanel] = useState<DockPanel>(null);
-  const [isViewportShifted, setIsViewportShifted] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dockControlsRef = useRef<HTMLDivElement>(null);
   const dockPanelRef = useRef<HTMLDivElement>(null);
+  const recenterButtonRef = useRef<HTMLButtonElement>(null);
+  const viewportShiftedRef = useRef(false);
+  const setRecenterButtonRef = useCallback((button: HTMLButtonElement | null) => {
+    recenterButtonRef.current = button;
+    if (button) button.hidden = !viewportShiftedRef.current;
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -200,7 +208,6 @@ export const KnowledgeGraphView: React.FC = () => {
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomTransformRef = useRef<ZoomTransform | null>(null);
   const userZoomInProgressRef = useRef(false);
-  const viewportShiftedRef = useRef(false);
 
   // Hover states
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
@@ -211,10 +218,10 @@ export const KnowledgeGraphView: React.FC = () => {
   });
 
   useEffect(() => {
-    if (!bridgeNodeId || !nodes.some((node) => node.id === bridgeNodeId)) return;
+    if (!bridgeNodeId || !nodeById.has(bridgeNodeId)) return;
     setSelectedNodeId(bridgeNodeId);
     setIsPanelOpen(true);
-  }, [bridgeNodeId, nodes]);
+  }, [bridgeNodeId, nodeById]);
 
   useEffect(() => {
     if (!activeDockPanel) return;
@@ -296,15 +303,29 @@ export const KnowledgeGraphView: React.FC = () => {
 
   useEffect(() => {
     if (!containerRef.current) return;
-    
+
+    const commitSize = (width: number, height: number) => {
+      const nextWidth = Math.round(width);
+      const nextHeight = Math.round(height);
+      if (nextWidth <= 0 || nextHeight <= 0) return false;
+      setDimensions((previous) => (
+        previous.width === nextWidth && previous.height === nextHeight
+          ? previous
+          : { width: nextWidth, height: nextHeight }
+      ));
+      return true;
+    };
+
     const updateSize = () => {
       if (!containerRef.current) return;
       const { width, height } = containerRef.current.getBoundingClientRect();
-      if (width > 0 && height > 0) {
-        setDimensions({ width, height });
-      } else {
+      if (!commitSize(width, height)) {
         // Fallback to approximate window size if container is hidden/0
-        setDimensions(prev => prev.width === 0 ? { width: window.innerWidth - 64, height: window.innerHeight - 100 } : prev);
+        setDimensions((previous) => (
+          previous.width === 0
+            ? { width: window.innerWidth - 64, height: window.innerHeight - 100 }
+            : previous
+        ));
       }
     };
     
@@ -313,25 +334,15 @@ export const KnowledgeGraphView: React.FC = () => {
     const observer = new ResizeObserver(entries => {
       if (entries[0]) {
         const { width, height } = entries[0].contentRect;
-        if (width > 0 && height > 0) {
-          setDimensions({ width, height });
-        }
+        commitSize(width, height);
       }
     });
     observer.observe(containerRef.current);
-    
-    const timer = setTimeout(updateSize, 500); // Check again after animations
-    
+
     return () => {
       observer.disconnect();
-      clearTimeout(timer);
     };
   }, [isHydrated]);
-
-  const getDescendants = useCallback(
-    (id: string): string[] => descendantsByNode.get(id) ?? [],
-    [descendantsByNode],
-  );
 
   const reviewsByNode = useMemo(() => {
     const map = new Map<string, typeof reviewTasks>();
@@ -361,33 +372,49 @@ export const KnowledgeGraphView: React.FC = () => {
     return map;
   }, [allProjectTasks]);
 
-  const getLeafVisualState = useCallback((nodeId: string): NodeVisualState => {
-    if (!(activationStates.get(nodeId)?.isActivated ?? false)) return 'inactive';
-    const rounds = reviewsByNode.get(nodeId) ?? [];
-    if (rounds.length > 0) {
-      return rounds.every((task) => task.isCompleted) ? 'mastered' : 'reviewing';
-    }
+  const nodeVisualStates = useMemo(() => {
+    const states = new Map<string, NodeVisualState>();
+    const visiting = new Set<string>();
+    const visit = (nodeId: string): NodeVisualState => {
+      const cached = states.get(nodeId);
+      if (cached) return cached;
+      if (visiting.has(nodeId)) {
+        return 'inactive';
+      }
+      if (!(activationStates.get(nodeId)?.isActivated ?? false)) {
+        states.set(nodeId, 'inactive');
+        return 'inactive';
+      }
 
-    // An explicitly enabled completed binding means a review plan is expected.
-    // Keep it green during generation/migration gaps instead of falsely claiming
-    // that the user opted out of review. Manual activation and explicit opt-out
-    // both intentionally resolve to blue when there is no review plan.
-    return completedBindingsByNode.get(nodeId)?.hasAutoReview
-      ? 'reviewing'
-      : 'completed-no-review';
-  }, [activationStates, completedBindingsByNode, reviewsByNode]);
+      visiting.add(nodeId);
+      const childIds = childrenByParent.get(nodeId) ?? [];
+      let state: NodeVisualState;
+      if (childIds.length === 0) {
+        const rounds = reviewsByNode.get(nodeId) ?? [];
+        state = rounds.length > 0
+          ? (rounds.every((task) => task.isCompleted) ? 'mastered' : 'reviewing')
+          : (completedBindingsByNode.get(nodeId)?.hasAutoReview ? 'reviewing' : 'completed-no-review');
+      } else {
+        const childStates = childIds.map(visit);
+        state = childStates.every((childState) => childState === 'mastered')
+          ? 'mastered'
+          : childStates.some((childState) => childState === 'reviewing')
+            ? 'reviewing'
+            : 'completed-no-review';
+      }
+      visiting.delete(nodeId);
+      states.set(nodeId, state);
+      return state;
+    };
 
-  const getNodeVisualState = useCallback((nodeId: string): NodeVisualState => {
-    if (!(activationStates.get(nodeId)?.isActivated ?? false)) return 'inactive';
+    nodes.forEach((node) => visit(node.id));
+    return states;
+  }, [activationStates, childrenByParent, completedBindingsByNode, nodes, reviewsByNode]);
 
-    const scopedLeafIds = [nodeId, ...getDescendants(nodeId)].filter(
-      (scopedId) => !childrenByParent.has(scopedId),
-    );
-    const leafStates = scopedLeafIds.map(getLeafVisualState);
-    if (leafStates.length > 0 && leafStates.every((state) => state === 'mastered')) return 'mastered';
-    if (leafStates.some((state) => state === 'reviewing')) return 'reviewing';
-    return 'completed-no-review';
-  }, [activationStates, childrenByParent, getDescendants, getLeafVisualState]);
+  const getNodeVisualState = useCallback(
+    (nodeId: string): NodeVisualState => nodeVisualStates.get(nodeId) ?? 'inactive',
+    [nodeVisualStates],
+  );
 
   const getNodeColorHex = useCallback(
     (nodeId: string): string => NODE_STATE_COLOR[getNodeVisualState(nodeId)],
@@ -396,92 +423,55 @@ export const KnowledgeGraphView: React.FC = () => {
 
   const islandsData = useMemo(() => {
     const today = todayStr();
-    const nodeMap = new Map(nodes.map(node => [node.id, node]));
-    const childrenMap = new Map<string | null, string[]>();
-    nodes.forEach(node => {
-      const siblings = childrenMap.get(node.parentId) ?? [];
-      siblings.push(node.id);
-      childrenMap.set(node.parentId, siblings);
-    });
-
-    const mergeStats = (statsList: NodeRollupStats[]): NodeRollupStats => ({
-      totalReviewCount: statsList.reduce((sum, stats) => sum + stats.totalReviewCount, 0),
-      pendingCount: statsList.reduce((sum, stats) => sum + stats.pendingCount, 0),
-      completedCount: statsList.reduce((sum, stats) => sum + stats.completedCount, 0),
-      overdueCount: statsList.reduce((sum, stats) => sum + stats.overdueCount, 0),
-      noteCount: statsList.reduce((sum, stats) => sum + stats.noteCount, 0),
-    });
-
-    const descendantLeafMap = new Map<string, string[]>();
-    const getLeafDescendants = (nodeId: string, currentPath = new Set<string>()): string[] => {
-      if (currentPath.has(nodeId)) return [];
-      if (descendantLeafMap.has(nodeId)) return descendantLeafMap.get(nodeId)!;
-
-      currentPath.add(nodeId);
-      const children = childrenMap.get(nodeId) ?? [];
-      let leafIds: string[] = [];
-
-      if (children.length === 0) {
-        leafIds = [nodeId];
-      } else {
-        children.forEach(childId => {
-          leafIds = leafIds.concat(getLeafDescendants(childId, currentPath));
-        });
+    const directStatsByNode = new Map<string, NodeRollupStats>();
+    for (const [nodeId, tasksForNode] of reviewsByNode) {
+      const stats: NodeRollupStats = {
+        totalReviewCount: 0,
+        pendingCount: 0,
+        completedCount: 0,
+        overdueCount: 0,
+        noteCount: 0,
+      };
+      for (const task of tasksForNode) {
+        stats.totalReviewCount += 1;
+        if (task.isCompleted) stats.completedCount += 1;
+        else {
+          stats.pendingCount += 1;
+          if (diffDays(today, task.dueDate) > 0) stats.overdueCount += 1;
+        }
       }
-
-      currentPath.delete(nodeId);
-      descendantLeafMap.set(nodeId, leafIds);
-      return leafIds;
-    };
-
-    nodes.forEach(n => {
-      if (!descendantLeafMap.has(n.id)) descendantLeafMap.set(n.id, getLeafDescendants(n.id));
-    });
-
-    const descendantNodeMap = new Map<string, string[]>();
-    const getAllDescendants = (nodeId: string, currentPath = new Set<string>()): string[] => {
-      if (currentPath.has(nodeId)) return [];
-      if (descendantNodeMap.has(nodeId)) return descendantNodeMap.get(nodeId)!;
-      currentPath.add(nodeId);
-      const descendants = (childrenMap.get(nodeId) ?? []).flatMap((childId) => [
-        childId,
-        ...getAllDescendants(childId, currentPath),
-      ]);
-      currentPath.delete(nodeId);
-      descendantNodeMap.set(nodeId, descendants);
-      return descendants;
-    };
-
-    const reviewTasksByNodeId = new Map<string, typeof reviewTasks>();
-    reviewTasks.forEach(task => {
-      if (!task.graphNodeId || task.isArchived) return;
-      const bucket = reviewTasksByNodeId.get(task.graphNodeId) ?? [];
-      bucket.push(task);
-      reviewTasksByNodeId.set(task.graphNodeId, bucket);
-    });
+      directStatsByNode.set(nodeId, stats);
+    }
 
     const nodeStatsMap = new Map<string, NodeRollupStats>();
-    nodes.forEach(node => {
-      // A task may be bound directly to any level of the knowledge tree.
-      // Aggregate the complete subtree rather than only the leaf descendants.
-      const statisticNodeIds = [node.id, ...getAllDescendants(node.id)];
-      const directStats = mergeStats(
-        statisticNodeIds.map(statisticNodeId => {
-          const leafTasks = reviewTasksByNodeId.get(statisticNodeId) ?? [];
-          return {
-            totalReviewCount: leafTasks.length,
-            pendingCount: leafTasks.filter(task => !task.isCompleted).length,
-            completedCount: leafTasks.filter(task => task.isCompleted).length,
-            overdueCount: leafTasks.filter(task => !task.isCompleted && diffDays(today, task.dueDate) > 0).length,
-            noteCount: 0,
-          };
-        }),
-      );
-      nodeStatsMap.set(node.id, directStats);
-    });
+    const collectStats = (nodeId: string, path = new Set<string>()): NodeRollupStats => {
+      const cached = nodeStatsMap.get(nodeId);
+      if (cached) return cached;
+      if (path.has(nodeId)) {
+        return { totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0, noteCount: 0 };
+      }
+
+      const direct = directStatsByNode.get(nodeId);
+      const stats: NodeRollupStats = direct
+        ? { ...direct }
+        : { totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0, noteCount: 0 };
+      path.add(nodeId);
+      for (const childId of childrenByParent.get(nodeId) ?? []) {
+        const childStats = collectStats(childId, path);
+        stats.totalReviewCount += childStats.totalReviewCount;
+        stats.pendingCount += childStats.pendingCount;
+        stats.completedCount += childStats.completedCount;
+        stats.overdueCount += childStats.overdueCount;
+        stats.noteCount += childStats.noteCount;
+      }
+      path.delete(nodeId);
+      nodeStatsMap.set(nodeId, stats);
+      return stats;
+    };
+    nodes.forEach((node) => collectStats(node.id));
 
     let rootsToProcess: string[] = [];
-    if (selectedRootFilter !== 'all' && nodeMap.has(selectedRootFilter)) {
+    if (selectedRootFilter !== 'all' && nodeById.has(selectedRootFilter)) {
       rootsToProcess = [selectedRootFilter];
     } else {
       rootsToProcess = nodes.filter(n => !n.parentId).map(n => n.id);
@@ -512,40 +502,34 @@ export const KnowledgeGraphView: React.FC = () => {
     const startY = -totalHeight / 2 + cellHeight / 2;
 
     rootsToProcess.forEach((rootId, index) => {
-      const validIdsForTree = new Set<string>();
-      const addDescendants = (id: string) => {
-        validIdsForTree.add(id);
-        (childrenMap.get(id) || []).forEach(addDescendants);
-      };
-      addDescendants(rootId);
-
-      const flatData = nodes
-        .filter(d => validIdsForTree.has(d.id))
-        .map(n => {
-          const leafIds = descendantLeafMap.get(n.id) ?? [n.id];
-          const isLeaf = leafIds.length === 1 && leafIds[0] === n.id;
-          const stats = nodeStatsMap.get(n.id) ?? {
+      const flatData = getSubtreeNodeIds(rootId)
+        .flatMap((nodeId) => {
+          const node = nodeById.get(nodeId);
+          if (!node) return [];
+          const activationState = activationStates.get(node.id);
+          const isLeaf = activationState?.isLeaf ?? !childrenByParent.has(node.id);
+          const stats = nodeStatsMap.get(node.id) ?? {
             totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0, noteCount: 0,
           };
 
-          return {
-            id: n.id,
-            name: n.name,
-            parentId: n.id === rootId ? null : n.parentId,
-            color: getNodeColorHex(n.id),
-            status: activationStates.get(n.id)?.isActivated ? 'activated' : 'unactivated',
-            visualState: getNodeVisualState(n.id),
-            isActivated: activationStates.get(n.id)?.isActivated ?? false,
+          return [{
+            id: node.id,
+            name: node.name,
+            parentId: node.id === rootId ? null : node.parentId,
+            color: getNodeColorHex(node.id),
+            status: activationState?.isActivated ? 'activated' : 'unactivated',
+            visualState: getNodeVisualState(node.id),
+            isActivated: activationState?.isActivated ?? false,
             isLeaf,
-            activeCount: isLeaf ? 0 : activationStates.get(n.id)?.activatedLeafCount ?? 0,
-            totalLeafCount: isLeaf ? 0 : activationStates.get(n.id)?.totalLeafCount ?? leafIds.length,
+            activeCount: isLeaf ? 0 : activationState?.activatedLeafCount ?? 0,
+            totalLeafCount: isLeaf ? 0 : activationState?.totalLeafCount ?? 0,
             ...stats,
             importanceScore: stats.pendingCount + stats.overdueCount * 2,
             labelPriority: stats.overdueCount > 0 ? 'high' : 'low',
             isVirtual: false,
             depth: 0,
             rootId: rootId
-          } as ViewNode;
+          } as ViewNode];
         });
 
       allFlatNodes = allFlatNodes.concat(flatData);
@@ -555,7 +539,7 @@ export const KnowledgeGraphView: React.FC = () => {
           .id(d => d.id)
           .parentId(d => (d as any).parentId)(flatData);
 
-        root.sum(d => childrenMap.has(d.id) ? 0 : 1);
+        root.sum(d => childrenByParent.has(d.id) ? 0 : 1);
         root.sort((a, b) => (b.value || 0) - (a.value || 0));
 
         const partitionLayout = partition<ViewNode>().size([2 * Math.PI, baseRadius]);
@@ -581,7 +565,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     return { islands, allFlatNodes };
-  }, [nodes, reviewTasks, selectedRootFilter, getNodeColorHex, getNodeVisualState, dimensions.width, dimensions.height, activationStates, radiusMode]);
+  }, [activationStates, childrenByParent, dimensions.height, dimensions.width, getNodeColorHex, getNodeVisualState, getSubtreeNodeIds, nodeById, nodes, radiusMode, reviewsByNode, selectedRootFilter]);
 
   const arcGenerator = useMemo(() => {
     return arc<HierarchyRectangularNode<ViewNode>>()
@@ -594,7 +578,7 @@ export const KnowledgeGraphView: React.FC = () => {
   }, []);
 
   const rootNodes = useMemo(() => nodes.filter(n => !n.parentId), [nodes]);
-  const hasFocusedRoot = selectedRootFilter !== 'all' && nodes.some((node) => node.id === selectedRootFilter);
+  const hasFocusedRoot = selectedRootFilter !== 'all' && nodeById.has(selectedRootFilter);
   const canExpandRadius = rootNodes.length === 1 || hasFocusedRoot;
 
   useEffect(() => {
@@ -609,11 +593,11 @@ export const KnowledgeGraphView: React.FC = () => {
 
     if (!canExpandRadius) {
       let targetRootId = rootNodes[0]?.id;
-      let current = selectedNodeId ? nodes.find((node) => node.id === selectedNodeId) : undefined;
+      let current = selectedNodeId ? nodeById.get(selectedNodeId) : undefined;
       const visited = new Set<string>();
       while (current?.parentId && !visited.has(current.id)) {
         visited.add(current.id);
-        const parent = nodes.find((node) => node.id === current?.parentId);
+        const parent = nodeById.get(current.parentId);
         if (!parent) break;
         current = parent;
       }
@@ -621,7 +605,7 @@ export const KnowledgeGraphView: React.FC = () => {
       if (targetRootId) setSelectedRootFilter(targetRootId);
     }
     setRadiusMode(mode);
-  }, [canExpandRadius, focusRoot, nodes, rootNodes, selectedNodeId]);
+  }, [canExpandRadius, focusRoot, nodeById, rootNodes, selectedNodeId]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<Exclude<GraphStatusFilter, 'all'>, number> = {
@@ -666,42 +650,47 @@ export const KnowledgeGraphView: React.FC = () => {
         let currId = node.id;
         while (currId) {
           matched.add(currId);
-          const parent = nodes.find(n => n.id === currId);
+          const parent = nodeById.get(currId);
           currId = parent?.parentId || '';
         }
       }
     });
 
     return matched;
-  }, [islandsData.allFlatNodes, statusFilter, searchQuery, nodes]);
+  }, [islandsData.allFlatNodes, nodeById, searchQuery, statusFilter]);
 
   // Setup D3 Zoom
   useEffect(() => {
     if (!isHydrated || !svgRef.current || !gRef.current) return;
     const svg = select(svgRef.current);
+    const commitPendingZoomTransform = () => {
+      const transform = pendingZoomTransformRef.current;
+      if (transform && gRef.current) gRef.current.setAttribute('transform', transform.toString());
+    };
     zoomBehaviorRef.current = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
       .on('start', (event) => {
         if (!event.sourceEvent) return;
+        svg.interrupt();
         userZoomInProgressRef.current = true;
-        gRef.current?.setAttribute('data-zooming', 'true');
       })
       .on('zoom', (event) => {
         pendingZoomTransformRef.current = event.transform;
         if (zoomFrameRef.current !== null) return;
         zoomFrameRef.current = requestAnimationFrame(() => {
           zoomFrameRef.current = null;
-          const transform = pendingZoomTransformRef.current;
-          if (transform && gRef.current) gRef.current.setAttribute('transform', transform.toString());
+          commitPendingZoomTransform();
         });
       })
       .on('end', () => {
         if (!userZoomInProgressRef.current) return;
         userZoomInProgressRef.current = false;
-        gRef.current?.removeAttribute('data-zooming');
+        if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+        zoomFrameRef.current = null;
+        commitPendingZoomTransform();
         if (!viewportShiftedRef.current) {
           viewportShiftedRef.current = true;
-          setIsViewportShifted(true);
+          recenterButtonRef.current?.removeAttribute('hidden');
         }
       });
     svg.call(zoomBehaviorRef.current);
@@ -710,17 +699,17 @@ export const KnowledgeGraphView: React.FC = () => {
       zoomFrameRef.current = null;
       pendingZoomTransformRef.current = null;
       userZoomInProgressRef.current = false;
-      gRef.current?.removeAttribute('data-zooming');
       svg.on('.zoom', null);
     };
   }, [isHydrated]);
 
-  const zoomToFit = useCallback(() => {
+  const zoomToFit = useCallback((animate = true) => {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
     const svg = select(svgRef.current);
     viewportShiftedRef.current = false;
-    setIsViewportShifted(false);
+    recenterButtonRef.current?.setAttribute('hidden', '');
     
+    let transform = zoomIdentity;
     if (islandsData.islands.length > 1) {
       const cols = Math.ceil(Math.sqrt(islandsData.islands.length));
       const rows = Math.ceil(islandsData.islands.length / cols);
@@ -733,23 +722,26 @@ export const KnowledgeGraphView: React.FC = () => {
       const scaleX = dimensions.width / (totalWidth || dimensions.width);
       const scaleY = dimensions.height / (totalHeight || dimensions.height);
       const scale = Math.min(scaleX, scaleY, 1) * 0.9;
-      const transform = zoomIdentity
+      transform = zoomIdentity
         .translate(dimensions.width / 2, dimensions.height / 2)
         .scale(scale)
         .translate(-dimensions.width / 2, -dimensions.height / 2);
+    }
 
-      svg.transition().duration(750).call(zoomBehaviorRef.current.transform, transform);
+    svg.interrupt();
+    if (animate) {
+      svg.transition().duration(220).call(zoomBehaviorRef.current.transform, transform);
     } else {
-      svg.transition().duration(750).call(zoomBehaviorRef.current.transform, zoomIdentity);
+      svg.call(zoomBehaviorRef.current.transform, transform);
     }
   }, [islandsData.islands.length, dimensions.width, dimensions.height]);
 
   useEffect(() => {
-    const timer = setTimeout(zoomToFit, 100);
-    return () => clearTimeout(timer);
+    if (dimensions.width === 0 || dimensions.height === 0) return;
+    zoomToFit(false);
   }, [zoomToFit, selectedRootFilter, radiusMode]);
 
-  const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId), [nodes, selectedNodeId]);
+  const selectedNode = selectedNodeId ? nodeById.get(selectedNodeId) : undefined;
   const selectedActivationState = selectedNodeId
     ? activationStates.get(selectedNodeId) ?? null
     : null;
@@ -809,15 +801,19 @@ export const KnowledgeGraphView: React.FC = () => {
     [selectedNodeId, getDescendants],
   );
 
-  const selectedReviewTasks = useMemo(() => reviewTasks
-    .filter(task => !task.isArchived && task.graphNodeId && selectedScopeIds.has(task.graphNodeId))
-    .sort((a, b) => {
-      if (a.isCompleted !== b.isCompleted) return Number(a.isCompleted) - Number(b.isCompleted);
-      return (a.dueDate || '').localeCompare(b.dueDate || '');
-    }), [reviewTasks, selectedScopeIds]);
+  const selectedReviewTasks = useMemo(() => {
+    if (!selectedNodeId) return [];
+    return reviewTasks
+      .filter(task => !task.isArchived && task.graphNodeId && selectedScopeIds.has(task.graphNodeId))
+      .sort((a, b) => {
+        if (a.isCompleted !== b.isCompleted) return Number(a.isCompleted) - Number(b.isCompleted);
+        return (a.dueDate || '').localeCompare(b.dueDate || '');
+      });
+  }, [reviewTasks, selectedNodeId, selectedScopeIds]);
 
-  const selectedRetrospectiveEntries = useMemo(
-    () => Object.values(retrospectives)
+  const selectedRetrospectiveEntries = useMemo(() => {
+    if (!selectedNodeId) return [];
+    return Object.values(retrospectives)
       .filter((retrospective) => retrospective.status === 'completed')
       .flatMap((retrospective) => retrospective.entries)
       .filter((entry) => (entry.nodeIds ?? []).some((nodeId) => selectedScopeIds.has(nodeId)))
@@ -830,9 +826,8 @@ export const KnowledgeGraphView: React.FC = () => {
           reviewTasks,
           schedules,
         ),
-      })),
-    [retrospectives, selectedScopeIds, tasks, groups, reviewTasks, schedules],
-  );
+      }));
+  }, [groups, retrospectives, reviewTasks, schedules, selectedNodeId, selectedScopeIds, tasks]);
 
   const selectedNodeReviewPreview = useMemo(
     () => selectedReviewTasks.slice(0, 5),
@@ -1132,7 +1127,7 @@ export const KnowledgeGraphView: React.FC = () => {
                     >
                       <option value="all">全部知识盘</option>
                       {hasFocusedRoot && !rootNodes.some((node) => node.id === selectedRootFilter) && (
-                        <option value={selectedRootFilter}>{nodes.find((node) => node.id === selectedRootFilter)?.name ?? '当前分支'}</option>
+                        <option value={selectedRootFilter}>{nodeById.get(selectedRootFilter)?.name ?? '当前分支'}</option>
                       )}
                       {rootNodes.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}
                     </select>
@@ -1256,23 +1251,16 @@ export const KnowledgeGraphView: React.FC = () => {
             )}
           </div>
 
-          <AnimatePresence initial={false}>
-            {isViewportShifted && (
-              <motion.button
-                initial={{ opacity: 0, width: 0, scale: 0.94 }}
-                animate={{ opacity: 1, width: 36, scale: 1 }}
-                exit={{ opacity: 0, width: 0, scale: 0.94 }}
-                transition={MOTION_SPRING_GENTLE}
-                type="button"
-                onClick={zoomToFit}
-                className="tl-dock-btn overflow-hidden text-slate-500 hover:text-blue-600"
-                title="视角归中"
-                aria-label="视角归中"
-              >
-                <Focus size={17} className="shrink-0" />
-              </motion.button>
-            )}
-          </AnimatePresence>
+          <button
+            ref={setRecenterButtonRef}
+            type="button"
+            onClick={zoomToFit}
+            className="tl-dock-btn overflow-hidden text-slate-500 hover:text-blue-600"
+            title="视角归中"
+            aria-label="视角归中"
+          >
+            <Focus size={17} className="shrink-0" />
+          </button>
           <SyncStatusIndicator />
           <button
             type="button"
@@ -1321,7 +1309,7 @@ export const KnowledgeGraphView: React.FC = () => {
                   fontSize={16}
                   fontWeight={700}
                   fill="#64748b"
-                  className="kg-zoom-label pointer-events-none select-none opacity-50"
+                  className="pointer-events-none select-none opacity-50"
                 >
                   {island.root?.data.name}
                 </text>
@@ -1461,7 +1449,7 @@ export const KnowledgeGraphView: React.FC = () => {
                           fontWeight={node.depth === 0 || isSelected ? 700 : 500}
                           fill={textFill}
                           pointerEvents="none"
-                          className="kg-zoom-label select-none"
+                          className="select-none"
                           style={{ transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
                         >
                           {displayName}

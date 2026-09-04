@@ -103,6 +103,8 @@ const MindMapWorkspace = () => {
   const [referenceTarget, setReferenceTarget] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [catalogSyncError, setCatalogSyncError] = useState<string | null>(null);
+  const [backgroundSyncError, setBackgroundSyncError] = useState<string | null>(null);
   const [assetSyncError, setAssetSyncError] = useState<string | null>(null);
   const [assetRevision, setAssetRevision] = useState(0);
   const [syncRetry, setSyncRetry] = useState(0);
@@ -190,8 +192,11 @@ const MindMapWorkspace = () => {
       identity: auth.userId,
       name: auth.login || auth.userId,
       documents: indexDocumentsRef.current,
-      onEntries: (entries) => void applyRemoteCatalog(entries),
-      onError: setLocalError,
+      onEntries: (entries) => {
+        setCatalogSyncError(null);
+        void applyRemoteCatalog(entries);
+      },
+      onError: setCatalogSyncError,
     });
     catalogSessionRef.current = session;
     void session.start();
@@ -227,7 +232,13 @@ const MindMapWorkspace = () => {
         });
         activeSession = session;
         await session.start();
+        if (cancelled) {
+          session.stop();
+          activeSession = null;
+          return;
+        }
         if (sessionError) throw new Error(sessionError);
+        if (!session.isReady()) throw new Error('后台思维导图云端房间未准备就绪。');
         const syncedDocument = mergedDocument ?? backgroundDocument;
         await session.syncImageAssets(syncedDocument);
         await session.flush();
@@ -235,8 +246,9 @@ const MindMapWorkspace = () => {
         session.stop();
         activeSession = null;
       }
+      if (!cancelled) setBackgroundSyncError(null);
     })().catch((syncError) => {
-      if (!cancelled) setLocalError(syncError instanceof Error ? syncError.message : '后台导图同步失败。');
+      if (!cancelled) setBackgroundSyncError(syncError instanceof Error ? syncError.message : '后台导图同步失败。');
     });
     return () => {
       cancelled = true;
@@ -249,19 +261,20 @@ const MindMapWorkspace = () => {
       setAssetSyncError(null);
       return;
     }
-    if (syncState.status !== 'connected' || !syncSessionRef.current) return;
+    const session = syncSessionRef.current;
+    if (syncState.status !== 'connected' || !session?.isReady()) return;
     let cancelled = false;
-    void syncSessionRef.current.syncImageAssets(document).then(({ downloaded }) => {
+    void session.syncImageAssets(document).then(({ downloaded }) => {
       if (cancelled) return;
       setAssetSyncError(null);
       if (downloaded > 0) setAssetRevision((value) => value + 1);
       const latest = documentRef.current;
-      if (latest?.id === document.id) syncSessionRef.current?.publish(latest);
+      if (latest?.id === document.id) session.publish(latest);
     }).catch((assetError) => {
       if (cancelled) return;
       setAssetSyncError(assetError instanceof Error ? assetError.message : '思维导图图片同步失败。');
       const latest = documentRef.current;
-      if (latest?.id === document.id) syncSessionRef.current?.publish(latest);
+      if (latest?.id === document.id) session.publish(latest);
     });
     return () => { cancelled = true; };
   }, [auth.enabled, auth.status, auth.userId, document, syncRetry, syncState.status]);
@@ -569,19 +582,21 @@ const MindMapWorkspace = () => {
         />
       )}
 
-      {(localError || error || assetSyncError || syncState.error) && (
+      {(localError || error || catalogSyncError || backgroundSyncError || assetSyncError || syncState.error) && (
         <div className={styles.errorBanner} role="alert">
-          <span>{localError || error || assetSyncError || syncState.error}</span>
+          <span>{localError || error || catalogSyncError || backgroundSyncError || assetSyncError || syncState.error}</span>
           <button
             type="button"
             onClick={() => {
               setLocalError(null);
+              setCatalogSyncError(null);
+              setBackgroundSyncError(null);
               setAssetSyncError(null);
               clearError();
-              if (assetSyncError || syncState.error) setSyncRetry((value) => value + 1);
+              if (catalogSyncError || backgroundSyncError || assetSyncError || syncState.error) setSyncRetry((value) => value + 1);
             }}
           >
-            {assetSyncError || syncState.error ? '重试' : '关闭'}
+            {catalogSyncError || backgroundSyncError || assetSyncError || syncState.error ? '重试' : '关闭'}
           </button>
         </div>
       )}

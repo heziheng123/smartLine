@@ -690,11 +690,6 @@
   background: transparent;
 }
 
-/* Keep wheel and drag zoom responsive: text is restored as soon as input ends. */
-.knowledge-graph-view [data-zooming='true'] .kg-zoom-label {
-  visibility: hidden;
-}
-
 /* Knowledge controls are top-right utility popovers, not bottom Dock sheets. */
 .kg-control-popover {
   bottom: auto !important;

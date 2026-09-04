@@ -372,6 +372,10 @@ export class MindMapSyncSession {
     this.room?.updatePresence(patch);
   }
 
+  isReady() {
+    return !this.closed && this.room !== null && this.root !== null;
+  }
+
   async syncImageAssets(document: MindMapDocument) {
     const room = this.room;
     const root = this.root;
