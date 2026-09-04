@@ -10,10 +10,13 @@ import { diffDays } from './dateSafe';
 
 // ── ID 生成 ────────────────────────────────────────────────
 
-let _counter = 0;
 export function genBlockId(): string {
-  _counter += 1;
-  return `blk-${Date.now().toString(36)}-${_counter.toString(36)}`;
+  // The previous time + per-tab counter could collide when two browser tabs
+  // created a block in the same millisecond. UUIDs keep IDs unique across
+  // tabs and devices while preserving the existing `blk-` source-id prefix.
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `blk-${uuid}`;
+  return `blk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 // ── 默认标签颜色（莫兰迪色系）───────────────────────────────
@@ -376,7 +379,20 @@ export function computeBlockProgress(blocks: Block[]): { total: number; done: nu
 
 /** 追加 block 到末尾 */
 export function appendBlock(blocks: Block[] | undefined, block: Block): Block[] {
-  return [...(blocks ?? []), block];
+  const next = [...(blocks ?? []), block];
+  assertUniqueBlockIds(next);
+  return next;
+}
+
+/** Reject invalid or duplicate IDs before a project document is persisted. */
+export function assertUniqueBlockIds(blocks: readonly Block[] | undefined): void {
+  const ids = new Set<string>();
+  for (const block of blocks ?? []) {
+    const id = typeof block.id === 'string' ? block.id.trim() : '';
+    if (!id) throw new Error('项目文档中存在缺少 ID 的内容块，已取消保存以保护数据。');
+    if (ids.has(id)) throw new Error(`项目文档中存在重复内容块 ID：${id}，已取消保存以保护数据。`);
+    ids.add(id);
+  }
 }
 
 /** 更新 SmartTaskBlock 的 header */

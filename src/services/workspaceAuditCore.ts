@@ -1,5 +1,6 @@
 import type { WorkspaceBackup } from './workspaceBackup.ts';
 import { hashWorkspaceBackup } from './workspaceSyncCore.ts';
+import { getUniqueTasks } from '@/store/timelineData';
 
 export type WorkspaceAuditSeverity = 'info' | 'warning' | 'blocker';
 
@@ -90,13 +91,16 @@ function collectEntities(backup: WorkspaceBackup): Record<string, AuditedEntity[
   const groupedTasks = backup.timeline.groups.flatMap((group) => group.children);
   const schedules = Object.entries(backup.daily.schedules);
   const retrospectives = Object.entries(backup.daily.retrospectives);
-  const allProjects = [...backup.timeline.tasks, ...groupedTasks];
+  // `groups.children` is a compatibility projection of `tasks`, not another
+  // project collection. Counting both here made every grouped block appear as
+  // a duplicate even when its canonical task was healthy.
+  const canonicalProjects = getUniqueTasks(backup.timeline.tasks, backup.timeline.groups);
 
   return {
     'timeline.tasks': backup.timeline.tasks.map((item) => entity(item.id, item)),
     'timeline.groups': backup.timeline.groups.map((item) => entity(item.id, item)),
     'timeline.groupChildren': groupedTasks.map((item) => entity(item.id, item)),
-    'timeline.blocks': allProjects.flatMap((task) => task.blocks.map((block) => entity(`${task.id}:${block.id}`, block))),
+    'timeline.blocks': canonicalProjects.flatMap((task) => task.blocks.map((block) => entity(`${task.id}:${block.id}`, block))),
     'timeline.notes': backup.timeline.notes.map((item) => entity(item.id, item)),
     'timeline.milestones': backup.timeline.milestones.map((item) => entity(item.id, item)),
     'timeline.lifeStages': backup.timeline.lifeStages.map((item) => entity(item.id, item)),
@@ -158,7 +162,7 @@ function inspectReferences(backup: WorkspaceBackup, findings: WorkspaceAuditFind
     if (review.graphNodeId && !graphIds.has(review.graphNodeId)) addMissingReference(findings, 'ebb.reviewTasks', review.id, '知识节点', review.graphNodeId);
     if (review.outlineNodeId && !outlineIds.has(review.outlineNodeId)) addMissingReference(findings, 'ebb.reviewTasks', review.id, '大纲节点', review.outlineNodeId);
   }
-  for (const task of [...backup.timeline.tasks, ...backup.timeline.groups.flatMap((group) => group.children)]) {
+  for (const task of getUniqueTasks(backup.timeline.tasks, backup.timeline.groups)) {
     if (task.lifeMapProjection?.areaId && !areaIds.has(task.lifeMapProjection.areaId)) {
       addMissingReference(findings, 'timeline.tasks', task.id, '人生领域', task.lifeMapProjection.areaId);
     }

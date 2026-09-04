@@ -1,4 +1,5 @@
 import { parseSourceId } from '@/components/dailySchedule/conversion';
+import { getUniqueTasks } from '@/store/timelineData';
 import type { WorkspaceBackup } from './workspaceBackup';
 import type {
   PendingWorkspaceSync,
@@ -55,7 +56,7 @@ async function inspectTimelineBlocks(
   issues: WorkspaceIntegrityIssue[],
 ): Promise<void> {
   const blockIdsByTask = new Map<string, Set<string>>();
-  for (const [taskIndex, task] of backup.timeline.tasks.entries()) {
+  for (const [taskIndex, task] of getUniqueTasks(backup.timeline.tasks, backup.timeline.groups).entries()) {
     const ids = new Set<string>();
     blockIdsByTask.set(task.id, ids);
     for (const [blockIndex, block] of task.blocks.entries()) {

@@ -12,6 +12,7 @@ import {
   updateBlockHeader,
   deleteBlock,
   appendBlock,
+  assertUniqueBlockIds,
   isQuantityTask,
   recoverRequiredTaskStartDate,
 } from '@/utils/blocks';
@@ -389,6 +390,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const oldTask = state.tasks.find((t) => t.id === taskId)
             ?? state.groups.flatMap((group) => group.children).find((task) => task.id === taskId);
           if (!oldTask) return;
+          assertUniqueBlockIds(blocks);
 
           const oldSmartBlocks = new Map(
             (Array.isArray(oldTask.blocks) ? oldTask.blocks : [])
@@ -1053,6 +1055,9 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
         },
 
         appendBlock: (taskId, block) => {
+          const existingTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
+          if (!existingTask) return;
+          assertUniqueBlockIds([...(existingTask.blocks ?? []), block]);
           const now = new Date().toISOString();
           set((state) => {
             const tasks = state.tasks.map((t) => {
@@ -1089,6 +1094,9 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
 
         extendTaskBlocks: (taskId, newBlocks) => {
           if (newBlocks.length === 0) return;
+          const existingTask = getUniqueTasks(get().tasks, get().groups).find((task) => task.id === taskId);
+          if (!existingTask) return;
+          assertUniqueBlockIds([...(existingTask.blocks ?? []), ...newBlocks]);
           const now = new Date().toISOString();
           set((state) => {
             const tasks = state.tasks.map((t) => {

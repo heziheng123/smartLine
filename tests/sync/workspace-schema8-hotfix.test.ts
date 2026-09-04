@@ -17,6 +17,7 @@ import {
 import { mergeWorkspaceFieldChangesDetailed } from '../../src/services/workspaceSyncCore.ts';
 import { buildPendingWorkspaceSyncRemainder } from '../../src/services/workspaceSyncQueueCore.ts';
 import { createWorkspaceIntegrityReport } from '../../src/services/workspaceIntegrity.ts';
+import { assertUniqueBlockIds, genBlockId } from '../../src/utils/blocks.ts';
 
 function backupWithBlocks(blocks: Array<Record<string, unknown>>): WorkspaceBackup {
   return {
@@ -43,6 +44,22 @@ test('only user and explicit restore origins can create schema 8 queue writes', 
     'migration', 'broadcast', 'convergence', 'system-normalization',
   ];
   for (const origin of origins) assert.equal(canWorkspaceMutationEnqueue(origin), allowed.has(origin), origin);
+});
+
+test('new block IDs are cross-tab-safe and duplicate writes are rejected before persistence', () => {
+  const ids = new Set(Array.from({ length: 50 }, () => genBlockId()));
+  assert.equal(ids.size, 50);
+  assert.throws(
+    () => assertUniqueBlockIds([
+      { type: 'text', id: 'same-id', content: '第一份' },
+      { type: 'text', id: 'same-id', content: '第二份' },
+    ]),
+    /重复内容块 ID/,
+  );
+  assert.throws(
+    () => assertUniqueBlockIds([{ type: 'text', id: '', content: '缺少 ID' }]),
+    /缺少 ID/,
+  );
 });
 
 test('timeline repair keeps different duplicates and archives identical extra copies', async () => {

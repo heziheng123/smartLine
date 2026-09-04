@@ -356,23 +356,44 @@ function waitForRoomConnected(
 }
 
 async function waitForRoomSnapshot(
-  room: { getStorage: () => Promise<{ root: { toJSON: () => unknown } }> },
+  room: {
+    getStatus: () => string;
+    getStorage: () => Promise<{ root: { toJSON: () => unknown } }>;
+    getStorageStatus?: () => string;
+    reconnect?: () => void;
+  },
   expected: Record<string, unknown>,
   fields: readonly string[],
   timeoutMs = 15_000,
 ): Promise<void> {
-  const { root } = await room.getStorage();
-  const startedAt = Date.now();
-  while (hasWorkspaceFieldSnapshotChanged(
-    expected,
-    materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>),
-    fields,
-  )) {
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error('本机云端缓存尚未追平最新工作区，已保留待传修改，请稍后重试。');
+  // `inspectRoom` uses a separate connection. A current Room can therefore
+  // report connected while its old local cache is still catching up. Retry one
+  // in-place reconnect before declaring the cache stale; user edits stay in
+  // the durable queue until the later flush confirms them.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { root } = await room.getStorage();
+    const startedAt = Date.now();
+    while (hasWorkspaceFieldSnapshotChanged(
+      expected,
+      materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>),
+      fields,
+    )) {
+      if (Date.now() - startedAt > timeoutMs) break;
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    if (!hasWorkspaceFieldSnapshotChanged(
+      expected,
+      materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>),
+      fields,
+    )) return;
+
+    if (attempt === 0) {
+      room.reconnect?.();
+      await waitForRoomConnected(room);
+      await waitForRoomStorageSynchronized(room);
+    }
   }
+  throw new Error('本机云端缓存重新连接后仍未追平最新工作区，已保留待传修改，请检查网络后重试。');
 }
 
 export function disconnectWorkspace(disable = false): void {

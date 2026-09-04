@@ -391,6 +391,24 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }>({ status: 'idle', message: '', detail: [] });
   const [healthReport, setHealthReport] = useState<WorkspaceAuditReport | null>(null);
   const [healthReportBusy, setHealthReportBusy] = useState(false);
+  const healthReportRequestRef = useRef(0);
+
+  const refreshHealthReport = useCallback(() => {
+    const requestId = ++healthReportRequestRef.current;
+    setHealthReportBusy(true);
+    void createCurrentWorkspaceAuditReport()
+      .then((report) => {
+        if (requestId === healthReportRequestRef.current) setHealthReport(report);
+      })
+      .catch((error) => {
+        if (requestId === healthReportRequestRef.current) {
+          setRestoreMessage(error instanceof Error ? error.message : '数据盘点报告生成失败。');
+        }
+      })
+      .finally(() => {
+        if (requestId === healthReportRequestRef.current) setHealthReportBusy(false);
+      });
+  }, []);
 
   const runCrossTabDetection = useCallback(async () => {
     setCrossTabCheck({ status: 'running', message: '正在打开第二个标签页…', detail: [] });
@@ -472,13 +490,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, [supportsWebLocks]);
 
   useEffect(() => {
-    if (healthReport || healthReportBusy) return;
-    setHealthReportBusy(true);
-    createCurrentWorkspaceAuditReport()
-      .then(setHealthReport)
-      .catch((error) => setRestoreMessage(error instanceof Error ? error.message : '数据盘点报告生成失败。'))
-      .finally(() => setHealthReportBusy(false));
-  }, [healthReport, healthReportBusy]);
+    refreshHealthReport();
+    const refresh = () => refreshHealthReport();
+    window.addEventListener(WORKSPACE_VERIFIED_EVENT, refresh);
+    window.addEventListener(WORKSPACE_QUEUE_EVENT, refresh);
+    return () => {
+      window.removeEventListener(WORKSPACE_VERIFIED_EVENT, refresh);
+      window.removeEventListener(WORKSPACE_QUEUE_EVENT, refresh);
+    };
+  }, [refreshHealthReport]);
 
   useEffect(() => {
     if (!dataPanelOpen) return;
@@ -575,12 +595,16 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && architecture.architecture !== 'unified';
   const runtimeBusy = ['connecting', 'initializing', 'migrating', 'flushing', 'verifying'].includes(runtimeState.phase);
   const runtimeProblem = runtimeState.phase === 'error' || runtimeState.phase === 'conflict';
+  const healthBlocked = healthReport?.integrity.status === 'blocked';
+  const healthCheckPending = healthReport === null && healthReportBusy;
   const fullySynchronized = allConnected
     && pendingFieldCount === 0
     && activeConflictCount === 0
     && !requiresUnifiedMigration
     && !runtimeBusy
-    && !runtimeProblem;
+    && !runtimeProblem
+    && !healthBlocked
+    && !healthCheckPending;
 
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
@@ -991,13 +1015,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         {/* 同步状态卡：圆点 + 主标语 + 主操作 + 待办 + 折叠的 hint */}
         <div className="tl-sync-status" style={{ flexDirection: 'column', alignItems: 'stretch', padding: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span className="tl-sync-dot" style={{ backgroundColor: fullySynchronized ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
+            <span className="tl-sync-dot" style={{ backgroundColor: healthBlocked ? '#DC2626' : fullySynchronized ? '#059669' : enabledCount > 0 ? '#D97706' : '#9CA3AF' }} />
             <strong style={{ fontSize: 14, color: '#111827' }}>{runtimeBusy
               ? runtimeState.message
               : runtimeProblem && activeConflictCount === 0
                 ? runtimeState.message || '同步运行异常，请重新连接'
               : fullySynchronized
               ? (architecture.architecture === 'unified' ? '统一工作区已同步' : '旧房间同步 5/5')
+              : allConnected && healthBlocked
+                ? `同步已完成，但数据检查有 ${healthReport?.integrity.blockerCount ?? 1} 个阻断`
               : allConnected && requiresUnifiedMigration
                 ? '旧架构已连接，尚未进入统一工作区'
               : allConnected && activeConflictCount > 0

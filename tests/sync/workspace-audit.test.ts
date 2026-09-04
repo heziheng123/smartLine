@@ -69,6 +69,38 @@ test('workspace audit blocks duplicate IDs and missing references', async () => 
   assert.ok(report.findings.some((item) => item.code === 'missing-reference'));
 });
 
+test('workspace audit counts a grouped task block once when groups mirror canonical tasks', async () => {
+  const backup = emptyBackup();
+  const task = {
+    id: 'project-1', name: '项目', start: '2026-08-12', end: '2026-08-12', groupId: 'group-1',
+    blocks: [{ type: 'text' as const, id: 'block-1', content: '正文' }],
+  };
+  backup.timeline.tasks.push(task);
+  backup.timeline.groups.push({ id: 'group-1', name: '分组', children: [task] });
+
+  const report = await createWorkspaceAuditReport(backup);
+
+  assert.equal(report.integrity.status, 'passed');
+  assert.equal(report.collections['timeline.blocks'].count, 1);
+  assert.deepEqual(report.collections['timeline.blocks'].duplicateIds, []);
+});
+
+test('workspace audit still blocks a real duplicate block ID inside one task', async () => {
+  const backup = emptyBackup();
+  backup.timeline.tasks.push({
+    id: 'project-1', name: '项目', start: '2026-08-12', end: '2026-08-12',
+    blocks: [
+      { type: 'text', id: 'same-block', content: '第一份' },
+      { type: 'text', id: 'same-block', content: '第二份' },
+    ],
+  });
+
+  const report = await createWorkspaceAuditReport(backup);
+
+  assert.equal(report.integrity.status, 'blocked');
+  assert.deepEqual(report.collections['timeline.blocks'].duplicateIds, ['project-1:same-block']);
+});
+
 test('workspace audit includes local queue and conflict state in migration readiness', async () => {
   const report = await createWorkspaceAuditReport(emptyBackup(), {
     sync: {
