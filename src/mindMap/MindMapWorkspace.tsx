@@ -220,6 +220,12 @@ const MindMapWorkspace = () => {
   }, [index.documents]);
 
   useEffect(() => {
+    const awaitsCloudCatalog = MIND_MAP_SYNC_ENABLED && auth.enabled && auth.status === 'authenticated' && Boolean(auth.userId);
+    if (!isHydrated || document || error || awaitsCloudCatalog) return;
+    void createDocument();
+  }, [auth.enabled, auth.status, auth.userId, createDocument, document, error, isHydrated]);
+
+  useEffect(() => {
     if (!MIND_MAP_SYNC_ENABLED || !isHydrated || !auth.enabled || auth.status !== 'authenticated' || !auth.userId) return;
     const identity = auth.userId;
     const name = auth.login || identity;
@@ -271,7 +277,11 @@ const MindMapWorkspace = () => {
       return;
     }
     const session = syncSessionRef.current;
-    if (syncState.status !== 'connected' || !session?.isReady()) return;
+    if (!session) return;
+    // Preserve edits made while the room is still connecting; reconciliation
+    // otherwise sees the session's construction snapshot and can overwrite them.
+    session.publish(document);
+    if (!session.isReady()) return;
     let cancelled = false;
     void session.syncImageAssets(document).then(({ downloaded }) => {
       if (cancelled) return;

@@ -26,7 +26,7 @@ import {
   type MindMapHistory,
 } from './commands';
 import { mindMapRepository } from './repository';
-import type { MindMapCatalogEntry } from './syncCore';
+import { selectLatestActiveMindMapCatalogEntry, type MindMapCatalogEntry } from './syncCore';
 import { repairMindMapTreeForest } from './treeValidation';
 import { readMindMapSnapshots, restoreMindMapSnapshot, saveMindMapSnapshot, type MindMapSnapshot } from './snapshots';
 
@@ -130,16 +130,20 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
               if (document) break;
             }
           }
-          if (!document) {
-            document = createEmptyMindMapDocument();
-            index = updateSummary(emptyIndex(), document);
-            await mindMapRepository.saveNow(document, index);
-          } else {
+          if (document) {
             index = updateSummary(index ?? emptyIndex(), document);
           }
-          const history = histories.get(document.id) ?? emptyMindMapHistory();
-          histories.set(document.id, history);
-          set({ isHydrated: true, document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saved', error: null });
+          const history = document ? (histories.get(document.id) ?? emptyMindMapHistory()) : emptyMindMapHistory();
+          if (document) histories.set(document.id, history);
+          set({
+            isHydrated: true,
+            document,
+            index: index ?? emptyIndex(),
+            history,
+            snapshots: document ? readMindMapSnapshots(document.id) : [],
+            saveStatus: 'saved',
+            error: null,
+          });
         } catch (error) {
           set({
             isHydrated: true,
@@ -360,7 +364,6 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
 
     applyRemoteCatalog: async (entries) => {
       const current = get().document;
-      if (!current) return;
       const remote = new Map(entries.map((entry) => [entry.id, entry]));
       const removedIds: string[] = [];
       const documents = get().index.documents.flatMap((summary) => {
@@ -395,10 +398,18 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
           knownIds.add(entry.id);
         }
       }
-      if (removedIds.length === 0
+      if (current && removedIds.length === 0
         && JSON.stringify(documents) === JSON.stringify(get().index.documents)) return;
-      let document: MindMapDocument = current;
-      if (removedIds.includes(current.id)) {
+      let document: MindMapDocument;
+      if (!current) {
+        // A new device must discover the shared catalog before creating its own
+        // document ID; otherwise it would open a permanently separate room.
+        const latest = selectLatestActiveMindMapCatalogEntry(entries);
+        document = latest
+          ? createEmptyMindMapDocument(latest.title, { id: latest.id, now: latest.createdAt })
+          : createEmptyMindMapDocument();
+        if (!knownIds.has(document.id)) documents.unshift(summarizeMindMapDocument(document));
+      } else if (removedIds.includes(current.id)) {
         let nextDocument: MindMapDocument | null = null;
         for (const summary of documents) {
           nextDocument = await mindMapRepository.loadDocument(summary.id);
@@ -408,6 +419,8 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
           ? createEmptyMindMapDocument(documents[0].title, { id: documents[0].id, now: documents[0].createdAt })
           : createEmptyMindMapDocument());
         if (!knownIds.has(document.id)) documents.unshift(summarizeMindMapDocument(document));
+      } else {
+        document = current;
       }
       const index: MindMapIndex = {
         schemaVersion: MIND_MAP_SCHEMA_VERSION,

@@ -16,6 +16,7 @@ import {
   mergeMindMapCatalogEntries,
   mergeMindMapDocuments,
   mindMapCatalogEntries,
+  selectLatestActiveMindMapCatalogEntry,
 } from '../../src/mindMap/syncCore.ts';
 
 const documentWithNode = (nodeId: string, updatedAt: number) => {
@@ -49,6 +50,14 @@ test('the owner catalog discovers remote documents and preserves explicit deleti
     'remote-document': { ...remote['remote-document'], updatedAt: deletedAt, deletedAt },
   });
   assert.equal(withDeletion['remote-document'].deletedAt, deletedAt);
+});
+
+test('a fresh device selects the newest active cloud document before creating a local one', () => {
+  const old = { ...summarizeMindMapDocument(documentWithNode('old', 10)), deletedAt: null };
+  const latest = { ...summarizeMindMapDocument(documentWithNode('latest', 20)), id: 'latest-document', deletedAt: null };
+  const deleted = { ...summarizeMindMapDocument(documentWithNode('deleted', 30)), id: 'deleted-document', deletedAt: 40 };
+  assert.equal(selectLatestActiveMindMapCatalogEntry([old, deleted, latest])?.id, 'latest-document');
+  assert.equal(selectLatestActiveMindMapCatalogEntry([deleted]), null);
 });
 
 test('three-way merge preserves independent entity edits and the local camera', () => {

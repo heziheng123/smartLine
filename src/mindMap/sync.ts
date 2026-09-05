@@ -215,8 +215,12 @@ export class MindMapCatalogSession {
       const { root } = await this.room.getStorage();
       if (this.closed) return;
       this.root = root;
-      await this.reconcile();
-      this.unsubscribers.push(this.room.subscribe(root, () => this.queueReconcile(), { isDeep: true }));
+      this.unsubscribers.push(
+        this.room.subscribe('status', () => this.queueReconcile()),
+        this.room.subscribe('storage-status', () => this.queueReconcile()),
+        this.room.subscribe(root, () => this.queueReconcile(), { isDeep: true }),
+      );
+      this.queueReconcile();
     } catch (error) {
       if (!this.closed) this.options.onError(error instanceof Error ? error.message : '无法连接思维导图云端目录。');
     }
@@ -256,7 +260,13 @@ export class MindMapCatalogSession {
   }
 
   private async reconcile() {
-    if (this.closed || !this.root) return;
+    if (
+      this.closed
+      || !this.root
+      || !this.room
+      || this.room.getStatus() !== 'connected'
+      || this.room.getStorageStatus() !== 'synchronized'
+    ) return;
     const remote = catalogEntriesFromStorage(this.root.toJSON() as MindMapCatalogRoomStorage);
     const merged = mergeMindMapCatalogEntries(this.local, remote);
     this.local = merged;
@@ -269,7 +279,12 @@ export class MindMapCatalogSession {
     entries: Record<string, MindMapCatalogEntry>,
     remote: Record<string, MindMapCatalogEntry> = {},
   ) {
-    if (!this.root || !this.room) return;
+    if (
+      !this.root
+      || !this.room
+      || this.room.getStatus() !== 'connected'
+      || this.room.getStorageStatus() !== 'synchronized'
+    ) return;
     const changed = Object.values(entries).filter((entry) => (
       JSON.stringify(entry) !== JSON.stringify(remote[entry.id])
     ));

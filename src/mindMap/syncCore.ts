@@ -87,6 +87,13 @@ export function mindMapCatalogEntries(documents: MindMapDocumentSummary[]): Reco
   return Object.fromEntries(documents.map((document) => [document.id, { ...document, deletedAt: null }]));
 }
 
+export function selectLatestActiveMindMapCatalogEntry(entries: MindMapCatalogEntry[]): MindMapCatalogEntry | null {
+  return [...entries]
+    .filter((entry) => entry.deletedAt === null)
+    .sort((left, right) => right.updatedAt - left.updatedAt || right.createdAt - left.createdAt || left.id.localeCompare(right.id))[0]
+    ?? null;
+}
+
 export function mergeMindMapCatalogEntries(
   local: Record<string, MindMapCatalogEntry>,
   remote: Record<string, MindMapCatalogEntry>,
