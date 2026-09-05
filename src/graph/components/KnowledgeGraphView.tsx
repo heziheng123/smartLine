@@ -681,16 +681,27 @@ export const KnowledgeGraphView: React.FC = () => {
   useEffect(() => {
     if (!isHydrated || !svgRef.current || !gRef.current) return;
     const svg = select(svgRef.current);
+    const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${k}, ${x}, ${y})`;
     const commitPendingZoomTransform = () => {
       const transform = pendingZoomTransformRef.current;
-      if (transform && gRef.current) gRef.current.setAttribute('transform', transform.toString());
+      if (transform && gRef.current) gRef.current.style.transform = toTransformMatrix(transform);
+    };
+    const commitFinalZoomTransform = () => {
+      const transform = pendingZoomTransformRef.current;
+      if (!transform || !gRef.current) return;
+      gRef.current.setAttribute('transform', toTransformMatrix(transform));
+      gRef.current.style.transform = '';
+      gRef.current.style.willChange = '';
     };
     zoomBehaviorRef.current = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
       .on('start', (event) => {
-        if (!event.sourceEvent) return;
-        svg.interrupt();
-        userZoomInProgressRef.current = true;
+        if (event.sourceEvent) {
+          svg.interrupt();
+          userZoomInProgressRef.current = true;
+        }
+        gRef.current!.style.transformOrigin = '0 0';
+        gRef.current!.style.willChange = 'transform';
       })
       .on('zoom', (event) => {
         pendingZoomTransformRef.current = event.transform;
@@ -701,12 +712,12 @@ export const KnowledgeGraphView: React.FC = () => {
         });
       })
       .on('end', () => {
-        if (!userZoomInProgressRef.current) return;
+        const wasUserZoom = userZoomInProgressRef.current;
         userZoomInProgressRef.current = false;
         if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
         zoomFrameRef.current = null;
-        commitPendingZoomTransform();
-        if (!viewportShiftedRef.current) {
+        commitFinalZoomTransform();
+        if (wasUserZoom && !viewportShiftedRef.current) {
           viewportShiftedRef.current = true;
           recenterButtonRef.current?.removeAttribute('hidden');
         }
@@ -717,6 +728,10 @@ export const KnowledgeGraphView: React.FC = () => {
       zoomFrameRef.current = null;
       pendingZoomTransformRef.current = null;
       userZoomInProgressRef.current = false;
+      if (gRef.current) {
+        gRef.current.style.transform = '';
+        gRef.current.style.willChange = '';
+      }
       svg.on('.zoom', null);
     };
   }, [isHydrated]);

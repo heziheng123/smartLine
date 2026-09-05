@@ -105,7 +105,7 @@ test('knowledge graph keeps the app dock navigation-only and moves page controls
   await expect(page.getByLabel('视角归中')).toBeHidden();
 });
 
-test('knowledge graph keeps labels visible while the user is zooming', async ({ page }) => {
+test('knowledge graph keeps labels visible while panning', async ({ page }) => {
   const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
   const label = canvas.locator('[data-node-id="radius-leaf"] text');
   const box = await canvas.boundingBox();
@@ -116,5 +116,32 @@ test('knowledge graph keeps labels visible while the user is zooming', async ({ 
   await page.mouse.move(box!.x + box!.width / 2 + 30, box!.y + box!.height / 2 + 30);
   await expect(label).toBeVisible();
   await page.mouse.up();
+  await expect(label).toBeVisible();
+});
+
+test('knowledge graph keeps labels visible while the scale is changing', async ({ page }) => {
+  const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  const graph = canvas.locator(':scope > g');
+  const label = canvas.locator('[data-node-id="radius-leaf"] text');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+
+  const readScale = () => graph.evaluate((element) => {
+    const matrix = (element as SVGGElement).getScreenCTM();
+    return matrix ? Math.hypot(matrix.a, matrix.b) : 0;
+  });
+  const initialScale = await readScale();
+
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.wheel(0, -240);
+  await page.waitForTimeout(50);
+  const inFlightScale = await readScale();
+
+  expect(Math.abs(inFlightScale - initialScale)).toBeGreaterThan(0.01);
+  await expect(label).toBeVisible();
+  await page.waitForTimeout(160);
+  const settledScale = await readScale();
+
+  expect(Math.abs(settledScale - inFlightScale)).toBeLessThan(0.001);
   await expect(label).toBeVisible();
 });
