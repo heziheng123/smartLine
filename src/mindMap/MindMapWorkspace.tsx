@@ -37,11 +37,12 @@ import {
 import type { TreeDirection } from './layout';
 import { migrateLifeMapIntoDocument } from './lifeMapMigration';
 import LifePlanningPanel from './LifePlanningPanel';
-import { createProjectReferenceCard, createTimelineSection, DEFAULT_DOCUMENT_TITLE, type MindMapNodeType, type ProjectReferenceCard } from './model';
+import { createEmptyMindMapDocument, createProjectReferenceCard, createTimelineSection, DEFAULT_DOCUMENT_TITLE, type MindMapNodeType, type ProjectReferenceCard } from './model';
 import { mindMapRepository } from './repository';
 import { useMindMapStore } from './store';
 import { MindMapCatalogSession, MindMapSyncSession, type MindMapSyncViewState } from './sync';
 import type { MindMapPresence } from './syncCore';
+import { reportMindMapSyncRuntimeState } from './syncRuntime';
 import { useLifeMapDataSnapshot, useLifeMapHydrated } from './timelineProjectionHooks';
 import styles from './styles/MindMapWorkspace.module.css';
 import { mindMapVisualCssVariables } from './styles/visualTokens';
@@ -125,6 +126,7 @@ const MindMapWorkspace = () => {
   documentRef.current = document;
   indexDocumentsRef.current = index.documents;
   const documentId = document?.id;
+  const backgroundSyncKey = index.documents.map((item) => `${item.id}:${item.updatedAt}`).join('|');
   const projectPlanning = useProjectPlanningSnapshot();
   const lifeMapData = useLifeMapDataSnapshot();
   const lifeMapHydrated = useLifeMapHydrated();
@@ -219,8 +221,8 @@ const MindMapWorkspace = () => {
     void (async () => {
       for (const summary of indexDocumentsRef.current) {
         if (cancelled || summary.id === documentRef.current?.id) continue;
-        const backgroundDocument = await mindMapRepository.loadDocument(summary.id);
-        if (!backgroundDocument) continue;
+        const backgroundDocument = await mindMapRepository.loadDocument(summary.id)
+          ?? createEmptyMindMapDocument(summary.title, { id: summary.id, now: summary.createdAt });
         let sessionError: string | null = null;
         let mergedDocument = null as typeof backgroundDocument | null;
         const session = new MindMapSyncSession({
@@ -254,7 +256,7 @@ const MindMapWorkspace = () => {
       cancelled = true;
       activeSession?.stop();
     };
-  }, [auth.enabled, auth.login, auth.status, auth.userId, cacheRemoteDocument, isHydrated, syncRetry]);
+  }, [auth.enabled, auth.login, auth.status, auth.userId, backgroundSyncKey, cacheRemoteDocument, isHydrated, syncRetry]);
 
   useEffect(() => {
     if (!document || !MIND_MAP_SYNC_ENABLED || !auth.enabled || auth.status !== 'authenticated' || !auth.userId) {
@@ -278,6 +280,18 @@ const MindMapWorkspace = () => {
     });
     return () => { cancelled = true; };
   }, [auth.enabled, auth.status, auth.userId, document, syncRetry, syncState.status]);
+
+  // The map uses rooms outside the unified workspace. Publish its real runtime
+  // state so the workspace sync panel does not mistake "feature enabled" for
+  // "this device has already synchronized the map".
+  useEffect(() => {
+    const enabled = MIND_MAP_SYNC_ENABLED && auth.enabled && auth.status === 'authenticated' && Boolean(auth.userId);
+    const error = catalogSyncError || backgroundSyncError || assetSyncError || syncState.error;
+    reportMindMapSyncRuntimeState({
+      status: !enabled ? 'local' : error ? 'error' : syncState.status,
+      error: error ?? null,
+    });
+  }, [assetSyncError, auth.enabled, auth.status, auth.userId, backgroundSyncError, catalogSyncError, syncState.error, syncState.status]);
 
   const updatePresence = useCallback((patch: Partial<Pick<MindMapPresence, 'cursor' | 'draggingId' | 'editingId'>>) => {
     syncSessionRef.current?.updatePresence(patch);

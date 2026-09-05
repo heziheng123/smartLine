@@ -63,13 +63,13 @@ import { planReviewRoundReschedule, type ReviewRescheduleMode } from '../resched
 import { buildBalancedDailyReviewPlan } from '../dailyReviewPlanning';
 import { useOperationHistory } from '@/services/operationHistory';
 import { MOTION_DURATION, MOTION_EASE_ENTER } from '@/motion/system';
-import { takeReviewPlanFocus } from '@/services/actionBridge';
+import { clearReviewPlanFocus, peekReviewPlanFocus } from '@/services/actionBridge';
 
 type PlanViewMode = 'list' | 'calendar';
 const REVIEW_ADJUSTMENT_INTENT_KEY = 'smart-line-review-adjustment-intent';
 
 const EbbView: React.FC = () => {
-  const [bridgeReviewTaskId] = useState(() => takeReviewPlanFocus());
+  const [bridgeReviewTaskId] = useState(peekReviewPlanFocus);
   const prefersReducedMotion = useReducedMotion();
   const safeMode = useMemo(() => {
     try { return sessionStorage.getItem('smart-line-ebb-safe-mode') === '1'; }
@@ -215,6 +215,9 @@ const EbbView: React.FC = () => {
     setSelectedDate(task.dueDate);
     setRoundsTopic(getReviewTopicKey(task));
   }, [bridgeReviewTaskId, rawReviewTasks]);
+  useEffect(() => {
+    if (bridgeReviewTaskId) clearReviewPlanFocus();
+  }, [bridgeReviewTaskId]);
   const toastTimer = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const latestOperation = useOperationHistory((state) => state.entries[0]);

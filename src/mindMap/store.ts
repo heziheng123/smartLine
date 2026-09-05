@@ -36,6 +36,7 @@ interface MindMapStore {
   saveStatus: MindMapSaveStatus;
   error: string | null;
   hydrate: () => Promise<void>;
+  reloadFromRepository: () => Promise<void>;
   createDocument: () => Promise<void>;
   renameDocument: (title: string) => void;
   duplicateDocument: (sourceId?: string) => Promise<void>;
@@ -147,6 +148,19 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         hydratePromise = null;
       });
       return hydratePromise;
+    },
+
+    reloadFromRepository: async () => {
+      hydratePromise = null;
+      set({
+        isHydrated: false,
+        document: null,
+        index: emptyIndex(),
+        history: emptyMindMapHistory(),
+        saveStatus: 'idle',
+        error: null,
+      });
+      await get().hydrate();
     },
 
     createDocument: async () => {

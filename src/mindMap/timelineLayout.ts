@@ -1,4 +1,5 @@
 import { addDays, diffDays, getDayOfWeek, isValidCalendarDate, splitDate } from '@/utils/dateSafe';
+import type { TimelineSection } from './model';
 
 export interface TimelineCoordinates {
   rangeStart: string;
@@ -14,6 +15,21 @@ export interface TimelineTick {
   label: string;
   sublabel?: string;
   kind: 'major' | 'minor';
+}
+
+export function resizeTimelineRect(
+  initial: Pick<TimelineSection, 'x' | 'y' | 'width' | 'height'>,
+  dx: number,
+  dy: number,
+) {
+  const constrainedDx = Math.max(-initial.width + 320, dx);
+  const constrainedDy = Math.max(-initial.height + 180, dy);
+  return {
+    x: initial.x + constrainedDx / 2,
+    y: initial.y + constrainedDy / 2,
+    width: initial.width + constrainedDx,
+    height: initial.height + constrainedDy,
+  };
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -116,10 +132,10 @@ export function buildTimelineTicks(options: {
 export function formatTimelineRange(start: string, end: string): string {
   const left = splitDate(start);
   const right = splitDate(end);
-  if (left.year === right.year && left.month === right.month) return `${left.year} · ${MONTHS[left.month - 1]}`;
+  if (left.year === right.year && left.month === right.month) return `${left.year} 年 ${left.month} 月`;
   return left.year === right.year
-    ? `${left.year} · ${MONTHS[left.month - 1]}–${MONTHS[right.month - 1]}`
-    : `${MONTHS[left.month - 1]} ${left.year}–${MONTHS[right.month - 1]} ${right.year}`;
+    ? `${left.year} 年 ${left.month}–${right.month} 月`
+    : `${left.year} 年 ${left.month} 月–${right.year} 年 ${right.month} 月`;
 }
 
 export const timelineScaleLabel = (scale: 'long-range' | 'month' | 'week') => (

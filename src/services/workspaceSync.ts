@@ -139,7 +139,7 @@ export interface UnifiedWorkspaceConnectionResult {
   warning?: string;
 }
 
-export type UnifiedWorkspaceConflictResolution = 'cloud' | 'local';
+export type UnifiedWorkspaceConflictResolution = 'cloud' | 'local' | 'mixed';
 
 export class UnifiedWorkspaceConflictError extends Error {
   readonly code = 'workspace-content-conflict';
@@ -785,6 +785,77 @@ export function normalizeWorkspaceBackupForMigrationComparison(backup: Workspace
 }
 
 /**
+ * Creates a merged workspace backup based on domain resolution preferences.
+ * For each data field, it selects either local or remote data based on the domainResolution map.
+ */
+export function createMergedBackup(
+  local: WorkspaceBackup,
+  remote: WorkspaceBackup,
+  domainResolution: Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>,
+): WorkspaceBackup {
+  // Helper function to select source based on domain resolution
+  const selectSource = <T>(field: WorkspaceStorageField, localValue: T, remoteValue: T): T => {
+    const source = domainResolution[field];
+    if (source === 'cloud') return remoteValue;
+    if (source === 'local') return localValue;
+    // Default to local if no specific resolution
+    return localValue;
+  };
+
+  // Merge timeline data
+  const mergedTimeline = {
+    tasks: selectSource('tasks', local.timeline.tasks, remote.timeline.tasks),
+    groups: selectSource('groups', local.timeline.groups, remote.timeline.groups),
+    notes: selectSource('notes', local.timeline.notes, remote.timeline.notes),
+    milestones: selectSource('milestones', local.timeline.milestones, remote.timeline.milestones),
+    lifeStages: selectSource('lifeStages', local.timeline.lifeStages, remote.timeline.lifeStages),
+  };
+
+  const mergedLifeMap = {
+    lifeMapAreas: selectSource('lifeMapAreas', local.lifeMap.lifeMapAreas, remote.lifeMap.lifeMapAreas),
+    lifeMapPlanGroups: selectSource('lifeMapPlanGroups', local.lifeMap.lifeMapPlanGroups, remote.lifeMap.lifeMapPlanGroups),
+    lifeMapStages: selectSource('lifeMapStages', local.lifeMap.lifeMapStages, remote.lifeMap.lifeMapStages),
+    lifeMapThemes: selectSource('lifeMapThemes', local.lifeMap.lifeMapThemes, remote.lifeMap.lifeMapThemes),
+    lifeMapGoals: selectSource('lifeMapGoals', local.lifeMap.lifeMapGoals, remote.lifeMap.lifeMapGoals),
+    lifeMapSystems: selectSource('lifeMapSystems', local.lifeMap.lifeMapSystems, remote.lifeMap.lifeMapSystems),
+    lifeMapSystemCheckIns: selectSource('lifeMapSystemCheckIns', local.lifeMap.lifeMapSystemCheckIns, remote.lifeMap.lifeMapSystemCheckIns),
+    lifeMapEvents: selectSource('lifeMapEvents', local.lifeMap.lifeMapEvents, remote.lifeMap.lifeMapEvents),
+    lifeMapFocuses: selectSource('lifeMapFocuses', local.lifeMap.lifeMapFocuses, remote.lifeMap.lifeMapFocuses),
+    lifeMapNotes: selectSource('lifeMapNotes', local.lifeMap.lifeMapNotes, remote.lifeMap.lifeMapNotes),
+    lifeMapReviews: selectSource('lifeMapReviews', local.lifeMap.lifeMapReviews, remote.lifeMap.lifeMapReviews),
+  };
+
+  // Merge EBB data
+  const mergedEbb = {
+    reviewTasks: selectSource('reviewTasks', local.ebb.reviewTasks, remote.ebb.reviewTasks),
+    inboxItems: selectSource('inboxItems', local.ebb.inboxItems, remote.ebb.inboxItems),
+    outlineNodes: selectSource('outlineNodes', local.ebb.outlineNodes, remote.ebb.outlineNodes),
+    ebbSettings: local.ebb.ebbSettings, // Always keep local settings
+  };
+
+  // Merge daily data
+  const mergedDaily = {
+    schedules: selectSource('schedules', local.daily.schedules, remote.daily.schedules),
+    retrospectives: selectSource('retrospectives', local.daily.retrospectives, remote.daily.retrospectives),
+  };
+
+  // Merge graph data
+  const mergedGraph = { nodes: selectSource('nodes', local.graph.nodes, remote.graph.nodes) };
+
+  return {
+    ...local, // Keep local metadata, settings, etc.
+    timeline: mergedTimeline,
+    lifeMap: mergedLifeMap,
+    ebb: mergedEbb,
+    daily: mergedDaily,
+    graph: mergedGraph,
+    // Map documents use their own room and are deliberately not copied through
+    // the unified workspace channel. Keep the local backup payload untouched.
+    mindMap: local.mindMap,
+  };
+}
+
+/**
  * First-time unified activation is deliberately fail-closed.  Empty devices
  * may join an existing cloud workspace and equal workspaces may reconnect, but
  * two different non-empty workspaces are never silently overlaid.
@@ -1013,9 +1084,9 @@ async function resolveLegacyWorkspaceConflictInternal(
   identity: string,
   resolution: UnifiedWorkspaceConflictResolution,
   historicalIdentity?: string,
+  domainResolution?: Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>,
 ): Promise<UnifiedWorkspaceConnectionResult> {
   const local = createWorkspaceBackup();
-  const localSummary = summaryOf(local);
   const legacy = await inspectLegacyWorkspaceWithBase(roomCode, createEmptyWorkspaceBase());
   if (!workspaceHasUserContent(legacy.summary)) {
     throw new Error('旧房间当前已没有可迁移内容，请重新执行普通连接。');
@@ -1036,23 +1107,35 @@ async function resolveLegacyWorkspaceConflictInternal(
     return { roomId: migration.targetRoomId, applied: 0, repairedFields: [] };
   }
 
+  const selected = resolution === 'mixed' && domainResolution
+    ? createMergedBackup(local, legacy.backup, domainResolution)
+    : local;
   await Promise.all([
-    createLocalSnapshot('选择本机数据并保留旧房间前'),
-    createWorkspaceSnapshot(legacy.backup, '被本机统一工作区取代前的旧房间副本'),
+    createLocalSnapshot(resolution === 'mixed' ? '按域合并旧房间前的本机工作区' : '选择本机数据并保留旧房间前'),
+    createWorkspaceSnapshot(legacy.backup, resolution === 'mixed' ? '按域合并前的旧房间副本' : '被本机统一工作区取代前的旧房间副本'),
   ]);
-  const target = await inspectUnifiedWorkspaceTarget(roomCode, identity, historicalIdentity, local);
+  if (resolution === 'mixed') {
+    if (!domainResolution) throw new Error('按域合并缺少数据来源选择。');
+    setWorkspaceQueueSuppressed(true);
+    try {
+      await restoreWorkspaceBackup(selected, { suppressSyncJournal: true });
+    } finally {
+      setWorkspaceQueueSuppressed(false);
+    }
+  }
+  const target = await inspectUnifiedWorkspaceTarget(roomCode, identity, historicalIdentity, selected);
   if (target.hasStorage) {
-    const currentUnified = rootToBackup(target.root, local);
-    const [localHash, unifiedHash] = await Promise.all([
-      hashWorkspaceBackup(local),
+    const currentUnified = rootToBackup(target.root, selected);
+    const [selectedHash, unifiedHash] = await Promise.all([
+      hashWorkspaceBackup(selected),
       hashWorkspaceBackup(currentUnified),
     ]);
-    if (localHash !== unifiedHash) {
+    if (selectedHash !== unifiedHash) {
       recordPendingWorkspaceActivationConflict(roomCode, 'unified');
-      throw new UnifiedWorkspaceConflictError(localSummary, summaryOf(currentUnified));
+      throw new UnifiedWorkspaceConflictError(summaryOf(selected), summaryOf(currentUnified));
     }
   } else {
-    await overwriteUnifiedRoomFromBackup(target.roomId, local);
+    await overwriteUnifiedRoomFromBackup(target.roomId, selected);
   }
   if (pendingBeforeResolution) await clearPendingWorkspaceSync(pendingBeforeResolution);
   writeWorkspaceSyncSettings({ architecture: 'unified', roomCode, unifiedRoomId: target.roomId });
@@ -1067,9 +1150,10 @@ async function resolveUnifiedWorkspaceConflictInternal(
   resolution: UnifiedWorkspaceConflictResolution,
   historicalIdentity?: string,
   remoteSource: 'unified' | 'legacy' = 'unified',
+  domainResolution?: Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>,
 ): Promise<UnifiedWorkspaceConnectionResult> {
   if (remoteSource === 'legacy') {
-    return await resolveLegacyWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity);
+    return await resolveLegacyWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity, domainResolution);
   }
   reportWorkspaceConnectionProgress('正在重新读取双方数据并创建冲突恢复点…');
   const local = normalizeWorkspaceBackupForMigrationComparison(createWorkspaceBackup());
@@ -1092,6 +1176,26 @@ async function resolveUnifiedWorkspaceConflictInternal(
     } finally {
       setWorkspaceQueueSuppressed(false);
     }
+  } else if (resolution === 'mixed' && domainResolution) {
+    // Per-domain resolution: create merged backup and apply to both sides
+    await Promise.all([
+      createLocalSnapshot('自定义合并前的本机工作区'),
+      createWorkspaceSnapshot(remote, '自定义合并前的云端工作区副本'),
+    ]);
+    reportWorkspaceConnectionProgress('双方恢复点已保存，正在按自定义选择合并数据…');
+
+    const mergedBackup = createMergedBackup(local, remote, domainResolution);
+
+    setWorkspaceQueueSuppressed(true);
+    try {
+      await restoreWorkspaceBackup(mergedBackup, { suppressSyncJournal: true });
+      if (pendingBeforeResolution) await clearPendingWorkspaceSync(pendingBeforeResolution);
+    } finally {
+      setWorkspaceQueueSuppressed(false);
+    }
+
+    reportWorkspaceConnectionProgress('本机已更新，正在上传合并后的数据到云端…');
+    await overwriteUnifiedRoomFromBackup(target.roomId, mergedBackup);
   } else {
     await Promise.all([
       createLocalSnapshot('以本机数据覆盖云端前'),
@@ -1116,9 +1220,10 @@ export function resolveUnifiedWorkspaceConflict(
   resolution: UnifiedWorkspaceConflictResolution,
   historicalIdentity?: string,
   remoteSource: 'unified' | 'legacy' = 'unified',
+  domainResolution?: Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>,
 ): Promise<UnifiedWorkspaceConnectionResult> {
   return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
-    () => resolveUnifiedWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity, remoteSource),
+    () => resolveUnifiedWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity, remoteSource, domainResolution),
   ));
 }
 

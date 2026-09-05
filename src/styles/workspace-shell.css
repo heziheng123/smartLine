@@ -435,7 +435,13 @@
   background: #fffbeb;
 }
 
-.ui-workspace-header .workspace-sync-status--error {
+.ui-workspace-header .workspace-sync-status--needs-action {
+  border-color: #fed7aa;
+  color: #c2410c;
+  background: #fff7ed;
+}
+
+.ui-workspace-header .workspace-sync-status--stopped {
   border-color: #fecaca;
   color: #dc2626;
   background: #fef2f2;

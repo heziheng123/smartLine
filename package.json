@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test:auth": "tsx --test tests/auth/github-auth.test.ts tests/auth/storage-auth.test.ts",
-    "test:sync": "tsx --test tests/sync/workspace-sync.test.ts tests/sync/workspace-audit.test.ts tests/sync/workspace-schema8-hotfix.test.ts tests/sync/service-worker-policy.test.ts",
+    "test:sync": "tsx --test tests/sync/workspace-sync.test.ts tests/sync/workspace-audit.test.ts tests/sync/workspace-schema8-hotfix.test.ts tests/sync/service-worker-policy.test.ts tests/sync/workspace-backup-mind-map.test.ts",
     "test:duration": "tsx --test tests/domain/duration.test.ts",
     "test:life-map": "tsx --test tests/domain/life-map.test.ts tests/domain/life-map-plan-layout.test.ts tests/domain/life-map-creation.test.ts tests/domain/life-map-v13-foundation.test.ts tests/domain/life-map-v14-manuscript.test.ts",
     "test:mind-map": "tsx --test tests/domain/mind-map-workspace.test.ts tests/domain/mind-map-edge-routing.test.ts tests/domain/timeline-projection.test.ts tests/domain/life-map-migration.test.ts",

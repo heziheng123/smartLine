@@ -74,8 +74,8 @@ test('adaptive timeline ticks remain readable across year, season, month, and we
   assert.deepEqual(labels('2026-03-01', '2026-06-30', 'week'), ['Mar', 'Apr', 'May', 'Jun']);
   assert.deepEqual(labels('2026-08-01', '2026-08-31'), ['1', '5', '10', '15', '20', '25', '31']);
   assert.deepEqual(labels('2026-08-10', '2026-08-16', 'week'), ['Mon:10', 'Tue:11', 'Wed:12', 'Thu:13', 'Fri:14', 'Sat:15', 'Sun:16']);
-  assert.equal(formatTimelineRange('2026-03-01', '2026-06-30'), '2026 · Mar–Jun');
-  assert.equal(formatTimelineRange('2026-08-01', '2026-08-31'), '2026 · Aug');
+  assert.equal(formatTimelineRange('2026-03-01', '2026-06-30'), '2026 年 3–6 月');
+  assert.equal(formatTimelineRange('2026-08-01', '2026-08-31'), '2026 年 8 月');
 });
 
 test('every timeline element shares one reversible coordinate system after resize', () => {

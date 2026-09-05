@@ -1097,11 +1097,13 @@ const App: React.FC = () => {
           </motion.div>
         )}
 
-        {currentView === 'mind-map' && MIND_MAP_ENABLED && (
+        {MIND_MAP_ENABLED && (currentView === 'mind-map' || (auth.enabled && auth.status === 'authenticated')) && (
           <motion.div
             key="mind-map"
             id="view-mind-map"
             role="tabpanel"
+            hidden={currentView !== 'mind-map'}
+            aria-hidden={currentView !== 'mind-map'}
             className="tl-app-split tl-app-split--ebb"
             custom={viewMotionContext}
             variants={VIEW_MOTION_VARIANTS}

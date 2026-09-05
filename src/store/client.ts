@@ -14,7 +14,8 @@ export function createLiveblocksClient() {
     return createClient({ authEndpoint: liveblocksAuthEndpoint });
   }
 
-  if (import.meta.env.PROD) {
+  const env = (import.meta as ImportMeta & { env?: ImportMetaEnv }).env ?? {} as ImportMetaEnv;
+  if (env.PROD) {
     throw new Error('[Liveblocks] Production requires VITE_LIVEBLOCKS_AUTH_ENDPOINT; public-key fallback is development-only.');
   }
 

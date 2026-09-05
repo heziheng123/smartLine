@@ -8,7 +8,7 @@ export interface TimelineProjectionItem {
   start: string;
   end: string;
   color: string;
-  kind: 'stage' | 'project' | 'task' | 'milestone' | 'system' | 'theme' | 'goal' | 'focus' | 'note' | 'review';
+  kind: 'group' | 'stage' | 'project' | 'task' | 'milestone' | 'system' | 'theme' | 'goal' | 'focus' | 'note' | 'review';
   shape: 'range' | 'marker';
   parentId?: string;
   progress?: number;
@@ -21,6 +21,14 @@ export type LifeTimelineSnapshot = Pick<
   'lifeMapAreas' | 'lifeMapStages' | 'lifeMapThemes' | 'lifeMapGoals' | 'lifeMapSystems'
   | 'lifeMapEvents' | 'lifeMapFocuses' | 'lifeMapNotes' | 'lifeMapReviews'
 >;
+
+export function timelineStatus(items: TimelineProjectionItem[], today: string) {
+  return items.reduce((status, item) => {
+    if (item.shape === 'range' && item.start <= today && item.end >= today && item.progress !== 100) status.active += 1;
+    if (item.progress !== undefined && item.progress < 100 && item.end < today) status.overdue += 1;
+    return status;
+  }, { active: 0, overdue: 0 });
+}
 
 const active = <T extends { deletedAt?: string }>(items: T[]) => items.filter((item) => !item.deletedAt);
 const range = (
@@ -62,6 +70,44 @@ export function projectTimelineItems(projectId: string, data: ProjectPlanningSna
   ].filter((item): item is TimelineProjectionItem => Boolean(item));
 }
 
+const groupTimelineItem = (group: NonNullable<ProjectPlanningSnapshot['groups']>[number]) => (
+  range(`group:${group.id}`, group.name, group.start, group.end, group.color ?? '#64748b', 'group')
+);
+
+export function timelineSelectedProjectIds(section: TimelineSection, data: ProjectPlanningSnapshot) {
+  if (section.selectionScopes.length > 0) {
+    const groupIds = new Set(section.selectionScopes.filter((scope) => scope.type === 'group').map((scope) => scope.id));
+    return [...new Set([
+      ...data.projects.filter((project) => project.groupId && groupIds.has(project.groupId)).map((project) => project.id),
+      ...section.selectionScopes.filter((scope) => scope.type === 'project').map((scope) => scope.id),
+    ])];
+  }
+  if (section.source === 'project' && section.targetId) return [section.targetId];
+  if (section.source !== 'manual') return [];
+  return [...new Set(section.manualItems.flatMap((reference) => (
+    reference.source === 'project' && reference.itemId === `project:${reference.contextId}` ? [reference.contextId] : []
+  )))];
+}
+
+const projectUnscheduledItemIds = (projectId: string, data: ProjectPlanningSnapshot) => {
+  const project = data.projects.find((item) => item.id === projectId);
+  if (!project) return [];
+  return project.blocks.flatMap((block) => block.type === 'smart-task' && !block.header.date && !block.header.deadline
+    ? [`task:${project.id}:${block.id}`]
+    : []);
+};
+
+export function timelineUnscheduledItemCount(section: TimelineSection, data: ProjectPlanningSnapshot) {
+  if (section.selectionScopes.length > 0) return timelineSelectedProjectIds(section, data)
+    .reduce((count, projectId) => count + projectUnscheduledItemIds(projectId, data).length, 0);
+  if (section.source === 'project' && section.targetId) return projectUnscheduledItemIds(section.targetId, data).length;
+  if (section.source !== 'manual') return 0;
+  const unscheduled = new Set(section.manualItems.flatMap((reference) => reference.source === 'project'
+    ? projectUnscheduledItemIds(reference.contextId, data)
+    : []));
+  return section.manualItems.filter((reference) => unscheduled.has(reference.itemId)).length;
+}
+
 export function lifeTimelineItems(areaId: string, data: LifeTimelineSnapshot): TimelineProjectionItem[] {
   const area = active(data.lifeMapAreas).find((item) => item.id === areaId);
   if (!area) return [];
@@ -91,6 +137,17 @@ export function timelineProjectionItems(
   projects: ProjectPlanningSnapshot,
   life: LifeTimelineSnapshot,
 ): TimelineProjectionItem[] {
+  const scopedItems = section.selectionScopes.length > 0
+    ? [
+        ...section.selectionScopes.flatMap((scope) => {
+          const group = scope.type === 'group' ? (projects.groups ?? []).find((item) => item.id === scope.id) : null;
+          const item = group ? groupTimelineItem(group) : null;
+          return item ? [item] : [];
+        }),
+        ...timelineSelectedProjectIds(section, projects).flatMap((projectId) => projectTimelineItems(projectId, projects)),
+      ]
+    : null;
+  if (scopedItems) return [...new Map(scopedItems.map((item) => [item.id, item])).values()];
   const items = section.source === 'project' && section.targetId
     ? projectTimelineItems(section.targetId, projects)
     : section.source === 'life' && section.targetId
@@ -105,7 +162,7 @@ export function timelineProjectionItems(
           })
         : [];
   const order = (item: TimelineProjectionItem) => (
-    item.kind === 'stage' ? 0
+    item.kind === 'group' || item.kind === 'stage' ? 0
       : item.kind === 'project' ? 1
         : item.kind === 'task' ? 2
           : item.kind === 'milestone' || item.shape === 'marker' ? 4

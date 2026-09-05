@@ -5508,7 +5508,13 @@ html, body, #root {
   background: #fffbeb;
 }
 
-.workspace-sync-status--error {
+.workspace-sync-status--needs-action {
+  border-color: #fed7aa;
+  color: #c2410c;
+  background: #fff7ed;
+}
+
+.workspace-sync-status--stopped {
   border-color: #fecaca;
   color: #dc2626;
   background: #fef2f2;

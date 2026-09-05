@@ -70,10 +70,10 @@ import { MindMapSpatialIndex } from './spatialIndex';
 import { buildEdgeRoute, pointOnRoute, type EdgeRoute } from './edgeRouting';
 import { connectableObjects, edgeConnectableObjects, hitConnectableObject, resolveConnectableObject, type ConnectableObject } from './connectableObjects';
 import { renderMindMapWebGl } from './webglRenderer';
-import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timelineVisibleItems, type TimelineProjectionItem } from '../timelineProjection';
+import { projectTimelineItems, timelineProjectionItems, timelineSelectedProjectIds, timelineStatus, timelineUnscheduledItemCount, timelineVisibleItems, type TimelineProjectionItem } from '../timelineProjection';
 import { useLifeTimelineSnapshot } from '../timelineProjectionHooks';
 import { updateLifePlanningDates } from '../lifePlanning';
-import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, timelineScaleLabel } from '../timelineLayout';
+import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, resizeTimelineRect, timelineScaleLabel } from '../timelineLayout';
 import { mindMapNodeThemeColor, resolveBranchThemeColors, resolveTreeEdgeColor } from '../visualTheme';
 import 'katex/dist/katex.min.css';
 import styles from './MindMapCanvas.module.css';
@@ -219,6 +219,20 @@ interface ClipboardGraph {
   projectReferences: ProjectReferenceCard[];
   edges: MindMapEdge[];
 }
+
+type TimelineVisibility = {
+  stages: boolean;
+  milestones: boolean;
+  progress: boolean;
+  today: boolean;
+};
+
+const DEFAULT_TIMELINE_VISIBILITY: TimelineVisibility = {
+  stages: true,
+  milestones: true,
+  progress: true,
+  today: true,
+};
 
 interface ContextMenuState {
   x: number;
@@ -626,12 +640,24 @@ const previewProjectReference = (reference: ProjectReferenceCard, interaction: I
 };
 
 const previewTimeline = (timeline: TimelineSection, interaction: Interaction): TimelineSection => {
-  if (interaction?.type !== 'timeline-drag' || interaction.timelineId !== timeline.id) return timeline;
-  return {
-    ...timeline,
-    x: interaction.initial.x + interaction.currentWorld.x - interaction.startWorld.x,
-    y: interaction.initial.y + interaction.currentWorld.y - interaction.startWorld.y,
-  };
+  if (interaction?.type === 'timeline-drag' && interaction.timelineId === timeline.id) {
+    return {
+      ...timeline,
+      x: interaction.initial.x + interaction.currentWorld.x - interaction.startWorld.x,
+      y: interaction.initial.y + interaction.currentWorld.y - interaction.startWorld.y,
+    };
+  }
+  if (interaction?.type === 'timeline-resize' && interaction.timelineId === timeline.id) {
+    return {
+      ...timeline,
+      ...resizeTimelineRect(
+        interaction.initial,
+        interaction.currentWorld.x - interaction.startWorld.x,
+        interaction.currentWorld.y - interaction.startWorld.y,
+      ),
+    };
+  }
+  return timeline;
 };
 
 const dateAfter = (start: string, days: number) => {
@@ -717,6 +743,11 @@ export default function MindMapCanvas({
   const [selectedProjectReferenceId, setSelectedProjectReferenceId] = useState<string | null>(null);
   const [hoveredProjectReferenceId, setHoveredProjectReferenceId] = useState<string | null>(null);
   const [selectedTimelineId, setSelectedTimelineId] = useState<string | null>(null);
+  const [timelineSelectorOpen, setTimelineSelectorOpen] = useState(false);
+  const [timelineSelectorSearch, setTimelineSelectorSearch] = useState('');
+  const [timelineSelectorFilter, setTimelineSelectorFilter] = useState<'all' | 'selected'>('all');
+  const [timelineExpandedGroups, setTimelineExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [timelineExpandedProjects, setTimelineExpandedProjects] = useState<Set<string>>(() => new Set());
   const [focusedBranchRootId, setFocusedBranchRootId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
@@ -732,6 +763,7 @@ export default function MindMapCanvas({
   const [webglActive, setWebglActive] = useState(false);
   const [timelineTaskInteraction, setTimelineTaskInteraction] = useState<TimelineTaskInteraction | null>(null);
   const [timelineEditError, setTimelineEditError] = useState<string | null>(null);
+  const [timelineVisibility, setTimelineVisibility] = useState<Record<string, TimelineVisibility>>({});
   const [projectDateUndo, setProjectDateUndo] = useState<ProjectDateUndo | null>(null);
   const [lifeDateUpdated, setLifeDateUpdated] = useState(false);
   const editingSessionKey = editing ? editing.nodeId ?? 'new' : null;
@@ -763,16 +795,13 @@ export default function MindMapCanvas({
   const projectPlanning = useProjectPlanningSnapshot();
   const legacyLifeTimeline = useLifeTimelineSnapshot();
   const lifeTimeline = document.lifeMap ?? legacyLifeTimeline;
-  const manualTimelineCandidates = useMemo(() => [
-    ...projectPlanning.projects.flatMap((project) => projectTimelineItems(project.id, projectPlanning).map((item) => ({
-      reference: { source: 'project' as const, contextId: project.id, itemId: item.id },
-      label: `${project.name} · ${item.title}`,
-    }))),
-    ...lifeTimeline.lifeMapAreas.filter((area) => !area.deletedAt).flatMap((area) => lifeTimelineItems(area.id, lifeTimeline).map((item) => ({
-      reference: { source: 'life' as const, contextId: area.id, itemId: item.id },
-      label: `${area.name} · ${item.title}`,
-    }))),
-  ], [lifeTimeline, projectPlanning]);
+
+  const toggleTimelineVisibility = useCallback((timelineId: string, key: keyof TimelineVisibility) => {
+    setTimelineVisibility((current) => {
+      const value = current[timelineId] ?? DEFAULT_TIMELINE_VISIBILITY;
+      return { ...current, [timelineId]: { ...value, [key]: !value[key] } };
+    });
+  }, []);
 
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const treeChildrenById = useMemo(() => {
@@ -1181,6 +1210,12 @@ export default function MindMapCanvas({
     setWebglActive(renderMindMapWebGl(canvas, renderDocument, visualCanvasNodes, edgeNodes, hiddenNodeIds, treeDirection, camera, size));
   }, [camera, canvasNodes, edgeNodes, hiddenNodeIds, renderDocument, size, treeDirection, visualCanvasNodes]);
 
+  // Timeline interactions are rendered by their own DOM surface. Keeping them out of
+  // the canvas draw dependency prevents a full-map redraw on every resize frame.
+  const canvasInteraction = interaction?.type === 'timeline-drag' || interaction?.type === 'timeline-resize'
+    ? null
+    : interaction;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.width <= 0 || size.height <= 0) return;
@@ -1237,19 +1272,19 @@ export default function MindMapCanvas({
       const previewNodes: Record<string, MindMapNode> = {};
       for (const id of renderNodeIds) {
         const node = canvasNodes[id];
-        if (node) previewNodes[id] = previewNode(node, interaction);
+        if (node) previewNodes[id] = previewNode(node, canvasInteraction);
       }
-      const previewsNodeGeometry = interaction?.type === 'drag'
-        || interaction?.type === 'resize'
-        || interaction?.type === 'section-drag'
-        || interaction?.type === 'section-resize';
+      const previewsNodeGeometry = canvasInteraction?.type === 'drag'
+        || canvasInteraction?.type === 'resize'
+        || canvasInteraction?.type === 'section-drag'
+        || canvasInteraction?.type === 'section-resize';
       const previewEdgeNodes = previewsNodeGeometry
         ? edgeRenderNodes({ ...renderDocument, nodes: { ...renderDocument.nodes, ...previewNodes } })
         : edgeNodes;
-      const movingReference = interaction?.type === 'project-reference-drag'
-        ? document.projectReferences[interaction.referenceId]
+      const movingReference = canvasInteraction?.type === 'project-reference-drag'
+        ? document.projectReferences[canvasInteraction.referenceId]
         : null;
-      const previewReference = movingReference ? previewProjectReference(movingReference, interaction) : null;
+      const previewReference = movingReference ? previewProjectReference(movingReference, canvasInteraction) : null;
       const edgeDocument = (previewsNodeGeometry || previewReference)
         ? {
             ...renderDocument,
@@ -1260,7 +1295,7 @@ export default function MindMapCanvas({
       const visible = visibleWorldRect(size, camera);
 
       for (const section of Object.values(renderDocument.sections)) {
-        const rect = sectionRect(section, interaction);
+        const rect = sectionRect(section, canvasInteraction);
         if (!rectIntersectsRect(visible, rect)) continue;
         const topLeft = worldToView({ x: rect.x, y: rect.y }, camera);
         const width = rect.width * camera.scale;
@@ -1287,7 +1322,7 @@ export default function MindMapCanvas({
       }
 
       if (selectedSectionId && document.sections[selectedSectionId]) {
-        const rect = sectionRect(document.sections[selectedSectionId], interaction);
+        const rect = sectionRect(document.sections[selectedSectionId], canvasInteraction);
         const handle = worldToView({ x: rect.x + rect.width, y: rect.y + rect.height }, camera);
         context.fillStyle = '#ffffff';
         context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
@@ -1324,10 +1359,10 @@ export default function MindMapCanvas({
         if (edgeIsHiddenInsideCollapsedSection(edge, document)) continue;
         if ((edgeSourceRef(edge).type === 'node' && hiddenNodeIds.has(edgeSourceRef(edge).id))
           || (edgeTargetRef(edge).type === 'node' && hiddenNodeIds.has(edgeTargetRef(edge).id))) continue;
-        const renderedEdge = interaction?.type === 'edge-control' && interaction.edgeId === edge.id
+        const renderedEdge = canvasInteraction?.type === 'edge-control' && canvasInteraction.edgeId === edge.id
           ? {
               ...edge,
-              controlPoints: edge.controlPoints.map((point, index) => index === interaction.controlIndex ? interaction.currentWorld : point),
+              controlPoints: edge.controlPoints.map((point, index) => index === canvasInteraction.controlIndex ? canvasInteraction.currentWorld : point),
             }
           : edge;
         const points = edgePoints(renderedEdge, edgeDocument, treeDirection);
@@ -1429,12 +1464,12 @@ export default function MindMapCanvas({
         context.restore();
       }
 
-      if (interaction?.type === 'connect') {
-        const source = resolveConnectableObject(edgeDocument, interaction.source);
+      if (canvasInteraction?.type === 'connect') {
+        const source = resolveConnectableObject(edgeDocument, canvasInteraction.source);
         if (source) {
           const previewRoute = buildEdgeRoute(
             source.bounds,
-            { x: interaction.currentWorld.x - 1, y: interaction.currentWorld.y - 1, width: 2, height: 2 },
+            { x: canvasInteraction.currentWorld.x - 1, y: canvasInteraction.currentWorld.y - 1, width: 2, height: 2 },
             { kind: 'relation' },
           );
           const start = worldToView(previewRoute.start, camera);
@@ -1449,8 +1484,8 @@ export default function MindMapCanvas({
           context.setLineDash([6, 4]);
           context.stroke();
           context.setLineDash([]);
-          const target = hitConnectable(interaction.currentWorld);
-          if (target && !sameCanvasObjectRef(target.ref, interaction.source)) {
+          const target = hitConnectable(canvasInteraction.currentWorld);
+          if (target && !sameCanvasObjectRef(target.ref, canvasInteraction.source)) {
             const topLeft = worldToView({ x: target.bounds.x, y: target.bounds.y }, camera);
             context.save();
             context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
@@ -1461,13 +1496,13 @@ export default function MindMapCanvas({
         }
       }
 
-      if (interaction?.type === 'reconnect') {
-        const edge = document.edges[interaction.edgeId];
+      if (canvasInteraction?.type === 'reconnect') {
+        const edge = document.edges[canvasInteraction.edgeId];
         const points = edge ? edgePoints(edge, edgeDocument, treeDirection) : null;
         if (edge && points) {
-          const fixed = interaction.endpoint === 'source' ? points.end : points.start;
+          const fixed = canvasInteraction.endpoint === 'source' ? points.end : points.start;
           const start = worldToView(fixed, camera);
-          const end = worldToView(interaction.currentWorld, camera);
+          const end = worldToView(canvasInteraction.currentWorld, camera);
           context.beginPath();
           context.moveTo(start.x, start.y);
           context.lineTo(end.x, end.y);
@@ -1611,11 +1646,11 @@ export default function MindMapCanvas({
         }
       }
 
-      if (interaction?.type === 'create-child') {
-        const parent = previewNodes[interaction.parentId];
+      if (canvasInteraction?.type === 'create-child') {
+        const parent = previewNodes[canvasInteraction.parentId];
         if (parent) {
           const start = worldToView({ x: parent.x + parent.width / 2, y: parent.y }, camera);
-          const end = worldToView(interaction.currentWorld, camera);
+          const end = worldToView(canvasInteraction.currentWorld, camera);
           context.beginPath();
           context.moveTo(start.x, start.y);
           context.lineTo(end.x, end.y);
@@ -1642,9 +1677,9 @@ export default function MindMapCanvas({
             context.stroke();
           }
           if (edge.type === 'orthogonal') {
-            const controls = edge.controlPoints.map((point, index) => interaction?.type === 'edge-control'
-              && interaction.edgeId === edge.id && interaction.controlIndex === index
-              ? interaction.currentWorld
+            const controls = edge.controlPoints.map((point, index) => canvasInteraction?.type === 'edge-control'
+              && canvasInteraction.edgeId === edge.id && canvasInteraction.controlIndex === index
+              ? canvasInteraction.currentWorld
               : point);
             for (const point of controls) {
               const view = worldToView(point, camera);
@@ -1655,9 +1690,9 @@ export default function MindMapCanvas({
         }
       }
 
-      if (interaction?.type === 'marquee') {
-        const start = worldToView(interaction.startWorld, camera);
-        const end = worldToView(interaction.currentWorld, camera);
+      if (canvasInteraction?.type === 'marquee') {
+        const start = worldToView(canvasInteraction.startWorld, camera);
+        const end = worldToView(canvasInteraction.currentWorld, camera);
         const rect = normalizedRect(start, end);
         context.globalAlpha = 0.08;
         context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
@@ -1669,7 +1704,7 @@ export default function MindMapCanvas({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [branchThemeColors, camera, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredEdgeId, hoveredNodeId, interaction, nodeDepthById, nodePresentationById, renderDocument, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, treeEdgePreview, visibleNodeIds, visibleZOrder, webglActive]);
+  }, [branchThemeColors, camera, canvasInteraction, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredEdgeId, hoveredNodeId, nodeDepthById, nodePresentationById, renderDocument, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, treeEdgePreview, visibleNodeIds, visibleZOrder, webglActive]);
 
   const startEditingNode = (node: MindMapNode) => {
     setEditing({
@@ -2432,7 +2467,7 @@ export default function MindMapCanvas({
   };
 
   const handleTimelinePointerDown = (event: ReactPointerEvent<HTMLDivElement>, timeline: TimelineSection) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button, input, select, textarea, a')) return;
     event.preventDefault();
     event.stopPropagation();
     surfaceRef.current?.focus();
@@ -2484,12 +2519,7 @@ export default function MindMapCanvas({
         const timeline = current.timelineSections[active.timelineId];
         if (!timeline || timeline.locked) return current;
         const resized = active.type === 'timeline-resize'
-          ? {
-              x: active.initial.x + Math.max(-active.initial.width + 320, dx) / 2,
-              y: active.initial.y + Math.max(-active.initial.height + 180, dy) / 2,
-              width: Math.max(320, active.initial.width + dx),
-              height: Math.max(180, active.initial.height + dy),
-            }
+          ? resizeTimelineRect(active.initial, dx, dy)
           : { x: active.initial.x + dx, y: active.initial.y + dy };
         return {
           ...current,
@@ -3158,9 +3188,10 @@ export default function MindMapCanvas({
           : camera.scale < 0.75
             ? allItems.filter((item) => item.kind !== 'task' && item.kind !== 'note')
             : allItems;
+        const visibility = timelineVisibility[timeline.id] ?? DEFAULT_TIMELINE_VISIBILITY;
         const visibleItems = timelineVisibleItems(lodItems, range.start, range.end, Number.MAX_SAFE_INTEGER);
-        const stageCandidates = visibleItems.filter((item) => item.kind === 'stage');
-        const milestoneCandidates = visibleItems.filter((item) => item.kind === 'milestone' || item.shape === 'marker');
+        const stageCandidates = visibility.stages ? visibleItems.filter((item) => item.kind === 'stage') : [];
+        const milestoneCandidates = visibility.milestones ? visibleItems.filter((item) => item.kind === 'milestone' || item.shape === 'marker') : [];
         const rowCandidates = visibleItems.filter((item) => item.kind !== 'stage' && item.kind !== 'milestone' && item.shape !== 'marker');
         const headerHeight = 48;
         const axisHeight = 52;
@@ -3189,15 +3220,30 @@ export default function MindMapCanvas({
         const coordinates = createTimelineCoordinates(range.start, range.end, timeline.width);
         const ticks = buildTimelineTicks({ rangeStart: range.start, rangeEnd: range.end, plotWidth: coordinates.plotWidth, scale: timeline.scale });
         const today = todayStr();
-        const todayVisible = today >= range.start && today <= range.end;
+        const todayVisible = visibility.today && today >= range.start && today <= range.end;
+        const status = timelineStatus(allItems, today);
+        const todayLabel = `今天 ${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))}${status.active ? ` · 进行中 ${status.active}` : ''}${status.overdue ? ` · 逾期 ${status.overdue}` : ''}`;
         const topLeft = worldToView({
           x: timeline.x - timeline.width / 2,
           y: timeline.y - timeline.height / 2,
         }, camera);
         const renderedHeight = timeline.collapsed ? headerHeight : timeline.height;
         const rangeSummary = `${formatTimelineRange(range.start, range.end)} · ${timelineScaleLabel(timeline.scale)}`;
-        const projectCount = allItems.filter((item) => item.kind === 'project').length;
-        const taskCount = allItems.filter((item) => item.kind === 'task').length;
+        const selectedProjectCount = new Set(timeline.manualItems.filter((item) => item.source === 'project').map((item) => item.contextId)).size;
+        const sourceLabel = timeline.source === 'manual'
+          ? `已选 ${selectedProjectCount} 个项目`
+          : timeline.source === 'project'
+            ? `旧版项目 · ${projectPlanning.projects.find((project) => project.id === timeline.targetId)?.name ?? '未选择'}`
+            : `旧版人生领域 · ${lifeTimeline.lifeMapAreas.find((area) => area.id === timeline.targetId)?.name ?? '未选择'}`;
+        const unscheduledCount = timelineUnscheduledItemCount(timeline, projectPlanning);
+        const contentSummary = `${sourceLabel} · ${allItems.length} 项${unscheduledCount ? ` · ${unscheduledCount} 项未排期` : ''}`;
+        const automaticRange = !timeline.rangeStart && !timeline.rangeEnd;
+        const emptyMessage = unscheduledCount ? `${unscheduledCount} 项尚未排期` : timeline.source === 'manual' ? '尚未选择分组或项目' : '暂无带日期的内容';
+        const emptyDescription = unscheduledCount
+          ? '为这些项目任务设置开始日期或截止日期后，它们会自动显示在这里'
+          : timeline.source === 'manual'
+          ? `从“显示范围”中勾选分组或项目${automaticRange ? `；自动显示未来 ${diffDays(range.end, range.start)} 天` : ''}`
+          : '为该来源中的项目、任务或人生条目设置日期后，会自动显示在这里';
         const scale = camera.scale;
         const itemColor = (item: TimelineProjectionItem) => ({ '--timeline-item-color': item.color } as CSSProperties);
         return (
@@ -3235,17 +3281,18 @@ export default function MindMapCanvas({
             }}
           >
             {!timeline.collapsed && summaryMode ? (
-              <div className={styles.timelineSummary}>
+              <div className={styles.timelineSummary} data-testid={`mind-map-timeline-drag-handle-${timeline.id}`} onPointerDown={(event) => handleTimelinePointerDown(event, timeline)} onPointerMove={handleTimelinePointerMove} onPointerUp={finishTimelineInteraction} onPointerCancel={finishTimelineInteraction}>
                 <span><CalendarRange size={15} aria-hidden="true" /></span>
                 <strong>{timeline.title}</strong>
                 <small>{formatTimelineRange(range.start, range.end)}</small>
-                <p>{projectCount} 个项目 · {taskCount} 个任务</p>
+                <p>{contentSummary}</p>
               </div>
             ) : <>
-              <div className={styles.timelineHeader} style={{ height: headerHeight * scale, paddingInline: Math.max(8, 14 * scale) }}>
+              <div className={styles.timelineHeader} data-testid={`mind-map-timeline-drag-handle-${timeline.id}`} aria-label="拖动时间线" style={{ height: headerHeight * scale, paddingInline: Math.max(8, 14 * scale) }} onPointerDown={(event) => handleTimelinePointerDown(event, timeline)} onPointerMove={handleTimelinePointerMove} onPointerUp={finishTimelineInteraction} onPointerCancel={finishTimelineInteraction}>
                 <div className={styles.timelineHeaderTitle}>
                   <CalendarRange size={Math.max(12, 16 * scale)} aria-hidden="true" />
                   <strong style={{ fontSize: Math.max(11, 15 * scale) }}>{timeline.title}</strong>
+                  <span className={styles.timelineSource} title={contentSummary} style={{ fontSize: Math.max(8, 10 * scale) }}>{contentSummary}</span>
                 </div>
                 <div className={styles.timelineHeaderMeta}>
                   <span title={`${range.start} — ${range.end}`}>{rangeSummary}</span>
@@ -3267,8 +3314,16 @@ export default function MindMapCanvas({
                   </span>;
                 })}
                 {todayVisible && <span className={styles.timelineToday} style={{ left: dateToX(today, coordinates) * scale, top: 3 * scale, height: Math.max(1, (milestoneTop + 8) * scale) }}>
-                  <span style={{ fontSize: Math.max(8, 10 * scale) }}>今天 {Number(today.slice(5, 7))}/{Number(today.slice(8, 10))}</span>
+                  <span style={{ fontSize: Math.max(8, 10 * scale) }}>{todayLabel}</span>
                 </span>}
+                {allItems.length === 0 && <div className={styles.timelineEmpty} style={{ top: (axisHeight + 18) * scale }}>
+                  <strong>{emptyMessage}</strong>
+                  <span>{emptyDescription}</span>
+                  <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedTimelineId(timeline.id);
+                  }}>管理内容</button>
+                </div>}
                 {stages.map((item, stageRow) => {
                   const renderedDates = timelineTaskDates(item, timelineTaskInteraction);
                   const left = dateToX(renderedDates.start, coordinates) * scale;
@@ -3317,6 +3372,7 @@ export default function MindMapCanvas({
                   const project = item.kind === 'project';
                   const task = item.kind === 'task';
                   const barHeight = (project ? 17 : task ? 13 : 14) * scale;
+                  const progress = item.progress === undefined ? null : Math.max(0, Math.min(100, item.progress));
                   return (
                     <span key={item.id} className={styles.timelineRow} style={{ top: rowTop, height: rowStep * scale }}>
                       <span className={`${styles.timelineRowLabel} ${project ? styles.timelineProjectLabel : ''} ${task || item.parentId ? styles.timelineTaskLabel : ''}`} style={{ width: (coordinates.plotLeft - 16) * scale, fontSize: Math.max(9, (project ? 12 : 11) * scale) }}>
@@ -3332,7 +3388,8 @@ export default function MindMapCanvas({
                         onPointerCancel={item.projectTaskId || item.lifeItemId ? finishTimelineTaskInteraction : undefined}
                         onDoubleClick={item.projectTaskId || item.lifeItemId ? (event) => event.stopPropagation() : undefined}
                       >
-                      {item.progress !== undefined && <span className={styles.timelineBarProgress} style={{ width: `${Math.max(0, Math.min(100, item.progress))}%` }} />}
+                      {visibility.progress && progress !== null && <span className={styles.timelineBarProgress} style={{ width: `${progress}%` }} />}
+                      {visibility.progress && progress !== null && width >= 38 && <b className={styles.timelineProgressLabel} style={{ fontSize: Math.max(7, 9 * scale) }}>{progress}%</b>}
                       {(item.projectTaskId || item.lifeItemId) && (
                         <>
                           <span
@@ -3373,7 +3430,24 @@ export default function MindMapCanvas({
                     onDoubleClick={item.lifeItemId ? (event) => event.stopPropagation() : undefined}
                   ><i /> <span>{item.title}</span></span>;
                 })}
-                {rowCandidates.length > items.length && <span className={styles.timelineOverflow}>+{rowCandidates.length - items.length} 项</span>}
+                {rowCandidates.length > items.length && <button type="button" className={styles.timelineOverflow} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                  event.stopPropagation();
+                  execute('展开时间线内容', (current) => {
+                    const currentTimeline = current.timelineSections[timeline.id];
+                    if (!currentTimeline) return current;
+                    return {
+                      ...current,
+                      timelineSections: {
+                        ...current.timelineSections,
+                        [timeline.id]: {
+                          ...currentTimeline,
+                          height: Math.max(currentTimeline.height, recommendedTimelineHeight(allItems)),
+                          updatedAt: Date.now(),
+                        },
+                      },
+                    };
+                  });
+                }}>显示其余 {rowCandidates.length - items.length} 项</button>}
               </div>
               )}
             </>}
@@ -3847,7 +3921,7 @@ export default function MindMapCanvas({
       )}
       {inspectorOpen && (
         <aside
-          className={styles.inspector}
+          className={`${styles.inspector} ${selectedTimeline ? styles.timelineInspector : ''}`}
           aria-label={selectedTimeline ? '时间线属性' : selectedProjectReference ? '项目引用属性' : selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : '多选排列'}
         >
           <div className={styles.inspectorHeader}>
@@ -3884,66 +3958,23 @@ export default function MindMapCanvas({
                   }))}
                 />
               </label>
-              <label>
-                <span>来源</span>
-                <select
-                  aria-label="时间线来源"
-                  value={`${selectedTimeline.source}:${selectedTimeline.targetId ?? ''}`}
-                  onChange={(event) => {
-                    const separator = event.target.value.indexOf(':');
-                    const source = event.target.value.slice(0, separator) as TimelineSection['source'];
-                    const targetId = event.target.value.slice(separator + 1) || null;
-                    const title = source === 'project'
-                      ? projectPlanning.projects.find((item) => item.id === targetId)?.name
-                      : source === 'life'
-                        ? lifeTimeline.lifeMapAreas.find((item) => item.id === targetId)?.name
-                        : '时间线';
-                    const preview = { ...selectedTimeline, source, targetId };
-                    const height = recommendedTimelineHeight(timelineProjectionItems(preview, projectPlanning, lifeTimeline));
-                    execute('设置时间线来源', (current) => ({
-                      ...current,
-                      timelineSections: {
-                        ...current.timelineSections,
-                        [selectedTimeline.id]: {
-                          ...selectedTimeline,
-                          source,
-                          targetId,
-                          title: title || selectedTimeline.title,
-                          height,
-                          updatedAt: Date.now(),
-                        },
-                      },
-                    }));
-                  }}
-                >
-                  <option value="manual:">手动选择内容</option>
-                  {projectPlanning.projects.map((project) => <option key={project.id} value={`project:${project.id}`}>项目 · {project.name}</option>)}
-                  {lifeTimeline.lifeMapAreas.filter((area) => !area.deletedAt).map((area) => <option key={area.id} value={`life:${area.id}`}>人生领域 · {area.name}</option>)}
-                </select>
-              </label>
-              {selectedTimeline.source === 'manual' && <details className={styles.timelineContentManager}>
-                <summary><span>内容</span><strong>已选择 {selectedTimeline.manualItems.length} 项</strong><em>管理</em></summary>
-                <fieldset className={styles.manualTimelineItems}>
-                  {manualTimelineCandidates.length === 0 && <small>当前没有可选择的项目或人生规划。</small>}
-                  {manualTimelineCandidates.map(({ reference, label }) => {
-                    const key = `${reference.source}:${reference.contextId}:${reference.itemId}`;
-                    const checked = selectedTimeline.manualItems.some((item) => `${item.source}:${item.contextId}:${item.itemId}` === key);
-                    return <label className={styles.checkboxField} key={key}>
-                      <input type="checkbox" checked={checked} onChange={(event) => execute('设置手动时间线内容', (current) => {
-                        const timeline = current.timelineSections[selectedTimeline.id];
-                        if (!timeline) return current;
-                        const manualItems = event.target.checked
-                          ? [...timeline.manualItems.filter((item) => `${item.source}:${item.contextId}:${item.itemId}` !== key), reference]
-                          : timeline.manualItems.filter((item) => `${item.source}:${item.contextId}:${item.itemId}` !== key);
-                        const preview = { ...timeline, manualItems };
-                        const height = recommendedTimelineHeight(timelineProjectionItems(preview, projectPlanning, lifeTimeline));
-                        return { ...current, timelineSections: { ...current.timelineSections, [timeline.id]: { ...timeline, manualItems, height, updatedAt: Date.now() } } };
-                      })} />
-                      <span>{label}</span>
-                    </label>;
-                  })}
-                </fieldset>
-              </details>}
+              {(() => {
+                const selectedProjectIds = new Set(timelineSelectedProjectIds(selectedTimeline, projectPlanning));
+                const selectedGroups = (projectPlanning.groups ?? []).filter((group) => projectPlanning.projects.some((project) => project.groupId === group.id && selectedProjectIds.has(project.id)));
+                const names = selectedGroups.slice(0, 2).map((group) => group.name);
+                const summary = names.length && selectedGroups.length <= 2 ? names.join('、') : `${selectedGroups.length} 个分组 · ${selectedProjectIds.size} 个项目`;
+                return <section className={styles.timelineSummarySection} aria-label="内容范围">
+                  <h3>内容范围</h3>
+                  <div className={styles.timelineSummaryRow}>
+                    <div><strong>{summary || '尚未选择内容'}</strong><small>{selectedGroups.length} 个分组 · {selectedProjectIds.size} 个项目</small></div>
+                    <button type="button" className={styles.timelineChangeButton} onClick={() => {
+                      setTimelineSelectorSearch('');
+                      setTimelineSelectorFilter('all');
+                      setTimelineSelectorOpen(true);
+                    }}>更改 <span aria-hidden="true">›</span></button>
+                  </div>
+                </section>;
+              })()}
               <label>
                 <span>尺度</span>
                 <select
@@ -3963,18 +3994,31 @@ export default function MindMapCanvas({
                 </select>
               </label>
               <div className={styles.timelineRangeFields}>
-                <span>范围</span>
-                <label><span>开始</span><input type="date" aria-label="时间线开始日期" value={selectedTimeline.rangeStart ?? ''} onChange={(event) => execute('设置时间线范围', (current) => ({
+                <span>时间范围</span>
+                <label><input type="date" aria-label="时间线开始日期" value={selectedTimeline.rangeStart ?? ''} onChange={(event) => execute('设置时间线范围', (current) => ({
                   ...current,
                   timelineSections: { ...current.timelineSections, [selectedTimeline.id]: { ...selectedTimeline, rangeStart: event.target.value || null, updatedAt: Date.now() } },
                 }))} /></label>
                 <b>→</b>
-                <label><span>结束</span><input type="date" aria-label="时间线结束日期" value={selectedTimeline.rangeEnd ?? ''} onChange={(event) => execute('设置时间线范围', (current) => ({
+                <label><input type="date" aria-label="时间线结束日期" value={selectedTimeline.rangeEnd ?? ''} onChange={(event) => execute('设置时间线范围', (current) => ({
                   ...current,
                   timelineSections: { ...current.timelineSections, [selectedTimeline.id]: { ...selectedTimeline, rangeEnd: event.target.value || null, updatedAt: Date.now() } },
                 }))} /></label>
               </div>
-              <p className={styles.timelineDisplaySummary}><span>显示</span><strong>阶段 · 关键日期 · 进度 · 今天线</strong></p>
+              <section className={styles.timelineDisplaySection} aria-label="显示设置">
+                <h3>显示内容</h3>
+                <div className={styles.timelineVisibilityChips} aria-label="当前显示内容">
+                  {([
+                    ['stages', '阶段'],
+                    ['milestones', '关键日期'],
+                    ['progress', '进度'],
+                    ['today', '今天线'],
+                  ] as const).map(([key, label]) => {
+                    const active = (timelineVisibility[selectedTimeline.id] ?? DEFAULT_TIMELINE_VISIBILITY)[key];
+                    return <button type="button" aria-label={`显示${label}`} aria-pressed={active} className={`${styles.timelineVisibilityChip} ${active ? styles.timelineVisibilityChipActive : ''}`} key={key} onClick={() => toggleTimelineVisibility(selectedTimeline.id, key)}>{active ? '✓ ' : ''}{label}</button>;
+                  })}
+                </div>
+              </section>
               <label className={styles.checkboxField}>
                 <input
                   type="checkbox"
@@ -4016,6 +4060,55 @@ export default function MindMapCanvas({
               <small>拖动组件只改变画布位置，不会修改任何项目日期。</small>
             </div>
           )}
+          {timelineSelectorOpen && selectedTimeline && (() => {
+            const selectedProjectIds = new Set(selectedTimeline.manualItems.filter((item) => item.source === 'project').map((item) => item.contextId));
+            const groups = projectPlanning.groups ?? [];
+            const groupProjects = new Map(groups.map((group) => [group.id, projectPlanning.projects.filter((project) => project.groupId === group.id)]));
+            const query = timelineSelectorSearch.trim().toLocaleLowerCase();
+            const matches = (project: typeof projectPlanning.projects[number], groupName = '') => !query || `${groupName} ${project.name}`.toLocaleLowerCase().includes(query);
+            const visibleProject = (project: typeof projectPlanning.projects[number], groupName = '') => (timelineSelectorFilter === 'all' || selectedProjectIds.has(project.id)) && matches(project, groupName);
+            const updateProjects = (projectIds: string[], checked: boolean) => execute('设置时间线显示内容', (current) => {
+              const timeline = current.timelineSections[selectedTimeline.id];
+              if (!timeline) return current;
+              const ids = new Set(projectIds);
+              const references = timeline.manualItems.filter((item) => !(item.source === 'project' && ids.has(item.contextId)));
+              const additions = checked ? projectIds.flatMap((id) => projectTimelineItems(id, projectPlanning).map((item) => ({ source: 'project' as const, contextId: id, itemId: item.id }))) : [];
+              const next = { ...timeline, source: 'manual' as const, targetId: null, manualItems: [...references, ...additions] };
+              return { ...current, timelineSections: { ...current.timelineSections, [timeline.id]: { ...next, height: recommendedTimelineHeight(timelineProjectionItems(next, projectPlanning, lifeTimeline)), updatedAt: Date.now() } } };
+            });
+            const projectRow = (project: typeof projectPlanning.projects[number], groupName = '') => <label className={styles.timelineSelectorProject} key={project.id}>
+              <input type="checkbox" checked={selectedProjectIds.has(project.id)} onChange={(event) => updateProjects([project.id], event.target.checked)} />
+              <span><strong>{project.name}</strong>{(project.start || project.end) && <small>{project.start || '—'} — {project.end || '—'}</small>}</span>
+              {query && groupName && <em>{groupName}</em>}
+            </label>;
+            const renderGroup = (group: typeof groups[number]) => {
+              const projects = groupProjects.get(group.id) ?? [];
+              const selectedCount = projects.filter((project) => selectedProjectIds.has(project.id)).length;
+              const expanded = timelineExpandedGroups.has(group.id) || timelineExpandedProjects.has(group.id) || Boolean(query) || timelineSelectorFilter === 'selected';
+              const shown = expanded ? projects.filter((project) => visibleProject(project, group.name)) : projects.filter((project) => selectedProjectIds.has(project.id) || visibleProject(project, group.name)).slice(0, 8);
+              if (query && !shown.length) return null;
+              return <div className={styles.timelineSelectorGroup} key={group.id}>
+                <div className={styles.timelineSelectorGroupHeader}>
+                  <button type="button" aria-label={`${expanded ? '收起' : '展开'}${group.name}`} onClick={() => setTimelineExpandedGroups((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}>{expanded ? '▾' : '›'}</button>
+                  <label className={styles.timelineSelectorGroupChoice}>
+                    <input type="checkbox" aria-label={`整个分组 ${group.name}`} checked={selectedCount === projects.length && projects.length > 0} ref={(element) => { if (element) element.indeterminate = selectedCount > 0 && selectedCount < projects.length; }} onChange={(event) => updateProjects(projects.map((project) => project.id), event.target.checked)} />
+                    <strong>{group.name}</strong>
+                  </label>
+                  <small>{selectedCount} / {projects.length}</small>
+                </div>
+                {expanded && <div className={styles.timelineSelectorProjects}>{shown.map((project) => projectRow(project, group.name))}{projects.length > shown.length && <button type="button" className={styles.timelineShowMore} onClick={() => setTimelineExpandedProjects((current) => new Set(current).add(group.id))}>显示其余 {projects.length - shown.length} 个</button>}</div>}
+              </div>;
+            };
+            const ungrouped = projectPlanning.projects.filter((project) => !project.groupId || !groupProjects.has(project.groupId));
+            const visibleUngrouped = ungrouped.filter((project) => visibleProject(project));
+            const matchingGroups = groups.filter((group) => !query && timelineSelectorFilter === 'all' || (groupProjects.get(group.id) ?? []).some((project) => visibleProject(project, group.name)));
+            return <div className={styles.timelineSelectorOverlay} role="dialog" aria-label="选择显示内容">
+              <div className={styles.timelineSelectorHeader}><strong>选择显示内容</strong><button type="button" aria-label="关闭选择显示内容" onClick={() => setTimelineSelectorOpen(false)}>×</button></div>
+              <div className={styles.timelineSelectorTools}><label><Search size={14} aria-hidden="true" /><input autoFocus type="search" placeholder="搜索分组或项目……" value={timelineSelectorSearch} onChange={(event) => setTimelineSelectorSearch(event.target.value)} /></label><div role="tablist" aria-label="内容筛选"><button type="button" className={timelineSelectorFilter === 'all' ? styles.timelineFilterActive : ''} onClick={() => setTimelineSelectorFilter('all')}>全部</button><button type="button" className={timelineSelectorFilter === 'selected' ? styles.timelineFilterActive : ''} onClick={() => setTimelineSelectorFilter('selected')}>已选择</button></div></div>
+              <div className={styles.timelineSelectorList}>{matchingGroups.map(renderGroup)}{ungrouped.length > 0 && visibleUngrouped.length > 0 && <div className={styles.timelineSelectorGroup}><div className={styles.timelineSelectorGroupHeader}><strong>未分组项目</strong><small>{visibleUngrouped.filter((project) => selectedProjectIds.has(project.id)).length} / {ungrouped.length}</small></div>{visibleUngrouped.map((project) => projectRow(project))}</div>}{!projectPlanning.projects.length && <p className={styles.timelineSelectorEmpty}>暂无可显示项目</p>}{projectPlanning.projects.length > 0 && !matchingGroups.length && !visibleUngrouped.length && <p className={styles.timelineSelectorEmpty}>没有找到“{timelineSelectorSearch}”</p>}</div>
+              <div className={styles.timelineSelectorFooter}><span>已选择 {selectedProjectIds.size} 个项目</span><button type="button" onClick={() => updateProjects([...selectedProjectIds], false)}>清空选择</button><button type="button" onClick={() => setTimelineSelectorOpen(false)}>完成</button></div>
+            </div>;
+          })()}
           {selectedProjectReference && (
             <div className={styles.inspectorFields}>
               <p>此卡片实时读取源数据，不保存标题、日期或进度副本。</p>

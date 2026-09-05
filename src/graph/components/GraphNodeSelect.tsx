@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useGraphStore } from '../store';
 import { Search, Plus, Sparkles, X, Check } from 'lucide-react';
 import type { GraphNode } from '../types';
@@ -10,7 +11,14 @@ interface GraphNodeSelectProps {
   footer?: React.ReactNode;
 }
 
-  // 简单的相似度计算：计算 nodeName 在 taskTitle 中出现的比例，或者共有字符的比例
+const stopWords = ['的', '了', '是', '复习', '看书', '看课', '做题', '笔记', '第', '章', '节', '课', '和', '与'];
+
+const meaningfulCharacters = (value: string) => {
+  const withoutStopWords = stopWords.reduce((text, word) => text.split(word).join(''), value);
+  return Array.from(new Set([...withoutStopWords].filter((character) => character.trim())));
+};
+
+// 简单的相似度计算：计算 nodeName 在 taskTitle 中出现的比例，或者共有字符的比例
 function calculateSimilarity(taskTitle: string, nodeName: string): number {
   if (!taskTitle || !nodeName) return 0;
   const title = taskTitle.toLowerCase();
@@ -22,11 +30,9 @@ function calculateSimilarity(taskTitle: string, nodeName: string): number {
   // 2. 节点名包含在任务名中（通常任务名更长）
   if (name.includes(title)) return 80;
   
-  // 3. 计算共有中文字符/单词的比例
-  // 过滤掉常见无意义词汇
-  const stopWords = ['的', '了', '是', '复习', '看书', '看课', '做题', '笔记', '第', '章', '节', '课', '和', '与'];
-  const titleChars = Array.from(new Set(title.split('').filter(c => c.trim() && !stopWords.includes(c))));
-  const nameChars = Array.from(new Set(name.split('').filter(c => c.trim() && !stopWords.includes(c))));
+  // 3. 计算去除完整停用词后的共有字符比例
+  const titleChars = meaningfulCharacters(title);
+  const nameChars = meaningfulCharacters(name);
   
   if (nameChars.length === 0) return 0;
   
@@ -48,7 +54,11 @@ function calculateSimilarity(taskTitle: string, nodeName: string): number {
 export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTitle = '', onChange, footer }) => {
   // 确保 value 始终是数组
   const safeValue = Array.isArray(value) ? value : [];
-  const { nodes, addNode, getNodeById } = useGraphStore();
+  const { nodes, addNode, getNodeById } = useGraphStore(useShallow((state) => ({
+    nodes: state.nodes,
+    addNode: state.addNode,
+    getNodeById: state.getNodeById,
+  })));
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,7 +104,7 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
     return path.length > 0 ? path.join(' / ') : '';
   };
 
-  // 最近使用：按 createdAt 降序，取前 5 个
+  // 最近创建：按 createdAt 降序，取前 5 个
   const recentNodes = useMemo(() => {
     return [...selectableNodes].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
   }, [selectableNodes]);
@@ -114,10 +124,10 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
 
   const filteredNodes = useMemo(() => {
     if (!search) {
-      // 过滤掉已经在推荐列表中的最近使用节点，避免重复显示
+      // 过滤掉已经在推荐列表中的最近创建节点，避免重复显示
       const recIds = new Set(recommendedNodes.map(n => n.id));
       const filteredRecent = recentNodes.filter(n => !recIds.has(n.id));
-      // 合并推荐和最近使用的节点
+      // 合并推荐和最近创建的节点
       const merged = [...recommendedNodes, ...filteredRecent];
       // 如果什么都没有，返回空数组，而不是抛错
       return merged;
@@ -252,20 +262,20 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
       )}
       
       {!search && recentNodes.length > 0 && recommendedNodes.length === 0 && (
-        <div className="stb-graph-picker-title">最近使用</div>
+        <div className="stb-graph-picker-title">最近创建</div>
       )}
 
       <div className="stb-graph-picker-list">
         {filteredNodes.map((node, index) => {
           const path = getNodePath(node);
           const isRecommended = !search && index < recommendedNodes.length;
-          // 如果过了推荐区，并且是最近使用的第一个，插入一个小标题
+          // 如果过了推荐区，并且是最近创建的第一个，插入一个小标题
           const isFirstRecent = !search && recommendedNodes.length > 0 && index === recommendedNodes.length;
           
           return (
             <React.Fragment key={node.id}>
               {isFirstRecent && (
-                <div className="stb-graph-picker-title" style={{ marginTop: 8, borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>最近使用</div>
+                <div className="stb-graph-picker-title" style={{ marginTop: 8, borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>最近创建</div>
               )}
               <button
                 type="button"

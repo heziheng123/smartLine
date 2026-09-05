@@ -8,9 +8,16 @@ import { useGraphStore } from '@/graph/store';
 import { LIFE_MAP_ROOM_PREFIX, useLifeMapStore } from '@/lifeMap/store';
 import { liveblocksAuthMode } from '@/store/client';
 import { useAuth } from '@/auth/AuthContext';
+import { MIND_MAP_ENABLED, MIND_MAP_SYNC_ENABLED } from '@/mindMap/config';
+import {
+  MIND_MAP_SYNC_RUNTIME_EVENT,
+  readMindMapSyncRuntimeState,
+  type MindMapSyncRuntimeState,
+} from '@/mindMap/syncRuntime';
 import {
   downloadWorkspaceBackup,
   createWorkspaceBackup,
+  createWorkspaceBackupWithMindMap,
   listLocalSnapshots,
   getSnapshotStorageStats,
   restoreLocalSnapshot,
@@ -62,8 +69,21 @@ const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
   lifeMapAreas: '人生领域', lifeMapPlanGroups: '项目展示大类', lifeMapStages: '人生时期', lifeMapThemes: '时期重点（历史主题）', lifeMapGoals: '目标与项目',
   lifeMapSystems: '长期系统', lifeMapSystemCheckIns: '系统完成记录', lifeMapEvents: '关键日期', lifeMapFocuses: '阶段重点',
   lifeMapNotes: '人生便签', lifeMapReviews: '周期复盘', tasks: '项目任务', groups: '项目分组',
-  schedules: '每日安排', retrospectives: '每日复盘', reviewTasks: '复习任务', nodes: '知识节点',
+  notes: '时间轴便签', milestones: '里程碑', lifeStages: '旧人生时期', schedules: '每日安排', retrospectives: '每日复盘',
+  reviewTasks: '复习任务', inboxItems: 'EBB 收集箱', outlineNodes: 'EBB 大纲', ebbSettings: 'EBB 设置', nodes: '知识节点',
 };
+const CONFLICT_DOMAINS: Array<{
+  id: ModuleKey;
+  label: string;
+  description: string;
+  fields: WorkspaceStorageField[];
+}> = [
+  { id: 'timeline', label: '项目与时间轴', description: '项目、分组、便签、里程碑与旧人生时期', fields: ['tasks', 'groups', 'notes', 'milestones', 'lifeStages'] },
+  { id: 'ebb', label: 'EBB 复习', description: '复习任务、收集箱、大纲与设置', fields: ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings'] },
+  { id: 'daily', label: '每日安排', description: '每日安排与每日复盘', fields: ['schedules', 'retrospectives'] },
+  { id: 'graph', label: '知识大盘', description: '知识节点', fields: ['nodes'] },
+  { id: 'lifeMap', label: '旧人生地图', description: '迁移与恢复用的旧人生规划字段', fields: ['lifeMapAreas', 'lifeMapPlanGroups', 'lifeMapStages', 'lifeMapThemes', 'lifeMapGoals', 'lifeMapSystems', 'lifeMapSystemCheckIns', 'lifeMapEvents', 'lifeMapFocuses', 'lifeMapNotes', 'lifeMapReviews'] },
+];
 
 function readLastConnected(): LastConnectedRecord {
   try {
@@ -97,6 +117,16 @@ function formatTime(value?: string): string {
   if (!value) return '暂无记录';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '暂无记录' : date.toLocaleString('zh-CN');
+}
+
+function describeMindMapRuntime(state: MindMapSyncRuntimeState): string {
+  return {
+    local: '仅本机',
+    connecting: '正在连接',
+    connected: '已同步',
+    offline: '离线，等待重连',
+    error: '需要重试',
+  }[state.status];
 }
 
 function summarizeConflictValue(value: unknown): string {
@@ -373,11 +403,13 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [syncConflicts, setSyncConflicts] = useState<WorkspaceConflictRecord[]>([]);
   const [connectionBusy, setConnectionBusy] = useState(isWorkspaceConnectionInProgress);
   const [runtimeState, setRuntimeState] = useState(readWorkspaceSyncRuntimeState);
+  const [mindMapRuntimeState, setMindMapRuntimeState] = useState(readMindMapSyncRuntimeState);
   const [activationConflict, setActivationConflict] = useState<{
     roomCode: string;
     remoteSource: 'unified' | 'legacy';
   } | null>(initialActivationConflict);
   const [selectedConflictFields, setSelectedConflictFields] = useState<WorkspaceStorageField[]>([]);
+  const [domainConflictResolution, setDomainConflictResolution] = useState<Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>>({});
   const [showConflictRecovery, setShowConflictRecovery] = useState(false);
   const [archivePeriod, setArchivePeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [historyDate, setHistoryDate] = useState(currentWorkspaceHistoryDate);
@@ -559,6 +591,18 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, []);
 
   useEffect(() => {
+    const refreshMindMapRuntime = (event?: Event) => {
+      setMindMapRuntimeState(
+        (event as CustomEvent<MindMapSyncRuntimeState | undefined> | undefined)?.detail
+          ?? readMindMapSyncRuntimeState(),
+      );
+    };
+    refreshMindMapRuntime();
+    window.addEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, refreshMindMapRuntime);
+    return () => window.removeEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, refreshMindMapRuntime);
+  }, []);
+
+  useEffect(() => {
     const refresh = () => {
       const next = readLastConnected();
       setLastConnected((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
@@ -595,6 +639,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && architecture.architecture !== 'unified';
   const runtimeBusy = ['connecting', 'initializing', 'migrating', 'flushing', 'verifying'].includes(runtimeState.phase);
   const runtimeProblem = runtimeState.phase === 'error' || runtimeState.phase === 'conflict';
+  const mindMapSyncConfigured = MIND_MAP_ENABLED && auth.enabled && auth.status === 'authenticated' && MIND_MAP_SYNC_ENABLED;
+  const mindMapStatusLabel = describeMindMapRuntime(mindMapRuntimeState);
+  const mindMapStatusColor = mindMapRuntimeState.status === 'connected'
+    ? '#059669'
+    : mindMapRuntimeState.status === 'error'
+      ? '#DC2626'
+      : mindMapRuntimeState.status === 'local'
+        ? '#9CA3AF'
+        : '#D97706';
   const healthBlocked = healthReport?.integrity.status === 'blocked';
   const healthCheckPending = healthReport === null && healthReportBusy;
   const fullySynchronized = allConnected
@@ -719,15 +772,31 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     }
   }, [roomCode, timeline.syncRoomCode, timeline.syncEnabled, ebb.syncRoomCode, ebb.syncEnabled, daily.syncRoomCode, daily.syncEnabled, graph.syncRoomCode, graph.syncEnabled, lifeMap.syncRoomCode, lifeMap.syncEnabled, connectModule, architecture, enabledCount, auth.login, auth.userId]);
 
-  const handleResolveActivationConflict = useCallback(async (resolution: 'cloud' | 'local') => {
+  const handleResolveActivationConflict = useCallback(async (resolution: 'cloud' | 'local' | 'mixed') => {
     if (!activationConflict || !isCurrentTabSyncLeader()) return;
     const keepCloud = resolution === 'cloud';
-    const confirmed = await requestConfirmation(keepCloud
-      ? '确定以云端工作区为准吗？当前设备的数据会先保存为本地快照，然后替换为云端数据。'
-      : '确定以当前设备为准并覆盖云端吗？当前云端数据和本机数据都会先保存为本地快照。');
+    let message = '';
+
+    if (resolution === 'mixed') {
+      const cloudDomains = CONFLICT_DOMAINS.filter((domain) => domainConflictResolution[domain.fields[0]] === 'cloud').map((domain) => domain.label);
+      const localDomains = CONFLICT_DOMAINS.filter((domain) => domainConflictResolution[domain.fields[0]] === 'local').map((domain) => domain.label);
+
+      if (cloudDomains.length === 0 && localDomains.length === 0) {
+        setRestoreMessage('请先选择至少一个数据域的来源，或使用"全部以云端为准"或"全部以本机为准"。');
+        return;
+      }
+
+      message = `确定按自定义选择合并数据吗？\n\n以云端为准：${cloudDomains.join('、') || '无'}\n以本机为准：${localDomains.join('、') || '无'}\n\n两边都会先保存到本机快照中。`;
+    } else {
+      message = keepCloud
+        ? '确定以云端工作区为准吗？当前设备的数据会先保存为本地快照，然后替换为云端数据。'
+        : '确定以当前设备为准并覆盖云端吗？当前云端数据和本机数据都会先保存为本地快照。';
+    }
+
+    const confirmed = await requestConfirmation(message);
     if (!confirmed) return;
     setConnectionBusy(true);
-    setRestoreMessage(keepCloud ? '正在保存双方恢复点并加载云端数据…' : '正在保存双方恢复点并上传本机数据…');
+    setRestoreMessage(resolution === 'mixed' ? '正在保存双方恢复点并按自定义选择合并数据…' : (keepCloud ? '正在保存双方恢复点并加载云端数据…' : '正在保存双方恢复点并上传本机数据…'));
     try {
       const result = await resolveUnifiedWorkspaceConflict(
         activationConflict.roomCode,
@@ -735,11 +804,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         resolution,
         auth.login || undefined,
         activationConflict.remoteSource,
+        resolution === 'mixed' ? domainConflictResolution : undefined,
       );
       setArchitecture(readWorkspaceSyncSettings());
       setActivationConflict(null);
+      setDomainConflictResolution({});
       setRestoreMessage(result.warning ?? (
-        `${keepCloud ? '云端' : '本机'}数据已设为当前版本；五个数据域已连接、补传并校验完成`
+        resolution === 'mixed'
+          ? '自定义合并已完成；各数据域已按选择连接、补传并校验完成'
+          : `${keepCloud ? '云端' : '本机'}数据已设为当前版本；五个数据域已连接、补传并校验完成`
           + `${result.repairedFields.length > 0 ? `，另修复 ${result.repairedFields.length} 个旧格式字段` : ''}。`
       ));
     } catch (error) {
@@ -753,7 +826,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     } finally {
       setConnectionBusy(false);
     }
-  }, [activationConflict, auth.login, auth.userId]);
+  }, [activationConflict, auth.login, auth.userId, domainConflictResolution]);
 
   const handleDisconnectAll = useCallback(() => {
     disconnectWorkspace(false);
@@ -797,7 +870,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
           : '';
         const confirmed = await requestConfirmation(
-          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
+          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n地图文档 ${result.summary.mindMapDocuments}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
         );
         if (!confirmed) return;
         await restoreWorkspaceBackup(result.backup);
@@ -819,9 +892,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     }
   }, [auth, onClose]);
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     try {
-      downloadWorkspaceBackup();
+      await downloadWorkspaceBackup();
       try { localStorage.setItem(LAST_MANUAL_EXPORT_KEY, new Date().toISOString()); } catch { /* storage guarded */ }
       setRestoreMessage(`完整工作区备份已导出（${describeLastManualExport()}）。`);
     } catch (error) {
@@ -829,9 +902,9 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     }
   }, []);
 
-  const handleHealthCheck = useCallback(() => {
+  const handleHealthCheck = useCallback(async () => {
     try {
-      const result = validateWorkspaceBackup(createWorkspaceBackup());
+      const result = validateWorkspaceBackup(await createWorkspaceBackupWithMindMap());
       setRestoreSummary(result.summary ?? null);
       const issues = result.summary?.issues ?? [];
       setRestoreMessage(issues.length === 0 ? '数据健康检查通过，未发现孤儿绑定、重复 ID 或无效日期。' : `数据健康检查发现 ${issues.length} 个问题：${issues.slice(0, 3).join('；')}`);
@@ -1030,7 +1103,12 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 ? `同步暂停，正在自动归档 ${activeConflictCount} 个旧冲突`
                 : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
                   ? `已连接，等待补传 ${pendingFieldCount} 个字段`
-                  : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}</strong>
+                  : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}
+            {MIND_MAP_ENABLED && mindMapRuntimeState.status !== 'connected' && (
+              <span style={{ color: '#D97706', fontSize: 12, fontWeight: 500, marginLeft: 8 }}>
+                · 地图{mindMapStatusLabel}
+              </span>
+            )}</strong>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               {enabledCount > 0 && (
                 <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} disabled={connectionBusy}>
@@ -1051,8 +1129,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           </div>
           {(activeConflictCount > 0 || (pendingFieldCount ?? 0) > 0 || historicalConflicts.length > 0) && (
             <div style={{ display: 'flex', gap: 8, marginTop: 8, fontSize: 12, color: '#374151' }}>
-              {activeConflictCount > 0 && <span style={{ color: '#991B1B', fontWeight: 600 }}>● 旧冲突归档待重试 {activeConflictCount}</span>}
-              {(pendingFieldCount ?? 0) > 0 && <span style={{ color: '#92400E' }}>● 待补传 {pendingFieldCount}</span>}
+              {activeConflictCount > 0 && <span style={{ color: '#991B1B', fontWeight: 600 }}>● 冲突待处理 {activeConflictCount}</span>}
+              {(pendingFieldCount ?? 0) > 0 && <span style={{ color: '#92400E' }}>● 待补传 {pendingFieldCount} 个字段</span>}
               {historicalConflicts.length > 0 && <span style={{ color: '#6B7280' }}>● 历史副本 {historicalConflicts.length}</span>}
             </div>
           )}
@@ -1061,6 +1139,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             <div style={{ paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span>认证：{liveblocksAuthMode === 'authenticated' ? `用户身份认证${auth.login ? ` · GitHub：${auth.login}` : ''}` : '公钥兼容模式'}</span>
               <span>本机最近完成云端内容校验：{formatTime(lastConnected.workspace)}{requiresUnifiedMigration ? ' · 仅连接旧模块房间，请在高级设置中迁移后再比较多端。' : ''}</span>
+              {MIND_MAP_ENABLED && (
+                <span>地图同步：{mindMapSyncConfigured
+                  ? `${mindMapStatusLabel}${mindMapRuntimeState.error ? ` · ${mindMapRuntimeState.error}` : ''}`
+                  : '仅本机保存，不同设备间内容独立'}</span>
+              )}
               <span>本机本地备份：{describeLastManualExport()}</span>
             </div>
           </details>
@@ -1182,11 +1265,47 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         {activationConflict && (
           <section className="tl-sync-conflict-fields" aria-label="首次连接数据冲突处理">
             <strong>当前设备与{activationConflict.remoteSource === 'legacy' ? '旧房间云端' : '统一云端工作区'}都有不同数据，请明确选择一个当前版本。</strong>
-            <small>两边都会先保存到本机快照中；选择完成后才会覆盖并重新校验，不会再停在无法连接的状态。</small>
-            <div className="tl-sync-backup-actions">
-              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => void handleResolveActivationConflict('cloud')} disabled={connectionBusy}><Download size={14} />以云端为准</button>
-              <button type="button" className="tl-sync-backup-btn" onClick={() => void handleResolveActivationConflict('local')} disabled={connectionBusy}><Upload size={14} />以本机为准</button>
+            <small>两边都会先保存到本机快照中；选择完成后才会覆盖并重新校验，不会再停在无法连接的状态。你可以按数据域选择不同来源。</small>
+
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>按数据域选择来源：</div>
+              {CONFLICT_DOMAINS.map((domain) => {
+                const selected = domainConflictResolution[domain.fields[0]];
+                const choose = (source: 'cloud' | 'local') => setDomainConflictResolution((current) => {
+                  const next = { ...current };
+                  for (const field of domain.fields) {
+                    if (selected === source) delete next[field];
+                    else next[field] = source;
+                  }
+                  return next;
+                });
+                return <div key={domain.id} style={{ padding: '8px 10px', border: '1px solid #E5E7EB', borderRadius: 4, backgroundColor: '#FAFAFA' }}>
+                  <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>{domain.label}</div>
+                  <small style={{ display: 'block', color: '#6B7280', marginBottom: 6, fontSize: 11 }}>{domain.description}</small>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {(['cloud', 'local'] as const).map((source) => <button
+                      key={source}
+                      type="button"
+                      className={`tl-sync-backup-btn ${selected === source ? 'tl-sync-backup-btn--import' : ''}`}
+                      onClick={() => choose(source)}
+                      disabled={connectionBusy}
+                      style={{ padding: '4px 8px', fontSize: 11 }}
+                    >{selected === source ? '✓ ' : ''}{source === 'cloud' ? '云端' : '本机'}</button>)}
+                  </div>
+                </div>;
+              })}
             </div>
+
+            <div className="tl-sync-backup-actions" style={{ marginTop: 8 }}>
+              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => void handleResolveActivationConflict('cloud')} disabled={connectionBusy}><Download size={14} />全部以云端为准</button>
+              <button type="button" className="tl-sync-backup-btn" onClick={() => void handleResolveActivationConflict('local')} disabled={connectionBusy}><Upload size={14} />全部以本机为准</button>
+              <button type="button" className="tl-sync-backup-btn" onClick={() => void handleResolveActivationConflict('mixed')} disabled={connectionBusy || Object.keys(domainConflictResolution).length === 0}><RefreshCw size={14} />应用自定义选择</button>
+            </div>
+            {Object.keys(domainConflictResolution).length > 0 && (
+              <small style={{ display: 'block', marginTop: 6, color: '#6B7280', fontSize: 11 }}>
+                已选择 {CONFLICT_DOMAINS.filter((domain) => domainConflictResolution[domain.fields[0]]).length} 个数据域的来源，未选择的数据域默认保留本机。
+              </small>
+            )}
           </section>
         )}
         {restoreMessage && <p className="tl-sync-backup-hint" role="status" aria-live="polite">{restoreMessage}</p>}
@@ -1208,6 +1327,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                 latestConflict.pending.baseFields ? { fields: { [field]: latestConflict.pending.baseFields[field] } } : null,
                 WORKSPACE_FIELD_LABELS,
               ).find((item) => item.field === field);
+
+              // Calculate affected entities count and types
+              const entityCount = detailedSummary?.totalEntities ?? 0;
+              const diffCount = detailedSummary?.totalDiffs ?? 0;
               return (
                 <div key={field} style={{ marginTop: 6, padding: 8, border: isConflictField ? '1px solid #FCA5A5' : '1px solid #E5E7EB', borderRadius: 6, backgroundColor: '#FFFFFF' }}>
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
@@ -1217,7 +1340,12 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
                       onChange={(event) => setSelectedConflictFields((current) => event.target.checked ? [...new Set([...current, field])] : current.filter((item) => item !== field))}
                     />
                     <span style={{ flex: 1 }}>
-                      <b style={{ fontSize: 13 }}>{WORKSPACE_FIELD_LABELS[field] ?? field}{isConflictField ? ' · 同字段冲突' : ''}</b>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                        <b style={{ fontSize: 13 }}>{WORKSPACE_FIELD_LABELS[field] ?? field}</b>
+                        {isConflictField && <span style={{ fontSize: 10, padding: '1px 4px', borderRadius: 2, backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: 600 }}>冲突</span>}
+                        {entityCount > 0 && <span style={{ fontSize: 10, color: '#6B7280' }}>{entityCount} 个条目</span>}
+                        {diffCount > 0 && <span style={{ fontSize: 10, color: '#6B7280' }}>{diffCount} 处差异</span>}
+                      </div>
                       <small style={{ display: 'block', color: '#6B7280', marginTop: 2 }}>
                         旧副本 {summarizeConflictValue(latestConflict.pending.fields[field])} · 冲突时云端 {summarizeConflictValue(latestConflict.remoteFields?.[field])}
                       </small>
@@ -1328,6 +1456,41 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               </div>
             ))}
           </div>
+          {MIND_MAP_ENABLED && (
+            <div style={{
+              padding: '10px 14px 12px',
+              fontSize: 12,
+              color: '#374151',
+              backgroundColor: mindMapRuntimeState.status === 'connected' ? '#D1FAE5' : '#F9FAFB',
+              borderTop: '1px solid #E5E7EB'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <strong style={{ color: mindMapRuntimeState.status === 'connected' ? '#065F46' : '#6B7280' }}>
+                  地图同步状态
+                </strong>
+                <span style={{
+                  fontSize: 10,
+                  padding: '1px 6px',
+                  borderRadius: 3,
+                  backgroundColor: mindMapStatusColor,
+                  color: '#FFFFFF',
+                  fontWeight: 600,
+                }}>
+                  {mindMapStatusLabel}
+                </span>
+              </div>
+              <small style={{ color: mindMapRuntimeState.status === 'connected' ? '#065F46' : '#6B7280', lineHeight: 1.4 }}>
+                {mindMapSyncConfigured
+                  ? `${mindMapRuntimeState.error ?? '地图目录与文档房间会在登录期间自动连接。'} 人生规划现在写在地图文档里；上表「人生地图」仍用于旧数据与恢复。`
+                  : '地图内容仅保存在本机浏览器中，不会同步到云端。如需多设备同步，请在账号设置中启用地图同步。人生规划现在写在地图文档里；上表「人生地图」仍用于旧数据与恢复。'}
+              </small>
+            </div>
+          )}
+          {(!MIND_MAP_ENABLED || !(auth.enabled && auth.status === 'authenticated')) && (
+            <small style={{ display: 'block', padding: '8px 14px 12px', fontSize: 11, color: '#6B7280' }}>
+              {!MIND_MAP_ENABLED ? '地图功能当前未启用。' : '登录后地图工作区会随账号同步。'}人生规划现在写在地图文档里；上表「人生地图」仍用于旧数据与恢复。
+            </small>
+          )}
         </div>
 
         {enabledCount > 0 && (
@@ -1360,12 +1523,12 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--import" onClick={() => fileInputRef.current?.click()}>
                 <Upload size={14} />恢复完整备份
               </button>
-              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={handleExport}>
+              <button type="button" className="tl-sync-backup-btn tl-sync-backup-btn--export" onClick={() => void handleExport()}>
                 <Download size={14} />导出完整备份
               </button>
             </div>
             <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#6B7280' }}>
-              包含时间轴、项目文档、EBB、每日安排、知识大盘和应用设置。恢复前会校验数据并自动创建本地快照。
+              包含时间轴、项目文档、地图与人生规划、EBB、每日安排、知识大盘和应用设置。恢复旧备份时若没有地图字段，本机地图不会被清空。
             </small>
           </div>
 
@@ -1375,7 +1538,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               数据健康与盘点
             </div>
             <div style={{ padding: '10px 14px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button type="button" className="tl-sync-backup-btn" onClick={handleHealthCheck}>
+              <button type="button" className="tl-sync-backup-btn" onClick={() => void handleHealthCheck()}>
                 <Check size={14} />数据健康检查
               </button>
               <button type="button" className="tl-sync-backup-btn" onClick={() => void handleAuditExport()} disabled={auditBusy}>
@@ -1384,7 +1547,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             </div>
             {restoreSummary && (
               <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#374151' }}>
-                最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.retrospectiveEntries} 条复盘、{restoreSummary.graphNodes} 个节点。
+                最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.mindMapDocuments} 份地图文档、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.retrospectiveEntries} 条复盘、{restoreSummary.graphNodes} 个节点。
               </small>
             )}
           </div>

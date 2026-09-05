@@ -1,7 +1,10 @@
 import { createDedicatedStorage } from '@/utils/persistence';
 import {
+  MIND_MAP_SCHEMA_VERSION,
+  MindMapVersionError,
   normalizeMindMapDocument,
   normalizeMindMapIndex,
+  summarizeMindMapDocument,
   type MindMapDocument,
   type MindMapIndex,
 } from './model';
@@ -15,6 +18,80 @@ const DOCUMENT_PREFIX = 'mind-map:document:';
 const SYNC_PREFIX = 'mind-map:sync:';
 const EMERGENCY_PREFIX = 'mind-map:emergency:';
 const ASSET_PREFIX = 'mind-map:asset:';
+
+export interface MindMapBackupBundle {
+  version: 1;
+  index: MindMapIndex;
+  documents: MindMapDocument[];
+  assets?: Array<{ id: string; mimeType: string; dataUrl: string }>;
+}
+
+const BACKUP_IMAGE_DATA_URL = /^data:image\/(png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i;
+
+function blobDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('地图图片读取失败。'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export function parseMindMapBackupBundle(value: unknown): { bundle?: MindMapBackupBundle; error?: string } {
+  if (value == null) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { error: '地图备份格式无效。' };
+  }
+  try {
+    const record = value as Record<string, unknown>;
+    if (record.version !== 1 && record.version !== undefined) {
+      return { error: '不支持的地图备份版本。' };
+    }
+    if (!Array.isArray(record.documents)) return { error: '地图备份缺少文档列表。' };
+    const documents: MindMapDocument[] = [];
+    const seen = new Set<string>();
+    for (const item of record.documents) {
+      const document = normalizeMindMapDocument(item);
+      if (!document) return { error: '地图备份包含无法读取的文档。' };
+      if (seen.has(document.id)) return { error: '地图备份包含重复文档。' };
+      seen.add(document.id);
+      documents.push(document);
+    }
+    const assets = record.assets === undefined ? undefined : Array.isArray(record.assets)
+      ? record.assets.flatMap((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+        const asset = item as Record<string, unknown>;
+        return typeof asset.id === 'string' && asset.id
+          && typeof asset.mimeType === 'string'
+          && typeof asset.dataUrl === 'string'
+          && asset.dataUrl.length <= 3_000_000
+          && BACKUP_IMAGE_DATA_URL.test(asset.dataUrl)
+          ? [{ id: asset.id, mimeType: asset.mimeType, dataUrl: asset.dataUrl }]
+          : [];
+      })
+      : null;
+    if (record.assets !== undefined && (!assets || assets.length !== (record.assets as unknown[]).length)) {
+      return { error: '地图备份包含无效图片资源。' };
+    }
+    if (assets && new Set(assets.map((asset) => asset.id)).size !== assets.length) {
+      return { error: '地图备份包含重复图片资源。' };
+    }
+    if (assets) {
+      const assetIds = new Set(assets.map((asset) => asset.id));
+      const missingAsset = documents.some((document) => Object.values(document.nodes)
+        .some((node) => node.imageAssetId && !assetIds.has(node.imageAssetId)));
+      if (missingAsset) return { error: '地图备份缺少节点引用的图片资源。' };
+    }
+    const index = normalizeMindMapIndex(record.index) ?? {
+      schemaVersion: MIND_MAP_SCHEMA_VERSION,
+      activeDocumentId: documents[0]?.id ?? null,
+      documents: documents.map(summarizeMindMapDocument),
+    };
+    return { bundle: { version: 1, index, documents, ...(assets ? { assets } : {}) } };
+  } catch (error) {
+    return { error: error instanceof MindMapVersionError ? error.message : '地图备份无法读取。' };
+  }
+}
 
 export interface MindMapImageAsset {
   id: string;
@@ -243,6 +320,82 @@ export class MindMapRepository {
       throw new Error('拒绝保存不属于当前思维导图的同步状态。');
     }
     await this.getStorage().setItem(syncKey(id), state);
+  }
+
+  async exportBundle(): Promise<MindMapBackupBundle> {
+    await this.flush();
+    const loaded = await this.loadIndex();
+    const index = loaded ?? {
+      schemaVersion: MIND_MAP_SCHEMA_VERSION,
+      activeDocumentId: null,
+      documents: [],
+    };
+    const documents: MindMapDocument[] = [];
+    for (const summary of index.documents) {
+      const document = await this.loadDocument(summary.id);
+      if (document) documents.push(document);
+    }
+    const assetIds = new Set(documents.flatMap((document) => Object.values(document.nodes)
+      .map((node) => node.imageAssetId)
+      .filter((id): id is string => Boolean(id))));
+    const assets = (await Promise.all([...assetIds].map(async (id) => {
+      const asset = await this.loadImageAsset(id);
+      return asset ? { id, mimeType: asset.mimeType, dataUrl: await blobDataUrl(asset.blob) } : null;
+    }))).filter((asset): asset is NonNullable<typeof asset> => Boolean(asset));
+    if (assets.length !== assetIds.size) throw new Error('地图文档引用的本机图片不完整，已停止生成备份。');
+    return {
+      version: 1,
+      index: {
+        ...index,
+        documents: documents.map(summarizeMindMapDocument),
+        activeDocumentId: documents.some((item) => item.id === index.activeDocumentId)
+          ? index.activeDocumentId
+          : documents[0]?.id ?? null,
+      },
+      documents,
+      assets,
+    };
+  }
+
+  async replaceFromBundle(bundle: MindMapBackupBundle) {
+    await this.flush();
+    const existing = await this.loadIndex();
+    if (existing) {
+      for (const summary of existing.documents) await this.deleteDocument(summary.id);
+    }
+    const references = new Map<string, Record<string, number>>();
+    for (const document of bundle.documents) {
+      for (const node of Object.values(document.nodes)) {
+        if (!node.imageAssetId) continue;
+        const byDocument = references.get(node.imageAssetId) ?? {};
+        byDocument[document.id] = (byDocument[document.id] ?? 0) + 1;
+        references.set(node.imageAssetId, byDocument);
+      }
+    }
+    for (const asset of bundle.assets ?? []) {
+      const blob = await (await fetch(asset.dataUrl)).blob();
+      await this.saveImageAsset(blob, asset.id, references.get(asset.id));
+    }
+    let index: MindMapIndex = {
+      schemaVersion: MIND_MAP_SCHEMA_VERSION,
+      activeDocumentId: bundle.index.activeDocumentId,
+      documents: [],
+    };
+    for (const document of bundle.documents) {
+      index = {
+        schemaVersion: MIND_MAP_SCHEMA_VERSION,
+        activeDocumentId: index.activeDocumentId ?? document.id,
+        documents: [...index.documents, summarizeMindMapDocument(document)],
+      };
+      await this.saveNow(document, index);
+    }
+    if (bundle.documents.length === 0) {
+      await this.getStorage().setItem(INDEX_KEY, {
+        schemaVersion: MIND_MAP_SCHEMA_VERSION,
+        activeDocumentId: null,
+        documents: [],
+      } satisfies MindMapIndex);
+    }
   }
 
   saveEmergency(document: MindMapDocument) {

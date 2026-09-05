@@ -1,9 +1,10 @@
 import { getProjectBlockSourceId } from '@/components/dailySchedule/sourceIds';
-import type { Milestone, SmartTaskBlock, Task } from '@/types';
+import type { Milestone, SmartTaskBlock, Task, TaskGroup } from '@/types';
 
 export interface ProjectPlanningSnapshot {
   projects: Task[];
   milestones: Milestone[];
+  groups?: TaskGroup[];
 }
 
 export interface ProjectTaskSnapshot {

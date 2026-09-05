@@ -127,12 +127,18 @@ export interface TimelineSection extends MindMapCanvasObjectBase {
   rangeEnd: string | null;
   collapsed: boolean;
   manualItems: TimelineManualReference[];
+  selectionScopes: TimelineSelectionScope[];
 }
 
 export interface TimelineManualReference {
   source: 'project' | 'life';
   contextId: string;
   itemId: string;
+}
+
+export interface TimelineSelectionScope {
+  type: 'group' | 'project';
+  id: string;
 }
 
 export type MindMapCanvasObject = ProjectReferenceCard | TimelineSection;
@@ -417,6 +423,7 @@ export function createTimelineSection(
     height: 320,
     collapsed: false,
     manualItems: [],
+    selectionScopes: [],
     locked: false,
     createdAt: now,
     updatedAt: now,
@@ -717,6 +724,18 @@ function normalizeTimelineSection(value: unknown, now: number): TimelineSection 
       manualItems.push({ source: raw.source, contextId, itemId });
     }
   }
+  const selectionScopes: TimelineSelectionScope[] = [];
+  if (Array.isArray(value.selectionScopes)) {
+    const seen = new Set<string>();
+    for (const raw of value.selectionScopes.slice(0, 500)) {
+      if (!isRecord(raw) || (raw.type !== 'group' && raw.type !== 'project')) continue;
+      const id = safeId(raw.id);
+      const key = `${raw.type}:${id}`;
+      if (!id || seen.has(key)) continue;
+      seen.add(key);
+      selectionScopes.push({ type: raw.type, id });
+    }
+  }
   return {
     ...base,
     kind: 'timeline-section',
@@ -728,6 +747,7 @@ function normalizeTimelineSection(value: unknown, now: number): TimelineSection 
     rangeEnd,
     collapsed: value.collapsed === true,
     manualItems,
+    selectionScopes,
   };
 }
 

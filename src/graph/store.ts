@@ -244,10 +244,13 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
         },
 
         addNode: (name: string, parentId: string | null = null) => {
+          const resolvedParentId = parentId && get().nodes.some((node) => node.id === parentId)
+            ? parentId
+            : null;
           const newNode: GraphNode = {
             id: genId('gn'),
             name,
-            parentId,
+            parentId: resolvedParentId,
             createdAt: Date.now(),
           };
 
@@ -255,7 +258,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             const newData = {
               nodes: [
                 ...state.nodes.map((node) =>
-                  node.id === parentId ? { ...node, status: 'unactivated' as const } : node
+                  node.id === resolvedParentId ? { ...node, status: 'unactivated' as const } : node
                 ),
                 newNode,
               ],
@@ -276,11 +279,26 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             const safeUpdates = targetHasChildren && updates.status
               ? { ...updates, status: undefined }
               : updates;
-            const nextParentId = safeUpdates.parentId;
+            const hasParentUpdate = Object.prototype.hasOwnProperty.call(safeUpdates, 'parentId');
+            const requestedParentId = safeUpdates.parentId;
+            const descendantIds = new Set(collectNodeCascadeIds(state.nodes, id));
+            const validParentId = requestedParentId
+              && state.nodes.some((node) => node.id === requestedParentId)
+              && !descendantIds.has(requestedParentId);
+            const nextParentId = !hasParentUpdate
+              ? currentNode?.parentId
+              : requestedParentId === null
+                ? null
+                : validParentId
+                  ? requestedParentId
+                  : currentNode?.parentId;
+            const nextUpdates = hasParentUpdate && requestedParentId !== nextParentId
+              ? { ...safeUpdates, parentId: nextParentId }
+              : safeUpdates;
             const newData = {
               nodes: state.nodes.map((node) =>
                 node.id === id
-                  ? { ...node, ...safeUpdates }
+                  ? { ...node, ...nextUpdates }
                   : node.id === nextParentId || node.id === previousParentId
                     ? { ...node, status: 'unactivated' as const }
                     : node

@@ -57,4 +57,5 @@ export const useProjectPlanningProjects = () => useTimelineStore((state) => stat
 export const useProjectPlanningSnapshot = () => useTimelineStore(useShallow((state) => ({
   projects: state.tasks,
   milestones: state.milestones,
+  groups: state.groups,
 })));

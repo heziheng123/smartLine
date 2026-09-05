@@ -13,6 +13,8 @@ import {
 } from '../../src/mindMap/model.ts';
 import { layoutMindMapBranch } from '../../src/mindMap/layout.ts';
 import { applyMindMapSyncPatch, createMindMapSyncPatch } from '../../src/mindMap/syncCore.ts';
+import { formatTimelineRange, resizeTimelineRect } from '../../src/mindMap/timelineLayout.ts';
+import { timelineStatus, timelineUnscheduledItemCount } from '../../src/mindMap/timelineProjection.ts';
 
 test('canvas objects survive normalization, undo, duplication, and sync patches', () => {
   const before = createEmptyMindMapDocument('地图', { id: 'map-1', now: 1 });
@@ -85,4 +87,29 @@ test('group membership is normalized symmetrically and duplicates do not share n
   assert.notEqual(duplicateNode.style, normalized.nodes[node.id].style);
   duplicateNode.style.fill = '#000000';
   assert.notEqual(normalized.nodes[node.id].style.fill, duplicateNode.style.fill);
+});
+
+test('timeline resizing keeps its minimum size and repositions from the center', () => {
+  assert.deepEqual(
+    resizeTimelineRect({ x: 100, y: 100, width: 840, height: 320 }, -800, -300),
+    { x: -160, y: 30, width: 320, height: 180 },
+  );
+});
+
+test('timeline range labels use the application locale', () => {
+  assert.equal(formatTimelineRange('2026-09-04', '2026-10-04'), '2026 年 9–10 月');
+});
+
+test('timeline status excludes completed work from active and overdue counts', () => {
+  assert.deepEqual(timelineStatus([
+    { id: 'active', title: '进行中', start: '2026-09-01', end: '2026-09-05', color: '#000', kind: 'task', shape: 'range', progress: 20 },
+    { id: 'overdue', title: '逾期', start: '2026-08-01', end: '2026-09-03', color: '#000', kind: 'task', shape: 'range', progress: 20 },
+    { id: 'done', title: '完成', start: '2026-09-01', end: '2026-09-05', color: '#000', kind: 'task', shape: 'range', progress: 100 },
+  ], '2026-09-04'), { active: 1, overdue: 1 });
+});
+
+test('timeline reports manually selected project tasks without dates', () => {
+  const project = { id: 'project-1', name: '项目', start: '2026-09-01', end: '2026-09-30', blocks: [{ type: 'smart-task' as const, id: 'block-1', header: { title: '未排期', tag: '', tagColor: '', duration: 0, isCompleted: false }, body: '' }] };
+  const timeline = createTimelineSection({ x: 0, y: 0 }, { id: 'timeline-unscheduled', now: 1 });
+  assert.equal(timelineUnscheduledItemCount({ ...timeline, manualItems: [{ source: 'project', contextId: project.id, itemId: 'task:project-1:block-1' }] }, { projects: [project], milestones: [] }), 1);
 });

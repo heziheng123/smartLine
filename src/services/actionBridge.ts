@@ -76,14 +76,16 @@ export function openKnowledgeNode(nodeId: string) {
   navigate('knowledge-graph');
 }
 
-export function takeKnowledgeNodeFocus() {
+export function peekKnowledgeNodeFocus() {
   try {
-    const nodeId = sessionStorage.getItem(GRAPH_FOCUS_NODE_KEY);
-    sessionStorage.removeItem(GRAPH_FOCUS_NODE_KEY);
-    return nodeId;
+    return sessionStorage.getItem(GRAPH_FOCUS_NODE_KEY);
   } catch {
     return null;
   }
+}
+
+export function clearKnowledgeNodeFocus() {
+  try { sessionStorage.removeItem(GRAPH_FOCUS_NODE_KEY); } catch { /* focus is optional */ }
 }
 
 export function openReviewPlan(reviewTaskId: string) {
@@ -91,12 +93,14 @@ export function openReviewPlan(reviewTaskId: string) {
   navigate('ebb');
 }
 
-export function takeReviewPlanFocus() {
+export function peekReviewPlanFocus() {
   try {
-    const taskId = sessionStorage.getItem(EBB_FOCUS_REVIEW_KEY);
-    sessionStorage.removeItem(EBB_FOCUS_REVIEW_KEY);
-    return taskId;
+    return sessionStorage.getItem(EBB_FOCUS_REVIEW_KEY);
   } catch {
     return null;
   }
+}
+
+export function clearReviewPlanFocus() {
+  try { sessionStorage.removeItem(EBB_FOCUS_REVIEW_KEY); } catch { /* focus is optional */ }
 }

@@ -307,7 +307,11 @@
   gap: 10px;
   border-bottom: 1px solid rgb(148 163 184 / 17%);
   background: rgb(255 255 255 / 92%);
+  cursor: grab;
 }
+
+.timelineHeader:active,
+.timelineSummary:active { cursor: grabbing; }
 
 .timelineHeaderTitle,
 .timelineHeaderMeta {
@@ -336,6 +340,17 @@
 .timelineHeaderTitle strong {
   letter-spacing: -0.015em;
   font-weight: 650;
+}
+
+.timelineSource {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: var(--mm-text-muted);
+  background: var(--mm-surface-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timelineHeaderMeta {
@@ -490,6 +505,39 @@
   white-space: nowrap;
 }
 
+.timelineEmpty {
+  position: absolute;
+  right: 20px;
+  left: 20px;
+  z-index: 5;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 12px;
+  color: var(--mm-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.timelineEmpty strong {
+  color: var(--mm-text);
+  font-size: 12px;
+}
+
+.timelineEmpty button,
+.timelineOverflow {
+  border: 0;
+  border-radius: 6px;
+  color: var(--mm-accent);
+  background: color-mix(in srgb, var(--mm-accent) 8%, white);
+  cursor: pointer;
+}
+
+.timelineEmpty button {
+  padding: 4px 7px;
+  font-size: inherit;
+}
+
 .timelineStageBand {
   position: absolute;
   z-index: 3;
@@ -536,6 +584,11 @@
   font-weight: 650;
 }
 
+.timelineGroupLabel {
+  color: #334155;
+  font-weight: 700;
+}
+
 .timelineProjectLabel i {
   width: 7px;
   height: 7px;
@@ -565,6 +618,11 @@
   background: color-mix(in srgb, var(--timeline-item-color) 30%, white);
 }
 
+.timelineGroupBar {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--timeline-item-color) 16%, white);
+}
+
 .timelineTaskBar {
   border-color: color-mix(in srgb, var(--timeline-item-color) 18%, transparent);
 }
@@ -579,6 +637,18 @@
   display: block;
   border-radius: inherit;
   background: color-mix(in srgb, var(--timeline-item-color) 76%, #334155 4%);
+}
+
+.timelineProgressLabel {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  right: 4px;
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgb(15 23 42 / 34%);
+  transform: translateY(-50%);
 }
 
 .timelineSystemBar {
@@ -688,7 +758,7 @@
   position: absolute;
   right: 12px;
   bottom: 8px;
-  color: var(--mm-text-muted);
+  padding: 3px 5px;
   font-size: 10px;
 }
 
@@ -1105,6 +1175,197 @@
   border: 0;
   border-top: 1px solid var(--mm-border);
 }
+
+.timelineInspector { width: min(520px, calc(100% - 28px)); }
+
+.timelineScopeItems {
+  display: grid;
+  max-height: 320px;
+  gap: 10px;
+  overflow: auto;
+  padding: 9px;
+  border-top: 1px solid var(--mm-border);
+}
+
+.timelineScopeHint,
+.timelineLegacyHint {
+  margin: 0;
+  color: var(--mm-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.timelineLegacyHint {
+  padding: 7px 8px;
+  border-radius: var(--mm-radius-control);
+  color: color-mix(in srgb, var(--mm-accent) 72%, var(--mm-text));
+  background: color-mix(in srgb, var(--mm-accent) 9%, var(--mm-surface));
+}
+
+.timelineScopeGroup {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--mm-border) 72%, transparent);
+  border-radius: var(--mm-radius-control);
+}
+
+.timelineScopeGroup legend {
+  padding: 0 4px;
+  color: var(--mm-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.timelineScopeGroup legend small {
+  margin-left: 6px;
+  color: var(--mm-text-muted);
+  font-weight: 400;
+}
+
+.timelineScopeAll,
+.timelineScopeProject {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  cursor: pointer;
+}
+
+.timelineScopeAll input,
+.timelineScopeProject input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--mm-accent);
+}
+
+.timelineScopeAll strong,
+.timelineScopeProject strong,
+.timelineScopeAll small,
+.timelineScopeProject small {
+  display: block;
+}
+
+.timelineScopeAll strong,
+.timelineScopeProject strong {
+  color: var(--mm-text);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.timelineScopeAll small,
+.timelineScopeProject small {
+  margin-top: 1px;
+  color: var(--mm-text-muted);
+  font-size: 10px;
+}
+
+.timelineScopeProjects {
+  display: grid;
+  gap: 3px;
+  padding-left: 24px;
+}
+
+.timelineScopeProject {
+  min-height: 28px;
+}
+
+.timelineScopeProject em {
+  color: var(--mm-text-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.timelineSummarySection {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.timelineSummarySection h3 {
+  margin: 0;
+  color: var(--mm-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.timelineSummaryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.timelineSummaryRow strong,
+.timelineSummaryRow small {
+  display: block;
+}
+
+.timelineSummaryRow strong { color: var(--mm-text); font-size: 13px; font-weight: 550; }
+.timelineSummaryRow small { margin-top: 3px; color: var(--mm-text-muted); font-size: 11px; }
+.timelineChangeButton { border: 0; color: var(--mm-accent); background: transparent; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.timelineDisplaySection { display: grid; gap: 8px; }
+.timelineDisplaySection h3 { margin: 0; color: var(--mm-text-muted); font-size: 12px; font-weight: 600; }
+.timelineVisibilityChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.timelineVisibilityChip { min-height: 30px; padding: 5px 9px; border: 0; border-radius: 7px; color: var(--mm-text-muted); background: var(--mm-surface-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.timelineVisibilityChipActive { color: var(--mm-accent); background: color-mix(in srgb, var(--mm-accent) 10%, transparent); }
+
+.timelineSelectorOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--mm-surface);
+}
+
+.timelineSelectorHeader,
+.timelineSelectorFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 0 16px;
+}
+
+.timelineSelectorHeader button { border: 0; color: var(--mm-text-muted); background: transparent; font-size: 20px; cursor: pointer; }
+.timelineSelectorTools { display: grid; gap: 4px; padding: 10px 16px 6px; border-bottom: 1px solid var(--mm-border); }
+.timelineSelectorTools label { display: flex; box-sizing: border-box; height: 34px; min-height: 34px; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--mm-border); border-radius: 8px; font-size: 12px; }
+.timelineSelectorTools label svg { width: 14px; height: 14px; }
+.timelineSelectorTools input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--mm-text); font: inherit; font-size: 12px; }
+.timelineSelectorTools [role='tablist'] { display: flex; gap: 4px; }
+.timelineSelectorTools [role='tablist'] button { min-height: 30px; border: 0; border-radius: 7px; padding: 4px 9px; color: var(--mm-text-muted); background: transparent; cursor: pointer; font-size: 12px; }
+.timelineFilterActive { color: var(--mm-accent) !important; background: color-mix(in srgb, var(--mm-accent) 8%, transparent) !important; }
+.timelineSelectorList { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 16px; }
+.timelineSelectorGroup { padding: 0; }
+.timelineSelectorGroupHeader { display: grid; grid-template-columns: 11px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 30px; border-radius: 6px; }
+.timelineSelectorGroupHeader:hover,
+.timelineSelectorProject:hover { background: var(--hover-bg, color-mix(in srgb, var(--mm-text) 4%, transparent)); }
+.timelineSelectorGroupHeader button { border: 0; padding: 0; color: var(--mm-text-muted); background: transparent; cursor: pointer; font-size: 11px; }
+.timelineSelectorGroupHeader input,
+.timelineSelectorProject input { width: 15px; height: 15px; margin: 0; border-radius: 3px; accent-color: var(--mm-accent); }
+.timelineSelectorGroupChoice { display: flex !important; min-width: 0; min-height: 30px; align-items: center !important; gap: 7px !important; cursor: pointer; }
+.timelineSelectorGroupHeader strong { min-width: 0; overflow: hidden; color: var(--mm-text); font-size: 13px; font-weight: 600; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.timelineSelectorGroupHeader > strong:first-child { grid-column: 1 / span 2; }
+.timelineSelectorGroupHeader small { color: var(--mm-text-muted); font-size: 11px; font-weight: 400; }
+.timelineSelectorProjects { display: grid; gap: 6px; padding-left: 22px; }
+.timelineSelectorProject { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 38px; border-radius: 6px; cursor: pointer; }
+.timelineSelectorProject strong,
+.timelineSelectorProject small { display: block; }
+.timelineSelectorProject strong { color: var(--mm-text); font-size: 13px; font-weight: 500; line-height: 17px; }
+.timelineSelectorProject small { margin-top: 1px; color: var(--mm-text-muted); font-size: 11px; line-height: 14px; }
+.timelineSelectorProject em { color: var(--mm-text-muted); font-size: 10px; font-style: normal; }
+.timelineShowMore { justify-self: start; border: 0; padding: 5px 0; color: var(--mm-accent); background: transparent; cursor: pointer; font-size: 11px; }
+.timelineSelectorEmpty { padding: 24px 4px; color: var(--mm-text-muted); text-align: center; font-size: 12px; }
+.timelineSelectorFooter { box-sizing: border-box; flex: 0 0 46px; min-height: 46px; gap: 8px; padding: 7px 16px; border-top: 1px solid var(--mm-border); border-bottom: 0; font-size: 12px; color: var(--mm-text-muted); }
+.timelineSelectorFooter > span { margin-right: auto; }
+.timelineSelectorFooter button { border: 0; color: var(--mm-accent); background: transparent; cursor: pointer; font-size: 12px; }
+.timelineSelectorFooter button:last-child { min-width: 64px; min-height: 28px; border-radius: 6px; padding: 4px 13px; color: white; background: var(--mm-accent); }
 
 .timelineRangeFields {
   display: grid;

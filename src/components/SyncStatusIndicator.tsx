@@ -20,7 +20,14 @@ import {
   WORKSPACE_VERIFIED_EVENT,
   type WorkspaceSyncRuntimeState,
 } from '@/services/workspaceSync';
+import { useAuth } from '@/auth/AuthContext';
 import { liveblocksAuthMode } from '@/auth/config';
+import { MIND_MAP_ENABLED, MIND_MAP_SYNC_ENABLED } from '@/mindMap/config';
+import {
+  MIND_MAP_SYNC_RUNTIME_EVENT,
+  readMindMapSyncRuntimeState,
+  type MindMapSyncRuntimeState,
+} from '@/mindMap/syncRuntime';
 import {
   deriveSyncIndicatorState,
   type ModuleSyncState,
@@ -78,6 +85,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     () => readWorkspaceSyncSettings().architecture === 'unified',
   );
   const [runtimeState, setRuntimeState] = useState(readWorkspaceSyncRuntimeState);
+  const [mindMapRuntimeState, setMindMapRuntimeState] = useState(readMindMapSyncRuntimeState);
 
   const modules = useMemo<ModuleSyncState[]>(
     () => [timeline, ebb, daily, graph, lifeMap],
@@ -135,6 +143,9 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     const handleRuntime = (event: Event) => {
       setRuntimeState((event as CustomEvent<WorkspaceSyncRuntimeState>).detail ?? readWorkspaceSyncRuntimeState());
     };
+    const handleMindMapRuntime = (event: Event) => {
+      setMindMapRuntimeState((event as CustomEvent<MindMapSyncRuntimeState>).detail ?? readMindMapSyncRuntimeState());
+    };
     const interval = window.setInterval(() => void refreshQueueState(), 15_000);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -143,6 +154,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     window.addEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
     window.addEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
     window.addEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, handleRuntime);
+    window.addEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, handleMindMapRuntime);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener('online', handleOnline);
@@ -152,9 +164,18 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       window.removeEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
       window.removeEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
       window.removeEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, handleRuntime);
+      window.removeEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, handleMindMapRuntime);
     };
   }, [refreshQueueState]);
 
+  const auth = useAuth();
+  const mapHint = !MIND_MAP_ENABLED
+    ? ''
+    : MIND_MAP_SYNC_ENABLED && auth.enabled && auth.status === 'authenticated'
+      ? ` · 地图${{
+        local: '仅本机', connecting: '正在连接', connected: '已同步', offline: '离线', error: '需要重试',
+      }[mindMapRuntimeState.status]}`
+      : ' · 地图仅本机';
   const derivedIndicatorState = !queueLoaded && enabledModules.length > 0
     ? 'connecting'
     : deriveSyncIndicatorState({
@@ -162,7 +183,10 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       online,
       pendingCount,
       conflictCount: activeConflictCount,
-      queueError: queueErrorKind !== null,
+      queueError: queueErrorKind === 'storage_write_failed' || queueErrorKind === 'system_origin_blocked',
+      recoverableError: queueErrorKind !== null
+        && queueErrorKind !== 'storage_write_failed'
+        && queueErrorKind !== 'system_origin_blocked',
       runtimePhase: runtimeState.phase,
     });
   const requiresUnifiedMigration = liveblocksAuthMode === 'authenticated' && !unifiedArchitecture;
@@ -196,25 +220,27 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       : indicatorState === 'connected'
         ? `已同步 ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
         : indicatorState === 'pending'
-          ? `${online ? '等待上传' : '网络离线'}${pendingCount > 0 ? ` · ${pendingCount} 个数据字段待同步` : ''}`
-          : `同步存在问题${issueCount > 0 ? ` · ${issueCount} 项已暂停并保留` : ''}${errorHint || runtimeState.error ? ` · ${errorHint ?? runtimeState.error}` : ''}${historicalHint}`;
+          ? `${online ? '正在上传' : '网络离线，改动保存在本机'}${pendingCount > 0 ? ` · 待上传 ${pendingCount} 个数据字段` : ''}${errorHint ? ` · ${errorHint}` : ''}`
+          : indicatorState === 'needs-action'
+            ? `需要你选择如何合并 · ${activeConflictCount} 处冲突已保留双方数据${historicalHint}`
+            : `同步已暂停${issueCount > 0 ? ` · ${issueCount} 项已暂停并保留` : ''}${errorHint || runtimeState.error ? ` · ${errorHint ?? runtimeState.error}` : ''}${historicalHint}`;
+  const labeledDescription = `${description}${indicatorState === 'off' ? '' : mapHint}`;
 
   return (
     <button
       type="button"
       className={`workspace-sync-status workspace-sync-status--${indicatorState} ${className}`.trim()}
       onClick={() => window.dispatchEvent(new CustomEvent(OPEN_WORKSPACE_SYNC_EVENT))}
-      aria-label={`${description}，打开同步与备份`}
-      title={`${description}。点击打开同步与备份。`}
+      aria-label={`${labeledDescription}，打开同步与备份`}
+      title={`${labeledDescription}。点击打开同步与备份。`}
       data-sync-state={indicatorState}
     >
       {indicatorState === 'connected' && <span className="workspace-sync-status__connected-icon"><Cloud size={17} /><Check size={9} /></span>}
-      {indicatorState === 'connecting' && <LoaderCircle className="workspace-sync-status__spinner" size={17} />}
-      {indicatorState === 'pending' && <CloudOff size={17} />}
-      {indicatorState === 'error' && <TriangleAlert size={17} />}
+      {(indicatorState === 'connecting' || indicatorState === 'pending') && <LoaderCircle className="workspace-sync-status__spinner" size={17} />}
+      {(indicatorState === 'needs-action' || indicatorState === 'stopped') && <TriangleAlert size={17} />}
       {indicatorState === 'off' && <CloudOff size={17} />}
-      {(issueCount > 0 || pendingCount > 0) && (
-        <span className="workspace-sync-status__badge">{Math.min(99, issueCount || pendingCount)}</span>
+      {(activeConflictCount > 0 || pendingCount > 0) && (
+        <span className="workspace-sync-status__badge">{Math.min(99, activeConflictCount || pendingCount)}</span>
       )}
     </button>
   );

@@ -19,13 +19,15 @@ import { isContinuousTask } from '@/domain/taskRules';
 import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, activeLifeMapItems, normalizeLifeMapData, validateLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
-import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
+import { parseMindMapBackupBundle, mindMapRepository, type MindMapBackupBundle } from '@/mindMap/repository';
+import { useMindMapStore } from '@/mindMap/store';
 import {
   runWorkspaceMutationWithOrigin,
   type WorkspaceMutationOrigin,
 } from './workspaceMutationOrigin';
+import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
 
-export { WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
+export { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from './workspaceSchema';
 const snapshotStorage = createScopedStorage('workspace_snapshots');
 const snapshotChunkStorage = createScopedStorage('workspace_snapshot_chunks');
 const SNAPSHOT_LOCK_NAME = 'smart-line-workspace-snapshots-v1';
@@ -52,6 +54,8 @@ export interface WorkspaceBackup {
     retrospectives: Record<string, DailyRetrospective>;
   };
   settings: { timelineViewPreferences?: unknown };
+  /** Optional extension for schema 8. Missing on exports made before map backup. */
+  mindMap?: MindMapBackupBundle;
 }
 
 export interface WorkspaceBackupSummary {
@@ -66,6 +70,7 @@ export interface WorkspaceBackupSummary {
   retrospectiveDays: number;
   retrospectiveEntries: number;
   graphNodes: number;
+  mindMapDocuments: number;
   issues: string[];
 }
 
@@ -75,12 +80,12 @@ export interface WorkspaceSnapshot {
   reason: string;
   backup?: WorkspaceBackup;
   format?: 2;
-  chunks?: Record<SnapshotSection, string>;
+  chunks?: Partial<Record<SnapshotSection, string>>;
   isCheckpoint?: boolean;
   storedBytes?: number;
 }
 
-type SnapshotSection = 'header' | 'timeline' | 'lifeMap' | 'ebb' | 'graph' | 'daily' | 'settings';
+type SnapshotSection = 'header' | 'timeline' | 'lifeMap' | 'ebb' | 'graph' | 'daily' | 'settings' | 'mindMap';
 
 interface SnapshotChunk {
   encoding: 'gzip' | 'json';
@@ -232,6 +237,11 @@ export function validateWorkspaceBackup(value: unknown): {
       ),
     },
   };
+  if (Object.prototype.hasOwnProperty.call(value, 'mindMap')) {
+    const parsed = parseMindMapBackupBundle(value.mindMap);
+    if (parsed.error) errors.push(parsed.error);
+    else backup.mindMap = parsed.bundle;
+  }
   if (!backup.timeline.tasks.every((task) => isRecord(task)
     && typeof task.id === 'string' && typeof task.name === 'string'
     && isDate(task.start) && isDate(task.end) && Array.isArray(task.blocks))) {
@@ -350,9 +360,12 @@ export function validateWorkspaceBackup(value: unknown): {
   if (errors.length > 0) return { errors };
 
   const issues: string[] = [];
-  const localRevision = Number.parseInt(localStorage.getItem('smart-line-workspace-revision') ?? '0', 10);
-  if (Number.isFinite(localRevision) && backup.revision < localRevision) {
-    issues.push('该备份版本早于当前设备数据版本');
+  // Handle environments where localStorage is not available (e.g., Node.js tests)
+  if (typeof localStorage !== 'undefined') {
+    const localRevision = Number.parseInt(localStorage.getItem('smart-line-workspace-revision') ?? '0', 10);
+    if (Number.isFinite(localRevision) && backup.revision < localRevision) {
+      issues.push('该备份版本早于当前设备数据版本');
+    }
   }
   const collections: Array<[string, unknown[]]> = [
     ['时间轴任务', backup.timeline.tasks],
@@ -582,6 +595,7 @@ export function validateWorkspaceBackup(value: unknown): {
       retrospectiveEntries: Object.values(backup.daily.retrospectives)
         .reduce((sum, retrospective) => sum + retrospective.entries.length, 0),
       graphNodes: backup.graph.nodes.length,
+      mindMapDocuments: backup.mindMap?.documents.length ?? 0,
       issues: [...new Set(issues)].slice(0, 50),
     },
   };
@@ -615,7 +629,7 @@ async function decompressChunk(chunk: SnapshotChunk): Promise<string> {
   return await new Response(stream).text();
 }
 
-function snapshotSections(backup: WorkspaceBackup): Record<SnapshotSection, unknown> {
+function snapshotSections(backup: WorkspaceBackup): Partial<Record<SnapshotSection, unknown>> {
   return {
     header: {
       kind: backup.kind, schemaVersion: backup.schemaVersion, revision: backup.revision,
@@ -627,11 +641,12 @@ function snapshotSections(backup: WorkspaceBackup): Record<SnapshotSection, unkn
     graph: backup.graph,
     daily: backup.daily,
     settings: backup.settings,
+    ...(backup.mindMap ? { mindMap: backup.mindMap } : {}),
   };
 }
 
-async function storeSnapshotChunks(backup: WorkspaceBackup): Promise<{ chunks: Record<SnapshotSection, string>; storedBytes: number }> {
-  const chunks = {} as Record<SnapshotSection, string>;
+async function storeSnapshotChunks(backup: WorkspaceBackup): Promise<{ chunks: Partial<Record<SnapshotSection, string>>; storedBytes: number }> {
+  const chunks: Partial<Record<SnapshotSection, string>> = {};
   let storedBytes = 0;
   for (const [section, value] of Object.entries(snapshotSections(backup)) as Array<[SnapshotSection, unknown]>) {
     const json = JSON.stringify(value);
@@ -696,7 +711,7 @@ export async function createWorkspaceSnapshot(
 }
 
 export async function createLocalSnapshot(reason: string): Promise<WorkspaceSnapshot> {
-  return await createWorkspaceSnapshot(createWorkspaceBackup(), reason);
+  return await createWorkspaceSnapshot(await createWorkspaceBackupWithMindMap(), reason);
 }
 
 export async function listLocalSnapshots(): Promise<WorkspaceSnapshot[]> {
@@ -722,6 +737,7 @@ export async function materializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot):
     graph: values.graph as WorkspaceBackup['graph'],
     daily: values.daily as WorkspaceBackup['daily'],
     settings: values.settings as WorkspaceBackup['settings'],
+    ...(values.mindMap ? { mindMap: values.mindMap as WorkspaceBackup['mindMap'] } : {}),
   };
 }
 
@@ -741,12 +757,19 @@ export async function getSnapshotStorageStats(): Promise<SnapshotStorageStats> {
   };
 }
 
+export async function createWorkspaceBackupWithMindMap(): Promise<WorkspaceBackup> {
+  const backup = createWorkspaceBackup();
+  await useMindMapStore.getState().flushSave();
+  backup.mindMap = await mindMapRepository.exportBundle();
+  return backup;
+}
+
 export async function restoreWorkspaceBackup(
   backup: WorkspaceBackup,
   options: { suppressSyncJournal?: boolean; origin?: WorkspaceMutationOrigin } = {},
 ): Promise<void> {
   await createLocalSnapshot('恢复完整工作区前');
-  const before = createWorkspaceBackup();
+  const before = await createWorkspaceBackupWithMindMap();
   const apply = async (source: WorkspaceBackup) => {
     const safe = deepClone(source);
     const origin = options.origin ?? (options.suppressSyncJournal ? 'remote-hydration' : 'restore');
@@ -775,15 +798,23 @@ export async function restoreWorkspaceBackup(
     if (backup.settings?.timelineViewPreferences !== undefined) {
       localStorage.setItem('smart-timeline-view-preferences-v2', JSON.stringify(backup.settings.timelineViewPreferences));
     }
+    if (backup.mindMap) {
+      await mindMapRepository.replaceFromBundle(backup.mindMap);
+      await useMindMapStore.getState().reloadFromRepository();
+    }
   } catch (error) {
     await apply(before);
+    if (before.mindMap) {
+      await mindMapRepository.replaceFromBundle(before.mindMap);
+      await useMindMapStore.getState().reloadFromRepository();
+    }
     throw error;
   }
   localStorage.setItem('smart-line-workspace-revision', String(Math.max(currentRevision(), backup.revision)));
 }
 
-export function downloadWorkspaceBackup(): void {
-  const backup = createWorkspaceBackup();
+export async function downloadWorkspaceBackup(): Promise<void> {
+  const backup = await createWorkspaceBackupWithMindMap();
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');

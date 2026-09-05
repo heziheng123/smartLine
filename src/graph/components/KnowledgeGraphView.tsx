@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { requestConfirmation } from '@/services/confirmation';
 import { useShallow } from 'zustand/react/shallow';
@@ -31,9 +30,9 @@ import { getUniqueTasks } from '@/store/timelineData';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import NodeRetrospectiveRecords from './NodeRetrospectiveRecords';
 import { isRetrospectiveEntryCurrentlyCompleted } from '@/domain/dailyRetrospective';
-import { takeKnowledgeNodeFocus } from '@/services/actionBridge';
+import { clearKnowledgeNodeFocus, peekKnowledgeNodeFocus } from '@/services/actionBridge';
 
-import { stratify, partition, HierarchyRectangularNode } from 'd3-hierarchy';
+import { stratify, partition, type HierarchyNode, type HierarchyRectangularNode } from 'd3-hierarchy';
 import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
 import { select } from 'd3-selection';
 import { arc } from 'd3-shape';
@@ -44,7 +43,6 @@ type NodeRollupStats = {
   pendingCount: number;
   completedCount: number;
   overdueCount: number;
-  noteCount: number;
 };
 
 type NodeVisualState = 'inactive' | 'completed-no-review' | 'reviewing' | 'mastered';
@@ -66,9 +64,9 @@ const GRAPH_STATUS_OPTIONS: Array<{
 }> = [
   { value: 'inactive', label: '未激活', dotClass: 'bg-slate-500' },
   { value: 'overdue', label: '严重逾期', dotClass: 'bg-rose-500' },
-  { value: 'completed-no-review', label: '已完成 · 无需复习', dotClass: 'bg-blue-500' },
+  { value: 'completed-no-review', label: '已激活 · 无复习计划', dotClass: 'bg-blue-500' },
   { value: 'reviewing', label: '复习中', dotClass: 'bg-emerald-500' },
-  { value: 'mastered', label: '已掌握', dotClass: 'bg-amber-500' },
+  { value: 'mastered', label: '复习已完成', dotClass: 'bg-amber-500' },
 ];
 
 const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
@@ -80,9 +78,9 @@ const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
 
 const NODE_STATE_LABEL: Record<NodeVisualState, string> = {
   inactive: '未激活',
-  'completed-no-review': '已完成 · 无需复习',
+  'completed-no-review': '已激活 · 无复习计划',
   reviewing: '复习中',
-  mastered: '已掌握',
+  mastered: '复习已完成',
 };
 
 const getNodeStateLabel = (value: unknown): string =>
@@ -93,6 +91,7 @@ const getNodeStateLabel = (value: unknown): string =>
 type ViewNode = {
   id: string;
   name: string;
+  parentId: string | null;
   color: string;
   status: string;
   visualState: NodeVisualState;
@@ -106,25 +105,32 @@ type ViewNode = {
   completedCount: number;
   overdueCount: number;
   totalReviewCount: number;
-  noteCount: number;
-  importanceScore: number;
-  labelPriority: 'high' | 'medium' | 'low';
-  isVirtual?: boolean;
 };
 
-const getContrastYIQ = (hexcolor: string) => {
-  hexcolor = hexcolor.replace("#", "");
-  if (hexcolor.length === 3) hexcolor = hexcolor.split('').map(c => c + c).join('');
-  if (hexcolor.length !== 6) return '#ffffff';
-  const r = parseInt(hexcolor.substr(0, 2), 16);
-  const g = parseInt(hexcolor.substr(2, 2), 16);
-  const b = parseInt(hexcolor.substr(4, 2), 16);
-  const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-  return (yiq >= 150) ? '#0f172a' : '#ffffff';
+type GraphIsland = {
+  rootId: string;
+  root: HierarchyNode<ViewNode>;
+  nodes: HierarchyRectangularNode<ViewNode>[];
+  flatNodes: ViewNode[];
+  centerX: number;
+  centerY: number;
+  radius: number;
+};
+
+const getAccessibleTextColor = (hexcolor: string) => {
+  const normalized = hexcolor.replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return '#ffffff';
+  const channels = normalized.match(/.{2}/g)!.map((value) => parseInt(value, 16) / 255);
+  const luminance = channels
+    .map((value) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+  const contrast = (textLuminance: number) => (Math.max(luminance, textLuminance) + 0.05)
+    / (Math.min(luminance, textLuminance) + 0.05);
+  return contrast(0.0152) > contrast(1) ? '#0f172a' : '#ffffff';
 };
 
 export const KnowledgeGraphView: React.FC = () => {
-  const [bridgeNodeId] = useState(() => takeKnowledgeNodeFocus());
+  const [bridgeNodeId] = useState(peekKnowledgeNodeFocus);
   const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore(
     useShallow((state) => ({
       isHydrated: state.isHydrated,
@@ -173,7 +179,16 @@ export const KnowledgeGraphView: React.FC = () => {
   })));
   const { tasks, groups } = useTimelineStore(useShallow((state) => ({ tasks: state.tasks, groups: state.groups })));
   const allProjectTasks = useMemo(() => getUniqueTasks(tasks, groups), [tasks, groups]);
-  const bindingSession = useGraphBindingStore();
+  const bindingSession = useGraphBindingStore(useShallow((state) => ({
+    active: state.active,
+    isConfirming: state.isConfirming,
+    taskTitle: state.taskTitle,
+    selectedNodeIds: state.selectedNodeIds,
+    toggleNode: state.toggleNode,
+    setSelectedNodeIds: state.setSelectedNodeIds,
+    cancel: state.cancel,
+    confirm: state.confirm,
+  })));
   const [bindingError, setBindingError] = useState('');
 
   const [newRootName, setNewRootName] = useState('');
@@ -190,6 +205,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeDockPanel, setActiveDockPanel] = useState<DockPanel>(null);
+  const [moveError, setMoveError] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dockControlsRef = useRef<HTMLDivElement>(null);
   const dockPanelRef = useRef<HTMLDivElement>(null);
@@ -208,6 +224,10 @@ export const KnowledgeGraphView: React.FC = () => {
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomTransformRef = useRef<ZoomTransform | null>(null);
   const userZoomInProgressRef = useRef(false);
+  const didInitialViewportFitRef = useRef(false);
+  const lastViewportModeRef = useRef<string | null>(null);
+  const lastSelectedNodeIdRef = useRef<string | null>(null);
+  const isEditingNameRef = useRef(false);
 
   // Hover states
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
@@ -224,6 +244,10 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [bridgeNodeId, nodeById]);
 
   useEffect(() => {
+    if (bridgeNodeId) clearKnowledgeNodeFocus();
+  }, [bridgeNodeId]);
+
+  useEffect(() => {
     if (!activeDockPanel) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
@@ -232,7 +256,7 @@ export const KnowledgeGraphView: React.FC = () => {
       }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setActiveDockPanel(null);
+      if (event.key === 'Escape' && !bindingSession.active) setActiveDockPanel(null);
     };
     document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
@@ -240,7 +264,7 @@ export const KnowledgeGraphView: React.FC = () => {
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activeDockPanel]);
+  }, [activeDockPanel, bindingSession.active]);
 
   useEffect(() => {
     if (activeDockPanel !== 'search') return;
@@ -265,6 +289,7 @@ export const KnowledgeGraphView: React.FC = () => {
     setSelectedNodeId(null);
     setIsPanelOpen(false);
     setIsMoveMode(false);
+    setMoveError('');
     setBindingError('');
   }, [bindingSession.active]);
 
@@ -430,7 +455,6 @@ export const KnowledgeGraphView: React.FC = () => {
         pendingCount: 0,
         completedCount: 0,
         overdueCount: 0,
-        noteCount: 0,
       };
       for (const task of tasksForNode) {
         stats.totalReviewCount += 1;
@@ -448,13 +472,13 @@ export const KnowledgeGraphView: React.FC = () => {
       const cached = nodeStatsMap.get(nodeId);
       if (cached) return cached;
       if (path.has(nodeId)) {
-        return { totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0, noteCount: 0 };
+        return { totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0 };
       }
 
       const direct = directStatsByNode.get(nodeId);
       const stats: NodeRollupStats = direct
         ? { ...direct }
-        : { totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0, noteCount: 0 };
+        : { totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0 };
       path.add(nodeId);
       for (const childId of childrenByParent.get(nodeId) ?? []) {
         const childStats = collectStats(childId, path);
@@ -462,7 +486,6 @@ export const KnowledgeGraphView: React.FC = () => {
         stats.pendingCount += childStats.pendingCount;
         stats.completedCount += childStats.completedCount;
         stats.overdueCount += childStats.overdueCount;
-        stats.noteCount += childStats.noteCount;
       }
       path.delete(nodeId);
       nodeStatsMap.set(nodeId, stats);
@@ -481,7 +504,7 @@ export const KnowledgeGraphView: React.FC = () => {
       return { islands: [], allFlatNodes: [] };
     }
 
-    const islands: any[] = [];
+    const islands: GraphIsland[] = [];
     let allFlatNodes: ViewNode[] = [];
 
     // Calculate grid layout for islands
@@ -509,7 +532,7 @@ export const KnowledgeGraphView: React.FC = () => {
           const activationState = activationStates.get(node.id);
           const isLeaf = activationState?.isLeaf ?? !childrenByParent.has(node.id);
           const stats = nodeStatsMap.get(node.id) ?? {
-            totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0, noteCount: 0,
+            totalReviewCount: 0, pendingCount: 0, completedCount: 0, overdueCount: 0,
           };
 
           return [{
@@ -524,9 +547,6 @@ export const KnowledgeGraphView: React.FC = () => {
             activeCount: isLeaf ? 0 : activationState?.activatedLeafCount ?? 0,
             totalLeafCount: isLeaf ? 0 : activationState?.totalLeafCount ?? 0,
             ...stats,
-            importanceScore: stats.pendingCount + stats.overdueCount * 2,
-            labelPriority: stats.overdueCount > 0 ? 'high' : 'low',
-            isVirtual: false,
             depth: 0,
             rootId: rootId
           } as ViewNode];
@@ -537,7 +557,7 @@ export const KnowledgeGraphView: React.FC = () => {
       try {
         const root = stratify<ViewNode>()
           .id(d => d.id)
-          .parentId(d => (d as any).parentId)(flatData);
+          .parentId(d => d.parentId)(flatData);
 
         root.sum(d => childrenByParent.has(d.id) ? 0 : 1);
         root.sort((a, b) => (b.value || 0) - (a.value || 0));
@@ -616,7 +636,6 @@ export const KnowledgeGraphView: React.FC = () => {
       mastered: 0,
     };
     islandsData.allFlatNodes.forEach((node: ViewNode) => {
-      if (node.isVirtual) return;
       if (node.visualState === 'inactive') counts.inactive += 1;
       if (node.isActivated && node.overdueCount > 0) counts.overdue += 1;
       if (node.visualState === 'reviewing' && node.overdueCount === 0) counts.reviewing += 1;
@@ -632,7 +651,6 @@ export const KnowledgeGraphView: React.FC = () => {
     const matched = new Set<string>();
 
     islandsData.allFlatNodes.forEach((node: ViewNode) => {
-      if (node.isVirtual) return;
       let isMatch = false;
       const matchStatus = statusFilter === 'all' 
         || (statusFilter === 'inactive' && node.visualState === 'inactive')
@@ -709,24 +727,24 @@ export const KnowledgeGraphView: React.FC = () => {
     viewportShiftedRef.current = false;
     recenterButtonRef.current?.setAttribute('hidden', '');
     
-    let transform = zoomIdentity;
-    if (islandsData.islands.length > 1) {
-      const cols = Math.ceil(Math.sqrt(islandsData.islands.length));
-      const rows = Math.ceil(islandsData.islands.length / cols);
-      // 这里的网格尺寸需要和上面的 baseRadius 保持同步
-      const cellWidth = 400 * 2 + 160;
-      const cellHeight = 400 * 2 + 160;
-      const totalWidth = cols * cellWidth;
-      const totalHeight = rows * cellHeight;
-      
-      const scaleX = dimensions.width / (totalWidth || dimensions.width);
-      const scaleY = dimensions.height / (totalHeight || dimensions.height);
-      const scale = Math.min(scaleX, scaleY, 1) * 0.9;
-      transform = zoomIdentity
-        .translate(dimensions.width / 2, dimensions.height / 2)
-        .scale(scale)
-        .translate(-dimensions.width / 2, -dimensions.height / 2);
-    }
+    const islands = islandsData.islands;
+    if (islands.length === 0 || dimensions.width === 0 || dimensions.height === 0) return;
+    const minX = Math.min(...islands.map((island) => island.centerX - island.radius));
+    const maxX = Math.max(...islands.map((island) => island.centerX + island.radius));
+    const minY = Math.min(...islands.map((island) => island.centerY - island.radius));
+    const maxY = Math.max(...islands.map((island) => island.centerY + island.radius + 46));
+    const padding = 64;
+    const scale = Math.min(
+      1,
+      (dimensions.width - padding * 2) / Math.max(1, maxX - minX),
+      (dimensions.height - padding * 2) / Math.max(1, maxY - minY),
+    );
+    const centerX = dimensions.width / 2 + (minX + maxX) / 2;
+    const centerY = dimensions.height / 2 + (minY + maxY) / 2;
+    const transform = zoomIdentity
+      .translate(dimensions.width / 2, dimensions.height / 2)
+      .scale(scale)
+      .translate(-centerX, -centerY);
 
     svg.interrupt();
     if (animate) {
@@ -734,12 +752,16 @@ export const KnowledgeGraphView: React.FC = () => {
     } else {
       svg.call(zoomBehaviorRef.current.transform, transform);
     }
-  }, [islandsData.islands.length, dimensions.width, dimensions.height]);
+  }, [islandsData.islands, dimensions.height, dimensions.width]);
 
   useEffect(() => {
-    if (dimensions.width === 0 || dimensions.height === 0) return;
+    if (dimensions.width === 0 || dimensions.height === 0 || islandsData.islands.length === 0) return;
+    const modeKey = `${selectedRootFilter}:${radiusMode}`;
+    if (didInitialViewportFitRef.current && lastViewportModeRef.current === modeKey) return;
     zoomToFit(false);
-  }, [zoomToFit, selectedRootFilter, radiusMode]);
+    didInitialViewportFitRef.current = true;
+    lastViewportModeRef.current = modeKey;
+  }, [islandsData.islands.length, zoomToFit, selectedRootFilter, radiusMode, dimensions.height, dimensions.width]);
 
   const selectedNode = selectedNodeId ? nodeById.get(selectedNodeId) : undefined;
   const selectedActivationState = selectedNodeId
@@ -756,7 +778,7 @@ export const KnowledgeGraphView: React.FC = () => {
     let islandRootId: string | null = null;
     
     for (const island of islandsData.islands) {
-      const found = island.nodes.find((n: any) => n.id === selectedNodeId);
+      const found = island.nodes.find((node) => node.data.id === selectedNodeId);
       if (found) {
         targetNode = found;
         islandRootId = island.rootId;
@@ -772,8 +794,7 @@ export const KnowledgeGraphView: React.FC = () => {
       // We want to rotate the chart counter-clockwise by midAngle to bring the node to 0.
       let targetRotation = - (midAngle * 180 / Math.PI);
       
-      // Normalize to 0-360 range
-      targetRotation = targetRotation % 360;
+      targetRotation = ((targetRotation % 360) + 360) % 360;
       
       setIslandRotations(prev => ({
         ...prev,
@@ -948,8 +969,14 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [relatedTaskBlocks, selectedReviewTasks, selectedScopeIds, selectedActivationState]);
 
   useEffect(() => {
-    if (selectedNode) {
-      setEditName(selectedNode.name);
+    if (!selectedNode) {
+      lastSelectedNodeIdRef.current = null;
+      return;
+    }
+    const selectionChanged = lastSelectedNodeIdRef.current !== selectedNode.id;
+    lastSelectedNodeIdRef.current = selectedNode.id;
+    if (selectionChanged || !isEditingNameRef.current) setEditName(selectedNode.name);
+    if (selectionChanged) {
       setIsPanelOpen(true);
       setDetailScope(getDescendants(selectedNode.id).length > 0 ? 'subtree' : 'direct');
     }
@@ -1044,8 +1071,8 @@ export const KnowledgeGraphView: React.FC = () => {
             className="absolute top-20 left-1/2 -translate-x-1/2 bg-blue-500/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-lg text-[13px] font-medium z-20 flex items-center gap-2 border border-blue-400"
           >
             <MoveRight size={14} className="text-white" />
-            请点击选择要转移到的目标父节点，或点击空白处使其成为根节点。
-            <button onClick={() => setIsMoveMode(false)} className="ml-2 px-2 py-0.5 bg-white/20 rounded text-xs hover:bg-white/30 transition-colors">取消</button>
+            {moveError || '请点击选择要转移到的目标父节点，或点击空白处使其成为根节点。'}
+            <button onClick={() => { setIsMoveMode(false); setMoveError(''); }} className="ml-2 px-2 py-0.5 bg-white/20 rounded text-xs hover:bg-white/30 transition-colors">取消</button>
           </motion.div>
         ) : !bindingSession.active && showHint ? (
           <motion.div 
@@ -1185,9 +1212,9 @@ export const KnowledgeGraphView: React.FC = () => {
                   aria-pressed={statusFilter === 'all'}
                   onClick={() => { setStatusFilter('all'); setActiveDockPanel(null); }}
                 >
-                  <span className="flex h-4 w-4 items-center justify-center">{statusFilter === 'all' && <Check size={13} />}</span>
                   <span className="flex-1">全部状态</span>
-                  <span className="text-[10px] text-slate-400">{islandsData.allFlatNodes.filter((node: ViewNode) => !node.isVirtual).length}</span>
+                  <span className="text-[10px] text-slate-400">{islandsData.allFlatNodes.length}</span>
+                  <span className="flex h-4 w-4 items-center justify-center">{statusFilter === 'all' && <Check size={13} />}</span>
                 </button>
                 {GRAPH_STATUS_OPTIONS.map((option) => (
                   <button
@@ -1320,19 +1347,19 @@ export const KnowledgeGraphView: React.FC = () => {
                     transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' 
                   }}
                 >
-                {island.nodes.map((node: any) => {
-                  const isVirtual = node.data.isVirtual;
-                  const isSelected = selectedNodeId === node.id;
-                  const isBindingSelected = bindingSession.active && bindingSession.selectedNodeIds.includes(node.id);
+                {island.nodes.map((node) => {
+                  const nodeId = node.data.id;
+                  const isSelected = selectedNodeId === nodeId;
+                  const isBindingSelected = bindingSession.active && bindingSession.selectedNodeIds.includes(nodeId);
 
                   const isXRayActive = matchingNodeIds !== null;
-                  const isXRayMatched = isXRayActive && matchingNodeIds.has(node.id);
+                  const isXRayMatched = isXRayActive && matchingNodeIds.has(nodeId);
                   const isDimmed = isXRayActive && !isXRayMatched;
 
-                  const fillColor = isVirtual ? '#ffffff' : node.data.color;
+                  const fillColor = node.data.color;
                   const hasOverdueRounds = node.data.overdueCount > 0;
-                  const strokeColor = isBindingSelected ? '#4f46e5' : (isSelected ? '#0f172a' : (hasOverdueRounds ? '#ef4444' : (isVirtual ? '#cbd5e1' : '#ffffff')));
-                  const strokeWidth = isBindingSelected ? 4 : (isSelected ? 2.5 : (hasOverdueRounds ? 3 : (isVirtual ? 2 : 1.5)));
+                  const strokeColor = isBindingSelected ? '#4f46e5' : (isSelected ? '#0f172a' : (hasOverdueRounds ? '#ef4444' : '#ffffff'));
+                  const strokeWidth = isBindingSelected ? 4 : (isSelected ? 2.5 : (hasOverdueRounds ? 3 : 1.5));
 
               const angleDiff = node.x1 - node.x0;
                const radiusDiff = node.y1 - node.y0;
@@ -1380,34 +1407,34 @@ export const KnowledgeGraphView: React.FC = () => {
                  ? `rotate(${-islandRotation})` // Counter-rotate root text
                  : `rotate(${x - 90}) translate(${y},0) rotate(${flipText ? 180 : 0})`;
 
-               // 移除根节点硬编码的黑色，所有节点统一使用动态对比度颜色
-               const textFill = getContrastYIQ(fillColor);
+                const textFill = getAccessibleTextColor(fillColor);
 
                   return (
                     <g 
-                      key={node.id}
-                      data-node-id={node.id}
+                       key={nodeId}
+                       data-node-id={nodeId}
                       role="button"
                       tabIndex={0}
                       aria-label={`知识节点：${node.data.name}`}
                       onClick={(e) => { 
                         e.stopPropagation(); 
                         if (bindingSession.active) {
-                          if (node.data.isLeaf) bindingSession.toggleNode(node.id);
-                          else focusRoot(node.id);
+                          if (node.data.isLeaf) bindingSession.toggleNode(nodeId);
+                          else focusRoot(nodeId);
                           return;
                         }
-                        if (isMoveMode && selectedNodeId && selectedNodeId !== node.id) {
+                        if (isMoveMode && selectedNodeId && selectedNodeId !== nodeId) {
                           // Prevent moving a node to its own descendant
                           const descendants = getDescendants(selectedNodeId);
-                          if (!descendants.includes(node.id)) {
-                            updateNode(selectedNodeId, { parentId: node.id });
+                          if (!descendants.includes(nodeId)) {
+                            updateNode(selectedNodeId, { parentId: nodeId });
                             setIsMoveMode(false);
+                            setMoveError('');
                           } else {
-                            alert('不能将节点移动到它的子节点下');
+                            setMoveError('不能将节点移动到它的子节点下。');
                           }
                         } else {
-                          setSelectedNodeId(node.id);
+                          setSelectedNodeId(nodeId);
                           setIsMoveMode(false);
                         }
                       }}
@@ -1419,15 +1446,15 @@ export const KnowledgeGraphView: React.FC = () => {
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         if (bindingSession.active) {
-                          if (!node.data.isLeaf) focusRoot(node.id);
+                          if (!node.data.isLeaf) focusRoot(nodeId);
                           return;
                         }
                         if (node.depth > 0 && !node.data.isLeaf) {
-                          focusRoot(node.id);
+                          focusRoot(nodeId);
                         } else if (node.depth === 0 && selectedRootFilter !== 'all') {
                           focusRoot('all');
                         } else if (node.depth === 0 && selectedRootFilter === 'all') {
-                          focusRoot(node.id);
+                          focusRoot(nodeId);
                         }
                       }}
                       className={`cursor-pointer transition-opacity duration-300 ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
@@ -1438,7 +1465,7 @@ export const KnowledgeGraphView: React.FC = () => {
                         fill={fillColor}
                         stroke={strokeColor}
                         strokeWidth={strokeWidth}
-                        className="transition-all duration-300 hover:opacity-85"
+                        className="transition-all duration-300 hover:opacity-90"
                       />
                       {showText && (
                         <text
@@ -1477,14 +1504,23 @@ export const KnowledgeGraphView: React.FC = () => {
                     className="w-full bg-transparent text-lg font-bold text-slate-800 placeholder-slate-400 focus:outline-none rounded px-1 -ml-1 border border-transparent focus:border-slate-200/60 transition-all truncate"
                     value={editName}
                     onChange={e => setEditName(e.target.value)}
-                    onBlur={() => { if(editName.trim()) updateNode(selectedNode.id, { name: editName.trim() }) }}
+                    onFocus={() => { isEditingNameRef.current = true; }}
+                    onBlur={() => {
+                      isEditingNameRef.current = false;
+                      const name = editName.trim();
+                      if (!name) {
+                        setEditName(selectedNode.name);
+                        return;
+                      }
+                      if (name !== selectedNode.name) updateNode(selectedNode.id, { name });
+                    }}
                     onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                     title={editName}
                   />
                 </div>
                 <div className="flex items-center shrink-0">
                   <div className={styles.actionGroup}>
-                    <button onClick={() => setIsMoveMode(!isMoveMode)} className={`${styles.actionBtn} ${isMoveMode ? styles.active : ''}`} title="转移节点层级">
+                    <button onClick={() => { setIsMoveMode((value) => !value); setMoveError(''); }} className={`${styles.actionBtn} ${isMoveMode ? styles.active : ''}`} title="转移节点层级">
                       <MoveRight size={13} />
                     </button>
                     <div className={styles.actionDivider}></div>
