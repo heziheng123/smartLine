@@ -1104,6 +1104,8 @@ const App: React.FC = () => {
             role="tabpanel"
             hidden={currentView !== 'mind-map'}
             aria-hidden={currentView !== 'mind-map'}
+            /* .tl-app-split 的 display:flex 会覆盖 hidden 属性的 UA 样式，需内联强制隐藏 */
+            style={{ display: currentView === 'mind-map' ? 'flex' : 'none' }}
             className="tl-app-split tl-app-split--ebb"
             custom={viewMotionContext}
             variants={VIEW_MOTION_VARIANTS}
