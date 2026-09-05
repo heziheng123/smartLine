@@ -27,12 +27,15 @@ import {
 } from './commands';
 import { mindMapRepository } from './repository';
 import type { MindMapCatalogEntry } from './syncCore';
+import { repairMindMapTreeForest } from './treeValidation';
+import { readMindMapSnapshots, restoreMindMapSnapshot, saveMindMapSnapshot, type MindMapSnapshot } from './snapshots';
 
 interface MindMapStore {
   isHydrated: boolean;
   index: MindMapIndex;
   document: MindMapDocument | null;
   history: MindMapHistory;
+  snapshots: MindMapSnapshot[];
   saveStatus: MindMapSaveStatus;
   error: string | null;
   hydrate: () => Promise<void>;
@@ -50,6 +53,8 @@ interface MindMapStore {
   execute: (label: string, transform: (document: MindMapDocument) => MindMapDocument) => void;
   undo: () => void;
   redo: () => void;
+  createSnapshot: (label?: string) => void;
+  restoreSnapshot: (id: string) => void;
   createNode: (position: { x: number; y: number }, text?: string) => string | null;
   updateNode: (id: string, updates: Partial<Omit<MindMapNode, 'id' | 'createdAt'>>) => void;
   deleteNodes: (ids: string[]) => void;
@@ -106,6 +111,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
     index: emptyIndex(),
     document: null,
     history: emptyMindMapHistory(),
+    snapshots: [],
     saveStatus: 'idle',
     error: null,
 
@@ -133,13 +139,14 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
           }
           const history = histories.get(document.id) ?? emptyMindMapHistory();
           histories.set(document.id, history);
-          set({ isHydrated: true, document, index, history, saveStatus: 'saved', error: null });
+          set({ isHydrated: true, document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saved', error: null });
         } catch (error) {
           set({
             isHydrated: true,
             document: null,
             index: emptyIndex(),
             history: emptyMindMapHistory(),
+            snapshots: [],
             saveStatus: 'error',
             error: error instanceof Error ? error.message : '思维导图数据加载失败。',
           });
@@ -157,6 +164,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         document: null,
         index: emptyIndex(),
         history: emptyMindMapHistory(),
+        snapshots: [],
         saveStatus: 'idle',
         error: null,
       });
@@ -169,7 +177,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       const index = updateSummary(get().index, document);
       const history = emptyMindMapHistory();
       histories.set(document.id, history);
-      set({ document, index, history, saveStatus: 'saving', error: null });
+      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
       try {
         await mindMapRepository.saveNow(document, index);
         set({ saveStatus: 'saved' });
@@ -206,7 +214,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       const index = updateSummary(get().index, document);
       const history = emptyMindMapHistory();
       histories.set(document.id, history);
-      set({ document, index, history, saveStatus: 'saving', error: null });
+      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
       try {
         await mindMapRepository.saveNow(document, index);
         set({ saveStatus: 'saved' });
@@ -228,7 +236,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         const index = updateSummary(get().index, document);
         const history = histories.get(document.id) ?? emptyMindMapHistory();
         histories.set(document.id, history);
-        set({ document, index, history, saveStatus: 'saved', error: null });
+      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saved', error: null });
         await mindMapRepository.saveNow(document, index);
       } catch (error) {
         set({ error: error instanceof Error ? error.message : '切换导图失败。' });
@@ -257,7 +265,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       };
       const history = histories.get(document.id) ?? emptyMindMapHistory();
       histories.set(document.id, history);
-      set({ document, index, history, saveStatus: 'saving', error: null });
+      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
       try {
         await mindMapRepository.saveNow(document, index);
         await mindMapRepository.deleteDocument(current.id);
@@ -300,7 +308,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         const index = updateSummary(get().index, document);
         const history = emptyMindMapHistory();
         histories.set(document.id, history);
-        set({ document, index, history, saveStatus: 'saving', error: null });
+        set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
         await mindMapRepository.saveNow(document, index);
         set({ saveStatus: 'saved' });
         return true;
@@ -322,7 +330,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       // remote merge lets Undo overwrite collaborators' newer changes.
       const history = emptyMindMapHistory();
       histories.set(normalized.id, history);
-      set({ history });
+      set({ history, snapshots: readMindMapSnapshots(normalized.id) });
       queueSave(normalized, updateSummary(get().index, normalized));
     },
 
@@ -426,12 +434,16 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       const projected = transformed.lifeMap !== current.lifeMap
         ? reconcileLifeMapProjections(transformed)
         : transformed;
-      const document = { ...maintainMindMapContainers(projected), updatedAt: Date.now() };
+      const document = {
+        ...maintainMindMapContainers(repairMindMapTreeForest(projected)),
+        updatedAt: Date.now(),
+      };
       const entry = createHistoryEntry(label, current, document);
       if (!entry) return;
       const history = pushHistory(get().history, entry);
+      const snapshots = saveMindMapSnapshot(current, label);
       histories.set(document.id, history);
-      set({ history });
+      set({ history, snapshots });
       queueSave(document, updateSummary(get().index, document));
     },
 
@@ -463,6 +475,19 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       histories.set(document.id, nextHistory);
       set({ history: nextHistory });
       queueSave(document, updateSummary(get().index, document));
+    },
+
+    createSnapshot: (label = '手动创建快照') => {
+      const document = get().document;
+      if (!document) return;
+      set({ snapshots: saveMindMapSnapshot(document, label, true) });
+    },
+
+    restoreSnapshot: (id) => {
+      const snapshot = get().snapshots.find((item) => item.id === id);
+      const restored = snapshot ? restoreMindMapSnapshot(snapshot) : null;
+      if (!snapshot || !restored || restored.id !== get().document?.id) return;
+      get().execute(`恢复版本：${snapshot.label}`, () => restored);
     },
 
     createNode: (position, text = '') => {

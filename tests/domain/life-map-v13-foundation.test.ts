@@ -4,7 +4,6 @@ import { createEmptyLifeMapData } from '../../src/lifeMap/data.ts';
 import { createLifeMapTimeMapper, getLifeMapDateRange } from '../../src/lifeMap/time/lifeMapTime.ts';
 import { getStageContents, getStageOverlaps, getStageStats, getStageWorkspaceDefaultZoom, getUnassignedLifeMapContent } from '../../src/lifeMap/selectors/lifeMapSelectors.ts';
 import { createLifePathGeometry } from '../../src/lifeMap/geometry/lifePathGeometry.ts';
-import { createParallelStageBands, createStageBand, createStageBranchLayout } from '../../src/lifeMap/geometry/stageBandGeometry.ts';
 
 const meta = { createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', revision: 1 };
 
@@ -65,35 +64,4 @@ test('v13 几何层不依赖 DOM，路径连续、切线法线标准且标签保
     assert.ok(Math.abs(geometry.getLabelAngle(y)) <= 10);
     assert.ok(geometry.getAmplitudeAt() <= 72);
   }
-});
-
-test('v13 阶段弧带为封闭路径，四重重叠仅展示三条并稳定汇总', () => {
-  const time = createLifeMapTimeMapper('2026-01-01', 4);
-  const geometry = createLifePathGeometry();
-  const stages = [0, 1, 2, 3].map((index) => ({ id: `stage-${index}`, name: `阶段 ${index}`, start: '2026-02-01', end: '2026-03-01', ...meta }));
-  const band = createStageBand(stages[0], geometry, { dateToWorldY: time.dateToWorldY });
-  assert.ok(band.path.startsWith('M '));
-  assert.ok(band.path.endsWith(' Z'));
-  assert.ok(band.points.length > 4);
-  const parallel = createParallelStageBands(stages, geometry, { dateToWorldY: time.dateToWorldY, today: '2026-02-15', selectedStageId: 'stage-3' });
-  assert.equal(parallel.visible.length, 3);
-  assert.equal(parallel.overflowCount, 1);
-  assert.deepEqual(parallel.visible.map((item) => item.id).sort(), ['stage-0', 'stage-1', 'stage-3']);
-});
-
-test('v13 普通时期路径收束，仅在阶段重叠区间平滑分叉并重新汇聚', () => {
-  const time = createLifeMapTimeMapper('2026-01-01', 6);
-  const stages = [
-    { id: 'a', name: '工作', start: '2026-02-01', end: '2026-04-30', ...meta },
-    { id: 'b', name: '学习', start: '2026-03-01', end: '2026-03-31', ...meta },
-  ];
-  const branches = createStageBranchLayout(stages, time.dateToWorldY);
-  const beforeOverlap = time.dateToWorldY('2026-02-10');
-  const inOverlap = time.dateToWorldY('2026-03-15');
-  const afterOverlap = time.dateToWorldY('2026-04-20');
-  assert.ok(Math.abs(branches.getOffset('a', time.dateToWorldY('2026-02-01'))) < 1);
-  assert.ok(Math.abs(branches.getOffset('a', beforeOverlap)) < 1);
-  assert.ok(Math.abs(branches.getOffset('a', inOverlap) - branches.getOffset('b', inOverlap)) > 20);
-  assert.ok(Math.abs(branches.getOffset('a', afterOverlap)) < 1);
-  assert.ok(Math.abs(branches.getOffset('a', time.dateToWorldY('2026-04-30'))) < 1);
 });

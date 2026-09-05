@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildEdgeRoute, routeTargetTangent } from '../../src/mindMap/canvas/edgeRouting.ts';
+import { buildEdgeRoute, pointOnRoute, routeTargetTangent } from '../../src/mindMap/canvas/edgeRouting.ts';
 import { createMindMapEdge, createEmptyMindMapDocument, createProjectReferenceCard, createTextMindMapNode, duplicateMindMapDocument, normalizeMindMapDocument } from '../../src/mindMap/model.ts';
 
 const source = { x: 0, y: 0, width: 100, height: 40 };
@@ -34,6 +34,35 @@ test('hierarchy router follows layout direction and arrows follow the target tan
     assert.deepEqual([route.sourceSide, route.targetSide], sides);
   }
   assert.ok(routeTargetTangent(buildEdgeRoute(source, target, { kind: 'hierarchy', hierarchyDirection: 'top-bottom' })).y > 0);
+});
+
+test('hierarchy sibling ports fan out in their layout order', () => {
+  const parent = { x: 0, y: 0, width: 120, height: 96 };
+  const targets = [-240, 0, 240].map((y) => ({ x: 320, y, width: 100, height: 48 }));
+  const routes = targets.map((target, index) => buildEdgeRoute(parent, target, {
+    kind: 'hierarchy',
+    hierarchyDirection: 'left-right',
+    hierarchyPort: { index, count: targets.length },
+  }));
+  assert.deepEqual(routes.map((route) => route.start.y), [...routes.map((route) => route.start.y)].sort((a, b) => a - b));
+  assert.deepEqual(routes.map((route) => pointOnRoute(route, 0.25).y), [...routes.map((route) => pointOnRoute(route, 0.25).y)].sort((a, b) => a - b));
+
+  const verticalRoutes = [-240, 0, 240].map((x, index) => buildEdgeRoute(parent, { x, y: 320, width: 48, height: 100 }, {
+    kind: 'hierarchy',
+    hierarchyDirection: 'top-bottom',
+    hierarchyPort: { index, count: 3 },
+  }));
+  assert.deepEqual(verticalRoutes.map((route) => route.start.x), [...verticalRoutes.map((route) => route.start.x)].sort((a, b) => a - b));
+});
+
+test('hierarchy curves do not fold back when sibling rows are far apart', () => {
+  const route = buildEdgeRoute(
+    { x: 0, y: 300, width: 196, height: 70 },
+    { x: 366, y: 610, width: 198, height: 70 },
+    { kind: 'hierarchy', hierarchyDirection: 'left-right', hierarchyPort: { index: 2, count: 5 } },
+  );
+  assert.ok(route.control1.x <= route.control2.x);
+  assert.ok(pointOnRoute(route, 0.25).x < pointOnRoute(route, 0.75).x);
 });
 
 test('new relation edges retain the weak, arrowless default semantics', () => {

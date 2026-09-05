@@ -1,4 +1,7 @@
 import {
+  createEmptyMindMapDocument,
+  createMindMapEdge,
+  createTextMindMapNode,
   normalizeMindMapDocument,
   type MindMapDocument,
   type MindMapEdge,
@@ -7,6 +10,8 @@ import { buildEdgeRoute } from './canvas/edgeRouting';
 import { edgeConnectableObjects } from './canvas/connectableObjects';
 import { mindMapRepository } from './repository';
 import { resolveBranchThemeColors, resolveTreeEdgeColor } from './visualTheme';
+import { layoutMindMapTree } from './layout';
+import { repairMindMapTreeForest } from './treeValidation';
 
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
 
@@ -49,6 +54,88 @@ export function parseMindMapDocumentJson(source: string): MindMapDocument {
   return document;
 }
 
+type OutlineLine = { level: number; text: string };
+
+const outlineLine = (line: string, previousLevel: number, headingLevel: number): OutlineLine | null => {
+  const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+  if (heading) return { level: heading[1].length, text: heading[2] };
+  const list = /^(\s*)(?:[-*+]|\d+[.)])\s+(.+?)\s*$/.exec(line);
+  if (list) {
+    const indentLevel = Math.floor(list[1].replace(/\t/g, '  ').length / 2);
+    return { level: (headingLevel || 0) + indentLevel + 1, text: list[2] };
+  }
+  const text = line.trim();
+  return text ? { level: Math.max(1, previousLevel), text } : null;
+};
+
+/** Imports headings and indented lists as a rooted forest of text nodes. */
+export function parseMindMapMarkdownOutline(source: string, title = '导入的 Markdown 大纲'): MindMapDocument {
+  if (new Blob([source]).size > MAX_JSON_BYTES) throw new Error('导入文件不能超过 32 MiB。');
+  const lines: OutlineLine[] = [];
+  let previousLevel = 1;
+  let headingLevel = 0;
+  for (const sourceLine of source.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const parsed = outlineLine(sourceLine, previousLevel, headingLevel);
+    if (!parsed) continue;
+    if (/^#{1,6}\s+/.test(sourceLine)) headingLevel = parsed.level;
+    previousLevel = parsed.level;
+    lines.push(parsed);
+  }
+  if (lines.length === 0) throw new Error('Markdown 大纲中没有可导入的标题或列表项。');
+
+  const firstHeading = /^#\s+(.+?)\s*$/m.exec(source)?.[1];
+  const document = createEmptyMindMapDocument(firstHeading || title);
+  const parentAtLevel: string[] = [];
+  for (const [index, line] of lines.entries()) {
+    const node = createTextMindMapNode(
+      { x: (line.level - 1) * 220, y: index * 88 },
+      { text: line.text },
+    );
+    document.nodes[node.id] = node;
+    document.zOrder.push(node.id);
+    const parentId = parentAtLevel.slice(0, line.level - 1).reverse().find(Boolean);
+    if (parentId) {
+      const edge = createMindMapEdge(parentId, node.id, { relationship: 'tree' });
+      document.edges[edge.id] = edge;
+    }
+    parentAtLevel.length = line.level - 1;
+    parentAtLevel[line.level - 1] = node.id;
+  }
+  return layoutMindMapTree(document);
+}
+
+/** Serializes tree edges as an indented Markdown outline; reference edges stay visual-only. */
+export function serializeMindMapMarkdownOutline(document: MindMapDocument): string {
+  const repaired = repairMindMapTreeForest(document);
+  const order = new Map(repaired.zOrder.map((id, index) => [id, index]));
+  const children = new Map<string, string[]>();
+  const childIds = new Set<string>();
+  for (const edge of Object.values(repaired.edges)) {
+    if (edge.relationship !== 'tree' || edge.source.type !== 'node' || edge.target.type !== 'node') continue;
+    const list = children.get(edge.sourceId) ?? [];
+    list.push(edge.targetId);
+    children.set(edge.sourceId, list);
+    childIds.add(edge.targetId);
+  }
+  for (const list of children.values()) list.sort((left, right) => (order.get(left) ?? Infinity) - (order.get(right) ?? Infinity));
+  const roots = [...repaired.zOrder, ...Object.keys(repaired.nodes)]
+    .filter((id, index, ids) => ids.indexOf(id) === index && repaired.nodes[id] && !childIds.has(id));
+  const output: string[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string, depth: number) => {
+    if (visited.has(id)) return;
+    const node = repaired.nodes[id];
+    if (!node) return;
+    visited.add(id);
+    const text = node.text.trim().replace(/\s*\n\s*/g, ' ') || '未命名节点';
+    output.push(`${'  '.repeat(depth)}- ${text}`);
+    for (const childId of children.get(id) ?? []) visit(childId, depth + 1);
+  };
+  for (const rootId of roots) visit(rootId, 0);
+  for (const nodeId of repaired.zOrder) visit(nodeId, 0);
+  return output.join('\n') + (output.length ? '\n' : '');
+}
+
 const blobDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('图片导出失败。'));
@@ -69,6 +156,16 @@ export async function downloadMindMapJson(document: MindMapDocument) {
   const anchor = window.document.createElement('a');
   anchor.href = url;
   anchor.download = safeFileName(document.title) + '.json';
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function downloadMindMapMarkdownOutline(document: MindMapDocument) {
+  const blob = new Blob([serializeMindMapMarkdownOutline(document)], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement('a');
+  anchor.href = url;
+  anchor.download = safeFileName(document.title) + '.md';
   anchor.click();
   URL.revokeObjectURL(url);
 }

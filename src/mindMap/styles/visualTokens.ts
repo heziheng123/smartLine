@@ -86,3 +86,13 @@ export const mindMapVisualCssVariables = {
   '--mm-font-small': `${MIND_MAP_VISUAL_TOKENS.typography.sizeSmall}px`,
   '--mm-font-size': `${MIND_MAP_VISUAL_TOKENS.typography.sizeUi}px`,
 } as CSSProperties;
+
+export function mindMapThemeCssVariables(theme: 'light' | 'dark' | 'minimal'): CSSProperties {
+  if (theme === 'dark') return {
+    '--mm-canvas': '#17181c', '--mm-surface': '#24262c', '--mm-surface-muted': '#30333b', '--mm-text': '#f3f4f6', '--mm-text-muted': '#b6bbc6', '--mm-border': 'rgba(255,255,255,0.16)', '--mm-border-strong': 'rgba(255,255,255,0.28)', '--mm-accent-soft': '#30305b',
+  } as CSSProperties;
+  if (theme === 'minimal') return {
+    '--mm-canvas': '#ffffff', '--mm-surface': '#ffffff', '--mm-surface-muted': '#fafafa', '--mm-border': 'rgba(32,33,36,0.08)', '--mm-shadow-floating': '0 3px 12px rgba(27,31,39,0.06)',
+  } as CSSProperties;
+  return {};
+}

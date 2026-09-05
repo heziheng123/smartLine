@@ -30,6 +30,29 @@ const addNode = async (page: Page, x: number, y: number, text: string) => {
   await page.getByLabel('新节点文本').press('Escape');
 };
 
+const addTreeChild = async (page: Page, parentText: string, text: string) => {
+  const canvas = page.getByTestId('mind-map-canvas');
+  const state = await graphState(page);
+  const entry = Object.entries(state.document?.nodes ?? {}).find(([, node]) => (
+    (node as { text: string }).text === parentText
+  )) as [string, { x: number; y: number }] | undefined;
+  expect(entry).toBeTruthy();
+  const [, parent] = entry!;
+  const viewport = state.document!.viewport;
+  await canvas.click({ position: {
+    x: parent.x * viewport.scale + viewport.x,
+    y: parent.y * viewport.scale + viewport.y,
+  } });
+  await page.keyboard.press('Tab');
+  const editor = page.getByLabel('新节点文本');
+  await expect(editor).toBeVisible();
+  await editor.fill(text);
+  await editor.press('Enter');
+  await expect.poll(async () => Object.values((await graphState(page)).document?.nodes ?? {}).some((node) => (
+    (node as { text: string }).text === text
+  ))).toBe(true);
+};
+
 test('the node editor continuously creates children and siblings as atomic graph commands', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
@@ -131,6 +154,28 @@ test('the node + action creates a tree child without a keyboard', async ({ page 
   expect(edge.sourceId).toBe(Object.keys(after.document?.nodes ?? {}).find((id) => (after.document?.nodes[id] as { text: string }).text === '英语'));
 });
 
+test('automatic child creation reflows the owning tree without moving its root', async ({ page }) => {
+  await openMindMap(page);
+  await addNode(page, 260, 240, '考研规划');
+  const initial = await graphState(page);
+  const root = Object.values(initial.document?.nodes ?? {})[0] as { x: number; y: number };
+
+  for (const [parent, child] of [
+    ['考研规划', '英语'], ['考研规划', '政治'],
+    ['英语', '阅读'], ['英语', '作文'],
+    ['政治', 'wa'], ['政治', '嘻嘻'],
+    ['英语', '单词'],
+  ]) await addTreeChild(page, parent, child);
+
+  const current = await graphState(page);
+  const nodes = Object.values(current.document?.nodes ?? {}) as Array<{ text: string; x: number; y: number; height: number }>;
+  const currentRoot = nodes.find((node) => node.text === '考研规划')!;
+  const word = nodes.find((node) => node.text === '单词')!;
+  const wa = nodes.find((node) => node.text === 'wa')!;
+  expect([currentRoot.x, currentRoot.y]).toEqual([root.x, root.y]);
+  expect(wa.y - wa.height / 2 - (word.y + word.height / 2)).toBeGreaterThanOrEqual(48);
+});
+
 test('the visible collapse control works before its node is selected', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
@@ -171,7 +216,7 @@ test('a branch can be selected as a whole and focused without changing the docum
     viewport: { x: 0, y: 0, scale: 1 },
     settings: { grid: 'dots', background: '#f9f9fb', selectionMode: 'contain' },
   };
-  await page.getByLabel('选择思维导图 JSON 文件').setInputFiles({
+  await page.getByLabel('选择思维导图或 Markdown 文件').setInputFiles({
     name: 'branch-focus-map.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(imported)),
@@ -228,7 +273,7 @@ test('JSON import, layout, search, JSON export and PNG export stay inside the pa
     viewport: { x: 0, y: 0, scale: 1 },
     settings: { grid: 'dots', background: '#f9f9fb', selectionMode: 'contain' },
   };
-  await page.getByLabel('选择思维导图 JSON 文件').setInputFiles({
+  await page.getByLabel('选择思维导图或 Markdown 文件').setInputFiles({
     name: 'imported-map.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(imported)),
@@ -241,6 +286,11 @@ test('JSON import, layout, search, JSON export and PNG export stay inside the pa
   await expect.poll(async () => (await graphState(page)).document?.nodes.root.x ?? 0).toBeLessThan(200);
   const laidOut = (await graphState(page)).document!;
   expect(laidOut.nodes.root.x).toBeLessThan(laidOut.nodes.child.x);
+
+  await page.getByRole('button', { name: '搜索或命令' }).click();
+  await page.getByLabel('搜索思维导图').fill('显示线条网格');
+  await page.getByRole('button', { name: '显示线条网格' }).click();
+  await expect.poll(async () => (await graphState(page)).document?.settings.grid).toBe('lines');
 
   await page.getByRole('button', { name: '搜索或命令' }).click();
   await page.getByLabel('搜索思维导图').fill('关键连接');

@@ -591,6 +591,25 @@
   text-align: left;
 }
 
+.layoutTheme {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mm-space-sm);
+  padding: 0 8px;
+  color: var(--mm-text-muted);
+}
+
+.layoutTheme select {
+  min-width: 72px;
+  border: 1px solid var(--mm-border);
+  border-radius: 5px;
+  color: var(--mm-text);
+  background: var(--mm-surface);
+  font: inherit;
+}
+
 .directionSelect {
   width: 34px;
 }
@@ -628,6 +647,66 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+.snapshotPanel {
+  position: absolute;
+  top: 44px;
+  right: var(--mm-space-md);
+  z-index: 30;
+  display: grid;
+  width: min(340px, calc(100vw - 24px));
+  gap: var(--mm-space-sm);
+  padding: var(--mm-space-md);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-panel);
+  color: var(--mm-text);
+  background: var(--mm-surface);
+  box-shadow: var(--mm-shadow-floating);
+  font-size: var(--mm-font-small);
+}
+
+.snapshotHeader,
+.snapshotList > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mm-space-sm);
+}
+
+.snapshotHeader button,
+.snapshotList button,
+.snapshotCreate {
+  border: 1px solid var(--mm-border);
+  border-radius: 6px;
+  color: var(--mm-text);
+  background: var(--mm-surface);
+  font: inherit;
+  cursor: pointer;
+}
+
+.snapshotCreate {
+  min-height: 30px;
+}
+
+.snapshotList {
+  display: grid;
+  max-height: 240px;
+  gap: 5px;
+  overflow: auto;
+}
+
+.snapshotList span {
+  overflow: hidden;
+  color: var(--mm-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshotPanel p,
+.snapshotPanel small {
+  margin: 0;
+  color: var(--mm-text-muted);
 }
 
 .lifePanelBackdrop {

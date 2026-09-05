@@ -77,6 +77,7 @@ export function createHistoryEntry(
     before.settings.grid !== after.settings.grid
     || before.settings.background !== after.settings.background
     || before.settings.selectionMode !== after.settings.selectionMode
+    || before.settings.theme !== after.settings.theme
   );
   const lifeMapChanged = !sameValue(before.lifeMap, after.lifeMap)
     || !sameValue(before.lifeMapMigration, after.lifeMapMigration);

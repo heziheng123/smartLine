@@ -41,10 +41,12 @@ import { mindMapRepository } from '../repository';
 import type { MindMapPresence, MindMapRemotePresence } from '../syncCore';
 import {
   downloadCanvasPng,
+  downloadMindMapMarkdownOutline,
   downloadMindMapPng,
+  parseMindMapMarkdownOutline,
   type MindMapPngScope,
 } from '../importExport';
-import { alignMindMapNodes, distributeMindMapNodes, layoutMindMapBranch, type TreeDirection } from '../layout';
+import { alignMindMapNodes, distributeMindMapNodes, findMindMapTreeRoot, layoutMindMapBranch, type TreeDirection } from '../layout';
 import { layoutMindMapTreeInWorker } from '../layoutWorkerClient';
 import { renderMindMapLatex, renderMindMapMarkdown } from '../richText';
 import { MIND_MAP_VISUAL_TOKENS } from '../styles/visualTokens';
@@ -67,7 +69,7 @@ import {
   type Rect,
 } from './geometry';
 import { MindMapSpatialIndex } from './spatialIndex';
-import { buildEdgeRoute, pointOnRoute, type EdgeRoute } from './edgeRouting';
+import { buildEdgeRoute, pointOnRoute, type EdgeRoute, type HierarchyPort } from './edgeRouting';
 import { connectableObjects, edgeConnectableObjects, hitConnectableObject, resolveConnectableObject, type ConnectableObject } from './connectableObjects';
 import { renderMindMapWebGl } from './webglRenderer';
 import { projectTimelineItems, timelineProjectionItems, timelineSelectedProjectIds, timelineStatus, timelineUnscheduledItemCount, timelineVisibleItems, type TimelineProjectionItem } from '../timelineProjection';
@@ -276,6 +278,9 @@ const MINIMAP_WIDTH = 144;
 const MINIMAP_HEIGHT = 90;
 const CLIPBOARD_PREFIX = 'smart-line-mind-map-clipboard:';
 
+const TASK_STATUS_ICON = { todo: '○', doing: '◐', done: '✓' } as const;
+const PRIORITY_COLOR = { low: '#3b82f6', medium: '#f59e0b', high: '#ef4444' } as const;
+
 const relationHandlePoint = (object: ConnectableObject): Point => ({
   x: object.bounds.x + object.bounds.width + 12,
   y: object.bounds.y + object.bounds.height / 2,
@@ -460,49 +465,74 @@ const pointSegmentDistance = (point: Point, start: Point, end: Point) => {
   return Math.hypot(point.x - (start.x + ratio * dx), point.y - (start.y + ratio * dy));
 };
 
-function edgeRoute(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection = 'left-right'): EdgeRoute | null {
+function edgeRoute(
+  edge: MindMapEdge,
+  document: MindMapDocument,
+  treeDirection: TreeDirection = 'left-right',
+  treeEdgePorts?: ReadonlyMap<string, HierarchyPort>,
+): EdgeRoute | null {
   const endpoints = edgeConnectableObjects(document, edge);
   if (!endpoints) return null;
   return buildEdgeRoute(
     endpoints.source.bounds,
     endpoints.target.bounds,
-    { kind: edge.relationship === 'tree' ? 'hierarchy' : 'relation', hierarchyDirection: treeDirection },
+    {
+      kind: edge.relationship === 'tree' ? 'hierarchy' : 'relation',
+      hierarchyDirection: treeDirection,
+      hierarchyPort: treeEdgePorts?.get(edge.id),
+    },
   );
 }
 
-function edgePoints(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection = 'left-right') {
-  const route = edgeRoute(edge, document, treeDirection);
+function edgePoints(
+  edge: MindMapEdge,
+  document: MindMapDocument,
+  treeDirection: TreeDirection = 'left-right',
+  treeEdgePorts?: ReadonlyMap<string, HierarchyPort>,
+) {
+  const route = edgeRoute(edge, document, treeDirection, treeEdgePorts);
   return route ? { start: route.start, end: route.end } : null;
 }
 
-function orthogonalPoints(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection = 'left-right') {
-  const endpoints = edgePoints(edge, document, treeDirection);
+function orthogonalPoints(
+  edge: MindMapEdge,
+  document: MindMapDocument,
+  treeDirection: TreeDirection = 'left-right',
+  treeEdgePorts?: ReadonlyMap<string, HierarchyPort>,
+) {
+  const endpoints = edgePoints(edge, document, treeDirection, treeEdgePorts);
   if (!endpoints) return null;
   if (edge.controlPoints.length > 0) return [endpoints.start, ...edge.controlPoints, endpoints.end];
   const middleX = (endpoints.start.x + endpoints.end.x) / 2;
   return [endpoints.start, { x: middleX, y: endpoints.start.y }, { x: middleX, y: endpoints.end.y }, endpoints.end];
 }
 
-function hitEdge(point: Point, document: MindMapDocument, tolerance: number, treeDirection: TreeDirection = 'left-right') {
+function hitEdge(
+  point: Point,
+  document: MindMapDocument,
+  tolerance: number,
+  treeDirection: TreeDirection = 'left-right',
+  treeEdgePorts?: ReadonlyMap<string, HierarchyPort>,
+) {
   const edges = Object.values(document.edges);
   for (let index = edges.length - 1; index >= 0; index -= 1) {
     const edge = edges[index];
     if (edgeIsHiddenInsideCollapsedSection(edge, document)) continue;
-    const points = edgePoints(edge, document, treeDirection);
+    const points = edgePoints(edge, document, treeDirection, treeEdgePorts);
     if (!points) continue;
     if (edge.type === 'straight') {
       if (pointSegmentDistance(point, points.start, points.end) <= tolerance) return edge;
       continue;
     }
     if (edge.type === 'orthogonal') {
-      const route = orthogonalPoints(edge, document, treeDirection);
+      const route = orthogonalPoints(edge, document, treeDirection, treeEdgePorts);
       if (!route) continue;
       for (let routeIndex = 1; routeIndex < route.length; routeIndex += 1) {
         if (pointSegmentDistance(point, route[routeIndex - 1], route[routeIndex]) <= tolerance) return edge;
       }
       continue;
     }
-    const route = edgeRoute(edge, document, treeDirection);
+    const route = edgeRoute(edge, document, treeDirection, treeEdgePorts);
     if (!route) continue;
     let previous = route.start;
     for (let step = 1; step <= 16; step += 1) {
@@ -757,6 +787,7 @@ export default function MindMapCanvas({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandSearch, setCommandSearch] = useState('');
+  const [searchCursor, setSearchCursor] = useState(0);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
   const [imageAssetUrls, setImageAssetUrls] = useState<Record<string, string>>({});
@@ -814,6 +845,27 @@ export default function MindMapCanvas({
     }
     return children;
   }, [document.edges]);
+  const treeEdgePorts = useMemo(() => {
+    const groups = new Map<string, MindMapEdge[]>();
+    for (const edge of Object.values(document.edges)) {
+      if (edge.relationship !== 'tree' || !document.nodes[edge.sourceId] || !document.nodes[edge.targetId]) continue;
+      const group = groups.get(edge.sourceId) ?? [];
+      group.push(edge);
+      groups.set(edge.sourceId, group);
+    }
+    const horizontal = treeDirection === 'left-right' || treeDirection === 'right-left';
+    const ports = new Map<string, HierarchyPort>();
+    for (const edges of groups.values()) {
+      edges.sort((left, right) => {
+        const leftNode = document.nodes[left.targetId];
+        const rightNode = document.nodes[right.targetId];
+        const difference = horizontal ? leftNode.y - rightNode.y : leftNode.x - rightNode.x;
+        return difference || left.id.localeCompare(right.id);
+      });
+      edges.forEach((edge, index) => ports.set(edge.id, { index, count: edges.length }));
+    }
+    return ports;
+  }, [document.edges, document.nodes, treeDirection]);
   const branchNodeIds = useCallback((rootId: string) => {
     const ids: string[] = [];
     const pending = [rootId];
@@ -1242,13 +1294,14 @@ export default function MindMapCanvas({
 
       if (document.settings.grid !== 'none') {
         const spacing = 24 * camera.scale;
-        if (spacing >= 8) {
+        if (spacing >= 5) {
           const offsetX = ((camera.x % spacing) + spacing) % spacing;
           const offsetY = ((camera.y % spacing) + spacing) % spacing;
-          context.fillStyle = MIND_MAP_VISUAL_TOKENS.canvas.gridDot;
+          const darkGrid = document.settings.theme === 'dark';
+          context.fillStyle = darkGrid ? 'rgba(255,255,255,0.24)' : 'rgba(32,33,36,0.20)';
           for (let x = offsetX; x < size.width; x += spacing) {
             for (let y = offsetY; y < size.height; y += spacing) {
-              if (document.settings.grid === 'dots') context.fillRect(x - 0.6, y - 0.6, 1.2, 1.2);
+              if (document.settings.grid === 'dots') context.fillRect(x - 0.8, y - 0.8, 1.6, 1.6);
             }
           }
           if (document.settings.grid === 'lines') {
@@ -1261,7 +1314,7 @@ export default function MindMapCanvas({
               context.moveTo(0, y);
               context.lineTo(size.width, y);
             }
-            context.strokeStyle = MIND_MAP_VISUAL_TOKENS.canvas.gridLine;
+            context.strokeStyle = darkGrid ? 'rgba(255,255,255,0.18)' : 'rgba(32,33,36,0.14)';
             context.lineWidth = 1;
             context.stroke();
           }
@@ -1365,11 +1418,11 @@ export default function MindMapCanvas({
               controlPoints: edge.controlPoints.map((point, index) => index === canvasInteraction.controlIndex ? canvasInteraction.currentWorld : point),
             }
           : edge;
-        const points = edgePoints(renderedEdge, edgeDocument, treeDirection);
+        const points = edgePoints(renderedEdge, edgeDocument, treeDirection, treeEdgePorts);
         if (!points) continue;
-        const bezier = edgeRoute(renderedEdge, edgeDocument, treeDirection);
+        const bezier = edgeRoute(renderedEdge, edgeDocument, treeDirection, treeEdgePorts);
         const routeWorld = edge.type === 'orthogonal'
-          ? orthogonalPoints(renderedEdge, edgeDocument, treeDirection) ?? [points.start, points.end]
+          ? orthogonalPoints(renderedEdge, edgeDocument, treeDirection, treeEdgePorts) ?? [points.start, points.end]
           : [points.start, points.end];
         const routeBounds = edge.type === 'curve' && bezier
           ? [bezier.start, bezier.control1, bezier.control2, bezier.end]
@@ -1498,7 +1551,7 @@ export default function MindMapCanvas({
 
       if (canvasInteraction?.type === 'reconnect') {
         const edge = document.edges[canvasInteraction.edgeId];
-        const points = edge ? edgePoints(edge, edgeDocument, treeDirection) : null;
+        const points = edge ? edgePoints(edge, edgeDocument, treeDirection, treeEdgePorts) : null;
         if (edge && points) {
           const fixed = canvasInteraction.endpoint === 'source' ? points.end : points.start;
           const start = worldToView(fixed, camera);
@@ -1599,6 +1652,21 @@ export default function MindMapCanvas({
             : topLeft.y + height / 2 - (lines.length - 1) * lineHeight / 2;
           lines.forEach((line, index) => context.fillText(line, textX, startY + index * lineHeight));
         }
+        if (camera.scale >= 0.45 && (node.taskStatus !== 'none' || node.priority !== 'none')) {
+          context.font = `${Math.max(10, 13 * camera.scale)}px sans-serif`;
+          context.textAlign = 'left';
+          context.textBaseline = 'top';
+          if (node.taskStatus !== 'none') {
+            context.fillStyle = node.taskStatus === 'done' ? '#16a34a' : presentation.accent;
+            context.fillText(TASK_STATUS_ICON[node.taskStatus], topLeft.x + 7 * camera.scale, topLeft.y + 6 * camera.scale);
+          }
+          if (node.priority !== 'none') {
+            context.fillStyle = PRIORITY_COLOR[node.priority];
+            context.beginPath();
+            context.arc(topLeft.x + width - 10 * camera.scale, topLeft.y + 10 * camera.scale, 3.5 * camera.scale, 0, Math.PI * 2);
+            context.fill();
+          }
+        }
         context.restore();
       }
 
@@ -1664,7 +1732,7 @@ export default function MindMapCanvas({
 
       if (selectedEdgeIds.length === 1) {
         const edge = document.edges[selectedEdgeIds[0]];
-        const points = edge ? edgePoints(edge, edgeDocument, treeDirection) : null;
+        const points = edge ? edgePoints(edge, edgeDocument, treeDirection, treeEdgePorts) : null;
         if (points) {
           context.fillStyle = '#ffffff';
           context.strokeStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
@@ -1704,7 +1772,7 @@ export default function MindMapCanvas({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [branchThemeColors, camera, canvasInteraction, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredEdgeId, hoveredNodeId, nodeDepthById, nodePresentationById, renderDocument, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, treeEdgePreview, visibleNodeIds, visibleZOrder, webglActive]);
+  }, [branchThemeColors, camera, canvasInteraction, canvasNodes, connectionSource, document, edgeNodes, hiddenNodeIds, hitConnectable, hoveredEdgeId, hoveredNodeId, nodeDepthById, nodePresentationById, renderDocument, selectedEdgeIds, selectedNodeIds, selectedSectionId, selectedSet, size, treeChildrenById, treeDirection, treeEdgePorts, treeEdgePreview, visibleNodeIds, visibleZOrder, webglActive]);
 
   const startEditingNode = (node: MindMapNode) => {
     setEditing({
@@ -1747,6 +1815,22 @@ export default function MindMapCanvas({
     const parentId = treeParentId(nodeId, sourceDocument);
     if (parentId) createChildNode(parentId, undefined, sourceDocument);
     else setEditing({ nodeId: null, x: node.x, y: node.y + node.height / 2 + 88, width: 180, height: 56, draft: '' });
+  };
+
+  const treeKeyboardTarget = (nodeId: string, key: string) => {
+    const parentId = treeParentId(nodeId);
+    const siblings = Object.values(document.edges)
+      .filter((edge) => edge.relationship === 'tree' && edge.sourceId === parentId)
+      .map((edge) => edge.targetId);
+    const childIds = Object.values(document.edges)
+      .filter((edge) => edge.relationship === 'tree' && edge.sourceId === nodeId)
+      .map((edge) => edge.targetId);
+    if (key === 'ArrowLeft') return parentId;
+    if (key === 'ArrowRight') return childIds[0] ?? null;
+    const index = siblings.indexOf(nodeId);
+    if (key === 'ArrowUp') return index > 0 ? siblings[index - 1] : null;
+    if (key === 'ArrowDown') return index >= 0 && index < siblings.length - 1 ? siblings[index + 1] : null;
+    return null;
   };
 
   const moveNodeToParent = (nodeId: string, parentId: string) => {
@@ -1799,7 +1883,9 @@ export default function MindMapCanvas({
         const edge = createMindMapEdge(session.connectFromId, node.id, { relationship: 'tree' });
         execute('创建子节点', (current) => {
           const next = { ...current, nodes: { ...current.nodes, [node.id]: node }, edges: { ...current.edges, [edge.id]: edge }, zOrder: [...current.zOrder, node.id] };
-          return session.treePlacement === 'auto' ? layoutMindMapBranch(next, session.connectFromId!, treeDirection) : next;
+          return session.treePlacement === 'auto'
+            ? layoutMindMapBranch(next, findMindMapTreeRoot(next, session.connectFromId!), treeDirection)
+            : next;
         });
         setSelectedNodeIds([node.id]);
         setSelectedEdgeIds([]);
@@ -1846,7 +1932,7 @@ export default function MindMapCanvas({
     if (node) {
       startEditingNode(node);
     } else {
-      const edge = hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection);
+      const edge = hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection, treeEdgePorts);
       if (edge) {
         setSelectedNodeIds([]);
         setSelectedEdgeIds([edge.id]);
@@ -1894,7 +1980,7 @@ export default function MindMapCanvas({
 
     if (selectedEdgeIds.length === 1) {
       const selectedEdge = document.edges[selectedEdgeIds[0]];
-      const points = selectedEdge ? edgePoints(selectedEdge, document, treeDirection) : null;
+      const points = selectedEdge ? edgePoints(selectedEdge, document, treeDirection, treeEdgePorts) : null;
       if (selectedEdge && points) {
         const tolerance = HANDLE_RADIUS / cameraRef.current.scale;
         if (selectedEdge.type === 'orthogonal') {
@@ -2075,7 +2161,7 @@ export default function MindMapCanvas({
       return;
     }
 
-    const edge = hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection);
+    const edge = hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection, treeEdgePorts);
     if (edge) {
       setSelectedNodeIds([]);
       setSelectedEdgeIds([edge.id]);
@@ -2138,7 +2224,7 @@ export default function MindMapCanvas({
     if (!activeInteraction && event.pointerType !== 'touch') {
       const hoveredNode = hitIndexedNode(world);
       setHoveredNodeId(hoveredNode?.id ?? null);
-      setHoveredEdgeId(hoveredNode ? null : hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection)?.id ?? null);
+      setHoveredEdgeId(hoveredNode ? null : hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection, treeEdgePorts)?.id ?? null);
     }
     if (event.pointerType === 'touch' && touchPoints.current.has(event.pointerId)) {
       touchPoints.current.set(event.pointerId, view);
@@ -2635,9 +2721,9 @@ export default function MindMapCanvas({
     setTimelineTaskInteraction(null);
   };
 
-  const copySelection = () => {
-    const selectedNodes = new Set(selectedNodeIds);
-    const selectedReferences = new Set(selectedProjectReferenceId ? [selectedProjectReferenceId] : []);
+  const copyNodes = (nodeIds: string[], projectReferenceIds: string[] = []) => {
+    const selectedNodes = new Set(nodeIds);
+    const selectedReferences = new Set(projectReferenceIds);
     if (selectedNodes.size === 0 && selectedReferences.size === 0) return;
     const selected = (ref: CanvasObjectRef) => ref.type === 'node' ? selectedNodes.has(ref.id) : selectedReferences.has(ref.id);
     const clipboard: ClipboardGraph = {
@@ -2650,6 +2736,8 @@ export default function MindMapCanvas({
       void navigator.clipboard.writeText(CLIPBOARD_PREFIX + JSON.stringify(clipboard)).catch(() => undefined);
     }
   };
+
+  const copySelection = () => copyNodes(selectedNodeIds, selectedProjectReferenceId ? [selectedProjectReferenceId] : []);
 
   const pasteSelection = () => {
     const clipboard = clipboardRef.current;
@@ -2700,11 +2788,49 @@ export default function MindMapCanvas({
     setSelectedEdgeIds([]);
   };
 
+  const pasteMarkdownOutline = (text: string) => {
+    if (text.length > 1_000_000) return;
+    let outline: MindMapDocument;
+    try {
+      outline = parseMindMapMarkdownOutline(text, '粘贴的大纲');
+    } catch {
+      return;
+    }
+    const nodes = Object.values(outline.nodes);
+    if (nodes.length === 0) return;
+    const left = Math.min(...nodes.map((node) => node.x - node.width / 2));
+    const right = Math.max(...nodes.map((node) => node.x + node.width / 2));
+    const top = Math.min(...nodes.map((node) => node.y - node.height / 2));
+    const bottom = Math.max(...nodes.map((node) => node.y + node.height / 2));
+    const target = viewToWorld({ x: size.width / 2, y: size.height / 2 }, cameraRef.current);
+    const offsetX = target.x - (left + right) / 2;
+    const offsetY = target.y - (top + bottom) / 2;
+    const now = Date.now();
+    const positionedNodes = Object.fromEntries(nodes.map((node) => [node.id, {
+      ...node,
+      x: node.x + offsetX,
+      y: node.y + offsetY,
+      updatedAt: now,
+    }]));
+    execute('粘贴 Markdown 大纲', (current) => ({
+      ...current,
+      nodes: { ...current.nodes, ...positionedNodes },
+      edges: { ...current.edges, ...outline.edges },
+      zOrder: [...current.zOrder, ...outline.zOrder],
+    }));
+    setSelectedNodeIds(outline.zOrder);
+    setSelectedEdgeIds([]);
+  };
+
   const pasteFromSystem = async () => {
     if (!navigator.clipboard?.readText) return;
     try {
       const text = await navigator.clipboard.readText();
-      if (!text.startsWith(CLIPBOARD_PREFIX) || text.length > 5_000_000) return;
+      if (!text.startsWith(CLIPBOARD_PREFIX)) {
+        pasteMarkdownOutline(text);
+        return;
+      }
+      if (text.length > 5_000_000) return;
       const value = JSON.parse(text.slice(CLIPBOARD_PREFIX.length)) as { nodes?: unknown; projectReferences?: unknown; edges?: unknown };
       if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) return;
       const rawNodes = Object.fromEntries(value.nodes.flatMap((node) => {
@@ -2750,7 +2876,7 @@ export default function MindMapCanvas({
     const view = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const world = viewToWorld(view, cameraRef.current);
     const node = hitIndexedNode(world);
-    const edge = node ? null : hitEdge(world, renderDocument, 7 / cameraRef.current.scale, treeDirection);
+    const edge = node ? null : hitEdge(world, renderDocument, 7 / cameraRef.current.scale, treeDirection, treeEdgePorts);
     if (node) {
       if (!selectedSet.has(node.id)) setSelectedNodeIds([node.id]);
       setSelectedEdgeIds([]);
@@ -2866,10 +2992,11 @@ export default function MindMapCanvas({
       return;
     }
     const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && event.key.toLowerCase() === 'k') {
+    if (modifier && (event.key.toLowerCase() === 'k' || event.key.toLowerCase() === 'f')) {
       event.preventDefault();
       setCommandOpen(true);
       setCommandSearch('');
+      setSearchCursor(0);
       return;
     }
     if (modifier && event.key.toLowerCase() === 'z') {
@@ -2941,6 +3068,16 @@ export default function MindMapCanvas({
         }
         return;
       }
+    }
+    if (!modifier && !event.altKey && selectedNodeIds.length === 1 && /^Arrow(?:Left|Right|Up|Down)$/.test(event.key)) {
+      const targetId = treeKeyboardTarget(selectedNodeIds[0], event.key);
+      if (targetId && document.nodes[targetId]) {
+        event.preventDefault();
+        setSelectedNodeIds([targetId]);
+        setSelectedEdgeIds([]);
+        setSelectedSectionId(null);
+      }
+      return;
     }
     if (event.key === 'Delete' || event.key === 'Backspace') {
       event.preventDefault();
@@ -3802,12 +3939,17 @@ export default function MindMapCanvas({
                 setContextMenu(null);
               }}>适合画布</button>
               <button type="button" role="menuitem" onClick={() => {
-                execute('切换网格', (current) => ({
-                  ...current,
-                  settings: { ...current.settings, grid: current.settings.grid === 'none' ? 'dots' : 'none' },
-                }));
+                execute('显示点阵网格', (current) => ({ ...current, settings: { ...current.settings, grid: 'dots' } }));
                 setContextMenu(null);
-              }}>{document.settings.grid === 'none' ? '显示网格' : '隐藏网格'}</button>
+              }}>点阵网格</button>
+              <button type="button" role="menuitem" onClick={() => {
+                execute('显示线条网格', (current) => ({ ...current, settings: { ...current.settings, grid: 'lines' } }));
+                setContextMenu(null);
+              }}>线条网格</button>
+              <button type="button" role="menuitem" onClick={() => {
+                execute('隐藏网格', (current) => ({ ...current, settings: { ...current.settings, grid: 'none' } }));
+                setContextMenu(null);
+              }}>隐藏网格</button>
             </>
           )}
         </div>
@@ -3818,7 +3960,7 @@ export default function MindMapCanvas({
       }}>
         <Search size={14} aria-hidden="true" />
         <span>搜索或命令</span>
-        <kbd>Ctrl K</kbd>
+        <kbd>Ctrl F</kbd>
       </button>
       {commandOpen && (
         <div className={styles.commandBackdrop} role="presentation" onPointerDown={() => setCommandOpen(false)}>
@@ -3835,20 +3977,33 @@ export default function MindMapCanvas({
               aria-label="搜索思维导图"
               placeholder="搜索节点、连线或命令"
               value={commandSearch}
-              onChange={(event) => setCommandSearch(event.target.value)}
+              onChange={(event) => { setCommandSearch(event.target.value); setSearchCursor(0); }}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key === 'Escape') setCommandOpen(false);
+                if (event.key === 'ArrowDown' && searchResults.length) {
+                  event.preventDefault();
+                  setSearchCursor((index) => (index + 1) % searchResults.length);
+                }
+                if (event.key === 'ArrowUp' && searchResults.length) {
+                  event.preventDefault();
+                  setSearchCursor((index) => (index - 1 + searchResults.length) % searchResults.length);
+                }
+                if (event.key === 'Enter' && searchResults.length) {
+                  event.preventDefault();
+                  revealSearchResult(searchResults[Math.min(searchCursor, searchResults.length - 1)]);
+                }
               }}
             />
             {searchResults.length > 0 && (
               <div className={styles.searchResults} role="listbox" aria-label="思维导图搜索结果">
-                {searchResults.map((result) => (
+                {searchResults.map((result, index) => (
                   <button
                     key={result.kind + result.id}
                     type="button"
                     role="option"
-                    aria-selected={result.kind === 'node' ? selectedSet.has(result.id) : selectedEdgeIds.includes(result.id)}
+                    aria-selected={index === searchCursor}
+                    onPointerMove={() => setSearchCursor(index)}
                     onClick={() => revealSearchResult(result)}
                   >
                     <span>{result.kind === 'node' ? '节点' : '连线'}</span>
@@ -3862,7 +4017,9 @@ export default function MindMapCanvas({
                 { label: '适合全部内容', run: fitAll },
                 { label: '适合当前选择', run: () => fit(selectedNodeIds.map((id) => canvasNodes[id]).filter((node): node is MindMapNode => Boolean(node))) },
                 { label: '从左到右树形布局', run: () => { void runTreeLayout(); } },
-                { label: document.settings.grid === 'none' ? '显示网格' : '隐藏网格', run: () => execute('切换网格', (current) => ({ ...current, settings: { ...current.settings, grid: current.settings.grid === 'none' ? 'dots' : 'none' } })) },
+                { label: '显示点阵网格', run: () => execute('显示点阵网格', (current) => ({ ...current, settings: { ...current.settings, grid: 'dots' } })) },
+                { label: '显示线条网格', run: () => execute('显示线条网格', (current) => ({ ...current, settings: { ...current.settings, grid: 'lines' } })) },
+                { label: '隐藏网格', run: () => execute('隐藏网格', (current) => ({ ...current, settings: { ...current.settings, grid: 'none' } })) },
                 { label: '选择全部节点', run: () => { setSelectedNodeIds(Object.keys(canvasNodes)); setSelectedEdgeIds([]); setSelectedSectionId(null); } },
                 { label: '在视口中心创建节点', run: () => {
                   const world = viewToWorld({ x: size.width / 2, y: size.height / 2 }, cameraRef.current);
@@ -4342,7 +4499,7 @@ export default function MindMapCanvas({
                     updateNode(selectedNode.id, { text, ...(selectedNode.sizeMode === 'auto' ? measuredNodeSize(text, selectedNode) : {}) });
                   }} />
                 </label>
-                {treeChildrenById.get(selectedNode.id)?.length ? <label className={styles.checkboxField}><input type="checkbox" aria-label="折叠子分支" checked={selectedNode.collapsed} onChange={(event) => updateNode(selectedNode.id, { collapsed: event.target.checked })} /><span>折叠子分支</span></label> : null}
+                {treeChildrenById.get(selectedNode.id)?.length ? <label className={styles.checkboxField}><input type="checkbox" aria-label="折叠子分支" checked={selectedNode.collapsed} onChange={(event) => updateNode(selectedNode.id, { collapsed: event.target.checked })} /><span>{selectedNode.collapsed ? `折叠子分支（已隐藏 ${Math.max(0, branchNodeIds(selectedNode.id).length - 1)} 个节点）` : '折叠子分支'}</span></label> : null}
                 {selectedNode.type === 'url' && <label><span>链接</span><input type="url" aria-label="节点链接" defaultValue={selectedNode.link ?? ''} placeholder="https://" onBlur={(event) => updateNode(selectedNode.id, { link: sanitizeMindMapResourceUrl(event.target.value) })} /></label>}
                 {selectedNode.type === 'image' && <>
                   <label><span>上传</span><input type="file" aria-label="上传节点图片" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => {
@@ -4369,10 +4526,45 @@ export default function MindMapCanvas({
               </section>
 
               <section className={styles.inspectorGroup}>
+                <h3>任务</h3>
+                <label><span>状态</span><select aria-label="任务状态" value={selectedNode.taskStatus} onChange={(event) => updateNode(selectedNode.id, { taskStatus: event.target.value as MindMapNode['taskStatus'] })}><option value="none">无</option><option value="todo">待办</option><option value="doing">进行中</option><option value="done">已完成</option></select></label>
+                <label><span>优先级</span><select aria-label="任务优先级" value={selectedNode.priority} onChange={(event) => updateNode(selectedNode.id, { priority: event.target.value as MindMapNode['priority'] })}><option value="none">无</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+                <label><span>截止日</span><input type="date" aria-label="任务截止日" value={selectedNode.dueDate ?? ''} onChange={(event) => updateNode(selectedNode.id, { dueDate: event.target.value || null })} /></label>
+                <label><span>备注</span><textarea aria-label="节点备注" defaultValue={selectedNode.note} maxLength={2000} rows={3} onBlur={(event) => event.target.value !== selectedNode.note && updateNode(selectedNode.id, { note: event.target.value })} /></label>
+              </section>
+
+              <section className={styles.inspectorGroup}>
+                <h3>分支</h3>
+                <div className={styles.layerActions}>
+                  <button type="button" onClick={() => copyNodes(branchNodeIds(selectedNode.id))}>复制整棵子树</button>
+                  <button type="button" onClick={() => {
+                    const branchIds = branchNodeIds(selectedNode.id);
+                    if (window.confirm(`删除“${selectedNode.text || '未命名节点'}”及其 ${Math.max(0, branchIds.length - 1)} 个子节点？`)) deleteNodes(branchIds);
+                  }}>删除整棵子树</button>
+                  <button type="button" onClick={() => {
+                    const branchIds = new Set(branchNodeIds(selectedNode.id));
+                    downloadMindMapMarkdownOutline({
+                      ...document,
+                      nodes: Object.fromEntries(Object.entries(document.nodes).filter(([id]) => branchIds.has(id))),
+                      edges: Object.fromEntries(Object.entries(document.edges).filter(([, edge]) => branchIds.has(edge.sourceId) && branchIds.has(edge.targetId))),
+                      zOrder: document.zOrder.filter((id) => branchIds.has(id)),
+                    });
+                  }}>导出此分支</button>
+                </div>
+              </section>
+
+              <section className={styles.inspectorGroup}>
                 <h3>外观</h3>
                 <label><span>填充</span><input type="color" aria-label="节点填充颜色" defaultValue={selectedNode.style.fill} onChange={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, fill: event.target.value } })} /></label>
                 <label><span>文字</span><input type="color" aria-label="节点文字颜色" defaultValue={selectedNode.style.textColor} onChange={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, textColor: event.target.value } })} /></label>
-                <label><span>字号</span><input type="number" aria-label="节点字号" min="8" max="96" defaultValue={selectedNode.style.fontSize} onBlur={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, fontSize: Math.max(8, Math.min(96, Number(event.target.value) || 15)) } })} /></label>
+                <label><span>字号</span><input type="number" aria-label="节点字号" min="8" max="96" defaultValue={selectedNode.style.fontSize} onBlur={(event) => {
+                  const fontSize = Math.max(8, Math.min(96, Number(event.target.value) || 15));
+                  const nextNode = { ...selectedNode, style: { ...selectedNode.style, fontSize } };
+                  updateNode(selectedNode.id, {
+                    style: nextNode.style,
+                    ...(selectedNode.sizeMode === 'auto' ? measuredNodeSize(nextNode.text, nextNode) : {}),
+                  });
+                }} /></label>
               </section>
 
               <section className={styles.inspectorGroup}>
@@ -4430,7 +4622,7 @@ export default function MindMapCanvas({
                   value={selectedEdge.type}
                   onChange={(event) => {
                     const type = event.target.value as MindMapEdge['type'];
-                    const points = edgePoints(selectedEdge, document, treeDirection);
+                    const points = edgePoints(selectedEdge, document, treeDirection, treeEdgePorts);
                     const middleX = points ? (points.start.x + points.end.x) / 2 : 0;
                     updateEdge(selectedEdge.id, {
                       type,

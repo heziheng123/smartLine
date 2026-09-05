@@ -3,6 +3,10 @@ export type EdgePoint = { x: number; y: number };
 export type EdgeRect = { x: number; y: number; width: number; height: number };
 export type EdgeRouteKind = 'hierarchy' | 'relation';
 export type HierarchyDirection = 'left-right' | 'right-left' | 'top-bottom' | 'bottom-top';
+export interface HierarchyPort {
+  index: number;
+  count: number;
+}
 
 export interface EdgeRoute {
   sourceSide: EdgeSide;
@@ -42,10 +46,25 @@ export function resolveAnchorPoint(rect: EdgeRect, side: EdgeSide, targetCenter:
 
 const normal = (side: EdgeSide): EdgePoint => ({ top: { x: 0, y: -1 }, right: { x: 1, y: 0 }, bottom: { x: 0, y: 1 }, left: { x: -1, y: 0 } })[side];
 
+const resolveHierarchyAnchor = (rect: EdgeRect, side: EdgeSide, port: HierarchyPort): EdgePoint => {
+  const padding = 10;
+  const ratio = (port.index + 1) / (port.count + 1);
+  if (side === 'right' || side === 'left') {
+    return {
+      x: side === 'right' ? rect.x + rect.width : rect.x,
+      y: rect.y + padding + (rect.height - padding * 2) * ratio,
+    };
+  }
+  return {
+    x: rect.x + padding + (rect.width - padding * 2) * ratio,
+    y: side === 'bottom' ? rect.y + rect.height : rect.y,
+  };
+};
+
 export function buildEdgeRoute(
   source: EdgeRect,
   target: EdgeRect,
-  options: { kind: EdgeRouteKind; hierarchyDirection?: HierarchyDirection },
+  options: { kind: EdgeRouteKind; hierarchyDirection?: HierarchyDirection; hierarchyPort?: HierarchyPort },
 ): EdgeRoute {
   const sourceCenter = center(source);
   const targetCenter = center(target);
@@ -57,10 +76,17 @@ export function buildEdgeRoute(
         'bottom-top': ['top', 'bottom'],
       } as const)[options.hierarchyDirection ?? 'left-right']
     : resolveEdgeSides(source, target);
-  const start = resolveAnchorPoint(source, sourceSide, targetCenter);
+  const start = options.kind === 'hierarchy' && options.hierarchyPort && options.hierarchyPort.count > 1
+    ? resolveHierarchyAnchor(source, sourceSide, options.hierarchyPort)
+    : resolveAnchorPoint(source, sourceSide, targetCenter);
   const end = resolveAnchorPoint(target, targetSide, sourceCenter);
   const distance = Math.hypot(end.x - start.x, end.y - start.y);
-  const handle = clamp(distance * 0.35, 32, 140);
+  const primaryDistance = sourceSide === 'left' || sourceSide === 'right'
+    ? Math.abs(end.x - start.x)
+    : Math.abs(end.y - start.y);
+  const handle = options.kind === 'hierarchy'
+    ? clamp(primaryDistance * 0.45, 24, 140)
+    : clamp(distance * 0.35, 32, 140);
   const startNormal = normal(sourceSide);
   const endNormal = normal(targetSide);
   return {

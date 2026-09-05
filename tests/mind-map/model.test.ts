@@ -8,6 +8,7 @@ import {
   normalizeMindMapDocument,
   type MindMapNode,
 } from '../../src/mindMap/model.ts';
+import { restoreMindMapSnapshot, trimMindMapSnapshots } from '../../src/mindMap/snapshots.ts';
 
 const node = (id: string, x = 0): MindMapNode => ({
   id,
@@ -26,6 +27,11 @@ const node = (id: string, x = 0): MindMapNode => ({
   groupId: null,
   locked: false,
   participatesInLayout: true,
+  collapsed: false,
+  note: '',
+  taskStatus: 'none',
+  priority: 'none',
+  dueDate: null,
   style: {
     fill: '#ffffff',
     fillOpacity: 1,
@@ -115,4 +121,24 @@ test('future document schemas fail closed instead of being normalized or overwri
     () => normalizeMindMapDocument({ ...document, schemaVersion: MIND_MAP_SCHEMA_VERSION + 1 }),
     MindMapVersionError,
   );
+});
+
+test('task metadata is normalized and snapshots retain restorable documents', () => {
+  const document = createEmptyMindMapDocument('任务', { id: 'task-doc', now: 1 });
+  document.nodes.task = {
+    ...node('task'),
+    note: '准备材料',
+    taskStatus: 'doing',
+    priority: 'high',
+    dueDate: '2026-09-30',
+  };
+  const normalized = normalizeMindMapDocument(document);
+  assert.equal(normalized?.nodes.task.taskStatus, 'doing');
+  assert.equal(normalized?.nodes.task.priority, 'high');
+  assert.equal(normalized?.nodes.task.dueDate, '2026-09-30');
+  const snapshots = trimMindMapSnapshots(Array.from({ length: 13 }, (_, index) => ({
+    id: String(index), savedAt: index, label: '快照', document,
+  })));
+  assert.equal(snapshots.length, 12);
+  assert.equal(restoreMindMapSnapshot(snapshots[0])?.id, document.id);
 });

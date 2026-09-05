@@ -1,7 +1,8 @@
 import { normalizeLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
+import { repairMindMapTreeForest } from './treeValidation';
 
-export const MIND_MAP_SCHEMA_VERSION = 8;
+export const MIND_MAP_SCHEMA_VERSION = 9;
 export const DEFAULT_DOCUMENT_TITLE = '未命名思维导图';
 
 export type MindMapSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -11,6 +12,8 @@ export type EdgeType = 'straight' | 'curve' | 'orthogonal';
 export type EdgeDirection = 'none' | 'forward' | 'backward' | 'both';
 export type EdgeRelationship = 'tree' | 'reference';
 export type CanvasObjectType = 'node' | 'project-reference';
+export type MindMapTaskStatus = 'none' | 'todo' | 'doing' | 'done';
+export type MindMapPriority = 'none' | 'low' | 'medium' | 'high';
 
 export interface CanvasObjectRef {
   type: CanvasObjectType;
@@ -56,6 +59,10 @@ export interface MindMapNode {
   locked: boolean;
   participatesInLayout: boolean;
   collapsed: boolean;
+  note: string;
+  taskStatus: MindMapTaskStatus;
+  priority: MindMapPriority;
+  dueDate: string | null;
   style: NodeStyle;
   createdAt: number;
   updatedAt: number;
@@ -153,6 +160,7 @@ export interface MindMapSettings {
   grid: 'none' | 'dots' | 'lines';
   background: string;
   selectionMode: 'contain' | 'intersect';
+  theme: 'light' | 'dark' | 'minimal';
 }
 
 export interface LifeMapMigrationMeta {
@@ -301,6 +309,10 @@ export function createMindMapNode(
     locked: false,
     participatesInLayout: true,
     collapsed: false,
+    note: '',
+    taskStatus: 'none',
+    priority: 'none',
+    dueDate: null,
     style: { ...DEFAULT_NODE_STYLE },
     createdAt: now,
     updatedAt: now,
@@ -535,7 +547,7 @@ export function createEmptyMindMapDocument(
     lifeMapMigration: null,
     zOrder: [],
     viewport: { x: 0, y: 0, scale: 1 },
-    settings: { grid: 'dots', background: '#f9f9fb', selectionMode: 'contain' },
+    settings: { grid: 'dots', background: '#f9f9fb', selectionMode: 'contain', theme: 'light' },
   };
 }
 
@@ -575,6 +587,10 @@ function normalizeNode(value: unknown, now: number): MindMapNode | null {
     locked: value.locked === true,
     participatesInLayout: value.participatesInLayout !== false,
     collapsed: value.collapsed === true,
+    note: safeString(value.note, '', 2_000),
+    taskStatus: value.taskStatus === 'todo' || value.taskStatus === 'doing' || value.taskStatus === 'done' ? value.taskStatus : 'none',
+    priority: value.priority === 'low' || value.priority === 'medium' || value.priority === 'high' ? value.priority : 'none',
+    dueDate: /^\d{4}-\d{2}-\d{2}$/.test(safeString(value.dueDate, '', 10)) ? safeString(value.dueDate, '', 10) : null,
     style: {
       fill: safeColor(style.fill, DEFAULT_NODE_STYLE.fill),
       fillOpacity: clamp(finite(style.fillOpacity, 1), 0, 1),
@@ -853,7 +869,7 @@ export function normalizeMindMapDocument(value: unknown): MindMapDocument | null
         migratedAt: safeTime(rawMigration.migratedAt, now),
       }
     : null;
-  return {
+  const document: MindMapDocument = {
     kind: 'smart-line-mind-map',
     schemaVersion: MIND_MAP_SCHEMA_VERSION,
     id,
@@ -878,8 +894,10 @@ export function normalizeMindMapDocument(value: unknown): MindMapDocument | null
       grid: settings.grid === 'none' || settings.grid === 'lines' ? settings.grid : 'dots',
       background: safeColor(settings.background, '#f9f9fb'),
       selectionMode: settings.selectionMode === 'intersect' ? 'intersect' : 'contain',
+      theme: settings.theme === 'dark' || settings.theme === 'minimal' ? settings.theme : 'light',
     },
   };
+  return repairMindMapTreeForest(document);
 }
 
 export function normalizeMindMapIndex(value: unknown): MindMapIndex | null {

@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseMindMapDocumentJson, serializeMindMapDocument } from '../../src/mindMap/importExport.ts';
-import { layoutMindMapTree } from '../../src/mindMap/layout.ts';
+import {
+  parseMindMapDocumentJson,
+  parseMindMapMarkdownOutline,
+  serializeMindMapDocument,
+  serializeMindMapMarkdownOutline,
+} from '../../src/mindMap/importExport.ts';
+import { findMindMapTreeRoot, layoutMindMapBranch, layoutMindMapTree } from '../../src/mindMap/layout.ts';
 import { layoutMindMapTreeInWorker } from '../../src/mindMap/layoutWorkerClient.ts';
+import { repairMindMapTreeForest, validateMindMapTreeForest } from '../../src/mindMap/treeValidation.ts';
 import { resolveBranchThemeColors, resolveTreeEdgeColor } from '../../src/mindMap/visualTheme.ts';
 import {
   createEmptyMindMapDocument,
@@ -58,8 +64,41 @@ test('tree layout reserves cross-axis space for complete subtrees', () => {
     + englishLeaves[2].y + englishLeaves[2].height / 2
   ) / 2);
   assert.ok(layout.nodes.politics.y - layout.nodes.politics.height / 2
-    >= englishLeaves[2].y + englishLeaves[2].height / 2 + 36);
+    >= englishLeaves[2].y + englishLeaves[2].height / 2 + 48);
   assert.equal(layout.nodes.root.y, 0);
+});
+
+test('reflowing the owning tree keeps new leaves clear of adjacent branches', () => {
+  const document = createEmptyMindMapDocument('自动新增', { id: 'auto-layout', now: 1 });
+  const ids = ['root', 'english', 'politics', 'reading', 'writing', 'wa', 'laugh'];
+  document.nodes = Object.fromEntries(ids.map((id) => [id, createTextMindMapNode(
+    { x: 0, y: 0 },
+    { id, text: id, now: 1 },
+  )]));
+  const connect = (sourceId: string, targetId: string) => createMindMapEdge(sourceId, targetId, {
+    id: `${sourceId}-${targetId}`,
+    now: 1,
+    relationship: 'tree',
+  });
+  for (const edge of [
+    connect('root', 'english'), connect('root', 'politics'),
+    connect('english', 'reading'), connect('english', 'writing'),
+    connect('politics', 'wa'), connect('politics', 'laugh'),
+  ]) document.edges[edge.id] = edge;
+  document.zOrder = ids;
+
+  const before = layoutMindMapTree(document);
+  before.nodes.word = createTextMindMapNode({ x: 0, y: 0 }, { id: 'word', text: 'word', now: 1 });
+  before.zOrder.push('word');
+  const newEdge = connect('english', 'word');
+  before.edges[newEdge.id] = newEdge;
+  const layout = layoutMindMapBranch(before, findMindMapTreeRoot(before, 'english'));
+  const word = layout.nodes.word;
+  const wa = layout.nodes.wa;
+
+  assert.equal(findMindMapTreeRoot(before, 'english'), 'root');
+  assert.deepEqual([layout.nodes.root.x, layout.nodes.root.y], [before.nodes.root.x, before.nodes.root.y]);
+  assert.ok(wa.y - wa.height / 2 >= word.y + word.height / 2 + 48);
 });
 
 test('tree edges inherit their first-level branch color unless explicitly overridden', () => {
@@ -93,6 +132,48 @@ test('JSON export and import round-trip while invalid data is rejected', () => {
   assert.deepEqual(parsed, document);
   assert.throws(() => parseMindMapDocumentJson('{broken'), /有效/);
   assert.throws(() => parseMindMapDocumentJson('{"kind":"other"}'), /支持/);
+});
+
+test('Markdown outlines import as trees and export in a stable outline form', () => {
+  const document = parseMindMapMarkdownOutline('# 学习计划\n## 英语\n- 单词\n- 阅读\n## 数学\n');
+  const nodes = Object.values(document.nodes);
+  assert.deepEqual(nodes.map((node) => node.text), ['学习计划', '英语', '单词', '阅读', '数学']);
+  assert.equal(Object.values(document.edges).filter((edge) => edge.relationship === 'tree').length, 4);
+  assert.equal(serializeMindMapMarkdownOutline(document), '- 学习计划\n  - 英语\n    - 单词\n    - 阅读\n  - 数学\n');
+  assert.throws(() => parseMindMapMarkdownOutline(' \n\t'), /没有可导入/);
+});
+
+test('tree validation downgrades extra parents and cycles to references', () => {
+  const document = createEmptyMindMapDocument('校验', { id: 'forest', now: 1 });
+  for (const id of ['root', 'other', 'child']) {
+    document.nodes[id] = createTextMindMapNode({ x: 0, y: 0 }, { id, now: 1 });
+  }
+  document.edges = Object.fromEntries([
+    createMindMapEdge('root', 'child', { id: 'root-child', now: 1, relationship: 'tree' }),
+    createMindMapEdge('other', 'child', { id: 'other-child', now: 1, relationship: 'tree' }),
+    createMindMapEdge('child', 'root', { id: 'child-root', now: 1, relationship: 'tree' }),
+  ].map((edge) => [edge.id, edge]));
+  const validation = validateMindMapTreeForest(document);
+  assert.deepEqual(validation.issues.map((issue) => issue.kind).sort(), ['cycle', 'multiple-parents']);
+  const repaired = repairMindMapTreeForest(document);
+  assert.equal(repaired.edges['root-child'].relationship, 'tree');
+  assert.equal(repaired.edges['other-child'].relationship, 'reference');
+  assert.equal(repaired.edges['child-root'].relationship, 'reference');
+  assert.equal(validateMindMapTreeForest(repaired).isValid, true);
+});
+
+test('layout preserves locked nodes and reserves primary space for edge labels', () => {
+  const document = createEmptyMindMapDocument('布局约束', { id: 'constraints', now: 1 });
+  const root = createTextMindMapNode({ x: 0, y: 0 }, { id: 'root', now: 1 });
+  const child = createTextMindMapNode({ x: 777, y: 555 }, { id: 'child', now: 1 });
+  child.locked = true;
+  document.nodes = { root, child };
+  const edge = createMindMapEdge('root', 'child', { id: 'edge', now: 1, relationship: 'tree' });
+  edge.label = '这是一条需要预留空间的连线标签';
+  document.edges = { edge };
+  const layout = layoutMindMapTree(document);
+  assert.deepEqual([layout.nodes.child.x, layout.nodes.child.y], [777, 555]);
+  assert.ok(layout.nodes.root.x === 0);
 });
 
 test('layout worker client has a deterministic non-browser fallback', async () => {

@@ -1,3 +1,4 @@
+import { persistTimelineData, useTimelineStore } from '@/store';
 import type { Block } from '@/types';
 import type { WorkspaceBackup } from './workspaceBackup';
 import { hashWorkspaceValue, workspaceValuesEqual } from './workspaceSyncCore';
@@ -395,7 +396,6 @@ export async function executePreparedTimelineBlocksRepair(
     appliedAt: new Date().toISOString(),
     status: 'local-applied',
   };
-  const { persistTimelineData, useTimelineStore } = await import('@/store');
   // Drain any older coalesced write before the repair transaction becomes authoritative.
   await persistTimelineData(source.timeline);
   await setScopedStorageItemsAtomically([

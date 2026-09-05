@@ -1,12 +1,30 @@
 import type { MindMapDocument, MindMapNode } from './model';
+import { repairMindMapTreeForest } from './treeValidation';
 
 export type TreeDirection = 'left-right' | 'right-left' | 'top-bottom' | 'bottom-top';
+
+/** Returns the stable root of the tree containing a node without following reference edges. */
+export function findMindMapTreeRoot(document: MindMapDocument, nodeId: string): string {
+  let rootId = nodeId;
+  const seen = new Set<string>();
+  while (!seen.has(rootId)) {
+    seen.add(rootId);
+    const parentId = Object.values(document.edges).find((edge) => (
+      edge.relationship === 'tree' && edge.targetId === rootId && Boolean(document.nodes[edge.sourceId])
+    ))?.sourceId;
+    if (!parentId) return rootId;
+    rootId = parentId;
+  }
+  return nodeId;
+}
 
 export function layoutMindMapBranch(
   document: MindMapDocument,
   rootId: string,
   direction: TreeDirection = 'left-right',
 ): MindMapDocument {
+  const repaired = repairMindMapTreeForest(document);
+  if (repaired !== document) return layoutMindMapBranch(repaired, rootId, direction);
   const root = document.nodes[rootId];
   if (!root) return document;
   const children = new Map<string, string[]>();
@@ -53,6 +71,8 @@ export function layoutMindMapTree(
   document: MindMapDocument,
   direction: TreeDirection = 'left-right',
 ): MindMapDocument {
+  const repaired = repairMindMapTreeForest(document);
+  if (repaired !== document) return layoutMindMapTree(repaired, direction);
   const nodeIds = [...new Set([...document.zOrder, ...Object.keys(document.nodes)])]
     .filter((id) => Boolean(document.nodes[id]));
   if (nodeIds.length < 2) return document;
@@ -96,20 +116,32 @@ export function layoutMindMapTree(
   const horizontal = direction === 'left-right' || direction === 'right-left';
   const reverse = direction === 'right-left' || direction === 'bottom-top';
   const primaryGap = 96;
-  const secondaryGap = 36;
+  const secondaryGap = 48;
 
   const maximumDepth = Math.max(...depthById.values());
   const primarySizes = Array.from({ length: maximumDepth + 1 }, () => 0);
+  const primaryGaps = Array.from({ length: maximumDepth + 1 }, () => primaryGap);
   for (const id of traversal) {
     const node = document.nodes[id];
     const depth = depthById.get(id) ?? 0;
     primarySizes[depth] = Math.max(primarySizes[depth], horizontal ? node.width : node.height);
   }
+  for (const edge of Object.values(document.edges)) {
+    if (edge.relationship !== 'tree' || !edge.label.trim()) continue;
+    const targetDepth = depthById.get(edge.targetId);
+    if (!targetDepth) continue;
+    // The label is rendered horizontally, so reserving its estimated width is
+    // the safe choice for both horizontal and vertical trees.
+    primaryGaps[targetDepth] = Math.max(
+      primaryGaps[targetDepth],
+      Math.min(320, 32 + [...edge.label.trim()].length * 7),
+    );
+  }
   const primaryCenters = [0];
   for (let depth = 1; depth <= maximumDepth; depth += 1) {
     primaryCenters[depth] = primaryCenters[depth - 1]
       + primarySizes[depth - 1] / 2
-      + primaryGap
+      + primaryGaps[depth]
       + primarySizes[depth] / 2;
   }
 
@@ -138,12 +170,14 @@ export function layoutMindMapTree(
     const span = subtreeSpans.get(id) ?? 0;
     const primary = primaryCenters[depth] * (reverse ? -1 : 1);
     const secondary = start + span / 2;
-    nodes[id] = {
-      ...node,
-      x: horizontal ? primary : secondary,
-      y: horizontal ? secondary : primary,
-      updatedAt: Date.now(),
-    };
+    if (!node.locked && node.participatesInLayout) {
+      nodes[id] = {
+        ...node,
+        x: horizontal ? primary : secondary,
+        y: horizontal ? secondary : primary,
+        updatedAt: Date.now(),
+      };
+    }
 
     const childIds = children.get(id) ?? [];
     const childSpan = childIds.reduce((sum, childId) => sum + (subtreeSpans.get(childId) ?? 0), 0)

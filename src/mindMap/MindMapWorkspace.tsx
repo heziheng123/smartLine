@@ -9,6 +9,7 @@ import {
   FileCode2,
   FolderOpen,
   GitFork,
+  History,
   Image as ImageIcon,
   Link2,
   Maximize2,
@@ -30,8 +31,10 @@ import MindMapCatalog from './MindMapCatalog';
 import { MIND_MAP_SYNC_ENABLED } from './config';
 import {
   downloadMindMapJson,
+  downloadMindMapMarkdownOutline,
   downloadMindMapSvg,
   parseMindMapDocumentJson,
+  parseMindMapMarkdownOutline,
   type MindMapPngScope,
 } from './importExport';
 import type { TreeDirection } from './layout';
@@ -45,7 +48,7 @@ import type { MindMapPresence } from './syncCore';
 import { reportMindMapSyncRuntimeState } from './syncRuntime';
 import { useLifeMapDataSnapshot, useLifeMapHydrated } from './timelineProjectionHooks';
 import styles from './styles/MindMapWorkspace.module.css';
-import { mindMapVisualCssVariables } from './styles/visualTokens';
+import { mindMapThemeCssVariables, mindMapVisualCssVariables } from './styles/visualTokens';
 
 const SAVE_LABEL = {
   idle: '准备就绪',
@@ -69,6 +72,7 @@ const MindMapWorkspace = () => {
     index,
     document,
     history,
+    snapshots,
     saveStatus,
     error,
     hydrate,
@@ -85,6 +89,8 @@ const MindMapWorkspace = () => {
     execute,
     undo,
     redo,
+    createSnapshot,
+    restoreSnapshot,
     flushSave,
     saveEmergency,
     clearError,
@@ -103,6 +109,7 @@ const MindMapWorkspace = () => {
   const [connectionMode, setConnectionMode] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [catalogSyncError, setCatalogSyncError] = useState<string | null>(null);
   const [backgroundSyncError, setBackgroundSyncError] = useState<string | null>(null);
@@ -335,7 +342,10 @@ const MindMapWorkspace = () => {
     if (!file) return;
     setLocalError(null);
     try {
-      const imported = parseMindMapDocumentJson(await file.text());
+      const source = await file.text();
+      const imported = /\.json$/i.test(file.name)
+        ? parseMindMapDocumentJson(source)
+        : parseMindMapMarkdownOutline(source, file.name.replace(/\.(?:md|markdown|txt)$/i, '') || '导入的 Markdown 大纲');
       await importDocument(imported);
     } catch (caught) {
       setLocalError(caught instanceof Error ? caught.message : '导入思维导图失败。');
@@ -433,7 +443,7 @@ const MindMapWorkspace = () => {
   return (
     <main
       className={styles.workspace}
-      style={mindMapVisualCssVariables}
+      style={{ ...mindMapVisualCssVariables, ...mindMapThemeCssVariables(document?.settings.theme ?? 'light') }}
       data-testid="mind-map-workspace"
       aria-label="地图工作区"
     >
@@ -504,6 +514,16 @@ const MindMapWorkspace = () => {
           >
             <FilePlus2 size={16} aria-hidden="true" />
           </button>
+          <button
+            type="button"
+            className={styles.iconAction}
+            title="版本快照"
+            aria-label="版本快照"
+            aria-expanded={snapshotOpen}
+            onClick={() => setSnapshotOpen((open) => !open)}
+          >
+            <History size={16} aria-hidden="true" />
+          </button>
           <details ref={moreMenuRef} className={styles.moreMenu}>
             <summary aria-label="更多操作" title="更多操作">
               <MoreHorizontal size={17} aria-hidden="true" />
@@ -533,13 +553,19 @@ const MindMapWorkspace = () => {
                 importInputRef.current?.click();
                 closeMoreMenu();
               }}>
-                <Upload size={15} aria-hidden="true" />导入 JSON
+                <Upload size={15} aria-hidden="true" />导入 JSON / Markdown
               </button>
               <button type="button" role="menuitem" onClick={() => {
                 if (document) void downloadMindMapJson(document);
                 closeMoreMenu();
               }} disabled={!document}>
                 <Download size={15} aria-hidden="true" />导出 JSON
+              </button>
+              <button type="button" role="menuitem" onClick={() => {
+                if (document) downloadMindMapMarkdownOutline(document);
+                closeMoreMenu();
+              }} disabled={!document}>
+                <FileCode2 size={15} aria-hidden="true" />导出 Markdown 大纲
               </button>
               <button type="button" role="menuitem" onClick={() => {
                 if (document) downloadMindMapSvg(document);
@@ -575,12 +601,20 @@ const MindMapWorkspace = () => {
           </details>
         </div>
       </header>
+      {snapshotOpen && <aside className={styles.snapshotPanel} aria-label="版本快照">
+        <div className={styles.snapshotHeader}><strong>版本快照</strong><button type="button" aria-label="关闭版本快照" onClick={() => setSnapshotOpen(false)}>×</button></div>
+        <button type="button" className={styles.snapshotCreate} disabled={!document} onClick={() => createSnapshot('手动创建快照')}>创建当前快照</button>
+        <small>每两分钟会在修改前自动保留一个版本。</small>
+        {snapshots.length ? <div className={styles.snapshotList}>{snapshots.map((snapshot) => <div key={snapshot.id}><span title={snapshot.label}>{new Date(snapshot.savedAt).toLocaleString()} · {snapshot.label}</span><button type="button" onClick={() => {
+          if (window.confirm(`恢复到“${snapshot.label}”的版本？当前内容会先自动保存为快照。`)) restoreSnapshot(snapshot.id);
+        }}>恢复</button></div>)}</div> : <p>尚无快照。首次修改前会自动创建。</p>}
+      </aside>}
       <input
         ref={importInputRef}
         className={styles.hiddenInput}
         type="file"
-        accept="application/json,.json"
-        aria-label="选择思维导图 JSON 文件"
+        accept="application/json,.json,text/markdown,text/plain,.md,.markdown,.txt"
+        aria-label="选择思维导图或 Markdown 文件"
         onChange={(event) => void handleImport(event)}
       />
 
@@ -690,6 +724,19 @@ const MindMapWorkspace = () => {
               <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('right-left')}>右 → 左</button>
               <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('top-bottom')}>上 → 下</button>
               <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('bottom-top')}>下 → 上</button>
+              <span className={styles.menuDivider} aria-hidden="true" />
+              <label className={styles.layoutTheme}><span>主题</span><select aria-label="思维导图主题" value={document?.settings.theme ?? 'light'} onChange={(event) => {
+                const theme = event.target.value as 'light' | 'dark' | 'minimal';
+                execute('切换主题', (current) => ({
+                  ...current,
+                  settings: {
+                    ...current.settings,
+                    theme,
+                    background: theme === 'dark' ? '#17181c' : theme === 'minimal' ? '#ffffff' : '#f9f9fb',
+                    grid: theme === 'minimal' ? 'none' : current.settings.grid === 'none' ? 'dots' : current.settings.grid,
+                  },
+                }));
+              }}><option value="light">浅色</option><option value="dark">深色</option><option value="minimal">简洁</option></select></label>
               <span className={styles.menuDivider} aria-hidden="true" />
               <button type="button" role="menuitem" disabled={!hasCanvasContent} onClick={() => {
                 setFitRequest((value) => value + 1);

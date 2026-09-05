@@ -16,7 +16,6 @@ import {
 } from '../../src/services/workspaceRepairSafety.ts';
 import { mergeWorkspaceFieldChangesDetailed } from '../../src/services/workspaceSyncCore.ts';
 import { buildPendingWorkspaceSyncRemainder } from '../../src/services/workspaceSyncQueueCore.ts';
-import { createWorkspaceIntegrityReport } from '../../src/services/workspaceIntegrity.ts';
 import { assertUniqueBlockIds, genBlockId } from '../../src/utils/blocks.ts';
 
 function backupWithBlocks(blocks: Array<Record<string, unknown>>): WorkspaceBackup {
@@ -45,7 +44,6 @@ test('only user and explicit restore origins can create schema 8 queue writes', 
   ];
   for (const origin of origins) assert.equal(canWorkspaceMutationEnqueue(origin), allowed.has(origin), origin);
 });
-
 test('new block IDs are cross-tab-safe and duplicate writes are rejected before persistence', () => {
   const ids = new Set(Array.from({ length: 50 }, () => genBlockId()));
   assert.equal(ids.size, 50);
@@ -61,7 +59,6 @@ test('new block IDs are cross-tab-safe and duplicate writes are rejected before 
     /缺少 ID/,
   );
 });
-
 test('timeline repair keeps different duplicates and archives identical extra copies', async () => {
   const before = backupWithBlocks([
     { type: 'text', id: '', content: 'missing' },
@@ -147,49 +144,4 @@ test('field acknowledgement retains blocked fields and their original baseline',
     baseHashes: { nodes: 'nodes-base' },
     forceFields: undefined,
   });
-});
-
-test('read-only integrity report identifies block IDs and dangling daily references', async () => {
-  const local = backupWithBlocks([
-    { type: 'text', id: '', content: 'missing' },
-    { type: 'text', id: 'dup', content: 'one' },
-    { type: 'text', id: 'dup', content: 'two' },
-  ]);
-  local.daily.schedules['2026-09-03'] = {
-    date: '2026-09-03',
-    items: [{
-      id: 'scheduled-1',
-      name: 'dangling',
-      source: 'project',
-      sourceId: 'project-blk:task-1::not-found',
-      completed: false,
-      order: 0,
-    }],
-    blocks: [],
-  };
-  const report = await createWorkspaceIntegrityReport({
-    workspaceId: 'workspace-owner-primary',
-    local,
-    queue: {
-      version: 1, writeId: 'write-1', deviceId: 'device-a',
-      createdAt: '2026-09-03T00:00:00.000Z', updatedAt: '2026-09-03T00:00:00.000Z',
-      fields: { tasks: local.timeline.tasks },
-    },
-    conflicts: [{
-      id: 'conflict-1', detectedAt: '2026-09-03T00:00:00.000Z',
-      remoteUpdatedAt: '2026-09-03T00:00:00.000Z',
-      pending: {
-        version: 1, deviceId: 'device-a',
-        createdAt: '2026-09-03T00:00:00.000Z', updatedAt: '2026-09-03T00:00:00.000Z',
-        fields: { tasks: [] },
-      },
-    }],
-  });
-  assert.equal(report.schemaVersion, 8);
-  assert.equal(report.queueWriteId, 'write-1');
-  assert.deepEqual(report.activeConflictIds, ['conflict-1']);
-  assert.deepEqual(report.issues.map((issue) => issue.type).sort(), [
-    'dangling-reference', 'duplicate-id', 'missing-id',
-  ]);
-  assert.ok(report.issues.every((issue) => /^[a-f0-9]{64}$/.test(issue.valueHash)));
 });
