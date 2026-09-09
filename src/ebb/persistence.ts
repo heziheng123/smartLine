@@ -57,3 +57,7 @@ export async function loadEbbData(): Promise<EbbData | null> {
 export function saveEbbData(data: EbbData): void {
   ebbPersistence.schedule(toEbbData(data));
 }
+
+export async function persistEbbData(data: EbbData): Promise<void> {
+  await ebbPersistence.writeNow(toEbbData(data));
+}

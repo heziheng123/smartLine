@@ -11,7 +11,12 @@ import { normalizeTimelineData } from '@/store/timelineData';
 import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
+import { useFocusStore } from '@/focus/store';
+import { normalizeFocusData, persistFocusData } from '@/focus/persistence';
 import { createLocalSnapshot } from './workspaceBackup';
+import {
+  isWorkspaceTrackedTransactionActive,
+} from './workspaceLocalWriteJournal';
 import {
   canWorkspaceMutationEnqueue,
   currentWorkspaceMutationOrigin,
@@ -22,13 +27,16 @@ import {
   broadcastWorkspaceFields,
   isWorkspaceConnectionMutationCaptureActive,
   isWorkspaceQueueSuppressed,
+  isWorkspaceSystemMutationSuppressed,
   listWorkspaceConflicts,
   markWorkspaceConflictResolved,
   queueWorkspaceFields,
+  readPendingWorkspaceSync,
   replaceWorkspaceConflictPending,
   setWorkspaceQueueSuppressed,
   setWorkspaceSystemMutationSuppressed,
   WORKSPACE_QUEUE_EVENT,
+  WORKSPACE_QUEUE_ERROR_EVENT,
   workspaceQueueChannel,
   workspaceQueueTabId,
   type WorkspaceStorageField,
@@ -109,6 +117,25 @@ export function applyWorkspaceFields(
   if (fields.nodes !== undefined) {
     useGraphStore.setState({ nodes: normalizeGraphNodes(fields.nodes) });
   }
+  if (fields.focusSubjects !== undefined || fields.focusSessions !== undefined || fields.focusWeeklyReviews !== undefined) {
+    const current = useFocusStore.getState();
+    const normalized = normalizeFocusData({
+      focusSubjects: fields.focusSubjects ?? current.focusSubjects,
+      focusSessions: fields.focusSessions ?? current.focusSessions,
+      focusWeeklyReviews: fields.focusWeeklyReviews ?? current.focusWeeklyReviews,
+    });
+    void persistFocusData(normalized).then((persisted) => {
+      runWorkspaceMutationWithOrigin(origin, () => useFocusStore.setState(persisted));
+    }).catch((error) => {
+      console.warn('[focus] 同步数据落盘失败：', error);
+      window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, {
+        detail: {
+          kind: 'storage_write_failed',
+          message: '专注同步数据无法安全写入本机，已保留当前界面数据，请勿关闭页面并重试。',
+        },
+      }));
+    });
+  }
   });
 }
 
@@ -116,6 +143,7 @@ function isWorkspaceMessage(value: unknown): value is {
   version?: 1;
   type: 'queue-ready' | 'fields';
   source: string;
+  generation?: number;
   fields?: Partial<Record<WorkspaceStorageField, unknown>>;
 } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -124,12 +152,14 @@ function isWorkspaceMessage(value: unknown): value is {
   if (record.type !== 'queue-ready' && record.type !== 'fields') return false;
   if (typeof record.source !== 'string' || !record.source) return false;
   if (record.type === 'queue-ready') return true;
+  const generation = record.generation;
+  if (generation !== undefined && (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 0)) return false;
   if (!record.fields || typeof record.fields !== 'object' || Array.isArray(record.fields)) return false;
   const allowed = new Set<WorkspaceStorageField>([
     'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
     ...LIFE_MAP_FIELDS,
     'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
-    'schedules', 'retrospectives', 'nodes',
+    'schedules', 'retrospectives', 'nodes', 'focusSubjects', 'focusSessions', 'focusWeeklyReviews',
   ]);
   return Object.keys(record.fields).every((key) => allowed.has(key as WorkspaceStorageField));
 }
@@ -138,28 +168,48 @@ export function startWorkspaceCrossTabDataSync(): () => void {
   if (!workspaceQueueChannel) return () => undefined;
 
   const channel = workspaceQueueChannel;
+  let appliedGeneration = 0;
   const handler = (event: MessageEvent<unknown>) => {
-    if (!isWorkspaceMessage(event.data)) return;
-    if (event.data.source === workspaceQueueTabId) return;
-    if (event.data.type === 'queue-ready') {
+    const message = event.data;
+    if (!isWorkspaceMessage(message)) return;
+    if (message.source === workspaceQueueTabId) return;
+    if (message.type === 'queue-ready') {
       window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
       return;
     }
-    if (event.data.type !== 'fields' || !event.data.fields) return;
+    if (message.type !== 'fields' || !message.fields) return;
+    const fields = message.fields;
+    const generation = message.generation ?? 0;
+    if (generation !== 0 && generation <= appliedGeneration) return;
 
     // Remote-broadcast fields are not local user edits. System mutation
     // suppression blocks trackedSet from journaling this apply and recreating
     // a queue loop on tabs that intentionally do not hold their own connection.
-    setWorkspaceSystemMutationSuppressed(true);
-    setWorkspaceQueueSuppressed(true);
-    try {
-      applyWorkspaceFields(event.data.fields, 'broadcast');
-    } finally {
-      window.setTimeout(() => {
-        setWorkspaceQueueSuppressed(false);
-        setWorkspaceSystemMutationSuppressed(false);
-      }, 0);
-    }
+    void readPendingWorkspaceSync().then((pending) => {
+      // Only the broadcast that belongs to this exact durable revision may
+      // paint over an optimistic local state. In particular, a leader's later
+      // cloud-hydration broadcast receives its own generation and must not
+      // overwrite a still-pending local user edit merely because it was sent
+      // later.
+      const applicableFields = pending && (pending.generation ?? 0) !== generation
+        ? Object.fromEntries(Object.entries(fields).filter(([field]) => (
+          !Object.prototype.hasOwnProperty.call(pending.fields, field)
+        ))) as Partial<Record<WorkspaceStorageField, unknown>>
+        : fields;
+      if (Object.keys(applicableFields).length === 0) return;
+      if (generation !== 0 && generation <= appliedGeneration) return;
+      setWorkspaceSystemMutationSuppressed(true);
+      setWorkspaceQueueSuppressed(true);
+      try {
+        applyWorkspaceFields(applicableFields, 'broadcast');
+        if (generation !== 0) appliedGeneration = generation;
+      } finally {
+        window.setTimeout(() => {
+          setWorkspaceQueueSuppressed(false);
+          setWorkspaceSystemMutationSuppressed(false);
+        }, 0);
+      }
+    }).catch((error) => console.warn('[workspace-queue] 跨标签页数据读取失败：', error));
   };
 
   channel.addEventListener('message', handler);
@@ -280,10 +330,12 @@ export function startWorkspaceQueueTracking(): () => void {
   let daily = useDailyScheduleStore.getState();
   let graph = useGraphStore.getState();
   let lifeMap = useLifeMapStore.getState();
+  let focus = useFocusStore.getState();
 
   const shouldQueue = () => (
     (isUnifiedWorkspaceConfigured() || isWorkspaceConnectionMutationCaptureActive())
     && !isWorkspaceStorageReady()
+    && !isWorkspaceTrackedTransactionActive()
   );
   const queueTrackedFields = (
     changed: Partial<Record<WorkspaceStorageField, unknown>>,
@@ -294,7 +346,9 @@ export function startWorkspaceQueueTracking(): () => void {
     void queueWorkspaceFields(changed, base, { preservePendingFields: true, origin });
   };
   const broadcastHydratedFields = (fields: Partial<Record<WorkspaceStorageField, unknown>>) => {
-    if (!isWorkspaceQueueSuppressed() && !shouldQueue()) broadcastWorkspaceFields(fields);
+    if (!isWorkspaceSystemMutationSuppressed() && !shouldQueue() && !isWorkspaceTrackedTransactionActive()) {
+      broadcastWorkspaceFields(fields);
+    }
   };
 
   const unsubscribers = [
@@ -405,6 +459,28 @@ export function startWorkspaceQueueTracking(): () => void {
           base[field] = previous[field];
         }
       });
+      if (!isWorkspaceQueueSuppressed() && shouldQueue() && Object.keys(changed).length) {
+        queueTrackedFields(changed, base);
+      }
+      if (Object.keys(changed).length) broadcastHydratedFields(changed);
+    }),
+    useFocusStore.subscribe((state) => {
+      const previous = focus;
+      focus = state;
+      const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
+      if (state.focusSubjects !== previous.focusSubjects) {
+        changed.focusSubjects = state.focusSubjects;
+        base.focusSubjects = previous.focusSubjects;
+      }
+      if (state.focusSessions !== previous.focusSessions) {
+        changed.focusSessions = state.focusSessions;
+        base.focusSessions = previous.focusSessions;
+      }
+      if (state.focusWeeklyReviews !== previous.focusWeeklyReviews) {
+        changed.focusWeeklyReviews = state.focusWeeklyReviews;
+        base.focusWeeklyReviews = previous.focusWeeklyReviews;
+      }
       if (!isWorkspaceQueueSuppressed() && shouldQueue() && Object.keys(changed).length) {
         queueTrackedFields(changed, base);
       }

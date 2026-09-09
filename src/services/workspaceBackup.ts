@@ -5,7 +5,8 @@ import type { DaySchedule } from '@/components/dailySchedule/types';
 import type { DailyRetrospective } from '@/components/dailySchedule/retrospectiveTypes';
 import { persistTimelineData, useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
-import { useGraphStore } from '@/graph/store';
+import { persistEbbData } from '@/ebb/persistence';
+import { persistGraphData, useGraphStore } from '@/graph/store';
 import {
   normalizeDailyRetrospectives,
   persistDailyRetrospectives,
@@ -16,9 +17,12 @@ import { parseSourceId } from '@/components/dailySchedule/conversion';
 import { getReviewTopicKey } from '@/ebb/scheduler';
 import { createScopedStorage } from '@/utils/persistence';
 import { isContinuousTask } from '@/domain/taskRules';
-import { useLifeMapStore } from '@/lifeMap/store';
+import { persistLifeMapData, useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, activeLifeMapItems, normalizeLifeMapData, validateLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
+import type { FocusData } from '@/focus/types';
+import { assertNoActiveFocusSessionForWorkspace, createEmptyFocusData, normalizeFocusData, persistFocusData } from '@/focus/persistence';
+import { useFocusStore } from '@/focus/store';
 import { parseMindMapBackupBundle, mindMapRepository, type MindMapBackupBundle } from '@/mindMap/repository';
 import { useMindMapStore } from '@/mindMap/store';
 import {
@@ -53,6 +57,9 @@ export interface WorkspaceBackup {
     schedules: Record<string, DaySchedule>;
     retrospectives: Record<string, DailyRetrospective>;
   };
+  focus: FocusData;
+  /** Compatibility marker added while normalizing backups made before Focus existed. */
+  omittedSections?: Array<'focus'>;
   settings: { timelineViewPreferences?: unknown };
   /** Optional extension for schema 8. Missing on exports made before map backup. */
   mindMap?: MindMapBackupBundle;
@@ -71,6 +78,8 @@ export interface WorkspaceBackupSummary {
   retrospectiveEntries: number;
   graphNodes: number;
   mindMapDocuments: number;
+  focusSubjects: number;
+  focusSessions: number;
   issues: string[];
 }
 
@@ -85,7 +94,7 @@ export interface WorkspaceSnapshot {
   storedBytes?: number;
 }
 
-type SnapshotSection = 'header' | 'timeline' | 'lifeMap' | 'ebb' | 'graph' | 'daily' | 'settings' | 'mindMap';
+type SnapshotSection = 'header' | 'timeline' | 'lifeMap' | 'ebb' | 'graph' | 'daily' | 'focus' | 'settings' | 'mindMap';
 
 interface SnapshotChunk {
   encoding: 'gzip' | 'json';
@@ -130,8 +139,9 @@ export function createWorkspaceBackup(): WorkspaceBackup {
   const graph = useGraphStore.getState();
   const daily = useDailyScheduleStore.getState();
   const lifeMap = useLifeMapStore.getState();
+  const focus = useFocusStore.getState();
 
-  if (!timeline.isHydrated || !ebb.isHydrated || !graph.isHydrated || !daily.isHydrated || !lifeMap.isHydrated) {
+  if (!timeline.isHydrated || !ebb.isHydrated || !graph.isHydrated || !daily.isHydrated || !lifeMap.isHydrated || !focus.isHydrated) {
     throw new Error('工作区数据仍在加载，请稍后再试。');
   }
   const backup: WorkspaceBackup = {
@@ -156,6 +166,7 @@ export function createWorkspaceBackup(): WorkspaceBackup {
     },
     graph: { nodes: graph.nodes },
     daily: { schedules: daily.schedules, retrospectives: daily.retrospectives },
+    focus: { focusSubjects: focus.focusSubjects, focusSessions: focus.focusSessions, focusWeeklyReviews: focus.focusWeeklyReviews },
     settings: {
       timelineViewPreferences: (() => {
         try { return JSON.parse(localStorage.getItem('smart-timeline-view-preferences-v2') ?? 'null'); }
@@ -205,6 +216,7 @@ export function validateWorkspaceBackup(value: unknown): {
   const ebb = value.ebb;
   const graph = value.graph;
   const daily = value.daily;
+  const rawFocus = value.focus;
   if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) errors.push(...validateLifeMapData(value.lifeMap));
   if (!isRecord(timeline) || !Array.isArray(timeline.tasks) || !Array.isArray(timeline.groups)
     || !Array.isArray(timeline.notes) || !Array.isArray(timeline.milestones)
@@ -219,6 +231,21 @@ export function validateWorkspaceBackup(value: unknown): {
   if (!isRecord(daily) || !isRecord(daily.schedules)) errors.push('每日安排数据格式无效。');
   if (errors.length > 0) return { errors };
 
+  if (rawFocus === undefined && value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
+    return { errors: ['当前版本备份缺少专注数据。'] };
+  }
+  let focus: FocusData;
+  try {
+    focus = rawFocus === undefined ? createEmptyFocusData() : normalizeFocusData(rawFocus);
+  } catch (error) {
+    errors.push(error instanceof Error ? `专注数据无效：${error.message}` : '专注数据无效。');
+    return { errors };
+  }
+  const focusSubjectIds = new Set(focus.focusSubjects.map((subject) => subject.id));
+  const missingFocusSubject = focus.focusSessions.find((session) => !focusSubjectIds.has(session.subjectId));
+  if (missingFocusSubject) {
+    return { errors: [`专注记录 ${missingFocusSubject.id} 引用了不存在的主题。`] };
+  }
   const rawBackup = value as unknown as WorkspaceBackup;
   const backup: WorkspaceBackup = {
     ...rawBackup,
@@ -236,6 +263,8 @@ export function validateWorkspaceBackup(value: unknown): {
           : {},
       ),
     },
+    focus,
+    ...(rawFocus === undefined ? { omittedSections: ['focus'] as Array<'focus'> } : {}),
   };
   if (Object.prototype.hasOwnProperty.call(value, 'mindMap')) {
     const parsed = parseMindMapBackupBundle(value.mindMap);
@@ -360,6 +389,7 @@ export function validateWorkspaceBackup(value: unknown): {
   if (errors.length > 0) return { errors };
 
   const issues: string[] = [];
+  if (backup.omittedSections?.includes('focus')) issues.push('旧版备份不含专注数据，恢复时将保留当前专注数据');
   // Handle environments where localStorage is not available (e.g., Node.js tests)
   if (typeof localStorage !== 'undefined') {
     const localRevision = Number.parseInt(localStorage.getItem('smart-line-workspace-revision') ?? '0', 10);
@@ -596,6 +626,8 @@ export function validateWorkspaceBackup(value: unknown): {
         .reduce((sum, retrospective) => sum + retrospective.entries.length, 0),
       graphNodes: backup.graph.nodes.length,
       mindMapDocuments: backup.mindMap?.documents.length ?? 0,
+      focusSubjects: backup.focus.focusSubjects.length,
+      focusSessions: backup.focus.focusSessions.length,
       issues: [...new Set(issues)].slice(0, 50),
     },
   };
@@ -640,6 +672,7 @@ function snapshotSections(backup: WorkspaceBackup): Partial<Record<SnapshotSecti
     ebb: backup.ebb,
     graph: backup.graph,
     daily: backup.daily,
+    focus: backup.focus,
     settings: backup.settings,
     ...(backup.mindMap ? { mindMap: backup.mindMap } : {}),
   };
@@ -736,6 +769,7 @@ export async function materializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot):
     ebb: values.ebb as WorkspaceBackup['ebb'],
     graph: values.graph as WorkspaceBackup['graph'],
     daily: values.daily as WorkspaceBackup['daily'],
+    focus: normalizeFocusData(values.focus),
     settings: values.settings as WorkspaceBackup['settings'],
     ...(values.mindMap ? { mindMap: values.mindMap as WorkspaceBackup['mindMap'] } : {}),
   };
@@ -768,10 +802,14 @@ export async function restoreWorkspaceBackup(
   backup: WorkspaceBackup,
   options: { suppressSyncJournal?: boolean; origin?: WorkspaceMutationOrigin } = {},
 ): Promise<void> {
+  await assertNoActiveFocusSessionForWorkspace();
   await createLocalSnapshot('恢复完整工作区前');
   const before = await createWorkspaceBackupWithMindMap();
   const apply = async (source: WorkspaceBackup) => {
     const safe = deepClone(source);
+    const focus = safe.omittedSections?.includes('focus')
+      ? normalizeFocusData(useFocusStore.getState())
+      : normalizeFocusData(safe.focus);
     const origin = options.origin ?? (options.suppressSyncJournal ? 'remote-hydration' : 'restore');
     runWorkspaceMutationWithOrigin(origin, () => {
       useTimelineStore.getState().replaceData(safe.timeline);
@@ -780,6 +818,7 @@ export async function restoreWorkspaceBackup(
       useGraphStore.getState().replaceGraphData(safe.graph);
       useDailyScheduleStore.getState().replaceSchedules(safe.daily.schedules);
       useDailyScheduleStore.getState().replaceRetrospectives(safe.daily.retrospectives);
+      useFocusStore.setState(focus);
     });
     await Promise.all([
       persistTimelineData({
@@ -789,8 +828,17 @@ export async function restoreWorkspaceBackup(
         milestones: useTimelineStore.getState().milestones,
         lifeStages: useTimelineStore.getState().lifeStages,
       }),
+      persistLifeMapData(normalizeLifeMapData(useLifeMapStore.getState())),
+      persistEbbData({
+        reviewTasks: useEbbStore.getState().reviewTasks,
+        inboxItems: useEbbStore.getState().inboxItems,
+        outlineNodes: useEbbStore.getState().outlineNodes,
+        ebbSettings: useEbbStore.getState().ebbSettings,
+      }),
+      persistGraphData({ nodes: useGraphStore.getState().nodes }),
       persistDailySchedules(useDailyScheduleStore.getState().schedules),
       persistDailyRetrospectives(useDailyScheduleStore.getState().retrospectives),
+      persistFocusData(focus),
     ]);
   };
   try {

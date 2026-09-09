@@ -79,6 +79,7 @@ try {
     operationHistoryModule,
     dailyRetrospectiveModule,
     lifeMapModule,
+    focusModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -112,12 +113,14 @@ try {
     load('/src/services/operationHistory.ts'),
     load('/src/domain/dailyRetrospective.ts'),
     load('/src/lifeMap/store.ts'),
+    load('/src/focus/store.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
   const { useGraphStore } = graphModule;
   const { useEbbStore } = ebbModule;
   const { useDailyScheduleStore } = dailyModule;
+  const { useFocusStore } = focusModule;
   const { useLifeMapStore } = lifeMapModule;
   const { useGraphBindingStore } = graphBindingModule;
   const {
@@ -234,6 +237,7 @@ try {
     });
     useDailyScheduleStore.setState({ schedules, retrospectives, isHydrated: true });
     useLifeMapStore.setState({ isHydrated: true });
+    useFocusStore.setState({ focusSubjects: [], focusSessions: [], isHydrated: true });
   };
 
   const smartBlock = (id, title, graphNodeIds, autoSyncEbb = true) => ({
@@ -1170,6 +1174,7 @@ try {
         },
         retrospectives: {},
       },
+      focus: backupModule.createWorkspaceBackup().focus,
       settings: {},
     };
     const result = backupModule.validateWorkspaceBackup(valid);
@@ -2096,7 +2101,7 @@ try {
       targetDate: '2026-09-30',
     });
     const backup = backupModule.createWorkspaceBackup();
-    assert.equal(backup.schemaVersion, 8);
+    assert.equal(backup.schemaVersion, 9);
     assert.equal(backup.lifeMap.lifeMapGoals.length, 1);
     assert.equal(backup.lifeMap.lifeMapPlanGroups.length, 3);
     assert.equal(backup.timeline.tasks[0].planningAreaId, 'health');
@@ -2110,7 +2115,7 @@ try {
     schemaFourBackup.lifeMap.lifeMapAreas.forEach((area) => { delete area.planGroupId; });
     const schemaSixUpgrade = backupModule.validateWorkspaceBackup(schemaFourBackup);
     assert.equal(schemaSixUpgrade.errors.length, 0);
-    assert.equal(schemaSixUpgrade.backup.schemaVersion, 8);
+    assert.equal(schemaSixUpgrade.backup.schemaVersion, 9);
     assert.deepEqual(schemaSixUpgrade.backup.lifeMap.lifeMapPlanGroups.map(({ id, placement }) => ({ id, placement })), [
       { id: 'learning', placement: 'above' },
       { id: 'work', placement: 'below' },
@@ -2122,7 +2127,7 @@ try {
     schemaSixBackup.schemaVersion = 6;
     const schemaSevenUpgrade = backupModule.validateWorkspaceBackup(schemaSixBackup);
     assert.equal(schemaSevenUpgrade.errors.length, 0);
-    assert.equal(schemaSevenUpgrade.backup.schemaVersion, 8);
+    assert.equal(schemaSevenUpgrade.backup.schemaVersion, 9);
     assert.equal(schemaSevenUpgrade.backup.timeline.tasks[0].planningAreaId, 'health');
 
     const oldBackup = structuredClone(backup);
@@ -2130,7 +2135,7 @@ try {
     delete oldBackup.lifeMap;
     const upgraded = backupModule.validateWorkspaceBackup(oldBackup);
     assert.equal(upgraded.errors.length, 0);
-    assert.equal(upgraded.backup.schemaVersion, 8);
+    assert.equal(upgraded.backup.schemaVersion, 9);
     assert.equal(upgraded.summary.lifeMapItems, 0);
   });
 

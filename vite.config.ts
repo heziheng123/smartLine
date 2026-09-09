@@ -29,6 +29,8 @@ export default defineConfig({
           if (normalized.includes('/node_modules/d3-')) return 'vendor-d3';
           if (normalized.includes('/node_modules/dayjs/')) return 'vendor-date';
           if (normalized.includes('/node_modules/dompurify/')) return 'vendor-sanitize';
+          if (normalized.includes('/node_modules/localforage/')) return 'vendor-storage';
+          if (normalized.includes('/node_modules/katex/') || normalized.includes('/node_modules/marked/')) return 'vendor-rich-text';
           if (normalized.includes('/node_modules/lucide-react/')) return 'vendor-icons';
         }
       }

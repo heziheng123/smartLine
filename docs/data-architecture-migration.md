@@ -4,7 +4,7 @@
 
 当前推荐架构使用 GitHub OAuth 确认用户身份，Cloudflare Pages Function 使用 Liveblocks Secret Key 为指定房间签发令牌。Timeline、Life Map、EBB、Daily 和 Graph 五个数据域共享一个 `workspace-{用户}-{工作区}` 房间。浏览器以 IndexedDB 为主存储，localStorage 只保存设置、租约、revision 和紧急写入日志。
 
-完整工作区 schema 当前为 `6`。版本 1–5 会在加载时归一化为版本 6。版本 5 引入固定项目大类偏好和 `LifeArea.planGroupId`；版本 6 允许全局关键日期，并增加项目到结果目标、关键日期到项目的可选关系。
+完整工作区 schema 当前为 `9`。版本 1–8 会在加载时归一化为版本 9；旧备份没有的新增域会安全保留当前本机数据。版本 5 引入固定项目大类偏好和 `LifeArea.planGroupId`；版本 6 允许全局关键日期；版本 7 增加项目分类关联；版本 8 增加实体投影和地图备份；版本 9 增加正式专注数据。
 
 ## 2. 迁移前检查
 

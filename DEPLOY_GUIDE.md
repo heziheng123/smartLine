@@ -138,7 +138,7 @@ Preview 环境使用独立 secrets 和 R2 bucket；不得复用 Production Secre
 1. 暂停多设备编辑；
 2. 从当前版本导出完整备份；
 3. 保留当前 Pages deployment；
-4. 验证待回滚版本支持当前 schema 8；任何只支持 schema 7 或更早版本的客户端都不能写入已升级的生产工作区；
+4. 验证待回滚版本支持当前 schema 9；任何只支持 schema 8 或更早版本的客户端都不能写入已升级的生产工作区；
 5. 回滚静态部署但不删除 Liveblocks 数据或可选的 R2 归档；
 6. 登录、hydrate、离线队列和导出全部验证后恢复使用。
 

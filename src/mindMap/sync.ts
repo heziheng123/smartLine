@@ -80,11 +80,24 @@ function entityKey(prefix: string, id: string): string {
   return prefix + hash.toString(16).padStart(16, '0');
 }
 
+function entityTombstoneKey(prefix: string, id: string): string {
+  return `${prefix}deleted:${entityKey('', id)}`;
+}
+
 function storageEntities(storage: MindMapRoomStorage, prefix: string): Record<string, unknown> {
+  const deletedIds = new Set(Object.entries(storage).flatMap(([key, value]) => {
+    if (!key.startsWith(prefix) || !value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const record = value as Record<string, unknown>;
+    return typeof record.id === 'string' && typeof record.deletedAt === 'number' ? [record.id] : [];
+  }));
   return Object.fromEntries(Object.entries(storage).flatMap(([key, value]) => {
     if (!key.startsWith(prefix) || !value || typeof value !== 'object' || Array.isArray(value)) return [];
-    const id = (value as Record<string, unknown>).id;
-    return typeof id === 'string' ? [[id, value]] : [];
+    const record = value as Record<string, unknown>;
+    // Tombstones remain in the room so an offline document that still has an
+    // old entity cannot recreate it after another device deleted it.
+    if (typeof record.deletedAt === 'number') return [];
+    const id = record.id;
+    return typeof id === 'string' && !deletedIds.has(id) ? [[id, value]] : [];
   }));
 }
 
@@ -135,10 +148,22 @@ function documentFromRoot(root: LiveObject<MindMapRoomStorage>, local: MindMapDo
 function applyEntityChanges(
   root: LiveObject<MindMapRoomStorage>,
   prefix: string,
-  change: { upserts: Record<string, object>; deletes: string[] },
+  change: { upserts: Record<string, object>; deletes: string[]; restores?: string[] },
 ) {
-  for (const id of change.deletes) root.delete(entityKey(prefix, id));
-  for (const [id, value] of Object.entries(change.upserts)) root.set(entityKey(prefix, id), jsonObject(value));
+  for (const id of change.deletes) {
+    root.set(entityTombstoneKey(prefix, id), jsonObject({ id, deletedAt: Date.now() }));
+    root.delete(entityKey(prefix, id));
+  }
+  const restores = new Set(change.restores ?? []);
+  for (const [id, value] of Object.entries(change.upserts)) {
+    // Tombstones use a different key, so an old offline upsert cannot replace
+    // the deletion simply by writing the entity's normal storage slot. Only an
+    // explicit local restore (for example Undo) may clear the tombstone.
+    const tombstoneKey = entityTombstoneKey(prefix, id);
+    if (restores.has(id)) root.delete(tombstoneKey);
+    else if (root.get(tombstoneKey)) continue;
+    root.set(entityKey(prefix, id), jsonObject(value));
+  }
 }
 
 function normalizeCatalogEntry(value: unknown): MindMapCatalogEntry | null {
@@ -300,6 +325,7 @@ export class MindMapSyncSession {
   private readonly roomId: string;
   private local: MindMapDocument;
   private base: MindMapDocument;
+  private pending: ReturnType<typeof createMindMapSyncPatch> | null = null;
   private room: MindMapRoom | null = null;
   private root: LiveObject<MindMapRoomStorage> | null = null;
   private leave: (() => void) | null = null;
@@ -328,6 +354,7 @@ export class MindMapSyncSession {
       if (this.closed) return;
       if (saved) {
         this.base = saved.base;
+        this.pending = saved.pending;
         if (saved.pending) {
           const queued = applyMindMapSyncPatch(saved.base, saved.pending);
           this.local = mergeMindMapDocuments(saved.base, this.local, queued);
@@ -356,6 +383,7 @@ export class MindMapSyncSession {
       const { root } = await this.room.getStorage();
       if (this.closed) return;
       this.root = root;
+      if (saved?.pending) this.writePatch(saved.pending);
       await this.reconcileFromRoom();
       this.unsubscribers.push(this.room.subscribe(root, () => this.queueReconcile(), { isDeep: true }));
       this.handleStatus(this.room.getStatus());
@@ -370,9 +398,11 @@ export class MindMapSyncSession {
   publish(document: MindMapDocument) {
     if (this.closed || document.id !== this.local.id) return;
     if (mindMapSyncSignature(document) === mindMapSyncSignature(this.local)) return;
+    const previous = this.local;
     this.local = document;
-    const pending = createMindMapSyncPatch(this.base, document);
+    const pending = createMindMapSyncPatch(this.base, document, previous, this.pending);
     if (isMindMapSyncPatchEmpty(pending)) return;
+    this.pending = pending;
     void this.persist({ version: 1, base: this.base, pending });
     if (this.root && this.room) {
       try {
@@ -502,12 +532,14 @@ export class MindMapSyncSession {
     }
     const pending = createMindMapSyncPatch(remote, merged);
     if (!isMindMapSyncPatchEmpty(pending)) {
+      this.pending = pending;
       this.base = remote;
       await mindMapRepository.saveSyncState(merged.id, { version: 1, base: remote, pending });
       this.writePatch(pending);
       return;
     }
     if (this.room.getStorageStatus() === 'synchronized') {
+      this.pending = null;
       this.base = merged;
       const state: MindMapSyncState = { version: 1, base: merged, pending: null };
       await mindMapRepository.saveSyncState(merged.id, state);

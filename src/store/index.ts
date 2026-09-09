@@ -25,7 +25,7 @@ import {
 import { getProjectBlockSourceId, getReviewSourceId } from '@/components/dailySchedule/sourceIds';
 import { todayStr } from '@/utils/dateSafe';
 import { isOperationRecordingSuppressed, recordOperation, registerUndoExecutor } from '@/services/operationHistory';
-import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
+import { createWorkspaceTrackedSet, runWorkspaceTrackedTransaction } from '@/services/workspaceLocalWriteJournal';
 import {
   planProjectTaskEffects,
   type CompletedTaskBindingStrategy,
@@ -672,32 +672,34 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               ]))
             : {};
 
-          set((state) => {
-            const tasks = state.tasks.map((task) =>
-              task.id === taskId
-                ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
-                : task,
-            );
-            const groups = state.groups.map((group) => ({
-              ...group,
-              children: group.children.map((task) =>
+          const commitReport = runWorkspaceTrackedTransaction(() => {
+            set((state) => {
+              const tasks = state.tasks.map((task) =>
                 task.id === taskId
                   ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
                   : task,
-              ),
-            }));
-            const newData = { ...state, tasks, groups };
-            saveData(newData);
-            return newData;
-          });
+              );
+              const groups = state.groups.map((group) => ({
+                ...group,
+                children: group.children.map((task) =>
+                  task.id === taskId
+                    ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
+                    : task,
+                ),
+              }));
+              const newData = { ...state, tasks, groups };
+              saveData(newData);
+              return newData;
+            });
 
-          const commitReport = commitProjectTaskEffects({
-            taskId,
-            blockId,
-            currentHeader: currentBlock.header,
-            nextHeader,
-            effectPlan,
-            ebbPlan: effectPlan.ebbPayloads.length > 0 ? ebbPlan : undefined,
+            return commitProjectTaskEffects({
+              taskId,
+              blockId,
+              currentHeader: currentBlock.header,
+              nextHeader,
+              effectPlan,
+              ebbPlan: effectPlan.ebbPayloads.length > 0 ? ebbPlan : undefined,
+            });
           });
 
           if (!isOperationRecordingSuppressed()) {

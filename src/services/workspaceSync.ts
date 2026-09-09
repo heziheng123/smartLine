@@ -4,6 +4,7 @@ import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
 import { LIFE_MAP_ROOM_PREFIX, useLifeMapStore } from '@/lifeMap/store';
+import { normalizeFocusData } from '@/focus/persistence';
 import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeTimelineData } from '@/store/timelineData';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
@@ -180,7 +181,7 @@ const EXPECTED_KEYS = [
   'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
   ...LIFE_MAP_FIELDS,
   'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
-  'schedules', 'retrospectives', 'nodes',
+  'schedules', 'retrospectives', 'nodes', 'focusSubjects', 'focusSessions', 'focusWeeklyReviews',
 ] as const;
 
 function isJsonRecord(value: unknown): value is Record<string, Json> {
@@ -200,8 +201,10 @@ let queueListenerStarted = false;
 let queueFlushTimer: number | null = null;
 let queueFlushInFlight: Promise<{ applied: number; conflict: boolean }> | null = null;
 let workspaceVerificationTimer: number | null = null;
-let workspaceVerificationInFlight: Promise<'connected' | 'pending' | 'conflict'> | null = null;
+let workspaceVerificationInFlight: Promise<'connected' | 'pending' | 'conflict' | 'deferred'> | null = null;
 let workspaceVerificationRoomId: string | null = null;
+let workspaceVerificationGeneration = 0;
+let workspaceVerificationActivity: WorkspaceSyncActivity | null = null;
 let workspaceConnectionOperation: Promise<unknown> | null = null;
 let workspaceConnectionActivity: WorkspaceSyncActivity | null = null;
 export const WORKSPACE_CONFLICT_EVENT = 'smartline:workspace-conflict';
@@ -439,7 +442,15 @@ export function connectLegacyWorkspace(fallbackCode?: string): void {
   if (connectedLifeMap.syncEnabled) connectedLifeMap.liveblocks?.enterRoom?.(`${LIFE_MAP_ROOM_PREFIX}${connectedLifeMap.syncRoomCode || code}`);
 }
 
-export async function connectUnifiedWorkspace(roomCode: string, roomId?: string): Promise<UnifiedWorkspaceConnectionResult> {
+export async function connectUnifiedWorkspace(
+  roomCode: string,
+  roomId?: string,
+  shouldContinue: () => boolean = () => true,
+): Promise<UnifiedWorkspaceConnectionResult> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   const settings = readWorkspaceSyncSettings();
   const targetRoomId = roomId || settings.unifiedRoomId || buildUnifiedRoomId(roomCode);
   stopWorkspaceVerificationMonitor();
@@ -455,6 +466,7 @@ export async function connectUnifiedWorkspace(roomCode: string, roomId?: string)
     ensureQueueListener();
 
     await waitForUnifiedStorage(targetRoomId);
+    assertCurrent();
     const connectedRoom = useTimelineStore.getState().liveblocks?.room;
     if (!connectedRoom || connectedRoom.id !== targetRoomId) {
       throw new Error('统一工作区连接已切换，无法补传本机修改。');
@@ -464,13 +476,16 @@ export async function connectUnifiedWorkspace(roomCode: string, roomId?: string)
     // completed the reconnect handshake and synchronized its storage state.
     await waitForRoomStorageSynchronized(connectedRoom);
     const authoritativeRoot = await inspectRoom(targetRoomId, '统一工作区最新快照');
+    assertCurrent();
     await waitForRoomSnapshot(connectedRoom, authoritativeRoot, EXPECTED_KEYS);
+    assertCurrent();
     reportWorkspaceConnectionProgress('云端已连接，正在补传本机离线修改…', 'flushing');
     if (queueFlushTimer) {
       window.clearTimeout(queueFlushTimer);
       queueFlushTimer = null;
     }
     const flushed = await flushWorkspaceQueue();
+    assertCurrent();
     const remaining = await readPendingWorkspaceSync();
     assertWorkspaceQueueDrained({
       pendingFieldCount: Object.keys(remaining?.fields ?? {}).length,
@@ -482,8 +497,10 @@ export async function connectUnifiedWorkspace(roomCode: string, roomId?: string)
       throw new Error('统一工作区连接在补传完成前中断，请检查网络后重试。');
     }
     await waitForRoomStorageSynchronized(room);
+    assertCurrent();
     reportWorkspaceConnectionProgress('补传已确认，正在校验五个数据域的一致性…', 'verifying');
-    const repairedFields = await ensureUnifiedWorkspaceConvergence(targetRoomId);
+    const repairedFields = await ensureUnifiedWorkspaceConvergence(targetRoomId, shouldContinue);
+    assertCurrent();
     recordWorkspaceVerification(targetRoomId, repairedFields);
     startWorkspaceVerificationMonitor(targetRoomId);
     window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
@@ -500,20 +517,29 @@ export async function activateUnifiedWorkspace(roomCode: string, identity: strin
 async function reconnectConfiguredWorkspaceInternal(
   identity?: string,
   historicalIdentity?: string,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceConnectionResult | null> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   const settings = readWorkspaceSyncSettings();
   const anyEnabled = [useTimelineStore, useEbbStore, useDailyScheduleStore, useGraphStore, useLifeMapStore]
     .some((store) => store.getState().syncEnabled);
   if (anyEnabled && settings.architecture === 'unified' && settings.unifiedRoomId) {
     const root = await inspectRoom(settings.unifiedRoomId, '统一工作区');
+    assertCurrent();
     assertWorkspaceSchemaSupported(root, WORKSPACE_SCHEMA_VERSION);
     await initializeUnifiedRoomBeforeConnect(
       settings.unifiedRoomId,
       rootToBackup(root, createWorkspaceBackup()),
       root,
       false,
+      shouldContinue,
     );
-    const connected = await connectUnifiedWorkspace(settings.roomCode, settings.unifiedRoomId);
+    assertCurrent();
+    const connected = await connectUnifiedWorkspace(settings.roomCode, settings.unifiedRoomId, shouldContinue);
+    assertCurrent();
     const warning = identity
       ? await tryWriteWorkspaceAccountBinding(identity, { roomCode: settings.roomCode, unifiedRoomId: settings.unifiedRoomId })
       : undefined;
@@ -530,7 +556,7 @@ async function reconnectConfiguredWorkspaceInternal(
         );
       }
       if (binding) {
-        return await activateUnifiedWorkspaceSafelyInternal(binding.roomCode, identity, historicalIdentity);
+        return await activateUnifiedWorkspaceSafelyInternal(binding.roomCode, identity, historicalIdentity, shouldContinue);
       }
     }
     connectLegacyWorkspace(settings.roomCode);
@@ -541,7 +567,7 @@ async function reconnectConfiguredWorkspaceInternal(
   // every module. Re-enable it safely on startup instead of treating the device
   // as permanently unconfigured.
   if (settings.architecture === 'unified' && settings.unifiedRoomId && identity) {
-    return await activateUnifiedWorkspaceSafelyInternal(settings.roomCode, identity, historicalIdentity);
+    return await activateUnifiedWorkspaceSafelyInternal(settings.roomCode, identity, historicalIdentity, shouldContinue);
   }
   if (!identity) return null;
   if (localStorage.getItem(AUTO_DISCOVERY_PAUSED_KEY) === 'true') return null;
@@ -551,15 +577,16 @@ async function reconnectConfiguredWorkspaceInternal(
   // per-device localStorage settings.
   const binding = await readWorkspaceAccountBinding(identity, historicalIdentity);
   if (!binding) return null;
-  return await activateUnifiedWorkspaceSafelyInternal(binding.roomCode, identity, historicalIdentity);
+  return await activateUnifiedWorkspaceSafelyInternal(binding.roomCode, identity, historicalIdentity, shouldContinue);
 }
 
 export function reconnectConfiguredWorkspace(
   identity?: string,
   historicalIdentity?: string,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceConnectionResult | null> {
   return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
-    () => reconnectConfiguredWorkspaceInternal(identity, historicalIdentity),
+    () => reconnectConfiguredWorkspaceInternal(identity, historicalIdentity, shouldContinue),
   ));
 }
 
@@ -638,6 +665,11 @@ function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): Wor
         : {},
     },
     graph: { nodes: Array.isArray(root.nodes) ? root.nodes as WorkspaceBackup['graph']['nodes'] : [] },
+    focus: normalizeFocusData({
+      focusSubjects: Array.isArray(root.focusSubjects) ? root.focusSubjects : base.focus.focusSubjects,
+      focusSessions: Array.isArray(root.focusSessions) ? root.focusSessions : base.focus.focusSessions,
+      focusWeeklyReviews: Array.isArray(root.focusWeeklyReviews) ? root.focusWeeklyReviews : base.focus.focusWeeklyReviews,
+    }),
     lifeMap: LIFE_MAP_FIELDS.some((field) => root[field] !== undefined)
       ? normalizeLifeMapData(root)
       : base.lifeMap,
@@ -842,6 +874,12 @@ export function createMergedBackup(
   // Merge graph data
   const mergedGraph = { nodes: selectSource('nodes', local.graph.nodes, remote.graph.nodes) };
 
+  const mergedFocus = {
+    focusSubjects: selectSource('focusSubjects', local.focus.focusSubjects, remote.focus.focusSubjects),
+    focusSessions: selectSource('focusSessions', local.focus.focusSessions, remote.focus.focusSessions),
+    focusWeeklyReviews: selectSource('focusWeeklyReviews', local.focus.focusWeeklyReviews, remote.focus.focusWeeklyReviews),
+  };
+
   return {
     ...local, // Keep local metadata, settings, etc.
     timeline: mergedTimeline,
@@ -849,6 +887,7 @@ export function createMergedBackup(
     ebb: mergedEbb,
     daily: mergedDaily,
     graph: mergedGraph,
+    focus: mergedFocus,
     // Map documents use their own room and are deliberately not copied through
     // the unified workspace channel. Keep the local backup payload untouched.
     mindMap: local.mindMap,
@@ -864,12 +903,19 @@ async function activateUnifiedWorkspaceSafelyInternal(
   roomCode: string,
   identity: string,
   historicalIdentity?: string,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceActivationResult> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   reportWorkspaceConnectionProgress('正在读取本机工作区并创建安全快照…');
   const local = createWorkspaceBackup();
   await createLocalSnapshot('首次连接统一工作区前');
+  assertCurrent();
   reportWorkspaceConnectionProgress('安全快照已完成，正在查找账号对应的云端工作区…');
   const target = await inspectUnifiedWorkspaceTarget(roomCode, identity, historicalIdentity, local);
+  assertCurrent();
   const targetRoomId = target.roomId;
   const remoteRoot = target.root;
   assertWorkspaceSchemaSupported(remoteRoot, WORKSPACE_SCHEMA_VERSION);
@@ -881,11 +927,12 @@ async function activateUnifiedWorkspaceSafelyInternal(
     hashWorkspaceBackup(local),
     hashWorkspaceBackup(remote),
   ]);
+  assertCurrent();
   const [localSummary, remoteSummary] = [summaryOf(local), summaryOf(remote)];
   // A newly opened device contains only product samples until it downloads the
   // workspace. Count that state as empty so it can safely adopt cloud data.
   const localDecisionSummary = isBundledDemoWorkspace(local)
-    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0 }
+    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0, focusSubjects: 0, focusSessions: 0 }
     : localSummary;
   const decision = decideUnifiedWorkspaceActivation(hasRemoteStorage, localHash, remoteHash, localDecisionSummary, remoteSummary);
   if (decision !== 'conflict') {
@@ -894,9 +941,12 @@ async function activateUnifiedWorkspaceSafelyInternal(
       decision === 'new' ? local : remote,
       remoteRoot,
       decision === 'new',
+      shouldContinue,
     );
+    assertCurrent();
     writeWorkspaceSyncSettings({ architecture: 'unified', roomCode, unifiedRoomId: targetRoomId });
-    const connected = await connectUnifiedWorkspace(roomCode, targetRoomId);
+    const connected = await connectUnifiedWorkspace(roomCode, targetRoomId, shouldContinue);
+    assertCurrent();
     reportWorkspaceConnectionProgress('数据已一致，正在保存账号工作区绑定…');
     const warning = await tryWriteWorkspaceAccountBinding(identity, { roomCode, unifiedRoomId: targetRoomId });
     if (!warning) reportWorkspaceConnectionProgress('统一工作区连接及完整校验均已完成。');
@@ -917,9 +967,10 @@ export function activateUnifiedWorkspaceSafely(
   roomCode: string,
   identity: string,
   historicalIdentity?: string,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceActivationResult> {
   return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
-    () => activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity),
+    () => activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity, shouldContinue),
   ));
 }
 
@@ -927,28 +978,36 @@ async function activateWorkspaceWithLegacyDiscoveryInternal(
   roomCode: string,
   identity: string,
   historicalIdentity?: string,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceActivationResult> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   const local = createWorkspaceBackup();
   reportWorkspaceConnectionProgress('正在检查统一工作区及旧版五个云端房间…');
   const unifiedTarget = await inspectUnifiedWorkspaceTarget(roomCode, identity, historicalIdentity, local);
+  assertCurrent();
   if (unifiedTarget.hasStorage) {
-    return await activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity);
+    return await activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity, shouldContinue);
   }
 
   // A new browser has no per-device legacy flags. Probe the old five-room
   // layout before creating an empty unified room, otherwise the new device can
   // accidentally strand the tablet's existing data in the legacy rooms.
   const legacy = await inspectLegacyWorkspaceWithBase(roomCode, createEmptyWorkspaceBase());
+  assertCurrent();
   if (!workspaceHasUserContent(legacy.summary)) {
-    return await activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity);
+    return await activateUnifiedWorkspaceSafelyInternal(roomCode, identity, historicalIdentity, shouldContinue);
   }
 
   const [localHash, localSummary] = await Promise.all([
     hashWorkspaceBackup(local),
     Promise.resolve(summaryOf(local)),
   ]);
+  assertCurrent();
   const localDecisionSummary = isBundledDemoWorkspace(local)
-    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0 }
+    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0, focusSubjects: 0, focusSessions: 0 }
     : localSummary;
   const discoveryDecision = decideLegacyWorkspaceDiscovery(
     false,
@@ -964,6 +1023,7 @@ async function activateWorkspaceWithLegacyDiscoveryInternal(
 
   const pendingBeforeAdoption = await readPendingWorkspaceSync();
   await createWorkspaceSnapshot(legacy.backup, '首次连接时发现的旧房间云端副本');
+  assertCurrent();
   if (discoveryDecision === 'legacy-cloud') {
     reportWorkspaceConnectionProgress('已发现旧房间数据，正在安全加载并迁移到统一工作区…');
     setWorkspaceQueueSuppressed(true);
@@ -974,7 +1034,8 @@ async function activateWorkspaceWithLegacyDiscoveryInternal(
       setWorkspaceQueueSuppressed(false);
     }
   }
-  const migration = await migrateLegacyWorkspaceInternal(roomCode, identity);
+  assertCurrent();
+  const migration = await migrateLegacyWorkspaceInternal(roomCode, identity, shouldContinue);
   reportWorkspaceConnectionProgress('旧房间数据已迁移，统一工作区连接和校验均已完成。');
   return {
     roomId: migration.targetRoomId,
@@ -988,16 +1049,22 @@ export function activateWorkspaceWithLegacyDiscovery(
   roomCode: string,
   identity: string,
   historicalIdentity?: string,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceActivationResult> {
   return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
-    () => activateWorkspaceWithLegacyDiscoveryInternal(roomCode, identity, historicalIdentity),
+    () => activateWorkspaceWithLegacyDiscoveryInternal(roomCode, identity, historicalIdentity, shouldContinue),
   ));
 }
 
 async function overwriteUnifiedRoomFromBackup(
   roomId: string,
   backup: WorkspaceBackup,
+  shouldContinue: () => boolean = () => true,
 ): Promise<void> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   const { room, leave } = createLiveblocksClient().enterRoom(roomId, { initialPresence: {} });
   try {
     const { root } = await withTimeout(
@@ -1005,11 +1072,13 @@ async function overwriteUnifiedRoomFromBackup(
       15_000,
       '连接云端工作区超时，请检查网络后重试。',
     );
+    assertCurrent();
     const fields = workspaceRootFromBackup(backup);
     const currentRoot = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
     const writeId = crypto.randomUUID();
     const entityWrites = buildWorkspaceEntityWrites(currentRoot, fields, writeId);
     const metadata = isJsonRecord(currentRoot.metadata) ? currentRoot.metadata : {};
+    assertCurrent();
     room.batch(() => {
       for (const [key, value] of Object.entries(fields)) root.set(key, value as Json);
       for (const [key, value] of Object.entries(entityWrites)) root.set(key, value as unknown as Json);
@@ -1026,7 +1095,12 @@ async function initializeUnifiedRoomBeforeConnect(
   backup: WorkspaceBackup,
   inspectedRoot: Record<string, unknown>,
   overwriteExisting: boolean,
+  shouldContinue: () => boolean = () => true,
 ): Promise<void> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   reportWorkspaceConnectionProgress('正在确认云端工作区结构和初始化状态…', 'initializing');
   const { room, leave } = createLiveblocksClient().enterRoom(roomId, { initialPresence: {} });
   try {
@@ -1035,6 +1109,7 @@ async function initializeUnifiedRoomBeforeConnect(
       15_000,
       '初始化统一工作区超时，请检查网络后重试。',
     );
+    assertCurrent();
     const rawCurrentRoot = root.toJSON() as Record<string, unknown>;
     const currentRoot = materializeWorkspaceEntityRoot(rawCurrentRoot);
     assertWorkspaceSchemaSupported(currentRoot, WORKSPACE_SCHEMA_VERSION);
@@ -1063,12 +1138,15 @@ async function initializeUnifiedRoomBeforeConnect(
       && !needsEntityInitialization
       && currentMetadata.schemaVersion === WORKSPACE_SCHEMA_VERSION
       && currentMetadata.writerProtocolVersion === WORKSPACE_WRITER_PROTOCOL_VERSION) return;
+    assertCurrent();
     room.batch(() => {
       for (const [key, value] of Object.entries(initializationFields)) root.set(key, value as Json);
       for (const [key, value] of Object.entries(entityWrites)) root.set(key, value as unknown as Json);
       root.set('metadata', workspaceProtocolMetadata(currentMetadata));
     });
     await waitForRoomStorageSynchronized(room);
+    assertCurrent();
+    assertCurrent();
     const confirmedRoot = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
     if (EXPECTED_KEYS.some((key) => confirmedRoot[key] === undefined)
       || hasWorkspaceFieldSnapshotChanged(expectedRoot, confirmedRoot, EXPECTED_KEYS)) {
@@ -1085,16 +1163,24 @@ async function resolveLegacyWorkspaceConflictInternal(
   resolution: UnifiedWorkspaceConflictResolution,
   historicalIdentity?: string,
   domainResolution?: Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceConnectionResult> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   const local = createWorkspaceBackup();
   const legacy = await inspectLegacyWorkspaceWithBase(roomCode, createEmptyWorkspaceBase());
+  assertCurrent();
   if (!workspaceHasUserContent(legacy.summary)) {
     throw new Error('旧房间当前已没有可迁移内容，请重新执行普通连接。');
   }
   const pendingBeforeResolution = await readPendingWorkspaceSync();
+  assertCurrent();
 
   if (resolution === 'cloud') {
     await createWorkspaceSnapshot(legacy.backup, '采用旧房间云端数据前保存的副本');
+    assertCurrent();
     reportWorkspaceConnectionProgress('旧房间数据已保存，正在恢复本机并迁移到统一工作区…');
     setWorkspaceQueueSuppressed(true);
     try {
@@ -1103,7 +1189,8 @@ async function resolveLegacyWorkspaceConflictInternal(
     } finally {
       setWorkspaceQueueSuppressed(false);
     }
-    const migration = await migrateLegacyWorkspaceInternal(roomCode, identity);
+    assertCurrent();
+    const migration = await migrateLegacyWorkspaceInternal(roomCode, identity, shouldContinue);
     return { roomId: migration.targetRoomId, applied: 0, repairedFields: [] };
   }
 
@@ -1114,6 +1201,7 @@ async function resolveLegacyWorkspaceConflictInternal(
     createLocalSnapshot(resolution === 'mixed' ? '按域合并旧房间前的本机工作区' : '选择本机数据并保留旧房间前'),
     createWorkspaceSnapshot(legacy.backup, resolution === 'mixed' ? '按域合并前的旧房间副本' : '被本机统一工作区取代前的旧房间副本'),
   ]);
+  assertCurrent();
   if (resolution === 'mixed') {
     if (!domainResolution) throw new Error('按域合并缺少数据来源选择。');
     setWorkspaceQueueSuppressed(true);
@@ -1122,8 +1210,10 @@ async function resolveLegacyWorkspaceConflictInternal(
     } finally {
       setWorkspaceQueueSuppressed(false);
     }
+    assertCurrent();
   }
   const target = await inspectUnifiedWorkspaceTarget(roomCode, identity, historicalIdentity, selected);
+  assertCurrent();
   if (target.hasStorage) {
     const currentUnified = rootToBackup(target.root, selected);
     const [selectedHash, unifiedHash] = await Promise.all([
@@ -1135,11 +1225,14 @@ async function resolveLegacyWorkspaceConflictInternal(
       throw new UnifiedWorkspaceConflictError(summaryOf(selected), summaryOf(currentUnified));
     }
   } else {
-    await overwriteUnifiedRoomFromBackup(target.roomId, selected);
+    await overwriteUnifiedRoomFromBackup(target.roomId, selected, shouldContinue);
   }
+  assertCurrent();
   if (pendingBeforeResolution) await clearPendingWorkspaceSync(pendingBeforeResolution);
+  assertCurrent();
   writeWorkspaceSyncSettings({ architecture: 'unified', roomCode, unifiedRoomId: target.roomId });
-  const connected = await connectUnifiedWorkspace(roomCode, target.roomId);
+  const connected = await connectUnifiedWorkspace(roomCode, target.roomId, shouldContinue);
+  assertCurrent();
   const warning = await tryWriteWorkspaceAccountBinding(identity, { roomCode, unifiedRoomId: target.roomId });
   return { ...connected, warning };
 }
@@ -1151,21 +1244,36 @@ async function resolveUnifiedWorkspaceConflictInternal(
   historicalIdentity?: string,
   remoteSource: 'unified' | 'legacy' = 'unified',
   domainResolution?: Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceConnectionResult> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   if (remoteSource === 'legacy') {
-    return await resolveLegacyWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity, domainResolution);
+    return await resolveLegacyWorkspaceConflictInternal(
+      roomCode,
+      identity,
+      resolution,
+      historicalIdentity,
+      domainResolution,
+      shouldContinue,
+    );
   }
   reportWorkspaceConnectionProgress('正在重新读取双方数据并创建冲突恢复点…');
   const local = normalizeWorkspaceBackupForMigrationComparison(createWorkspaceBackup());
   const target = await inspectUnifiedWorkspaceTarget(roomCode, identity, historicalIdentity, local);
+  assertCurrent();
   if (!target.hasStorage) throw new Error('云端工作区为空，不需要执行冲突覆盖。请直接重新连接。');
   assertWorkspaceSchemaSupported(target.root, WORKSPACE_SCHEMA_VERSION);
   const remote = rootToBackup(target.root, local);
   summaryOf(remote);
   const pendingBeforeResolution = await readPendingWorkspaceSync();
+  assertCurrent();
 
   if (resolution === 'cloud') {
     await createWorkspaceSnapshot(remote, '冲突处理时读取的云端工作区副本');
+    assertCurrent();
     reportWorkspaceConnectionProgress('已保存云端副本，正在用云端数据恢复本机…');
     setWorkspaceQueueSuppressed(true);
     try {
@@ -1176,12 +1284,14 @@ async function resolveUnifiedWorkspaceConflictInternal(
     } finally {
       setWorkspaceQueueSuppressed(false);
     }
+    assertCurrent();
   } else if (resolution === 'mixed' && domainResolution) {
     // Per-domain resolution: create merged backup and apply to both sides
     await Promise.all([
       createLocalSnapshot('自定义合并前的本机工作区'),
       createWorkspaceSnapshot(remote, '自定义合并前的云端工作区副本'),
     ]);
+    assertCurrent();
     reportWorkspaceConnectionProgress('双方恢复点已保存，正在按自定义选择合并数据…');
 
     const mergedBackup = createMergedBackup(local, remote, domainResolution);
@@ -1193,21 +1303,25 @@ async function resolveUnifiedWorkspaceConflictInternal(
     } finally {
       setWorkspaceQueueSuppressed(false);
     }
+    assertCurrent();
 
     reportWorkspaceConnectionProgress('本机已更新，正在上传合并后的数据到云端…');
-    await overwriteUnifiedRoomFromBackup(target.roomId, mergedBackup);
+    await overwriteUnifiedRoomFromBackup(target.roomId, mergedBackup, shouldContinue);
   } else {
     await Promise.all([
       createLocalSnapshot('以本机数据覆盖云端前'),
       createWorkspaceSnapshot(remote, '被本机数据替换前的云端工作区副本'),
     ]);
+    assertCurrent();
     reportWorkspaceConnectionProgress('双方恢复点已保存，正在用本机数据更新云端…');
-    await overwriteUnifiedRoomFromBackup(target.roomId, local);
+    await overwriteUnifiedRoomFromBackup(target.roomId, local, shouldContinue);
     if (pendingBeforeResolution) await clearPendingWorkspaceSync(pendingBeforeResolution);
   }
 
+  assertCurrent();
   writeWorkspaceSyncSettings({ architecture: 'unified', roomCode, unifiedRoomId: target.roomId });
-  const connected = await connectUnifiedWorkspace(roomCode, target.roomId);
+  const connected = await connectUnifiedWorkspace(roomCode, target.roomId, shouldContinue);
+  assertCurrent();
   reportWorkspaceConnectionProgress('正在保存账号工作区绑定…');
   const warning = await tryWriteWorkspaceAccountBinding(identity, { roomCode, unifiedRoomId: target.roomId });
   if (!warning) reportWorkspaceConnectionProgress('冲突方向已确认，五个数据域已重新连接并校验完成。');
@@ -1221,9 +1335,18 @@ export function resolveUnifiedWorkspaceConflict(
   historicalIdentity?: string,
   remoteSource: 'unified' | 'legacy' = 'unified',
   domainResolution?: Partial<Record<WorkspaceStorageField, 'cloud' | 'local'>>,
+  shouldContinue: () => boolean = () => true,
 ): Promise<UnifiedWorkspaceConnectionResult> {
   return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
-    () => resolveUnifiedWorkspaceConflictInternal(roomCode, identity, resolution, historicalIdentity, remoteSource, domainResolution),
+    () => resolveUnifiedWorkspaceConflictInternal(
+      roomCode,
+      identity,
+      resolution,
+      historicalIdentity,
+      remoteSource,
+      domainResolution,
+      shouldContinue,
+    ),
   ));
 }
 
@@ -1247,6 +1370,7 @@ function createEmptyWorkspaceBase(): WorkspaceBackup {
     },
     daily: { schedules: {}, retrospectives: {} },
     graph: { nodes: [] },
+    focus: { focusSubjects: [], focusSessions: [], focusWeeklyReviews: [] },
   };
 }
 
@@ -1314,17 +1438,31 @@ function stopWorkspaceVerificationMonitor(): void {
   if (workspaceVerificationTimer) window.clearTimeout(workspaceVerificationTimer);
   workspaceVerificationTimer = null;
   workspaceVerificationRoomId = null;
+  workspaceVerificationGeneration += 1;
+  workspaceVerificationActivity?.cancel();
+  workspaceVerificationActivity = null;
+}
+
+/** Pause background verification without disconnecting the workspace or dropping its queue. */
+export function pauseWorkspaceVerification(): void {
+  stopWorkspaceVerificationMonitor();
 }
 
 function startWorkspaceVerificationMonitor(roomId: string): void {
   stopWorkspaceVerificationMonitor();
   workspaceVerificationRoomId = roomId;
+  const generation = ++workspaceVerificationGeneration;
+  const isCurrent = () => (
+    workspaceVerificationGeneration === generation
+    && workspaceVerificationRoomId === roomId
+    && (typeof document === 'undefined' || document.visibilityState !== 'hidden')
+  );
 
   const schedule = () => {
-    if (workspaceVerificationRoomId !== roomId) return;
+    if (!isCurrent()) return;
     workspaceVerificationTimer = window.setTimeout(() => {
       workspaceVerificationTimer = null;
-      if (workspaceVerificationRoomId !== roomId || !isUnifiedStorageReady(roomId)) {
+      if (!isCurrent() || !isUnifiedStorageReady(roomId)) {
         schedule();
         return;
       }
@@ -1333,40 +1471,55 @@ function startWorkspaceVerificationMonitor(roomId: string): void {
         return;
       }
 
-      const operation = (async (): Promise<'connected' | 'pending' | 'conflict'> => {
+      const runtimeActivity = beginWorkspaceSyncActivity('verifying', '正在进行周期性云端一致性校验…');
+      workspaceVerificationActivity = runtimeActivity;
+      const operation = (async (): Promise<'connected' | 'pending' | 'conflict' | 'deferred'> => {
+        if (!isCurrent()) return 'deferred';
         const pending = await readPendingWorkspaceSync();
+        if (!isCurrent()) return 'deferred';
         if (pending) {
           const flushed = await flushWorkspaceQueue();
+          if (!isCurrent()) return 'deferred';
           if (flushed.conflict) return 'conflict';
           if (await readPendingWorkspaceSync()) return 'pending';
         }
-        const repairedFields = await ensureUnifiedWorkspaceConvergence(roomId);
+        const repairedFields = await ensureUnifiedWorkspaceConvergence(roomId, isCurrent);
+        if (!isCurrent()) return 'deferred';
         if (repairedFields.length > 0) recordWorkspaceVerification(roomId, repairedFields);
         const conflicts = await listWorkspaceConflicts();
+        if (!isCurrent()) return 'deferred';
         return conflicts.some((conflict) => conflict.status !== 'resolved') ? 'conflict' : 'connected';
       })();
-      const runtimeActivity = beginWorkspaceSyncActivity('verifying', '正在进行周期性云端一致性校验…');
       workspaceVerificationInFlight = operation;
       void operation.then(
-        (outcome) => runtimeActivity.finish(
-          outcome === 'conflict' ? 'conflict' : outcome === 'pending' ? 'idle' : 'connected',
-          outcome === 'conflict'
-            ? '云端校验完成，但修复或自动归档门禁尚未通过。'
-            : outcome === 'pending'
-              ? '本机仍有修改等待补传。'
-              : '周期性云端一致性校验已完成。',
-        ),
-        (error) => {
-          runtimeActivity.fail(error);
-          // Do not surface a stale error after this tab became a follower or
-          // switched rooms. A current connected workspace must expose failures
-          // instead of retaining a misleading green status.
-          if (workspaceVerificationRoomId === roomId && isUnifiedStorageReady(roomId)) {
-            reportQueueFlushFailure(error);
+        (outcome) => {
+          if (!isCurrent() || outcome === 'deferred') {
+            runtimeActivity.cancel();
+            return;
           }
+          runtimeActivity.finish(
+            outcome === 'conflict' ? 'conflict' : outcome === 'pending' ? 'idle' : 'connected',
+            outcome === 'conflict'
+              ? '云端校验完成，但修复或自动归档门禁尚未通过。'
+              : outcome === 'pending'
+                ? '本机仍有修改等待补传。'
+                : '周期性云端一致性校验已完成。',
+          );
+        },
+        (error) => {
+          // A page being backgrounded, a follower handoff, or a reconnect can
+          // invalidate this run after it has started. That is not a data error
+          // and must not overwrite a newer successful connection in the UI.
+          if (!isCurrent() || !isUnifiedStorageReady(roomId)) {
+            runtimeActivity.cancel();
+            return;
+          }
+          runtimeActivity.fail(error);
+          reportQueueFlushFailure(error);
         },
       ).finally(() => {
         if (workspaceVerificationInFlight === operation) workspaceVerificationInFlight = null;
+        if (workspaceVerificationActivity === runtimeActivity) workspaceVerificationActivity = null;
         schedule();
       });
     }, WORKSPACE_VERIFICATION_INTERVAL_MS);
@@ -1399,16 +1552,29 @@ function recordWorkspaceVerification(roomId: string, repairedFields: string[]): 
   }
 }
 
-async function ensureUnifiedWorkspaceConvergence(targetRoomId: string): Promise<string[]> {
-  const room = useTimelineStore.getState().liveblocks?.room;
-  if (!room || room.id !== targetRoomId || room.getStatus() !== 'connected') {
-    throw new Error('统一工作区连接已切换，无法完成数据一致性校验。');
-  }
+async function ensureUnifiedWorkspaceConvergence(
+  targetRoomId: string,
+  shouldContinue: () => boolean = () => true,
+): Promise<string[]> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前云端校验已被新的连接恢复任务取代。');
+    const currentRoom = useTimelineStore.getState().liveblocks?.room;
+    if (!currentRoom || currentRoom.id !== targetRoomId) {
+      throw new Error('统一工作区连接已切换，无法完成数据一致性校验。');
+    }
+    if (currentRoom.getStatus() !== 'connected') {
+      throw new Error('统一工作区连接正在恢复，已暂停本次一致性校验。');
+    }
+    return currentRoom;
+  };
+  const room = assertCurrent();
   const { root } = await room.getStorage();
   const repaired = new Set<string>();
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
+    assertCurrent();
     await waitForRoomStorageSynchronized(room);
+    assertCurrent();
     const rawRemote = root.toJSON() as Record<string, unknown>;
     const remote = materializeWorkspaceEntityRoot(rawRemote);
     assertWorkspaceSchemaSupported(remote, WORKSPACE_SCHEMA_VERSION);
@@ -1428,6 +1594,7 @@ async function ensureUnifiedWorkspaceConvergence(targetRoomId: string): Promise<
     if (mismatches.length === 0) return [...repaired];
 
     const pending = await readPendingWorkspaceSync();
+    assertCurrent();
     if (pending) {
       throw new Error('本机仍有修改等待同步，已停止云端一致性修复以避免覆盖。');
     }
@@ -1453,12 +1620,14 @@ async function ensureUnifiedWorkspaceConvergence(targetRoomId: string): Promise<
     // empty. Rehydrate stale Zustand slices from that exact cloud snapshot.
     applyWorkspaceFields(remoteFields, 'convergence');
     await Promise.resolve();
+    assertCurrent();
 
     // Normalizers can repair legacy values (for example group task copies)
     // while an old room can lack newly introduced fields. Write the canonical
     // values back only if that individual cloud field is still unchanged from
     // the snapshot. A simultaneous remote edit is never overwritten.
     if (!await readPendingWorkspaceSync()) {
+      assertCurrent();
       const latestRaw = root.toJSON() as Record<string, unknown>;
       const latestRemote = materializeWorkspaceEntityRoot(latestRaw);
       const latestLocal = workspaceRootFromBackup(createWorkspaceBackup()) as Record<string, unknown>;
@@ -1473,6 +1642,7 @@ async function ensureUnifiedWorkspaceConvergence(targetRoomId: string): Promise<
       const backfillFields = Object.fromEntries(fieldsToBackfill.map((key) => [key, latestLocal[key]]));
       const entityWrites = buildWorkspaceEntityWrites(latestRemote, backfillFields, crypto.randomUUID());
       const metadata = isJsonRecord(latestRemote.metadata) ? latestRemote.metadata : {};
+      assertCurrent();
       room.batch(() => {
         for (const [key, value] of Object.entries(backfillFields)) root.set(key, value as Json);
         for (const [key, value] of Object.entries(entityWrites)) root.set(key, value as unknown as Json);
@@ -1839,6 +2009,7 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
     // The local queue is the last durable copy of offline edits. Keep it until
     // Liveblocks confirms that the batch reached the cloud; a disconnect or
     // timeout must leave the queue intact so the next reconnect can retry.
+    let queueAdvancedDuringConfirmation = false;
     await commitWorkspaceQueueRevisionSafely({
       apply: () => room.batch(() => {
         for (const [key, value] of Object.entries(merged.fields)) root.set(key, value as Json);
@@ -1871,11 +2042,19 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
       // is durably removed. Releasing suppression first lets the Liveblocks
       // echo recreate an identical pending record while IndexedDB is clearing.
       clear: async () => {
-        if (!await acknowledgeWorkspaceSyncFields(pending, flushKeys)) {
-          throw new Error('本机队列版本已变化，已保留新版本并停止出队。');
-        }
+        // A user edit can land after the last pre-batch read. That newer
+        // revision must remain queued, but it is not a failed confirmation of
+        // the revision we just wrote. Continue draining it below.
+        queueAdvancedDuringConfirmation = !await acknowledgeWorkspaceSyncFields(pending, flushKeys);
       },
     });
+    if (queueAdvancedDuringConfirmation) {
+      // This is a fresh user revision, not a failed attempt against the same
+      // cloud snapshot. Reset the stale-snapshot retry budget and keep
+      // draining until the user stops editing; rapid consecutive completions
+      // therefore never strand the final click in the queue.
+      return flushWorkspaceQueueInternal();
+    }
     applyWorkspaceFields(merged.fields as Partial<Record<WorkspaceStorageField, unknown>>, 'remote-hydration');
     // A newer local revision may have landed after the last pre-batch check.
     // Never report a successful flush while a journal entry is still pending:
@@ -1887,10 +2066,7 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
       remaining = await readPendingWorkspaceSync();
     }
     if (remaining && blockedKeys.size === 0) {
-      if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) {
-        throw Object.assign(new Error('本机仍有新的修改等待同步，请稍后重试。'), { workspaceQueueErrorKind: 'flush_restart_exhausted' as WorkspaceQueueErrorKind });
-      }
-      return flushWorkspaceQueueInternal(restartCount + 1);
+      return flushWorkspaceQueueInternal();
     }
   } finally {
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);
@@ -1916,36 +2092,52 @@ function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> 
     schedules: backup.daily.schedules as unknown as Json,
     retrospectives: backup.daily.retrospectives as unknown as Json,
     nodes: backup.graph.nodes as unknown as Json,
+    focusSubjects: backup.focus.focusSubjects as unknown as Json,
+    focusSessions: backup.focus.focusSessions as unknown as Json,
+    focusWeeklyReviews: backup.focus.focusWeeklyReviews as unknown as Json,
     ...Object.fromEntries(LIFE_MAP_FIELDS.map((field) => [field, backup.lifeMap[field] as unknown as Json])),
   };
 }
 
-async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string): Promise<WorkspaceMigrationReport> {
+async function migrateLegacyWorkspaceInternal(
+  roomCode: string,
+  identity: string,
+  shouldContinue: () => boolean = () => true,
+): Promise<WorkspaceMigrationReport> {
+  const assertCurrent = () => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+  };
+  assertCurrent();
   const startedAt = new Date().toISOString();
   const local = createWorkspaceBackup();
   const initialSource = await inspectLegacyWorkspaceWithBase(roomCode, local);
+  assertCurrent();
   // Legacy Liveblocks rooms can still contain stale group child projections or
   // fields that are repaired by rootToBackup. Compare both sides in the same
   // canonical form; otherwise a repairable old shape is mistaken for different
   // user data and blocks migration even though every connected store is current.
   const canonicalLocal = normalizeWorkspaceBackupForMigrationComparison(local);
   const localHash = await hashWorkspaceBackup(canonicalLocal);
+  assertCurrent();
   if (localHash !== initialSource.hash) {
     throw new Error('本机规范化后的数据与旧房间仍不一致。请保持联网，等待五个模块全部连接后重新检查。');
   }
   await createLocalSnapshot('统一工作区迁移前');
+  assertCurrent();
 
   // Re-read the legacy rooms after the safety snapshot. Edits made locally
   // during discovery are captured in the durable queue and three-way merged
   // over this latest cloud state; they are never flushed into whichever legacy
   // room happens to be attached to the timeline store.
   const latestLegacy = await inspectLegacyWorkspaceWithBase(roomCode, initialSource.backup);
+  assertCurrent();
   // This is the migration cut-over point. Stop accepting further legacy-room
   // hydration before deriving and seeding the unified source. Local actions are
   // still accepted and journaled by captureWorkspaceMutationsDuring.
   disconnectWorkspace();
   try {
     const pending = await readPendingWorkspaceSync();
+    assertCurrent();
     let sourceBackup = latestLegacy.backup;
     if (pending) {
       const migrationMerge = mergePendingWorkspaceMigrationFields(
@@ -1958,9 +2150,11 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
       sourceBackup = rootToBackup(migrationMerge.root, latestLegacy.backup);
     }
     const sourceHash = await hashWorkspaceBackup(sourceBackup);
+    assertCurrent();
     const sourceSummary = summaryOf(sourceBackup);
     const targetRoomId = buildUnifiedRoomId(roomCode, identity);
     const existingRoot = await inspectRoom(targetRoomId, '统一工作区目标房间');
+    assertCurrent();
     assertWorkspaceSchemaSupported(existingRoot, WORKSPACE_SCHEMA_VERSION);
     const hasExistingData = EXPECTED_KEYS.some((key) => existingRoot[key] !== undefined);
 
@@ -1982,6 +2176,7 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
         15_000,
         '连接统一工作区目标房间超时，请检查网络后重试。',
       );
+      assertCurrent();
       const currentRoot = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
       assertWorkspaceSchemaSupported(currentRoot, WORKSPACE_SCHEMA_VERSION);
       const targetAlreadyHasData = EXPECTED_KEYS.some((key) => currentRoot[key] !== undefined);
@@ -2000,6 +2195,7 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
       const entityWrites = metadata.entityStorageVersion === WORKSPACE_ENTITY_STORAGE_VERSION
         ? {}
         : buildWorkspaceEntityInitializationWrites(fieldsToSeed, crypto.randomUUID());
+      assertCurrent();
       targetRoom.batch(() => {
         if (!targetAlreadyHasData) {
           for (const [key, value] of Object.entries(sourceFields)) root.set(key, value);
@@ -2013,6 +2209,7 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
         }));
       });
       await waitForRoomStorageSynchronized(targetRoom);
+      assertCurrent();
       const seededBackup = rootToBackup(
         materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>),
         sourceBackup,
@@ -2020,6 +2217,7 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
       if (await hashWorkspaceBackup(seededBackup) !== sourceHash) {
         throw new Error('目标房间写入后哈希不一致，已停止切换并保留旧房间和待传队列。');
       }
+      assertCurrent();
     } finally {
       leave();
     }
@@ -2027,23 +2225,29 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
     // The account binding is the durable pointer to the verified target. Write
     // it before attaching the stores, so a failure can reconnect the old
     // architecture with the exact pending queue still retryable.
+    assertCurrent();
     await writeWorkspaceAccountBinding(identity, { roomCode, unifiedRoomId: targetRoomId });
-    const connection = await connectUnifiedWorkspace(roomCode, targetRoomId);
+    assertCurrent();
+    const connection = await connectUnifiedWorkspace(roomCode, targetRoomId, shouldContinue);
+    assertCurrent();
     const target = connection.roomId;
     const timelineRoom = useTimelineStore.getState().liveblocks?.room;
     if (!timelineRoom) throw new Error('统一工作区连接未建立。');
     const { root } = await timelineRoom.getStorage();
     await waitForRoomStorageSynchronized(timelineRoom);
+    assertCurrent();
     const verifiedRoot = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
     const finalLocal = normalizeWorkspaceBackupForMigrationComparison(createWorkspaceBackup());
     const verifiedBackup = rootToBackup(verifiedRoot, finalLocal);
     const targetHash = await hashWorkspaceBackup(verifiedBackup);
     const finalLocalHash = await hashWorkspaceBackup(finalLocal);
+    assertCurrent();
     const finalSourceSummary = summaryOf(finalLocal);
     const targetSummary = summaryOf(verifiedBackup);
     if (targetHash !== finalLocalHash) throw new Error('迁移后本机与统一工作区哈希不一致，已停止切换并保留恢复点。');
 
     const completedAt = new Date().toISOString();
+    assertCurrent();
     writeWorkspaceSyncSettings({
       architecture: 'unified', roomCode, unifiedRoomId: target,
       migratedAt: completedAt, migrationHash: targetHash,
@@ -2055,14 +2259,18 @@ async function migrateLegacyWorkspaceInternal(roomCode: string, identity: string
       verified: true, legacyRoomsPreserved: true,
     };
   } catch (error) {
-    connectLegacyWorkspace(roomCode);
+    if (shouldContinue()) connectLegacyWorkspace(roomCode);
     throw error;
   }
 }
 
-export function migrateLegacyWorkspace(roomCode: string, identity: string): Promise<WorkspaceMigrationReport> {
+export function migrateLegacyWorkspace(
+  roomCode: string,
+  identity: string,
+  shouldContinue: () => boolean = () => true,
+): Promise<WorkspaceMigrationReport> {
   return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
-    () => migrateLegacyWorkspaceInternal(roomCode, identity),
+    () => migrateLegacyWorkspaceInternal(roomCode, identity, shouldContinue),
   ), 'migrating', '正在创建迁移恢复点并读取旧工作区…');
 }
 

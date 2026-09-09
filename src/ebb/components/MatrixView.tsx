@@ -335,7 +335,19 @@ const TopicRow: React.FC<TopicRowProps> = memo(({ stat, tagColor, topicTasks, ta
 
   return (
     <div className={`eb-topic-row ${expanded ? 'eb-topic-row--expanded' : ''} ${isUnlinked ? 'eb-topic-row--unlinked' : ''} ${hasSelectedDate ? 'is-date-match' : ''} ${selection?.isSelected ? 'is-selected' : ''}`} style={{ '--accent': accentColor, contentVisibility: 'auto', containIntrinsicSize: '92px' } as React.CSSProperties}>
-      <div className="eb-topic-row-main" onClick={() => setExpanded(!expanded)}>
+      <div
+        className="eb-topic-row-main"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setExpanded(!expanded);
+          }
+        }}
+      >
         {selection && (
           <label
             className="eb-topic-row-checkbox"

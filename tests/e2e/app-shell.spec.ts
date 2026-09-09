@@ -89,12 +89,38 @@ test('project details use a landscape split and a portrait right-side drawer', a
   expect(portrait.bottom).toBeLessThanOrEqual(1099);
 });
 
-test('six main views remain reachable through the real interface', async ({ page }) => {
+test('six main workspaces and the on-demand focus panel remain reachable through the real interface', async ({ page }) => {
+  await expect(page.getByRole('button', { name: '打开专注面板' })).toHaveCount(0);
   for (const title of ['地图工作区', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
     await page.getByTitle(title).click();
     await expect(page.getByTitle(title)).toHaveAttribute('aria-selected', 'true');
   }
+  await page.getByTitle('每日安排').click();
+  await page.getByRole('button', { name: '打开专注复盘' }).click();
+  const focusPanel = page.getByRole('dialog', { name: '专注复盘' });
+  await expect(focusPanel).toBeVisible();
+  const panelGeometry = await page.locator('.focus-panel__surface').evaluate((element) => {
+    const { left, right, width } = element.getBoundingClientRect();
+    return { left, right, width, viewport: window.innerWidth };
+  });
+  if (panelGeometry.viewport >= 900) {
+    expect(panelGeometry.left).toBeGreaterThanOrEqual(32);
+    expect(panelGeometry.viewport - panelGeometry.right).toBeGreaterThanOrEqual(32);
+  }
   await expect(page.getByTitle('任务总览')).toHaveCount(0);
+});
+
+test('sync dialog moves focus inside, traps Tab, closes with Escape, and restores focus', async ({ page }) => {
+  const opener = page.getByRole('button', { name: /打开同步与备份/ });
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: '云同步与完整备份' });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]')))).toBe(true);
+  for (let index = 0; index < 40; index += 1) await page.keyboard.press('Tab');
+  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]')))).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
 });
 
 test('phone viewport uses dedicated execution views without horizontal overflow', async ({ page }) => {
@@ -116,6 +142,12 @@ test('phone viewport uses dedicated execution views without horizontal overflow'
       await expect.poll(() => page.locator('.phone-workspace').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
     }
   }
+
+  await page.getByTitle('每日安排').click();
+  await page.getByRole('button', { name: '打开专注复盘' }).click();
+  await expect(page.getByRole('dialog', { name: '专注复盘' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  await page.getByRole('button', { name: '关闭专注复盘' }).click();
 
   const undersizedTargets = await page.locator('.phone-workspace button:visible, .tl-dock button:visible').evaluateAll((buttons) => buttons
     .map((button) => button.getBoundingClientRect())

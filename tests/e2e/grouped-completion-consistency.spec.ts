@@ -232,18 +232,12 @@ test('completed task without automatic review activates its knowledge node in bl
   expect(reviewCount).toBe(0);
 
   await page.getByTitle('知识大盘').click();
-  const nodeTitle = page.locator('svg title').filter({
-    hasText: '完成一致性节点 · 已完成 · 无需复习',
-  });
-  await expect(nodeTitle).toHaveCount(1);
-  const nodeFill = await nodeTitle.evaluate(
-    (element) => element.parentElement?.querySelector('path')?.getAttribute('fill'),
-  );
+  const node = page.getByRole('button', { name: '知识节点：完成一致性节点' });
+  await expect(node).toHaveCount(1);
+  const nodeFill = await node.locator('path').getAttribute('fill');
   expect(nodeFill).toBe('#3b82f6');
 
-  await nodeTitle.evaluate(
-    (element) => element.parentElement?.dispatchEvent(new MouseEvent('click', { bubbles: true })),
-  );
+  await node.click();
   const summary = page.getByLabel('学习状态总览');
   await expect(summary).toContainText('已完成 · 无需复习');
   await expect(summary).toContainText('未开启自动生成复习任务');

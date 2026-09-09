@@ -145,7 +145,7 @@ test('restoring an old conflict marks only selected fields for one-way cloud rep
   });
 });
 
-test('ordinary UI never asks users to choose a conflict or delete its recovery copy', async ({ page }) => {
+test('ordinary UI reports active conflicts and keeps resolved recovery copies read-only', async ({ page }) => {
   await waitForApp(page);
 
   const before = await page.evaluate(async () => {
@@ -187,11 +187,11 @@ test('ordinary UI never asks users to choose a conflict or delete its recovery c
     return JSON.stringify(currentTasks);
   });
 
-  await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'error');
+  await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'needs-action');
   await page.getByRole('button', { name: /打开同步与备份/ }).click();
   const dialog = page.getByRole('dialog', { name: '云同步与完整备份' });
   await expect(dialog).toBeVisible({ timeout: 30_000 });
-  await expect(dialog.getByText(/旧冲突归档待重试 1/)).toBeVisible();
+  await expect(dialog.getByText(/冲突待处理 1/)).toBeVisible();
   await expect(dialog.getByRole('region', { name: '当前同步冲突' })).toHaveCount(0);
   await expect(dialog.getByRole('region', { name: '历史恢复副本' })).toHaveCount(0);
 

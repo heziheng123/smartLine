@@ -25,6 +25,8 @@ export interface WorkspaceContentCounts {
   dailyDays: number;
   retrospectiveDays: number;
   graphNodes: number;
+  focusSubjects: number;
+  focusSessions: number;
 }
 
 export interface WorkspaceQueueDrainState {
@@ -64,7 +66,9 @@ export function workspaceHasUserContent(summary: WorkspaceContentCounts): boolea
     || summary.reviewTasks > 0
     || summary.dailyDays > 0
     || summary.retrospectiveDays > 0
-    || summary.graphNodes > 0;
+    || summary.graphNodes > 0
+    || summary.focusSubjects > 0
+    || summary.focusSessions > 0;
 }
 
 export function decideUnifiedWorkspaceActivation(
@@ -132,6 +136,8 @@ export function isBundledDemoWorkspace(backup: WorkspaceBackup): boolean {
     && isEmpty(Object.keys(backup.daily.schedules))
     && isEmpty(Object.keys(backup.daily.retrospectives))
     && isEmpty(backup.graph.nodes)
+    && isEmpty(backup.focus.focusSubjects)
+    && isEmpty(backup.focus.focusSessions)
     && hasOnlyDefaultLifeMap;
 }
 
@@ -277,9 +283,20 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isEntityArray(value: unknown): value is Array<Record<string, unknown> & { id: string }> {
+function entityId(value: Record<string, unknown>, path: string): string | null {
+  if (typeof value.id === 'string' && value.id.length > 0) return value.id;
+  // Focus weekly reviews are keyed by their week start, not a generated id.
+  // Keep this identity rule here so concurrent edits to separate weeks merge
+  // just like the rest of the workspace's entity collections.
+  if (path === 'focusWeeklyReviews' && typeof value.weekStart === 'string' && value.weekStart) {
+    return `week:${value.weekStart}`;
+  }
+  return null;
+}
+
+function isEntityArray(value: unknown, path: string): value is Array<Record<string, unknown>> {
   return Array.isArray(value) && value.every((item) =>
-    isPlainRecord(item) && typeof item.id === 'string' && item.id.length > 0,
+    isPlainRecord(item) && entityId(item, path) !== null,
   );
 }
 
@@ -319,11 +336,15 @@ function mergeWorkspaceValue(
     return { value: local, conflicts: [], appliedPaths: [path], alternates: [] };
   }
 
-  if (isEntityArray(base) && isEntityArray(local) && isEntityArray(remote)) {
-    const baseById = new Map(base.map((item) => [item.id, item]));
-    const localById = new Map(local.map((item) => [item.id, item]));
-    const remoteById = new Map(remote.map((item) => [item.id, item]));
-    const orderedIds = [...new Set([...remote.map((item) => item.id), ...local.map((item) => item.id), ...base.map((item) => item.id)])];
+  if (isEntityArray(base, path) && isEntityArray(local, path) && isEntityArray(remote, path)) {
+    const baseById = new Map(base.map((item) => [entityId(item, path)!, item]));
+    const localById = new Map(local.map((item) => [entityId(item, path)!, item]));
+    const remoteById = new Map(remote.map((item) => [entityId(item, path)!, item]));
+    const orderedIds = [...new Set([
+      ...remote.map((item) => entityId(item, path)!),
+      ...local.map((item) => entityId(item, path)!),
+      ...base.map((item) => entityId(item, path)!),
+    ])];
     const merged: unknown[] = [];
     const conflicts: string[] = [];
     const appliedPaths: string[] = [];
@@ -491,6 +512,6 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: 
 }
 
 export async function hashWorkspaceBackup(backup: WorkspaceBackup): Promise<string> {
-  const data = { timeline: backup.timeline, lifeMap: backup.lifeMap, ebb: backup.ebb, daily: backup.daily, graph: backup.graph };
+  const data = { timeline: backup.timeline, lifeMap: backup.lifeMap, ebb: backup.ebb, daily: backup.daily, graph: backup.graph, focus: backup.focus };
   return await hashWorkspaceValue(data);
 }

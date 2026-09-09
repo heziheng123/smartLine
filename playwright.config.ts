@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const executablePath = process.env.SMARTLINE_PLAYWRIGHT_EXECUTABLE;
+const chromium = executablePath ? { launchOptions: { executablePath } } : {};
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -15,7 +18,7 @@ export default defineConfig({
     timezoneId: 'Asia/Shanghai',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    video: executablePath ? 'off' : 'retain-on-failure',
   },
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4173',
@@ -24,12 +27,12 @@ export default defineConfig({
     timeout: 120_000,
   },
   projects: [
-    { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'], ...chromium } },
     {
       name: 'small-screen',
       // Cover the unchanged tablet workspace. Dedicated phone behavior and the
       // exact 600px non-phone boundary are exercised explicitly in app-shell.
-      use: { ...devices['iPhone 13'], viewport: { width: 820, height: 1180 }, browserName: 'chromium', isMobile: false },
+      use: { ...devices['iPhone 13'], viewport: { width: 820, height: 1180 }, browserName: 'chromium', isMobile: false, ...chromium },
     },
   ],
 });

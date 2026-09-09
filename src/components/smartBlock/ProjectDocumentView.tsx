@@ -670,39 +670,48 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
         <button type="button" className="pdv-back" onClick={onClose} aria-label="关闭项目文档">
           <ArrowLeft size={18} />
         </button>
-        <h2 className="pdv-title" onClick={() => setMetaExpanded(!metaExpanded)} title={currentTask.name}>
-          <span className="pdv-title-text">{currentTask.name}</span>
-          <span className={`pdv-caret ${metaExpanded ? 'pdv-caret--open' : ''}`}>▾</span>
+        <h2 className="pdv-title" title={currentTask.name}>
+          <button type="button" className="pdv-title-button" aria-expanded={metaExpanded} onClick={() => setMetaExpanded(!metaExpanded)}>
+            <span className="pdv-title-text">{currentTask.name}</span>
+            <span className={`pdv-caret ${metaExpanded ? 'pdv-caret--open' : ''}`}>▾</span>
+          </button>
         </h2>
         <div className="pdv-header-actions">
           {smartBlocks.length > 0 && (
             <div
               className="pdv-group-toggle"
+              role="group"
+              aria-label="项目任务分组维度"
               title={groupDimension === 'node' ? '按时间分组' : '按节点分组'}
             >
-              <span 
+              <button type="button"
                 className={`pdv-group-toggle-opt ${groupDimension === 'time' ? 'pdv-group-toggle-opt--active' : ''}`}
                 onClick={() => setGroupDimension('time')}
+                aria-pressed={groupDimension === 'time'}
+                aria-label="按时间分组"
               >
                 <CalendarDays size={14} aria-hidden="true" />
-              </span>
-              <span 
+              </button>
+              <button type="button"
                 className={`pdv-group-toggle-opt ${groupDimension === 'node' ? 'pdv-group-toggle-opt--active' : ''}`}
                 onClick={() => setGroupDimension('node')}
+                aria-pressed={groupDimension === 'node'}
+                aria-label="按节点分组"
               >
                 <Network size={14} aria-hidden="true" />
-              </span>
+              </button>
             </div>
           )}
           {smartBlocks.length > 0 && groupDimension === 'time' && (
-            <div
+            <button type="button"
               className={`pdv-group-toggle ${groupByWeek ? 'pdv-group-toggle--week' : ''}`}
               onClick={() => setGroupByWeek(prev => !prev)}
               title={groupByWeek ? '按日分组' : '按周分组'}
+              aria-label={groupByWeek ? '切换为按日分组' : '切换为按周分组'}
             >
               <span className={`pdv-group-toggle-opt ${!groupByWeek ? 'pdv-group-toggle-opt--active' : ''}`}>日</span>
               <span className={`pdv-group-toggle-opt ${groupByWeek ? 'pdv-group-toggle-opt--active' : ''}`}>周</span>
-            </div>
+            </button>
           )}
           <button
             type="button"

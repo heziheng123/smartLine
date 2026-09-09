@@ -224,6 +224,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomTransformRef = useRef<ZoomTransform | null>(null);
   const userZoomInProgressRef = useRef(false);
+  const programmaticZoomInProgressRef = useRef(false);
   const didInitialViewportFitRef = useRef(false);
   const lastViewportModeRef = useRef<string | null>(null);
   const lastSelectedNodeIdRef = useRef<string | null>(null);
@@ -681,17 +682,18 @@ export const KnowledgeGraphView: React.FC = () => {
   useEffect(() => {
     if (!isHydrated || !svgRef.current || !gRef.current) return;
     const svg = select(svgRef.current);
+    const graphGroup = gRef.current;
     const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${k}, ${x}, ${y})`;
     const commitPendingZoomTransform = () => {
       const transform = pendingZoomTransformRef.current;
-      if (transform && gRef.current) gRef.current.style.transform = toTransformMatrix(transform);
+      if (transform) graphGroup.style.transform = toTransformMatrix(transform);
     };
     const commitFinalZoomTransform = () => {
       const transform = pendingZoomTransformRef.current;
-      if (!transform || !gRef.current) return;
-      gRef.current.setAttribute('transform', toTransformMatrix(transform));
-      gRef.current.style.transform = '';
-      gRef.current.style.willChange = '';
+      if (!transform) return;
+      graphGroup.setAttribute('transform', toTransformMatrix(transform));
+      graphGroup.style.transform = '';
+      graphGroup.style.willChange = '';
     };
     zoomBehaviorRef.current = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
@@ -700,8 +702,8 @@ export const KnowledgeGraphView: React.FC = () => {
           svg.interrupt();
           userZoomInProgressRef.current = true;
         }
-        gRef.current!.style.transformOrigin = '0 0';
-        gRef.current!.style.willChange = 'transform';
+        graphGroup.style.transformOrigin = '0 0';
+        graphGroup.style.willChange = 'transform';
       })
       .on('zoom', (event) => {
         pendingZoomTransformRef.current = event.transform;
@@ -717,7 +719,11 @@ export const KnowledgeGraphView: React.FC = () => {
         if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
         zoomFrameRef.current = null;
         commitFinalZoomTransform();
-        if (wasUserZoom && !viewportShiftedRef.current) {
+        if (programmaticZoomInProgressRef.current) {
+          programmaticZoomInProgressRef.current = false;
+          viewportShiftedRef.current = false;
+          recenterButtonRef.current?.setAttribute('hidden', '');
+        } else if (wasUserZoom && !viewportShiftedRef.current) {
           viewportShiftedRef.current = true;
           recenterButtonRef.current?.removeAttribute('hidden');
         }
@@ -728,10 +734,9 @@ export const KnowledgeGraphView: React.FC = () => {
       zoomFrameRef.current = null;
       pendingZoomTransformRef.current = null;
       userZoomInProgressRef.current = false;
-      if (gRef.current) {
-        gRef.current.style.transform = '';
-        gRef.current.style.willChange = '';
-      }
+      programmaticZoomInProgressRef.current = false;
+      graphGroup.style.transform = '';
+      graphGroup.style.willChange = '';
       svg.on('.zoom', null);
     };
   }, [isHydrated]);
@@ -739,6 +744,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const zoomToFit = useCallback((animate = true) => {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
     const svg = select(svgRef.current);
+    programmaticZoomInProgressRef.current = true;
     viewportShiftedRef.current = false;
     recenterButtonRef.current?.setAttribute('hidden', '');
     
@@ -747,7 +753,7 @@ export const KnowledgeGraphView: React.FC = () => {
     const minX = Math.min(...islands.map((island) => island.centerX - island.radius));
     const maxX = Math.max(...islands.map((island) => island.centerX + island.radius));
     const minY = Math.min(...islands.map((island) => island.centerY - island.radius));
-    const maxY = Math.max(...islands.map((island) => island.centerY + island.radius + 46));
+    const maxY = Math.max(...islands.map((island) => island.centerY + island.radius));
     const padding = 64;
     const scale = Math.min(
       1,
@@ -1604,13 +1610,13 @@ export const KnowledgeGraphView: React.FC = () => {
                     <div className="text-[11px] font-bold text-slate-400/80 uppercase flex items-center gap-1.5"><Zap size={11} className="text-amber-400" />复习记录 <span className="font-medium text-slate-400">{selectedReviewTasks.length}</span></div>
                     <div className="space-y-0.5">
                       {selectedNodeReviewPreview.map(task => (
-                        <div key={task.id} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'ebb' } }))} className="group flex justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer">
+                        <button type="button" key={task.id} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'ebb' } }))} className="group flex w-full justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer text-left">
                           <div className="flex items-center gap-2 flex-1 overflow-hidden">
                             <div className={`w-1.5 h-1.5 rounded-full ${task.isCompleted ? 'bg-emerald-400' : 'bg-amber-400'}`}></div>
                             <span className="truncate text-xs font-medium text-slate-700">{task.topicName}</span>
                           </div>
                           <span className="text-[10px] text-slate-500">{task.isCompleted ? '✓' : task.dueDate}</span>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -1624,7 +1630,7 @@ export const KnowledgeGraphView: React.FC = () => {
                         const quantity = isQuantityTask(block.header);
                         const quantityProgress = quantity ? getQuantityProgressPercent(block.header) : 0;
                         return (
-                        <div key={`${task.id}-${block.id}`} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id, blockId: block.id } }))} className="group flex flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                        <button type="button" key={`${task.id}-${block.id}`} onClick={() => window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'timeline', taskId: task.id, blockId: block.id } }))} className="group flex w-full flex-col gap-1 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer text-left">
                           <div className="flex justify-between gap-3">
                             <div className="text-xs font-semibold text-slate-800 truncate">{block.header.title}</div>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full ${block.header.isCompleted ? 'text-emerald-600 bg-emerald-50' : 'text-amber-600 bg-amber-50'}`}>
@@ -1639,7 +1645,7 @@ export const KnowledgeGraphView: React.FC = () => {
                               {getQuantityCompleted(block.header)}/{getQuantityTotal(block.header)} {getQuantityUnit(block.header)}
                             </div>
                           )}
-                        </div>
+                        </button>
                         );
                       })}
                     </div>

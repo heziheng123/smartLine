@@ -8,6 +8,7 @@ const LEASE_MS = 7_000;
 const CLAIM_SETTLE_MS = 75;
 const tabId = crypto.randomUUID();
 let currentLeader = false;
+let leadershipEpoch = 0;
 
 interface LeaderLease { tabId: string; expiresAt: number }
 
@@ -17,6 +18,7 @@ function readLease(): LeaderLease | null {
 }
 
 export function isCurrentTabSyncLeader(): boolean { return currentLeader; }
+export function readWorkspaceTabLeadershipEpoch(): number { return leadershipEpoch; }
 
 export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOptions): () => void {
   if (typeof navigator !== 'undefined' && navigator.locks) {
@@ -56,6 +58,7 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
             return;
           }
           currentLeader = true;
+          leadershipEpoch += 1;
           renewLease();
           leaseTimer = window.setInterval(renewLease, 2_000);
           options.onLeader();
@@ -66,6 +69,7 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
           releaseLease();
           if (currentLeader) {
             currentLeader = false;
+            leadershipEpoch += 1;
             options.onFollower();
           }
         },
@@ -85,6 +89,7 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
       if (leaseTimer !== null) window.clearInterval(leaseTimer);
       releaseLease();
       currentLeader = false;
+      leadershipEpoch += 1;
     };
   }
 
@@ -98,6 +103,7 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
     cancelClaim();
     if (!currentLeader) return;
     currentLeader = false;
+    leadershipEpoch += 1;
     options.onFollower();
   };
   const confirmClaim = () => {
@@ -107,6 +113,7 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
     if (lease?.tabId !== tabId || lease.expiresAt <= Date.now()) return;
     if (!currentLeader) {
       currentLeader = true;
+      leadershipEpoch += 1;
       options.onLeader();
     }
   };
@@ -149,5 +156,6 @@ export function startWorkspaceTabCoordinator(options: WorkspaceTabCoordinatorOpt
     window.removeEventListener('beforeunload', release);
     release();
     currentLeader = false;
+    leadershipEpoch += 1;
   };
 }

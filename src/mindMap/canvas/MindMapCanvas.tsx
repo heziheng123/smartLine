@@ -2652,6 +2652,13 @@ export default function MindMapCanvas({
   ) => {
     const itemId = item.projectTaskId ?? item.lifeItemId;
     if (!itemId || timeline.locked || event.button !== 0) return;
+    let effectiveMode = mode;
+    if (mode === 'move') {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const edgeHitWidth = Math.min(10, bounds.width / 3);
+      if (event.clientX - bounds.left <= edgeHitWidth) effectiveMode = 'start';
+      else if (bounds.right - event.clientX <= edgeHitWidth) effectiveMode = 'end';
+    }
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -2660,7 +2667,7 @@ export default function MindMapCanvas({
       pointerId: event.pointerId,
       itemId,
       source: item.projectTaskId ? 'project' : 'life',
-      mode,
+      mode: effectiveMode,
       startClientX: event.clientX,
       width: Math.max(1, createTimelineCoordinates(rangeStart, rangeEnd, timeline.width).plotWidth * cameraRef.current.scale),
       rangeDays: Math.max(1, diffDays(rangeEnd, rangeStart)),

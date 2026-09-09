@@ -119,6 +119,8 @@ function collectEntities(backup: WorkspaceBackup): Record<string, AuditedEntity[
     'ebb.inboxItems': backup.ebb.inboxItems.map((item) => entity(item.id, item)),
     'ebb.outlineNodes': backup.ebb.outlineNodes.map((item) => entity(item.id, item)),
     'graph.nodes': backup.graph.nodes.map((item) => entity(item.id, item)),
+    'focus.subjects': backup.focus.focusSubjects.map((item) => entity(item.id, item)),
+    'focus.sessions': backup.focus.focusSessions.map((item) => entity(item.id, item)),
     'daily.schedules': schedules.map(([date, item]) => entity(date, item)),
     'daily.scheduleEntries': schedules.flatMap(([date, schedule]) => [...schedule.items, ...schedule.blocks].map((item) => entity(`${date}:${item.id}`, item))),
     'daily.retrospectives': retrospectives.map(([date, item]) => entity(date, item)),
@@ -148,6 +150,7 @@ function inspectReferences(backup: WorkspaceBackup, findings: WorkspaceAuditFind
   const areaIds = new Set(backup.lifeMap.lifeMapAreas.map((item) => item.id));
   const goalIds = new Set(backup.lifeMap.lifeMapGoals.map((item) => item.id));
   const systemIds = new Set(backup.lifeMap.lifeMapSystems.map((item) => item.id));
+  const focusSubjectIds = new Set(backup.focus.focusSubjects.map((item) => item.id));
 
   for (const node of backup.graph.nodes) {
     if (node.parentId && !graphIds.has(node.parentId)) addMissingReference(findings, 'graph.nodes', node.id, '父节点', node.parentId);
@@ -193,6 +196,9 @@ function inspectReferences(backup: WorkspaceBackup, findings: WorkspaceAuditFind
   for (const item of backup.lifeMap.lifeMapEvents) {
     if (item.areaId && !areaIds.has(item.areaId)) addMissingReference(findings, 'lifeMap.events', item.id, '人生领域', item.areaId);
     if (item.relatedPlanId && !goalIds.has(item.relatedPlanId)) addMissingReference(findings, 'lifeMap.events', item.id, '关联项目', item.relatedPlanId);
+  }
+  for (const session of backup.focus.focusSessions) {
+    if (!focusSubjectIds.has(session.subjectId)) addMissingReference(findings, 'focus.sessions', session.id, '专注主题', session.subjectId);
   }
   for (const retrospective of Object.values(backup.daily.retrospectives)) {
     for (const entry of retrospective.entries) {

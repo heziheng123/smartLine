@@ -134,5 +134,5 @@ test('timeline remains readable across annual, season, month, and week ranges', 
   await page.screenshot({ path: 'test-results/timeline-visual-zoom-68.png', fullPage: true });
 
   await setZoom(0.4);
-  await expect(timeline).toContainText('1 个项目 · 4 个任务');
+  await expect(timeline).toContainText('已选 1 个项目 · 10 项');
 });

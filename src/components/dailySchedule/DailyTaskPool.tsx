@@ -281,12 +281,25 @@ const DailyTaskPool: React.FC<DailyTaskPoolProps> = ({
                         {showCompleted && (
                           <div className="ds-pool-list">
                             {completedItems.map((item) => (
-                              <div key={item.id} className="ds-pool-item ds-pool-item--completed" style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }} onClick={() => { if (item.source === 'project') onOpenProjectSource(item.sourceId); }}>
-                                <div className="ds-pool-item-content">
-                                  <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
-                                  {item.detail && (item.source !== 'project' || isQuantityTask({ taskKind: item.taskKind })) && <span className="ds-pool-item-detail">{item.detail}</span>}
-                                </div>
-                                {item.source === 'project' && !isQuantityTask({ taskKind: item.taskKind }) && <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>}
+                              <div
+                                key={item.id}
+                                className="ds-pool-item ds-pool-item--completed"
+                                style={{ backgroundColor: resolveTaskCategoryTheme(item.categoryColor, item.source).backgroundColor }}
+                              >
+                                {item.source === 'project' ? (
+                                  <button type="button" className="ds-pool-item-open" onClick={() => onOpenProjectSource(item.sourceId)}>
+                                    <span className="ds-pool-item-content">
+                                      <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
+                                      {item.detail && isQuantityTask({ taskKind: item.taskKind }) && <span className="ds-pool-item-detail">{item.detail}</span>}
+                                    </span>
+                                    {!isQuantityTask({ taskKind: item.taskKind }) && <span className="ds-pool-item-tag ds-pool-item-tag--project ds-pool-item-tag--project-name ds-project-name-badge" title={item.detail || '项目'} style={projectBadgeStyle(item.color)}>{item.detail || '项目'}</span>}
+                                  </button>
+                                ) : (
+                                  <div className="ds-pool-item-content">
+                                    <span className="ds-pool-item-name" title={item.name}>{item.name}</span>
+                                    {item.detail && <span className="ds-pool-item-detail">{item.detail}</span>}
+                                  </div>
+                                )}
                                 <button type="button" className="ds-pool-undo-btn" onClick={(event) => { event.stopPropagation(); onUndoCompleted(item.source, item.sourceId); }}>撤销</button>
                               </div>
                             ))}

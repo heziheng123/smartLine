@@ -131,11 +131,11 @@ test('real Liveblocks transport preserves offline disjoint edits and surfaces a 
         taskEntityCount: Object.keys(raw).filter((key) => key.startsWith('workspace-entity:tasks:')).length,
       };
     });
-    expect(entityState.schemaVersion).toBe(8);
+    expect(entityState.schemaVersion).toBe(9);
     expect(entityState.taskEntityCount).toBeGreaterThanOrEqual(2);
 
     // Simulate the legacy whole-array projection losing one concurrent write.
-    // Schema 8 entity keys remain intact and must rebuild both local views.
+    // Entity keys remain intact across the schema 9 Focus upgrade and must rebuild both local views.
     await pageA.evaluate(async () => {
       const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
       const room = useTimelineStore.getState().liveblocks?.room;

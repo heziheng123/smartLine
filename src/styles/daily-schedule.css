@@ -98,6 +98,17 @@
   color: #4F46C7;
 }
 
+.ds-header-btn--focus {
+  border-color: rgba(99, 102, 241, 0.22);
+  background: rgba(99, 102, 241, 0.08);
+  color: #4F46C7;
+}
+
+.ds-header-btn--focus:hover {
+  background: rgba(99, 102, 241, 0.14);
+  color: #4338CA;
+}
+
 /* ── 时间段设置面板 ──────────────────────────────────────── */
 .ds-slot-settings {
   display: grid;
@@ -2528,6 +2539,20 @@
   align-items: flex-start;
   gap: 8px;
   padding: 8px 10px 5px;
+}
+
+.ds-pool-item-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .ds-pool-timing {

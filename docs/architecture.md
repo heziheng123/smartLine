@@ -112,11 +112,11 @@ flowchart TD
 
 ## 7. 统一工作区同步
 
-当前 schema 为 `7`。统一房间 ID 形如 `workspace-{identity}-{roomCode}`，五个 store 进入同一 room 并映射到不同 storage 字段。
+当前 schema 为 `9`。统一房间 ID 形如 `workspace-{identity}-{roomCode}`，工作区 store 进入同一 room 并映射到不同 storage 字段。
 
-schema 演进：schema 5 引入固定项目大类；schema 6 支持全局关键日期及项目—目标、关键日期—项目可选关系；schema 7 为项目增加可选 `planningAreaId`，支持项目与人生地图二级分类关联。
+schema 演进：schema 5 引入固定项目大类；schema 6 支持全局关键日期及项目—目标、关键日期—项目可选关系；schema 7 增加 `planningAreaId`；schema 8 增加实体投影和地图备份；schema 9 增加正式专注数据。
 
-支持的 schema 版本：1–7。远端 schema 高于 7 时拒绝连接。
+支持的 schema 版本：1–9。远端 schema 高于 9 时拒绝连接。
 
 - **首次连接保护**：比较远端与本地完整内容 hash 和摘要；双方非空且不同则拒绝连接，需用户显式选择以哪端为准。
 - **版本门禁**：远端 schema 高于本地支持版本时立即拒绝连接，防止旧客户端覆盖更新格式的数据。

@@ -17,6 +17,7 @@ import {
   ArrowLeft,
   CalendarCheck2,
   CalendarClock,
+  Clock3,
   RotateCcw,
   Settings2,
   X,
@@ -110,9 +111,11 @@ const REVIEW_ADJUSTMENT_INTENT_KEY = 'smart-line-review-adjustment-intent';
 interface DailyScheduleViewProps {
   targetDate?: string | null;
   weekReturnContext?: WeekMatrixContext | null;
+  onOpenFocusStart?: () => void;
+  onOpenFocusReview?: () => void;
 }
 
-const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekReturnContext: bridgeWeekReturnContext }) => {
+const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekReturnContext: bridgeWeekReturnContext, onOpenFocusStart, onOpenFocusReview }) => {
   const today = todayStr();
   const [selectedDate, setSelectedDate] = useState(() => {
     try {
@@ -1113,6 +1116,8 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             </div>
           </div>
           <div className="ds-header-right ui-workspace-header__actions">
+            <button type="button" className="ds-header-btn ds-header-btn--focus" onClick={onOpenFocusStart} aria-label="快速开始专注"><Clock3 size={15} />开始专注</button>
+            <button type="button" className="ds-header-btn" onClick={onOpenFocusReview} aria-label="打开专注复盘">专注复盘</button>
             <button
               type="button"
               className="ds-header-btn"

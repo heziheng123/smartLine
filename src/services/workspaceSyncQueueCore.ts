@@ -1,5 +1,5 @@
 import { createScopedStorage } from '@/utils/persistence';
-import { hashWorkspaceValue, isWorkspaceRevisionSuperseded } from './workspaceSyncCore';
+import { hashWorkspaceValue, isWorkspaceRevisionSuperseded, mergeWorkspaceFieldChanges } from './workspaceSyncCore';
 import {
   canWorkspaceMutationEnqueue,
   type WorkspaceMutationOrigin,
@@ -10,10 +10,13 @@ export type WorkspaceStorageField =
   | 'lifeMapAreas' | 'lifeMapPlanGroups' | 'lifeMapStages' | 'lifeMapThemes' | 'lifeMapGoals'
   | 'lifeMapSystems' | 'lifeMapSystemCheckIns' | 'lifeMapEvents' | 'lifeMapFocuses' | 'lifeMapNotes' | 'lifeMapReviews'
   | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
-  | 'schedules' | 'retrospectives' | 'nodes';
+  | 'schedules' | 'retrospectives' | 'nodes'
+  | 'focusSubjects' | 'focusSessions' | 'focusWeeklyReviews';
 
 export interface PendingWorkspaceSync {
   version: 1;
+  /** Monotonic per-browser revision used to reject stale cross-tab snapshots. */
+  generation?: number;
   /** Unique token for this exact queue revision (older records may omit it). */
   writeId?: string;
   deviceId: string;
@@ -77,6 +80,7 @@ const queueStorage = createScopedStorage('workspace_sync_queue');
 const QUEUE_KEY = 'pending-v1';
 const CONFLICTS_KEY = 'conflicts-v1';
 const DEVICE_KEY = 'smart-line-device-id';
+const QUEUE_GENERATION_KEY = 'smart-line-workspace-sync-generation-v1';
 const EMERGENCY_QUEUE_KEY = 'smart-line-workspace-sync-emergency-v1';
 const QUEUE_LOCK_NAME = 'smart-line-workspace-sync-queue-v1';
 const QUEUE_FALLBACK_LOCK_KEY = 'smart-line-workspace-sync-queue-lock-v1';
@@ -284,6 +288,20 @@ function deviceId(): string {
   return created;
 }
 
+/** Must run inside the shared queue lock so every tab observes one ordering. */
+function nextWorkspaceQueueGeneration(): number {
+  try {
+    const current = Number(localStorage.getItem(QUEUE_GENERATION_KEY));
+    const next = Number.isSafeInteger(current) && current >= 0 ? current + 1 : 1;
+    localStorage.setItem(QUEUE_GENERATION_KEY, String(next));
+    return next;
+  } catch {
+    // BroadcastChannel is only an optimization. A timestamp still lets the
+    // receiving tab reject the common stale-message case when storage is denied.
+    return Date.now();
+  }
+}
+
 export function queueWorkspaceFields(
   fields: Partial<Record<WorkspaceStorageField, unknown>>,
   baseFields: Partial<Record<WorkspaceStorageField, unknown>> = {},
@@ -321,15 +339,14 @@ export function queueWorkspaceFields(
       if (!baseHashes[key]) baseHashes[key] = await hashWorkspaceValue(value);
       if (!Object.prototype.hasOwnProperty.call(initialBaseFields, key)) initialBaseFields[key] = value;
     }
-    const next: PendingWorkspaceSync = {
+    const incoming: PendingWorkspaceSync = {
       version: 1,
+      generation: nextWorkspaceQueueGeneration(),
       writeId: crypto.randomUUID(),
       deviceId: existing?.deviceId || deviceId(),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
-      fields: options.preservePendingFields
-        ? { ...fields, ...(existing?.fields ?? {}) }
-        : { ...(existing?.fields ?? {}), ...fields },
+      fields,
       baseHashes,
       baseFields: initialBaseFields,
       forceFields: [...new Set([
@@ -338,8 +355,38 @@ export function queueWorkspaceFields(
       ])],
       origin: queueOrigin,
     };
+    const merge = existing && !options.preservePendingFields
+      ? mergeWorkspaceFieldChanges(fields, baseFields, existing.fields)
+      : null;
+    const conflictingFields = [...new Set((merge?.conflicts ?? []).map((path) => (
+      path.split(/[.[]/, 1)[0] as WorkspaceStorageField
+    )))];
+    const next: PendingWorkspaceSync = {
+      ...incoming,
+      fields: options.preservePendingFields
+        ? { ...fields, ...(existing?.fields ?? {}) }
+        : { ...(existing?.fields ?? {}), ...(merge?.fields ?? fields) },
+    };
     attemptedPending = next;
     await queueStorage.setItem(QUEUE_KEY, next);
+    if (existing && conflictingFields.length > 0) {
+      const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
+      await queueStorage.setItem(CONFLICTS_KEY, retainWorkspaceConflictRecords([{
+        id: crypto.randomUUID(),
+        detectedAt: now,
+        remoteUpdatedAt: existing.updatedAt,
+        status: 'active',
+        pending: incoming,
+        remoteFields: Object.fromEntries(conflictingFields.map((field) => [field, existing.fields[field]])),
+        conflictingFields,
+      }, ...conflicts]));
+      window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, {
+        detail: {
+          kind: 'flush_failed',
+          message: '检测到两个标签页同时修改同一内容；两个版本均已保留，请在同步设置中处理。',
+        } satisfies WorkspaceQueueErrorDetail,
+      }));
+    }
     // A successfully persisted revision supersedes the emergency snapshot it
     // was built from. Matching only `next` leaves an older volatile revision
     // permanently ahead of IndexedDB after a transient storage failure.
@@ -348,6 +395,7 @@ export function queueWorkspaceFields(
       version: 1,
       type: 'fields',
       source: workspaceQueueTabId,
+      generation: next.generation,
       fields: next.fields,
     });
     window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
@@ -370,12 +418,15 @@ export function broadcastWorkspaceFields(
   fields: Partial<Record<WorkspaceStorageField, unknown>>,
 ): void {
   if (Object.keys(fields).length === 0) return;
-  workspaceQueueChannel?.postMessage({
-    version: 1,
-    type: 'fields',
-    source: workspaceQueueTabId,
-    fields,
-  });
+  void withQueueStorageLock(async () => {
+    workspaceQueueChannel?.postMessage({
+      version: 1,
+      type: 'fields',
+      source: workspaceQueueTabId,
+      generation: nextWorkspaceQueueGeneration(),
+      fields,
+    });
+  }).catch((error) => console.warn('[workspace-queue] 跨标签页广播失败：', error));
 }
 
 export async function readPendingWorkspaceSync(): Promise<PendingWorkspaceSync | null> {

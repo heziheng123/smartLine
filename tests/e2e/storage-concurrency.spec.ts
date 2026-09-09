@@ -3,6 +3,8 @@ import { expect, test } from '@playwright/test';
 const EXPECTED_STORES = [
   'daily_schedule_data',
   'ebb_data',
+  'focus_active',
+  'focus_data',
   'graph_data',
   'life_map_data',
   'local-forage-detect-blob-support',
@@ -91,6 +93,169 @@ test('simultaneous offline edits from two tabs preserve every changed workspace 
   });
   expect(pending?.fields.tasks).toEqual([{ id: 'tab-a-task', name: 'tab-a-task' }]);
   expect(pending?.fields.nodes).toEqual([{ id: 'tab-b-node', title: 'tab-b-node' }]);
+});
+
+test('simultaneous offline edits in the same collection preserve both entities', async ({ context }) => {
+  const [first, second] = await Promise.all([context.newPage(), context.newPage()]);
+  await Promise.all([first.goto('/'), second.goto('/')]);
+  await Promise.all([
+    expect(first.locator('.tl-dock')).toBeVisible(),
+    expect(second.locator('.tl-dock')).toBeVisible(),
+  ]);
+
+  await Promise.all([
+    first.evaluate(async () => {
+      const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+      await queue.queueWorkspaceFields(
+        { tasks: [{ id: 'tab-a-task', name: 'tab-a-task' }] },
+        { tasks: [] },
+        { bypassSuppression: true, origin: 'user' },
+      );
+    }),
+    second.evaluate(async () => {
+      const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+      await queue.queueWorkspaceFields(
+        { tasks: [{ id: 'tab-b-task', name: 'tab-b-task' }] },
+        { tasks: [] },
+        { bypassSuppression: true, origin: 'user' },
+      );
+    }),
+  ]);
+
+  await expect.poll(() => first.evaluate(async () => {
+    const queue = await import('/src/services/workspaceSyncQueueCore.ts');
+    const pending = await queue.readPendingWorkspaceSync();
+    return (pending?.fields.tasks as Array<{ id: string }> | undefined)?.map((task) => task.id).sort();
+  })).toEqual(['tab-a-task', 'tab-b-task']);
+});
+
+test('simultaneous focus writes from two tabs preserve both sessions', async ({ context }) => {
+  const [first, second] = await Promise.all([context.newPage(), context.newPage()]);
+  await Promise.all([first.goto('/'), second.goto('/')]);
+  const base = {
+    focusSubjects: [{
+      id: 'subject', name: '并发专注', color: '#2563eb', order: 0,
+      createdAt: '2026-09-09T00:00:00.000Z', updatedAt: '2026-09-09T00:00:00.000Z',
+    }],
+    focusSessions: [],
+    focusWeeklyReviews: [],
+  };
+  await first.evaluate(async (value) => {
+    const focus = await import('/src/focus/persistence.ts');
+    await focus.persistFocusData(value);
+  }, base);
+
+  const writeSession = (page: typeof first, id: string) => page.evaluate(async ({ baseline, sessionId }) => {
+    const focus = await import('/src/focus/persistence.ts');
+    await focus.persistFocusData({
+      ...baseline,
+      focusSessions: [{
+        id: sessionId, source: 'manual', subjectId: 'subject',
+        startedAt: '2026-09-09T00:00:00.000Z', endedAt: '2026-09-09T00:01:00.000Z',
+        activeSeconds: 60, interruptions: [], localDate: '2026-09-09', timeZone: 'UTC',
+        mode: 'free', createdAt: '2026-09-09T00:01:00.000Z', updatedAt: '2026-09-09T00:01:00.000Z',
+      }],
+    }, baseline);
+  }, { baseline: base, sessionId: id });
+
+  await Promise.all([writeSession(first, 'session-a'), writeSession(second, 'session-b')]);
+  const ids = await first.evaluate(async () => {
+    const focus = await import('/src/focus/persistence.ts');
+    return (await focus.loadFocusData()).focusSessions.map((session) => session.id).sort();
+  });
+  expect(ids).toEqual(['session-a', 'session-b']);
+});
+
+test('restoring a pre-Focus backup preserves current Focus data', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.tl-dock')).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const stores = await import('/src/testing/workspaceStoreAccess.ts');
+    const { useFocusStore } = await import('/src/focus/store.ts');
+    return stores.useTimelineStore.getState().isHydrated
+      && stores.useEbbStore.getState().isHydrated
+      && stores.useDailyScheduleStore.getState().isHydrated
+      && stores.useGraphStore.getState().isHydrated
+      && stores.useLifeMapStore.getState().isHydrated
+      && useFocusStore.getState().isHydrated;
+  })).toBe(true);
+
+  const preserved = await page.evaluate(async () => {
+    const { useFocusStore } = await import('/src/focus/store.ts');
+    const backup = await import('/src/services/workspaceBackup.ts');
+    const subject = await useFocusStore.getState().createSubject({ name: '必须保留', color: '#2563eb', defaultBackgroundPolicy: 'continue' });
+    const legacy = { ...backup.createWorkspaceBackup(), schemaVersion: 8 } as Record<string, unknown>;
+    delete legacy.focus;
+    const validation = backup.validateWorkspaceBackup(legacy);
+    if (!validation.backup) throw new Error(validation.errors.join('\n'));
+    await backup.restoreWorkspaceBackup(validation.backup);
+    return useFocusStore.getState().focusSubjects.some((candidate) => candidate.id === subject.id);
+  });
+  expect(preserved).toBe(true);
+});
+
+test('workspace restore resolves only after EBB and graph data are durable', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.tl-dock')).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const stores = await import('/src/testing/workspaceStoreAccess.ts');
+    const { useFocusStore } = await import('/src/focus/store.ts');
+    return stores.useTimelineStore.getState().isHydrated
+      && stores.useEbbStore.getState().isHydrated
+      && stores.useDailyScheduleStore.getState().isHydrated
+      && stores.useGraphStore.getState().isHydrated
+      && stores.useLifeMapStore.getState().isHydrated
+      && useFocusStore.getState().isHydrated;
+  })).toBe(true);
+
+  const stored = await page.evaluate(async () => {
+    const backupModule = await import('/src/services/workspaceBackup.ts');
+    const { createScopedStorage } = await import('/src/utils/persistence.ts');
+    const backup = backupModule.createWorkspaceBackup();
+    backup.graph.nodes = [{ id: 'restored-node', name: '立即落盘节点', parentId: null, createdAt: Date.now() }];
+    backup.ebb.inboxItems = [{ id: 'restored-inbox', topicName: '立即落盘 EBB', tag: '', status: 'draft', createdAt: new Date().toISOString() }];
+    await backupModule.restoreWorkspaceBackup(backup);
+    const graph = await createScopedStorage('graph_data').getItem<{ nodes?: Array<{ id: string }> }>('line-graph-storage');
+    const ebb = await createScopedStorage('ebb_data').getItem<{ inboxItems?: Array<{ id: string }> }>('smart-ebb-data');
+    return {
+      graph: graph?.nodes?.map((item) => item.id),
+      ebb: ebb?.inboxItems?.map((item) => item.id),
+    };
+  });
+  expect(stored).toEqual({ graph: ['restored-node'], ebb: ['restored-inbox'] });
+});
+
+test('a failed primary write and failed emergency mirror reject and emit a visible error', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { createCoalescedPersistence, PERSISTENCE_ERROR_EVENT } = await import('/src/utils/persistence.ts');
+    const originalSetItem = Storage.prototype.setItem;
+    let eventMessage = '';
+    window.addEventListener(PERSISTENCE_ERROR_EVENT, (event) => {
+      eventMessage = (event as CustomEvent<{ message?: string }>).detail?.message ?? '';
+    }, { once: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (key === 'forced-storage-failure') throw new DOMException('quota', 'QuotaExceededError');
+      return originalSetItem.call(this, key, value);
+    };
+    try {
+      const persistence = createCoalescedPersistence({
+        mirrorKey: 'forced-storage-failure',
+        label: '回归测试',
+        writeAsync: async () => { throw new Error('IndexedDB unavailable'); },
+      });
+      try {
+        await persistence.writeNow({ value: 1 });
+        return { rejected: false, eventMessage };
+      } catch {
+        return { rejected: true, eventMessage };
+      }
+    } finally {
+      Storage.prototype.setItem = originalSetItem;
+    }
+  });
+  expect(result.rejected).toBe(true);
+  expect(result.eventMessage).toContain('无法写入 IndexedDB 或应急日志');
 });
 
 test('storage schema upgrade preserves data written by an older app version', async ({ page }) => {

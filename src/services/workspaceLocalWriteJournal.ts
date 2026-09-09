@@ -12,11 +12,72 @@ import type { StoreApi } from 'zustand';
 import {
   canWorkspaceMutationEnqueue,
   currentWorkspaceMutationOrigin,
+  type WorkspaceMutationOrigin,
 } from './workspaceMutationOrigin';
 
 type WorkspaceState = WorkspaceStoreReadiness;
 type SetStateLike<TState> = StoreApi<TState>['setState'];
 type SetStateInput<TState> = Partial<TState> | TState | ((state: TState) => Partial<TState> | TState);
+
+interface WorkspaceTrackedTransaction {
+  depth: number;
+  fields: Partial<Record<WorkspaceStorageField, unknown>>;
+  baseFields: Partial<Record<WorkspaceStorageField, unknown>>;
+  origin: WorkspaceMutationOrigin;
+}
+
+let activeTransaction: WorkspaceTrackedTransaction | null = null;
+
+export function isWorkspaceTrackedTransactionActive(): boolean {
+  return activeTransaction !== null;
+}
+
+/**
+ * Groups one user intent that touches multiple stores into one durable queue
+ * revision. The stores still update synchronously for the UI, but the cloud
+ * can only observe the completed cross-domain state.
+ */
+export function runWorkspaceTrackedTransaction<TResult>(operation: () => TResult): TResult {
+  const transaction = activeTransaction ?? {
+    depth: 0,
+    fields: {},
+    baseFields: {},
+    origin: currentWorkspaceMutationOrigin(),
+  };
+  activeTransaction = transaction;
+  transaction.depth += 1;
+  try {
+    return operation();
+  } finally {
+    transaction.depth -= 1;
+    if (transaction.depth === 0) {
+      activeTransaction = null;
+      if (Object.keys(transaction.fields).length > 0) {
+        void queueWorkspaceFields(transaction.fields, transaction.baseFields, {
+          bypassSuppression: true,
+          origin: transaction.origin,
+        });
+      }
+    }
+  }
+}
+
+function queueOrCollectWorkspaceChanges(
+  fields: Partial<Record<WorkspaceStorageField, unknown>>,
+  baseFields: Partial<Record<WorkspaceStorageField, unknown>>,
+  origin: WorkspaceMutationOrigin,
+): void {
+  if (activeTransaction) {
+    for (const [field, value] of Object.entries(fields) as [WorkspaceStorageField, unknown][]) {
+      activeTransaction.fields[field] = value;
+      if (!Object.prototype.hasOwnProperty.call(activeTransaction.baseFields, field)) {
+        activeTransaction.baseFields[field] = baseFields[field];
+      }
+    }
+    return;
+  }
+  void queueWorkspaceFields(fields, baseFields, { bypassSuppression: true, origin });
+}
 
 function isUnifiedWorkspaceConfigured(): boolean {
   if (typeof localStorage === 'undefined') return false;
@@ -71,10 +132,10 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
     // Keep a write-through journal even after Liveblocks reports storage ready.
     // A flush that started during hydration must never be allowed to replay an
     // older completion snapshot over a newer local cancellation.
-    queueWorkspaceFields(
+    queueOrCollectWorkspaceChanges(
       fields as Partial<Record<WorkspaceStorageField, unknown>>,
       baseFields as Partial<Record<WorkspaceStorageField, unknown>>,
-      { bypassSuppression: true, origin },
+      origin,
     );
   };
   return trackedSet as SetStateLike<TState>;

@@ -37,12 +37,12 @@ export interface MindMapSyncPatch {
   lifeMap?: LifeMapData | null;
   lifeMapMigration?: LifeMapMigrationMeta | null;
   updatedAt: number;
-  nodes: { upserts: Record<string, MindMapNode>; deletes: string[] };
-  edges: { upserts: Record<string, MindMapEdge>; deletes: string[] };
-  sections: { upserts: Record<string, MindMapSection>; deletes: string[] };
-  groups: { upserts: Record<string, MindMapGroup>; deletes: string[] };
-  projectReferences: { upserts: Record<string, ProjectReferenceCard>; deletes: string[] };
-  timelineSections: { upserts: Record<string, TimelineSection>; deletes: string[] };
+  nodes: { upserts: Record<string, MindMapNode>; deletes: string[]; restores?: string[] };
+  edges: { upserts: Record<string, MindMapEdge>; deletes: string[]; restores?: string[] };
+  sections: { upserts: Record<string, MindMapSection>; deletes: string[]; restores?: string[] };
+  groups: { upserts: Record<string, MindMapGroup>; deletes: string[]; restores?: string[] };
+  projectReferences: { upserts: Record<string, ProjectReferenceCard>; deletes: string[]; restores?: string[] };
+  timelineSections: { upserts: Record<string, TimelineSection>; deletes: string[]; restores?: string[] };
 }
 
 export interface MindMapSyncState {
@@ -105,9 +105,13 @@ export function mergeMindMapCatalogEntries(
     if (!here) merged[id] = there;
     else if (!there) merged[id] = here;
     else {
-      const hereAt = Math.max(here.updatedAt, here.deletedAt ?? 0);
-      const thereAt = Math.max(there.updatedAt, there.deletedAt ?? 0);
-      merged[id] = hereAt > thereAt || (hereAt === thereAt && here.deletedAt !== null) ? here : there;
+      // Document ids are immutable. Once one replica deletes an id, preserve
+      // that tombstone instead of trusting unsynchronised wall clocks.
+      if (here.deletedAt !== null || there.deletedAt !== null) {
+        merged[id] = here.deletedAt !== null ? here : there;
+      } else {
+        merged[id] = concurrentContentSignature(here) > concurrentContentSignature(there) ? here : there;
+      }
     }
   }
   return merged;
@@ -124,6 +128,21 @@ function canonical(value: unknown): unknown {
 }
 
 const same = (a: unknown, b: unknown) => a === b || JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+// Timestamps are useful metadata, but cannot arbitrate a true concurrent edit:
+// device clocks can differ and cause the two clients to choose opposite values.
+// Compare the actual content in a canonical order so every client picks the
+// same winner when neither side descends from the common base.
+function concurrentContentSignature(value: unknown): string {
+  const withoutUpdatedAt = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(withoutUpdatedAt);
+    if (!item || typeof item !== 'object') return item;
+    return Object.fromEntries(Object.entries(item as Record<string, unknown>)
+      .filter(([key]) => key !== 'updatedAt')
+      .map(([key, child]) => [key, withoutUpdatedAt(child)]));
+  };
+  return JSON.stringify(canonical(withoutUpdatedAt(value)));
+}
 
 function mergeEntities<T extends { updatedAt: number }>(
   base: Record<string, T>,
@@ -146,7 +165,7 @@ function mergeEntities<T extends { updatedAt: number }>(
     }
     // A concurrent deletion wins over an edit so an object cannot be half-resurrected.
     if (!here || !there) continue;
-    merged[id] = here.updatedAt > there.updatedAt ? here : there;
+    merged[id] = concurrentContentSignature(here) > concurrentContentSignature(there) ? here : there;
   }
   return merged;
 }
@@ -179,7 +198,7 @@ export function mergeMindMapDocuments(
   remote: MindMapDocument,
 ): MindMapDocument {
   if (base.id !== local.id || local.id !== remote.id) throw new Error('不能合并不同的思维导图。');
-  const preferLocal = local.updatedAt > remote.updatedAt;
+  const preferLocal = concurrentContentSignature(local) > concurrentContentSignature(remote);
   const normalized = normalizeMindMapDocument({
     kind: 'smart-line-mind-map',
     schemaVersion: MIND_MAP_SCHEMA_VERSION,
@@ -203,20 +222,34 @@ export function mergeMindMapDocuments(
   return normalized;
 }
 
-function entityDiff<T>(base: Record<string, T>, current: Record<string, T>) {
+function entityDiff<T>(
+  base: Record<string, T>,
+  current: Record<string, T>,
+  previous: Record<string, T>,
+  pendingRestores: string[] = [],
+) {
   const upserts: Record<string, T> = {};
   const deletes: string[] = [];
+  const restores = new Set(pendingRestores);
   for (const [id, value] of Object.entries(current)) {
-    if (!same(base[id], value)) upserts[id] = value;
+    const restored = restores.has(id) || !Object.prototype.hasOwnProperty.call(previous, id);
+    if (!same(base[id], value) || restored) upserts[id] = value;
+    if (restored) restores.add(id);
   }
   for (const id of Object.keys(base)) {
     if (!current[id]) deletes.push(id);
   }
-  return { upserts, deletes };
+  const activeRestores = [...restores].filter((id) => Object.prototype.hasOwnProperty.call(current, id));
+  return { upserts, deletes, ...(activeRestores.length > 0 ? { restores: activeRestores } : {}) };
 }
 
-export function createMindMapSyncPatch(base: MindMapDocument, current: MindMapDocument): MindMapSyncPatch {
-  if (base.id !== current.id) throw new Error('不能为不同的思维导图创建同步补丁。');
+export function createMindMapSyncPatch(
+  base: MindMapDocument,
+  current: MindMapDocument,
+  previous: MindMapDocument = base,
+  pending: MindMapSyncPatch | null = null,
+): MindMapSyncPatch {
+  if (base.id !== current.id || previous.id !== current.id) throw new Error('不能为不同的思维导图创建同步补丁。');
   return {
     version: 1,
     documentId: current.id,
@@ -226,12 +259,12 @@ export function createMindMapSyncPatch(base: MindMapDocument, current: MindMapDo
     ...(same(base.lifeMap, current.lifeMap) ? {} : { lifeMap: current.lifeMap }),
     ...(same(base.lifeMapMigration, current.lifeMapMigration) ? {} : { lifeMapMigration: current.lifeMapMigration }),
     updatedAt: current.updatedAt,
-    nodes: entityDiff(base.nodes, current.nodes),
-    edges: entityDiff(base.edges, current.edges),
-    sections: entityDiff(base.sections, current.sections),
-    groups: entityDiff(base.groups, current.groups),
-    projectReferences: entityDiff(base.projectReferences, current.projectReferences),
-    timelineSections: entityDiff(base.timelineSections, current.timelineSections),
+    nodes: entityDiff(base.nodes, current.nodes, previous.nodes, pending?.nodes.restores),
+    edges: entityDiff(base.edges, current.edges, previous.edges, pending?.edges.restores),
+    sections: entityDiff(base.sections, current.sections, previous.sections, pending?.sections.restores),
+    groups: entityDiff(base.groups, current.groups, previous.groups, pending?.groups.restores),
+    projectReferences: entityDiff(base.projectReferences, current.projectReferences, previous.projectReferences, pending?.projectReferences.restores),
+    timelineSections: entityDiff(base.timelineSections, current.timelineSections, previous.timelineSections, pending?.timelineSections.restores),
   };
 }
 

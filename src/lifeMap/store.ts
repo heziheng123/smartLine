@@ -140,6 +140,10 @@ const persistence = createCoalescedPersistence<LifeMapData>({
   writeAsync: (data) => lifeMapStorage.setItem(STORAGE_KEY, data).then(() => undefined),
 });
 
+export async function persistLifeMapData(data: LifeMapData): Promise<void> {
+  await persistence.writeNow(normalizeLifeMapData(data));
+}
+
 export const useLifeMapStore = create<WithLiveblocks<LifeMapStore>>()(
   liveblocks(
     (_setState, get, api) => {

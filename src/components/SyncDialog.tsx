@@ -53,8 +53,9 @@ import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConfl
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { currentWorkspaceHistoryDate, loadWorkspaceDailyHistory } from '@/services/workspaceHistory';
 import { createCurrentWorkspaceAuditReport, downloadCurrentWorkspaceAuditReport } from '@/services/workspaceAudit';
+import { assertNoActiveFocusSessionForWorkspace } from '@/focus/persistence';
 import type { WorkspaceAuditReport } from '@/services/workspaceAuditCore';
-import { isCurrentTabSyncLeader } from '@/services/workspaceTabCoordinator';
+import { isCurrentTabSyncLeader, readWorkspaceTabLeadershipEpoch } from '@/services/workspaceTabCoordinator';
 import { useShallow } from 'zustand/react/shallow';
 import { summarizeAllConflicts, type FieldConflictSummary } from '@/services/workspaceConflictDiff';
 
@@ -71,9 +72,10 @@ const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
   lifeMapNotes: '人生便签', lifeMapReviews: '周期复盘', tasks: '项目任务', groups: '项目分组',
   notes: '时间轴便签', milestones: '里程碑', lifeStages: '旧人生时期', schedules: '每日安排', retrospectives: '每日复盘',
   reviewTasks: '复习任务', inboxItems: 'EBB 收集箱', outlineNodes: 'EBB 大纲', ebbSettings: 'EBB 设置', nodes: '知识节点',
+  focusSubjects: '专注主题', focusSessions: '专注记录', focusWeeklyReviews: '专注周度复盘',
 };
 const CONFLICT_DOMAINS: Array<{
-  id: ModuleKey;
+  id: ModuleKey | 'focus';
   label: string;
   description: string;
   fields: WorkspaceStorageField[];
@@ -82,6 +84,7 @@ const CONFLICT_DOMAINS: Array<{
   { id: 'ebb', label: 'EBB 复习', description: '复习任务、收集箱、大纲与设置', fields: ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings'] },
   { id: 'daily', label: '每日安排', description: '每日安排与每日复盘', fields: ['schedules', 'retrospectives'] },
   { id: 'graph', label: '知识大盘', description: '知识节点', fields: ['nodes'] },
+  { id: 'focus', label: '独立专注', description: '专注主题、会话与周度复盘', fields: ['focusSubjects', 'focusSessions', 'focusWeeklyReviews'] },
   { id: 'lifeMap', label: '旧人生地图', description: '迁移与恢复用的旧人生规划字段', fields: ['lifeMapAreas', 'lifeMapPlanGroups', 'lifeMapStages', 'lifeMapThemes', 'lifeMapGoals', 'lifeMapSystems', 'lifeMapSystemCheckIns', 'lifeMapEvents', 'lifeMapFocuses', 'lifeMapNotes', 'lifeMapReviews'] },
 ];
 
@@ -157,6 +160,9 @@ function describeConflictPath(field: WorkspaceStorageField, entityId: string): s
     lifeMapFocuses: '阶段重点',
     lifeMapNotes: '人生便签',
     lifeMapReviews: '周期复盘',
+    focusSubjects: '专注主题',
+    focusSessions: '专注记录',
+    focusWeeklyReviews: '专注周度复盘',
   };
   return `${kindLabels[field] ?? field}[${entityId.slice(0, 12)}]`;
 }
@@ -347,6 +353,8 @@ function WorkspaceHealthPanel({ report, onShowOrphans }: { report: WorkspaceAudi
 const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const auth = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const timeline = useTimelineStore(useShallow((state) => ({
     syncRoomCode: state.syncRoomCode,
     syncEnabled: state.syncEnabled,
@@ -662,7 +670,14 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const connectModule = useCallback((key: ModuleKey, code: string) => {
     if (!code) return;
     if (architecture.architecture === 'unified') {
-      void reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login).catch((error) => {
+      if (!isCurrentTabSyncLeader()) {
+        setRestoreMessage('另一个标签页正在负责云同步。请在主标签页执行连接或迁移。');
+        return;
+      }
+      const leaderEpoch = readWorkspaceTabLeadershipEpoch();
+      void reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login, () => (
+        isCurrentTabSyncLeader() && readWorkspaceTabLeadershipEpoch() === leaderEpoch
+      )).catch((error) => {
         setRestoreMessage(error instanceof Error ? error.message : '统一工作区连接失败。');
       });
       return;
@@ -690,6 +705,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       setRestoreMessage('另一个标签页正在负责云同步。请在主标签页执行连接或迁移。');
       return;
     }
+    const leaderEpoch = readWorkspaceTabLeadershipEpoch();
+    const isStillLeader = () => (
+      isCurrentTabSyncLeader() && readWorkspaceTabLeadershipEpoch() === leaderEpoch
+    );
     const enteredCode = roomCode.trim();
     const fallbackCode = enteredCode
       || timeline.syncRoomCode
@@ -711,6 +730,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             fallbackCode,
             auth.userId || auth.login || 'owner',
             auth.login || undefined,
+            isStillLeader,
           );
           setArchitecture(readWorkspaceSyncSettings());
           setRestoreMessage(result.warning ?? (result.source === 'cloud'
@@ -719,7 +739,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               ? '本机与云端数据一致，连接及云端确认均已完成。'
               : '云端为空，已安全连接并完成本机工作区上传。'));
         } else {
-          const result = await reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login);
+          const result = await reconnectConfiguredWorkspace(auth.userId || auth.login, auth.login, isStillLeader);
           setRestoreMessage(result?.warning ?? (result && result.repairedFields.length > 0
             ? `连接及云端确认已完成，并从云端修复了 ${result.repairedFields.length} 个不一致数据字段。`
             : result && result.applied > 0
@@ -735,6 +755,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         fallbackCode,
         auth.userId || auth.login || 'owner',
         auth.login || undefined,
+        isStillLeader,
       );
         setArchitecture(readWorkspaceSyncSettings());
         setRestoreMessage(result.warning ?? (result.source === 'cloud'
@@ -774,6 +795,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   const handleResolveActivationConflict = useCallback(async (resolution: 'cloud' | 'local' | 'mixed') => {
     if (!activationConflict || !isCurrentTabSyncLeader()) return;
+    const leaderEpoch = readWorkspaceTabLeadershipEpoch();
+    const isStillLeader = () => (
+      isCurrentTabSyncLeader() && readWorkspaceTabLeadershipEpoch() === leaderEpoch
+    );
     const keepCloud = resolution === 'cloud';
     let message = '';
 
@@ -795,6 +820,10 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
     const confirmed = await requestConfirmation(message);
     if (!confirmed) return;
+    if (!isStillLeader()) {
+      setRestoreMessage('同步领导权已切换，冲突处理已取消。请在当前主标签页重新执行。');
+      return;
+    }
     setConnectionBusy(true);
     setRestoreMessage(resolution === 'mixed' ? '正在保存双方恢复点并按自定义选择合并数据…' : (keepCloud ? '正在保存双方恢复点并加载云端数据…' : '正在保存双方恢复点并上传本机数据…'));
     try {
@@ -805,6 +834,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
         auth.login || undefined,
         activationConflict.remoteSource,
         resolution === 'mixed' ? domainConflictResolution : undefined,
+        isStillLeader,
       );
       setArchitecture(readWorkspaceSyncSettings());
       setActivationConflict(null);
@@ -834,6 +864,12 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, []);
 
   const handleChangeWorkspace = useCallback(async () => {
+    try {
+      await assertNoActiveFocusSessionForWorkspace();
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '请先处理进行中的专注会话。');
+      return;
+    }
     if (!await requestConfirmation('确定在这台设备上忘记当前工作区并更换房间号吗？本机数据不会删除，账号云端绑定也不会删除；输入新房间号后会重新建立绑定。')) return;
     disconnectWorkspace(true);
     setArchitecture(readWorkspaceSyncSettings());
@@ -870,13 +906,15 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
           : '';
         const confirmed = await requestConfirmation(
-          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n地图文档 ${result.summary.mindMapDocuments}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
+          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n地图文档 ${result.summary.mindMapDocuments}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}\n专注主题 ${result.summary.focusSubjects} 个，专注记录 ${result.summary.focusSessions} 条${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
         );
         if (!confirmed) return;
         await restoreWorkspaceBackup(result.backup);
         setRestoreMessage('完整工作区恢复成功。已自动保存恢复前快照。');
-      } catch {
-        setRestoreMessage('恢复失败：文件不是有效的 JSON 备份。');
+      } catch (error) {
+        setRestoreMessage(error instanceof SyntaxError
+          ? '恢复失败：文件不是有效的 JSON 备份。'
+          : error instanceof Error ? `恢复失败：${error.message}` : '工作区恢复失败，请重试。');
       }
     };
     reader.onerror = () => setRestoreMessage('备份文件读取失败，请重新选择文件。');
@@ -885,6 +923,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   const handleLogout = useCallback(async () => {
     try {
+      await assertNoActiveFocusSessionForWorkspace();
       await auth.logout();
       onClose();
     } catch (error) {
@@ -989,12 +1028,22 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       setRestoreMessage(message);
       return;
     }
+    const leaderEpoch = readWorkspaceTabLeadershipEpoch();
+    const isStillLeader = () => (
+      isCurrentTabSyncLeader() && readWorkspaceTabLeadershipEpoch() === leaderEpoch
+    );
     const summary = migrationCheck.summary;
     if (!await requestConfirmation(`将旧模块房间复制到一个认证工作区：\n项目任务 ${summary.tasks}\n人生规划 ${summary.lifeMapItems}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n每日复盘 ${summary.retrospectiveDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
+    if (!isStillLeader()) {
+      const message = '同步领导权已切换，迁移已取消。请在当前主标签页重新执行。';
+      setMigrationStatus(message);
+      setRestoreMessage(message);
+      return;
+    }
     setMigrationBusy(true);
     setMigrationStatus('正在创建快照、复制并校验数据；完成前请不要刷新或关闭页面…');
     try {
-      const report = await migrateLegacyWorkspace(activeCode, auth.userId || auth.login || 'owner');
+      const report = await migrateLegacyWorkspace(activeCode, auth.userId || auth.login || 'owner', isStillLeader);
       setMigrationReport(report);
       setArchitecture(readWorkspaceSyncSettings());
       downloadMigrationReport(report);
@@ -1015,6 +1064,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const handleLegacyFallback = useCallback(async () => {
     if (!activeCode || !await requestConfirmation('确定暂时返回旧模块房间吗？统一工作区数据不会删除。')) return;
     try {
+      await assertNoActiveFocusSessionForWorkspace();
       resetToLegacyArchitecture(activeCode);
       setArchitecture(readWorkspaceSyncSettings());
       setRestoreMessage('已切回旧模块房间恢复通道。');
@@ -1077,9 +1127,47 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     }
   }, [historyDate]);
 
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const returnFocus = returnFocusRef.current;
+    const focusable = () => [...dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => !element.hasAttribute('hidden') && element.getClientRects().length > 0);
+    (focusable()[0] ?? dialog).focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      returnFocus?.focus();
+    };
+  }, [onClose]);
+
   return (
     <div className="tl-dialog-overlay" onClick={onClose}>
-      <div className="tl-dialog tl-dialog--wide" role="dialog" aria-modal="true" aria-label="云同步与完整备份" onClick={(event) => event.stopPropagation()}>
+      <div ref={dialogRef} className="tl-dialog tl-dialog--wide" role="dialog" aria-modal="true" aria-label="云同步与完整备份" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <h3 className="tl-dialog-title"><Cloud size={18} />云同步与完整备份</h3>
 
         {/* 数据健康卡：单行 chip + 展开明细 */}

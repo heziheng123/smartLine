@@ -21,6 +21,8 @@ export interface WorkspaceSyncActivity {
   update: (phase: WorkspaceSyncRuntimePhase, message: string) => void;
   finish: (phase?: 'idle' | 'connected' | 'conflict', message?: string) => void;
   fail: (error: unknown) => void;
+  /** Ends an obsolete activity without changing the settled sync outcome. */
+  cancel: () => void;
 }
 
 export const WORKSPACE_SYNC_RUNTIME_EVENT = 'smartline:workspace-sync-runtime';
@@ -94,6 +96,9 @@ export function beginWorkspaceSyncActivity(
       }
       publishRuntimeState();
     },
+    cancel() {
+      if (!remove()) return;
+      publishRuntimeState();
+    },
   };
 }
-

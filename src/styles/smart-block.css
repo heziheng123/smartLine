@@ -103,6 +103,18 @@
   gap: 4px;
   flex-shrink: 0;
 }
+.pdv-title-button {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
 
 .pdv-planning-area-select {
   max-width: 150px;
@@ -477,6 +489,8 @@
   cursor: pointer;
   user-select: none;
   transition: background 0.15s ease;
+  border: 0;
+  color: inherit;
 }
 .pdv-group-toggle:hover {
   background: #e5e7eb;
@@ -491,6 +505,8 @@
   font-weight: 500;
   color: #9ca3af;
   transition: all 0.15s ease;
+  border: 0;
+  background: transparent;
 }
 .pdv-group-toggle-opt--active {
   background: #fff;

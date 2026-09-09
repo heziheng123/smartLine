@@ -124,6 +124,15 @@ export interface ScopedStorageWrite {
   value: unknown;
 }
 
+export interface ScopedStorageMutationRead {
+  storeName: string;
+  key: IDBValidKey;
+}
+
+export interface ScopedStorageMutationWrite extends ScopedStorageWrite {
+  remove?: boolean;
+}
+
 /** Writes already-computed values to multiple stores in one IndexedDB transaction. */
 export async function setScopedStorageItemsAtomically(writes: ScopedStorageWrite[]): Promise<void> {
   if (typeof indexedDB === 'undefined') throw new Error('IndexedDB 不可用，已停止原子写入。');
@@ -143,6 +152,78 @@ export async function setScopedStorageItemsAtomically(writes: ScopedStorageWrite
       for (const write of writes) {
         transaction.objectStore(write.storeName).put(write.value, write.key);
       }
+    });
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Reads and writes a small set of values in one IndexedDB transaction. The
+ * mutation callback runs from the final read request handler, before the
+ * transaction can become inactive, so callers may safely implement a true
+ * check-and-set lock instead of relying on BroadcastChannel timing.
+ */
+export async function mutateScopedStorageItemsAtomically<T>(
+  reads: ScopedStorageMutationRead[],
+  mutate: (values: unknown[]) => { result: T; writes: ScopedStorageMutationWrite[] },
+): Promise<T> {
+  if (typeof indexedDB === 'undefined') throw new Error('IndexedDB 不可用，已停止原子写入。');
+  const storeNames = [...new Set(reads.map((read) => read.storeName))];
+  for (const storeName of storeNames) storageSchemaStores.add(storeName);
+  storageSchemaReady = null;
+  await ensureStorageSchema();
+  const database = await openCurrentDatabase();
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const transaction = database.transaction(storeNames, 'readwrite');
+      const values: unknown[] = Array(reads.length);
+      let result: T | undefined;
+      let completedReads = 0;
+      let mutationStarted = false;
+      transaction.oncomplete = () => {
+        if (mutationStarted) resolve(result as T);
+      };
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB 原子事务失败。'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB 原子事务已回滚。'));
+      if (reads.length === 0) {
+        try {
+          const output = mutate([]);
+          mutationStarted = true;
+          result = output.result;
+          for (const write of output.writes) {
+            const store = transaction.objectStore(write.storeName);
+            if (write.remove) store.delete(write.key);
+            else store.put(write.value, write.key);
+          }
+        } catch (error) {
+          transaction.abort();
+          reject(error);
+        }
+        return;
+      }
+      reads.forEach((read, index) => {
+        const request = transaction.objectStore(read.storeName).get(read.key);
+        request.onerror = () => transaction.abort();
+        request.onsuccess = () => {
+          values[index] = request.result;
+          completedReads += 1;
+          if (completedReads !== reads.length || mutationStarted) return;
+          try {
+            const output = mutate(values);
+            mutationStarted = true;
+            result = output.result;
+            for (const write of output.writes) {
+              const store = transaction.objectStore(write.storeName);
+              if (write.remove) store.delete(write.key);
+              else store.put(write.value, write.key);
+            }
+          } catch (error) {
+            transaction.abort();
+            reject(error);
+          }
+        };
+      });
     });
   } finally {
     database.close();
@@ -187,11 +268,15 @@ export function readJsonStorage<T>(key: string): T | null {
   }
 }
 
-export function writeJsonStorage(key: string, value: unknown, label: string) {
+export const PERSISTENCE_ERROR_EVENT = 'smartline:persistence-error';
+
+export function writeJsonStorage(key: string, value: unknown, label: string): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch (e) {
     console.warn(`[${label}] localStorage 写入失败：`, e);
+    return false;
   }
 }
 
@@ -218,7 +303,7 @@ export function createCoalescedPersistence<T>({
   let writeChain = Promise.resolve();
 
   const writeValue = (value: T) => {
-    writeChain = writeChain
+    const operation = writeChain
       .then(async () => {
         await writeAsync(value);
         localStorage.removeItem(mirrorKey);
@@ -226,10 +311,16 @@ export function createCoalescedPersistence<T>({
       .catch((error) => {
         // IndexedDB can be unavailable in private/restricted browser modes.
         // Keep one recoverable emergency copy instead of losing the edit.
-        writeJsonStorage(mirrorKey, value, label);
+        const preserved = writeJsonStorage(mirrorKey, value, label);
         console.warn(`[${label}] IndexedDB 合并写入失败，已保留应急日志：`, error);
+        if (!preserved) {
+          const failure = new Error(`${label} 数据无法写入 IndexedDB 或应急日志，请勿关闭页面并立即导出备份。`);
+          window.dispatchEvent(new CustomEvent(PERSISTENCE_ERROR_EVENT, { detail: { message: failure.message } }));
+          throw failure;
+        }
       });
-    return writeChain;
+    writeChain = operation.catch(() => undefined);
+    return operation;
   };
 
   const flush = () => {
@@ -247,7 +338,7 @@ export function createCoalescedPersistence<T>({
     // This still writes only the latest snapshot, but guarantees that a busy
     // editing session is persisted at least once per delay window.
     if (timer) return;
-    timer = setTimeout(() => { void flush(); }, delay);
+    timer = setTimeout(() => { void flush().catch(() => undefined); }, delay);
   };
 
   const writeNow = (value: T) => {
@@ -261,10 +352,12 @@ export function createCoalescedPersistence<T>({
     window.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') void flush();
     });
-    window.addEventListener('beforeunload', () => {
+    window.addEventListener('beforeunload', (event) => {
       // Synchronous emergency journal only. Normal operation keeps complete
       // datasets out of localStorage and stores them in IndexedDB.
-      if (latest !== undefined) writeJsonStorage(mirrorKey, latest, label);
+      if (latest !== undefined && !writeJsonStorage(mirrorKey, latest, label)) {
+        event.preventDefault();
+      }
     });
   }
 

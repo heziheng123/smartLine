@@ -56,6 +56,8 @@ interface PhoneWorkspaceProps {
   onAddProject: () => void;
   onOpenProject: (taskId: string, blockId?: string) => void;
   onOpenFullView: () => void;
+  onOpenFocusStart?: () => void;
+  onOpenFocusReview?: () => void;
 }
 
 interface PhoneHeaderProps {
@@ -210,7 +212,7 @@ type PhoneScheduleEntry =
   | { kind: 'item'; value: ScheduledItem }
   | { kind: 'block'; value: TimeBlock };
 
-const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenProject, onOpenFullView }) => {
+const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenProject, onOpenFullView, onOpenFocusStart, onOpenFocusReview }) => {
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [quickTitle, setQuickTitle] = useState('');
   const schedules = useDailyScheduleStore((state) => state.schedules);
@@ -292,6 +294,7 @@ const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPr
         subtitle={`${completed}/${entries.length} 完成 · ${formatMinutes(plannedMinutes)}`}
         onOpenFullView={onOpenFullView}
       />
+      <div className="phone-focus-actions" aria-label="专注操作"><button type="button" aria-label="快速开始专注" onClick={onOpenFocusStart}><Clock3 size={16} />开始专注</button><button type="button" aria-label="打开专注复盘" onClick={onOpenFocusReview}>专注复盘</button></div>
       <div className="phone-date-control">
         <button type="button" onClick={() => setSelectedDate(addDays(selectedDate, -1))} aria-label="前一天"><ChevronLeft size={18} /></button>
         <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-label="选择日期" />

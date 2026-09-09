@@ -1,4 +1,17 @@
-import type { MindMapDocument, MindMapEdge } from './model';
+interface TreeEdge {
+  id: string;
+  relationship: 'tree' | 'reference';
+  source: { type: string };
+  target: { type: string };
+  sourceId: string;
+  targetId: string;
+  updatedAt: number;
+}
+
+interface TreeDocument {
+  nodes: Record<string, unknown>;
+  edges: Record<string, TreeEdge>;
+}
 
 export type MindMapTreeIssueKind = 'multiple-parents' | 'cycle';
 
@@ -12,7 +25,7 @@ export interface MindMapTreeValidation {
   isValid: boolean;
 }
 
-const isTreeNodeEdge = (edge: MindMapEdge, document: MindMapDocument) => (
+const isTreeNodeEdge = (edge: TreeEdge, document: TreeDocument) => (
   edge.relationship === 'tree'
   && edge.source.type === 'node'
   && edge.target.type === 'node'
@@ -21,7 +34,7 @@ const isTreeNodeEdge = (edge: MindMapEdge, document: MindMapDocument) => (
 );
 
 /** Validates the rooted-forest rules used by the tree layout. */
-export function validateMindMapTreeForest(document: MindMapDocument): MindMapTreeValidation {
+export function validateMindMapTreeForest(document: TreeDocument): MindMapTreeValidation {
   const issues: MindMapTreeIssue[] = [];
   const parentByNode = new Map<string, string>();
   const childrenByNode = new Map<string, string[]>();
@@ -63,7 +76,7 @@ export function validateMindMapTreeForest(document: MindMapDocument): MindMapTre
  * Keeps documents viewable when a malformed import or reconnection violates
  * rooted-forest rules: the problematic link remains visible as a reference.
  */
-export function repairMindMapTreeForest(document: MindMapDocument): MindMapDocument {
+export function repairMindMapTreeForest<T extends TreeDocument>(document: T): T {
   const invalidEdgeIds = new Set(validateMindMapTreeForest(document).issues.map((issue) => issue.edgeId));
   if (invalidEdgeIds.size === 0) return document;
   const now = Date.now();
@@ -73,5 +86,5 @@ export function repairMindMapTreeForest(document: MindMapDocument): MindMapDocum
       id,
       invalidEdgeIds.has(id) ? { ...edge, relationship: 'reference' as const, updatedAt: now } : edge,
     ])),
-  };
+  } as T;
 }

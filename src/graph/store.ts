@@ -151,6 +151,10 @@ const graphPersistence = createCoalescedPersistence<GraphData>({
   writeAsync: saveGraphDataAsync,
 });
 
+export async function persistGraphData(data: GraphData): Promise<void> {
+  await graphPersistence.writeNow({ nodes: normalizeGraphNodes(data.nodes) });
+}
+
 export type GraphSyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface GraphStore extends GraphData {

@@ -36,6 +36,7 @@ function emptyBackup(): WorkspaceBackup {
     },
     graph: { nodes: [] },
     daily: { schedules: {}, retrospectives: {} },
+    focus: { focusSubjects: [], focusSessions: [] },
     settings: {},
   };
 }

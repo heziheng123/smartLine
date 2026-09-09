@@ -326,6 +326,10 @@ html, body, #root {
   position: relative;
 }
 
+.tl-dock-btn[hidden] {
+  display: none;
+}
+
 .tl-dock-btn:hover {
   background: rgba(255, 255, 255, 0.8);
   color: #111827;

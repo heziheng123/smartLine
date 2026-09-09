@@ -319,7 +319,12 @@ export class MindMapRepository {
     if (state.base.id !== id || (state.pending && state.pending.documentId !== id)) {
       throw new Error('拒绝保存不属于当前思维导图的同步状态。');
     }
-    await this.getStorage().setItem(syncKey(id), state);
+    // Sync-state writes race with rapid publish/reconcile calls. Reuse the
+    // repository's document write chain so an older async completion can
+    // never overwrite the newest pending patch.
+    await this.enqueue(async () => {
+      await this.getStorage().setItem(syncKey(id), state);
+    });
   }
 
   async exportBundle(): Promise<MindMapBackupBundle> {

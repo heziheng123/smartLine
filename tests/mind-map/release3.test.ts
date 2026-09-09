@@ -52,6 +52,15 @@ test('the owner catalog discovers remote documents and preserves explicit deleti
   assert.equal(withDeletion['remote-document'].deletedAt, deletedAt);
 });
 
+test('a catalog tombstone wins even when the deleting device clock is behind', () => {
+  const document = summarizeMindMapDocument(documentWithNode('node', 100));
+  const merged = mergeMindMapCatalogEntries(
+    { [document.id]: { ...document, deletedAt: 10 } },
+    { [document.id]: { ...document, updatedAt: 1000, deletedAt: null } },
+  );
+  assert.equal(merged[document.id].deletedAt, 10);
+});
+
 test('a fresh device selects the newest active cloud document before creating a local one', () => {
   const old = { ...summarizeMindMapDocument(documentWithNode('old', 10)), deletedAt: null };
   const latest = { ...summarizeMindMapDocument(documentWithNode('latest', 20)), id: 'latest-document', deletedAt: null };
@@ -88,6 +97,24 @@ test('a concurrent delete wins over an edit and normalization removes dangling e
   assert.deepEqual(merged.edges, {});
 });
 
+test('a true concurrent entity edit has the same winner on both devices despite clock skew', () => {
+  const base = documentWithNode('a', 1);
+  const local = {
+    ...base,
+    nodes: { a: { ...base.nodes.a, text: 'alpha', updatedAt: 9_999 } },
+    updatedAt: 9_999,
+  };
+  const remote = {
+    ...base,
+    nodes: { a: { ...base.nodes.a, text: 'zulu', updatedAt: 2 } },
+    updatedAt: 2,
+  };
+  const first = mergeMindMapDocuments(base, local, remote);
+  const second = mergeMindMapDocuments(base, remote, local);
+  assert.equal(first.nodes.a.text, 'zulu');
+  assert.equal(second.nodes.a.text, 'zulu');
+});
+
 test('entity patches exclude viewport state and replay without replacing unrelated entities', () => {
   const base = documentWithNode('a', 1);
   const current = {
@@ -116,4 +143,44 @@ test('an unchanged document produces no queued patch', () => {
   const patch = createMindMapSyncPatch(document, document);
   assert.equal(isMindMapSyncPatchEmpty(patch), true);
   assert.equal(emptyMindMapSyncBase(document).id, document.id);
+});
+
+test('undoing a synchronized deletion emits an explicit same-id restore', () => {
+  const base = documentWithNode('a', 1);
+  const deleted = { ...base, nodes: {}, zOrder: [], updatedAt: 2 };
+  const restored = { ...base, updatedAt: 3 };
+  const patch = createMindMapSyncPatch(base, restored, deleted);
+
+  assert.deepEqual(patch.nodes.restores, ['a']);
+  assert.ok(patch.nodes.upserts.a);
+  assert.equal(isMindMapSyncPatchEmpty(patch), false);
+});
+
+test('editing an existing entity is not allowed to clear its tombstone', () => {
+  const base = documentWithNode('a', 1);
+  const edited = {
+    ...base,
+    nodes: { a: { ...base.nodes.a, text: '离线编辑', updatedAt: 2 } },
+    updatedAt: 2,
+  };
+  const patch = createMindMapSyncPatch(base, edited, base);
+
+  assert.equal(patch.nodes.restores, undefined);
+  assert.ok(patch.nodes.upserts.a);
+});
+
+test('a queued restore survives later offline edits until synchronization', () => {
+  const base = documentWithNode('a', 1);
+  const deleted = { ...base, nodes: {}, zOrder: [], updatedAt: 2 };
+  const restored = { ...base, updatedAt: 3 };
+  const restorePatch = createMindMapSyncPatch(base, restored, deleted);
+  const edited = {
+    ...restored,
+    nodes: { a: { ...restored.nodes.a, text: '恢复后继续编辑', updatedAt: 4 } },
+    updatedAt: 4,
+  };
+  const editedPatch = createMindMapSyncPatch(base, edited, restored, restorePatch);
+
+  assert.deepEqual(editedPatch.nodes.restores, ['a']);
+  assert.equal(editedPatch.nodes.upserts.a.text, '恢复后继续编辑');
 });

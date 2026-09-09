@@ -24,12 +24,19 @@ const taskDates = async (page: Page) => {
 const mapLifeStage = async (page: Page, name: string) => page.evaluate(async (stageName) => {
   const { useMindMapStore } = await import('/src/mindMap/testing.ts');
   const item = useMindMapStore.getState().document?.lifeMap?.lifeMapStages.find((stage) => stage.name === stageName && !stage.deletedAt);
-  return item ? { id: item.id, start: item.start, end: item.end } : null;
+  return item ? { id: item.id, start: item.start, end: item.end, areaIds: item.areaIds } : null;
 }, name);
 
 const fitCanvas = async (page: Page) => {
   await page.getByTestId('mind-map-layout-menu').click();
   await page.getByRole('menuitem', { name: '适合画布' }).click();
+};
+
+const selectTimelineProjects = async (page: Page, projectNames: string[]) => {
+  await page.getByRole('button', { name: /更改/ }).click();
+  const selector = page.getByRole('dialog', { name: '选择显示内容' });
+  for (const name of projectNames) await selector.getByRole('checkbox', { name: new RegExp(name) }).check();
+  await selector.getByRole('button', { name: '完成' }).click();
 };
 
 test.beforeEach(async ({ page }) => {
@@ -73,7 +80,7 @@ test('project task bars update canonical dates and offer compensation undo', asy
     const box = await page.getByLabel(name).boundingBox();
     expect(box?.width).toBeGreaterThan(70);
   }
-  await page.getByLabel('时间线来源').selectOption('project:map-project');
+  await selectTimelineProjects(page, ['Map Project']);
 
   const taskBar = page.locator('[title^="Map Task ·"]').first();
   const box = await taskBar.boundingBox();
@@ -104,7 +111,7 @@ test('moving or deleting a timeline never mutates its projected project data', a
   await page.getByRole('button', { name: '时间规划', exact: true }).click();
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();
-  await page.getByLabel('时间线来源').selectOption('project:map-project');
+  await selectTimelineProjects(page, ['Map Project']);
   const originalDates = await taskDates(page);
   const box = await timeline.boundingBox();
   if (!box) throw new Error('Timeline was not rendered.');
@@ -157,8 +164,21 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   const timelineTestId = await timeline.getAttribute('data-testid');
   if (!timelineTestId) throw new Error('Timeline test id was not available.');
+  const timelineId = timelineTestId.replace(/^mind-map-timeline-/, '');
   await timeline.click();
-  await page.getByLabel('时间线来源').selectOption('life:learning');
+  const createdStage = await mapLifeStage(page, '地图人生阶段（已编辑）');
+  const targetId = createdStage?.areaIds[0];
+  if (!targetId) throw new Error('Life planning stage area was not available.');
+  await page.evaluate(async ({ lifeTargetId, selectedTimelineId }) => {
+    const { useMindMapStore } = await import('/src/mindMap/testing.ts');
+    useMindMapStore.getState().execute('加载旧版人生时间线', (document) => {
+      const timeline = document.timelineSections[selectedTimelineId];
+      return timeline ? {
+        ...document,
+        timelineSections: { ...document.timelineSections, [selectedTimelineId]: { ...timeline, source: 'life', targetId: lifeTargetId, manualItems: [], selectionScopes: [] } },
+      } : document;
+    });
+  }, { lifeTargetId: targetId, selectedTimelineId: timelineId });
 
   const lifeBar = page.locator('[title^="地图人生阶段（已编辑） ·"]').first();
   const original = await mapLifeStage(page, '地图人生阶段（已编辑）');
@@ -176,12 +196,8 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
   await expect.poll(() => mapLifeStage(page, '地图人生阶段（已编辑）')).toEqual(original);
 
   await timeline.click();
-  await page.getByLabel('时间线来源').selectOption('manual:');
-  await page.getByText(/已选择 \d+ 项/).click();
-  await page.getByLabel('Map Project · Map Task').check();
-  await page.getByLabel('学习成长 · 地图人生阶段（已编辑）').check();
+  await selectTimelineProjects(page, ['Map Project']);
   await expect(page.locator('[title^="Map Task ·"]').first()).toBeVisible();
-  await expect(page.locator('[title^="地图人生阶段（已编辑） ·"]').first()).toBeVisible();
 
   await page.evaluate(async () => {
     const { useMindMapStore } = await import('/src/mindMap/testing.ts');
@@ -194,7 +210,7 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
   await expect.poll(() => mapLifeStage(page, '地图人生阶段（已编辑）')).toEqual(original);
   const restoredTimeline = page.getByTestId(timelineTestId);
   await restoredTimeline.click();
-  await expect(page.getByLabel('时间线来源')).toHaveValue('manual:');
-  await expect(page.getByLabel('Map Project · Map Task')).toBeChecked();
-  await expect(page.getByLabel('学习成长 · 地图人生阶段（已编辑）')).toBeChecked();
+  await expect(page.getByLabel('内容范围')).toContainText('1 个项目');
+  await page.getByRole('button', { name: /更改/ }).click();
+  await expect(page.getByRole('dialog', { name: '选择显示内容' }).getByRole('checkbox', { name: /Map Project/ })).toBeChecked();
 });

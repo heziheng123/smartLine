@@ -9,6 +9,7 @@ const ARRAY_FIELDS = new Set<WorkspaceStorageField>([
   'lifeMapAreas', 'lifeMapPlanGroups', 'lifeMapStages', 'lifeMapThemes', 'lifeMapGoals',
   'lifeMapSystems', 'lifeMapSystemCheckIns', 'lifeMapEvents', 'lifeMapFocuses', 'lifeMapNotes', 'lifeMapReviews',
   'reviewTasks', 'inboxItems', 'outlineNodes', 'nodes',
+  'focusSubjects', 'focusSessions',
 ]);
 const MAP_FIELDS = new Set<WorkspaceStorageField>(['schedules', 'retrospectives']);
 const ENTITY_KEY_PREFIX = 'workspace-entity:';
