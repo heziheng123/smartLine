@@ -1,6 +1,7 @@
 import {
   createEmptyMindMapDocument,
   createMindMapEdge,
+  createMindMapNode,
   createTextMindMapNode,
   normalizeMindMapDocument,
   type MindMapDocument,
@@ -56,7 +57,7 @@ export function parseMindMapDocumentJson(source: string): MindMapDocument {
 
 type OutlineLine = { level: number; text: string };
 
-const outlineLine = (line: string, previousLevel: number, headingLevel: number): OutlineLine | null => {
+const outlineLine = (line: string, headingLevel: number): OutlineLine | null => {
   const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
   if (heading) return { level: heading[1].length, text: heading[2] };
   const list = /^(\s*)(?:[-*+]|\d+[.)])\s+(.+?)\s*$/.exec(line);
@@ -64,33 +65,83 @@ const outlineLine = (line: string, previousLevel: number, headingLevel: number):
     const indentLevel = Math.floor(list[1].replace(/\t/g, '  ').length / 2);
     return { level: (headingLevel || 0) + indentLevel + 1, text: list[2] };
   }
-  const text = line.trim();
-  return text ? { level: Math.max(1, previousLevel), text } : null;
+  return null;
 };
 
-/** Imports headings and indented lists as a rooted forest of text nodes. */
+const fenceStart = (line: string) => /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
+const isTableDivider = (line: string) => /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+
+const markdownBlockEnd = (lines: string[], start: number, headingLevel: number) => {
+  const fence = fenceStart(lines[start]);
+  if (fence) {
+    let end = start + 1;
+    while (end < lines.length && !new RegExp(`^\\s*${fence[0]}{${fence.length},}`).test(lines[end])) end += 1;
+    return Math.min(lines.length, end + 1);
+  }
+  if (/^\s*>/.test(lines[start])) {
+    let end = start + 1;
+    while (end < lines.length && (/^\s*>/.test(lines[end]) || lines[end].trim() === '')) end += 1;
+    return end;
+  }
+  if (lines[start + 1] && /\|/.test(lines[start]) && isTableDivider(lines[start + 1])) {
+    let end = start + 2;
+    while (end < lines.length && lines[end].trim() && /\|/.test(lines[end])) end += 1;
+    return end;
+  }
+  let end = start + 1;
+  while (end < lines.length && lines[end].trim() && !outlineLine(lines[end], headingLevel)) end += 1;
+  return end;
+};
+
+const taskFromOutlineText = (text: string) => {
+  const task = /^\[([ xX])\]\s+(.+?)\s*$/.exec(text);
+  return task ? { text: task[2], status: task[1].toLowerCase() === 'x' ? 'done' as const : 'todo' as const } : null;
+};
+
+const serializeOutlineText = (node: MindMapDocument['nodes'][string]) => {
+  const text = node.text.trim().replace(/\s*\n\s*/g, ' ') || '未命名节点';
+  return node.taskStatus === 'done' ? `[x] ${text}` : node.taskStatus === 'todo' ? `[ ] ${text}` : text;
+};
+
+/** Imports outlines as tree nodes and preserves all remaining Markdown as Markdown nodes. */
 export function parseMindMapMarkdownOutline(source: string, title = '导入的 Markdown 大纲'): MindMapDocument {
   if (new Blob([source]).size > MAX_JSON_BYTES) throw new Error('导入文件不能超过 32 MiB。');
-  const lines: OutlineLine[] = [];
-  let previousLevel = 1;
+  const sourceLines = source.replace(/^\uFEFF/, '').split(/\r?\n/);
+  if (!sourceLines.some((line) => line.trim())) throw new Error('Markdown 大纲中没有可导入的内容。');
   let headingLevel = 0;
-  for (const sourceLine of source.replace(/^\uFEFF/, '').split(/\r?\n/)) {
-    const parsed = outlineLine(sourceLine, previousLevel, headingLevel);
-    if (!parsed) continue;
-    if (/^#{1,6}\s+/.test(sourceLine)) headingLevel = parsed.level;
-    previousLevel = parsed.level;
-    lines.push(parsed);
-  }
-  if (lines.length === 0) throw new Error('Markdown 大纲中没有可导入的标题或列表项。');
-
   const firstHeading = /^#\s+(.+?)\s*$/m.exec(source)?.[1];
   const document = createEmptyMindMapDocument(firstHeading || title);
   const parentAtLevel: string[] = [];
-  for (const [index, line] of lines.entries()) {
+  let index = 0;
+  for (let lineIndex = 0; lineIndex < sourceLines.length;) {
+    const sourceLine = sourceLines[lineIndex];
+    if (!sourceLine.trim()) {
+      lineIndex += 1;
+      continue;
+    }
+    const line = outlineLine(sourceLine, headingLevel);
+    if (!line) {
+      const end = markdownBlockEnd(sourceLines, lineIndex, headingLevel);
+      const raw = sourceLines.slice(lineIndex, end).join('\n').trim();
+      const parentId = [...parentAtLevel].reverse().find(Boolean);
+      const node = createMindMapNode({ x: parentAtLevel.length * 220, y: index * 104 }, 'markdown', { text: raw });
+      document.nodes[node.id] = node;
+      document.zOrder.push(node.id);
+      if (parentId) {
+        const edge = createMindMapEdge(parentId, node.id, { relationship: 'tree' });
+        document.edges[edge.id] = edge;
+      }
+      index += 1;
+      lineIndex = end;
+      continue;
+    }
+    if (/^#{1,6}\s+/.test(sourceLine)) headingLevel = line.level;
+    const task = taskFromOutlineText(line.text);
     const node = createTextMindMapNode(
       { x: (line.level - 1) * 220, y: index * 88 },
-      { text: line.text },
+      { text: task?.text ?? line.text },
     );
+    if (task) node.taskStatus = task.status;
     document.nodes[node.id] = node;
     document.zOrder.push(node.id);
     const parentId = parentAtLevel.slice(0, line.level - 1).reverse().find(Boolean);
@@ -100,6 +151,8 @@ export function parseMindMapMarkdownOutline(source: string, title = '导入的 M
     }
     parentAtLevel.length = line.level - 1;
     parentAtLevel[line.level - 1] = node.id;
+    index += 1;
+    lineIndex += 1;
   }
   return layoutMindMapTree(document);
 }
@@ -127,8 +180,13 @@ export function serializeMindMapMarkdownOutline(document: MindMapDocument): stri
     const node = repaired.nodes[id];
     if (!node) return;
     visited.add(id);
-    const text = node.text.trim().replace(/\s*\n\s*/g, ' ') || '未命名节点';
-    output.push(`${'  '.repeat(depth)}- ${text}`);
+    if (node.type === 'markdown') {
+      if (output.length) output.push('');
+      const indent = '  '.repeat(depth);
+      output.push(...node.text.trim().split(/\r?\n/).map((line) => line ? indent + line : ''));
+    } else {
+      output.push(`${'  '.repeat(depth)}- ${serializeOutlineText(node)}`);
+    }
     for (const childId of children.get(id) ?? []) visit(childId, depth + 1);
   };
   for (const rootId of roots) visit(rootId, 0);

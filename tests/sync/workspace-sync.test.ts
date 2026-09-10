@@ -37,6 +37,7 @@ import {
   WORKSPACE_ENTITY_STORAGE_VERSION,
   buildWorkspaceEntityInitializationWrites,
   buildWorkspaceEntityWrites,
+  hasCompleteWorkspaceEntitySidecar,
   materializeWorkspaceEntityRoot,
   workspaceFieldsMatchEntityProjection,
 } from '../../src/services/workspaceEntityStorage.ts';
@@ -131,6 +132,25 @@ test('entity tombstones prevent a stale array projection from resurrecting delet
     materializeWorkspaceEntityRoot({ ...root, tasks, ...deletion }).tasks,
     [{ id: 'keep', title: 'keep' }],
   );
+});
+
+test('schema upgrades rebuild entity sidecars for newly synchronized collections', () => {
+  const fields = {
+    tasks: [{ id: 'task-1', title: 'existing' }],
+    focusSubjects: [{ id: 'focus-1', name: '新增同步字段' }],
+  };
+  const oldRoot = {
+    metadata: { schemaVersion: 8, entityStorageVersion: WORKSPACE_ENTITY_STORAGE_VERSION },
+    ...fields,
+    ...buildWorkspaceEntityInitializationWrites({ tasks: fields.tasks }, 'schema-8'),
+  };
+  assert.equal(hasCompleteWorkspaceEntitySidecar(oldRoot, fields), false);
+
+  const upgradedRoot = {
+    ...oldRoot,
+    ...buildWorkspaceEntityInitializationWrites(fields, 'schema-9'),
+  };
+  assert.equal(hasCompleteWorkspaceEntitySidecar(upgradedRoot, fields), true);
 });
 
 test('schema 8 acknowledgement requires both top-level and entity projections', () => {

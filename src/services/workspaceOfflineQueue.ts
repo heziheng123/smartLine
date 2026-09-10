@@ -59,10 +59,11 @@ export {
 } from './workspaceSyncQueueCore';
 export { acknowledgeAppliedWorkspaceSync } from './workspaceSyncQueueCore';
 
-export function applyWorkspaceFields(
+export async function applyWorkspaceFields(
   fields: Partial<Record<WorkspaceStorageField, unknown>>,
   origin: WorkspaceMutationOrigin,
-): void {
+): Promise<void> {
+  let focusPersistence = Promise.resolve();
   runWorkspaceMutationWithOrigin(origin, () => {
   const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones', 'lifeStages']
     .some((key) => fields[key as WorkspaceStorageField] !== undefined);
@@ -124,7 +125,7 @@ export function applyWorkspaceFields(
       focusSessions: fields.focusSessions ?? current.focusSessions,
       focusWeeklyReviews: fields.focusWeeklyReviews ?? current.focusWeeklyReviews,
     });
-    void persistFocusData(normalized).then((persisted) => {
+    focusPersistence = persistFocusData(normalized).then((persisted) => {
       runWorkspaceMutationWithOrigin(origin, () => useFocusStore.setState(persisted));
     }).catch((error) => {
       console.warn('[focus] 同步数据落盘失败：', error);
@@ -134,9 +135,11 @@ export function applyWorkspaceFields(
           message: '专注同步数据无法安全写入本机，已保留当前界面数据，请勿关闭页面并重试。',
         },
       }));
+      throw error;
     });
   }
   });
+  await focusPersistence;
 }
 
 function isWorkspaceMessage(value: unknown): value is {
@@ -185,7 +188,7 @@ export function startWorkspaceCrossTabDataSync(): () => void {
     // Remote-broadcast fields are not local user edits. System mutation
     // suppression blocks trackedSet from journaling this apply and recreating
     // a queue loop on tabs that intentionally do not hold their own connection.
-    void readPendingWorkspaceSync().then((pending) => {
+    void readPendingWorkspaceSync().then(async (pending) => {
       // Only the broadcast that belongs to this exact durable revision may
       // paint over an optimistic local state. In particular, a leader's later
       // cloud-hydration broadcast receives its own generation and must not
@@ -201,7 +204,7 @@ export function startWorkspaceCrossTabDataSync(): () => void {
       setWorkspaceSystemMutationSuppressed(true);
       setWorkspaceQueueSuppressed(true);
       try {
-        applyWorkspaceFields(applicableFields, 'broadcast');
+        await applyWorkspaceFields(applicableFields, 'broadcast');
         if (generation !== 0) appliedGeneration = generation;
       } finally {
         window.setTimeout(() => {
@@ -223,7 +226,7 @@ export async function restoreWorkspaceConflict(id: string): Promise<void> {
 
   setWorkspaceQueueSuppressed(true);
   try {
-    applyWorkspaceFields(conflict.pending.fields, 'restore');
+    await applyWorkspaceFields(conflict.pending.fields, 'restore');
   } finally {
     setWorkspaceQueueSuppressed(false);
   }
@@ -254,7 +257,7 @@ export async function restoreWorkspaceConflictFields(
   await createLocalSnapshot(`恢复冲突副本前 · ${conflict.detectedAt}`);
   setWorkspaceQueueSuppressed(true);
   try {
-    applyWorkspaceFields(pickedFields, 'restore');
+    await applyWorkspaceFields(pickedFields, 'restore');
   } finally {
     setWorkspaceQueueSuppressed(false);
   }

@@ -65,6 +65,7 @@ import {
   WORKSPACE_WRITER_PROTOCOL_VERSION,
   buildWorkspaceEntityInitializationWrites,
   buildWorkspaceEntityWrites,
+  hasCompleteWorkspaceEntitySidecar,
   materializeWorkspaceEntityRoot,
   workspaceFieldsMatchEntityProjection,
 } from './workspaceEntityStorage';
@@ -270,7 +271,7 @@ function runWorkspaceConnectionOperation<T>(
       if (workspaceConnectionOperation === current) {
         workspaceConnectionOperation = null;
         workspaceConnectionActivity = null;
-        activity.finish('connected', '统一工作区已连接并完成校验。');
+        activity.finish('connected', '统一工作区已连接，可以正常使用。');
       }
     },
     (error) => {
@@ -358,47 +359,6 @@ function waitForRoomConnected(
   });
 }
 
-async function waitForRoomSnapshot(
-  room: {
-    getStatus: () => string;
-    getStorage: () => Promise<{ root: { toJSON: () => unknown } }>;
-    getStorageStatus?: () => string;
-    reconnect?: () => void;
-  },
-  expected: Record<string, unknown>,
-  fields: readonly string[],
-  timeoutMs = 15_000,
-): Promise<void> {
-  // `inspectRoom` uses a separate connection. A current Room can therefore
-  // report connected while its old local cache is still catching up. Retry one
-  // in-place reconnect before declaring the cache stale; user edits stay in
-  // the durable queue until the later flush confirms them.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const { root } = await room.getStorage();
-    const startedAt = Date.now();
-    while (hasWorkspaceFieldSnapshotChanged(
-      expected,
-      materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>),
-      fields,
-    )) {
-      if (Date.now() - startedAt > timeoutMs) break;
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
-    }
-    if (!hasWorkspaceFieldSnapshotChanged(
-      expected,
-      materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>),
-      fields,
-    )) return;
-
-    if (attempt === 0) {
-      room.reconnect?.();
-      await waitForRoomConnected(room);
-      await waitForRoomStorageSynchronized(room);
-    }
-  }
-  throw new Error('本机云端缓存重新连接后仍未追平最新工作区，已保留待传修改，请检查网络后重试。');
-}
-
 export function disconnectWorkspace(disable = false): void {
   stopWorkspaceVerificationMonitor();
   setWorkspaceSyncRuntimeOutcome('idle', disable ? '同步已关闭。' : '工作区已断开。');
@@ -446,6 +406,7 @@ export async function connectUnifiedWorkspace(
   roomCode: string,
   roomId?: string,
   shouldContinue: () => boolean = () => true,
+  verifyInBackground = false,
 ): Promise<UnifiedWorkspaceConnectionResult> {
   const assertCurrent = () => {
     if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
@@ -475,9 +436,6 @@ export async function connectUnifiedWorkspace(
     // Do not merge the durable queue over that cache until Liveblocks has
     // completed the reconnect handshake and synchronized its storage state.
     await waitForRoomStorageSynchronized(connectedRoom);
-    const authoritativeRoot = await inspectRoom(targetRoomId, '统一工作区最新快照');
-    assertCurrent();
-    await waitForRoomSnapshot(connectedRoom, authoritativeRoot, EXPECTED_KEYS);
     assertCurrent();
     reportWorkspaceConnectionProgress('云端已连接，正在补传本机离线修改…', 'flushing');
     if (queueFlushTimer) {
@@ -498,6 +456,12 @@ export async function connectUnifiedWorkspace(
     }
     await waitForRoomStorageSynchronized(room);
     assertCurrent();
+    if (verifyInBackground) {
+      reportWorkspaceConnectionProgress('云端已连接，完整一致性校验将在后台继续。', 'connected');
+      startWorkspaceVerificationMonitor(targetRoomId);
+      window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
+      return { roomId: targetRoomId, applied: flushed.applied, repairedFields: [] };
+    }
     reportWorkspaceConnectionProgress('补传已确认，正在校验五个数据域的一致性…', 'verifying');
     const repairedFields = await ensureUnifiedWorkspaceConvergence(targetRoomId, shouldContinue);
     assertCurrent();
@@ -527,23 +491,26 @@ async function reconnectConfiguredWorkspaceInternal(
   const anyEnabled = [useTimelineStore, useEbbStore, useDailyScheduleStore, useGraphStore, useLifeMapStore]
     .some((store) => store.getState().syncEnabled);
   if (anyEnabled && settings.architecture === 'unified' && settings.unifiedRoomId) {
-    const root = await inspectRoom(settings.unifiedRoomId, '统一工作区');
-    assertCurrent();
-    assertWorkspaceSchemaSupported(root, WORKSPACE_SCHEMA_VERSION);
     await initializeUnifiedRoomBeforeConnect(
       settings.unifiedRoomId,
-      rootToBackup(root, createWorkspaceBackup()),
-      root,
+      createWorkspaceBackup(),
+      null,
       false,
       shouldContinue,
     );
     assertCurrent();
-    const connected = await connectUnifiedWorkspace(settings.roomCode, settings.unifiedRoomId, shouldContinue);
+    const connected = await connectUnifiedWorkspace(settings.roomCode, settings.unifiedRoomId, shouldContinue, true);
     assertCurrent();
-    const warning = identity
-      ? await tryWriteWorkspaceAccountBinding(identity, { roomCode: settings.roomCode, unifiedRoomId: settings.unifiedRoomId })
-      : undefined;
-    return { ...connected, warning };
+    // This binding was already saved when the workspace was activated. Refresh
+    // it opportunistically without making every normal startup wait for another
+    // room connection and storage acknowledgement.
+    if (identity) {
+      void tryWriteWorkspaceAccountBinding(identity, {
+        roomCode: settings.roomCode,
+        unifiedRoomId: settings.unifiedRoomId,
+      });
+    }
+    return connected;
   }
   if (anyEnabled) {
     if (identity && settings.architecture === 'legacy') {
@@ -1093,7 +1060,7 @@ async function overwriteUnifiedRoomFromBackup(
 async function initializeUnifiedRoomBeforeConnect(
   roomId: string,
   backup: WorkspaceBackup,
-  inspectedRoot: Record<string, unknown>,
+  inspectedRoot: Record<string, unknown> | null,
   overwriteExisting: boolean,
   shouldContinue: () => boolean = () => true,
 ): Promise<void> {
@@ -1113,7 +1080,7 @@ async function initializeUnifiedRoomBeforeConnect(
     const rawCurrentRoot = root.toJSON() as Record<string, unknown>;
     const currentRoot = materializeWorkspaceEntityRoot(rawCurrentRoot);
     assertWorkspaceSchemaSupported(currentRoot, WORKSPACE_SCHEMA_VERSION);
-    if (hasWorkspaceFieldSnapshotChanged(
+    if (inspectedRoot && hasWorkspaceFieldSnapshotChanged(
       inspectedRoot,
       currentRoot,
       [...EXPECTED_KEYS, 'metadata'],
@@ -1127,10 +1094,13 @@ async function initializeUnifiedRoomBeforeConnect(
     );
     const currentMetadata = isJsonRecord(currentRoot.metadata) ? currentRoot.metadata : {};
     const expectedRoot = { ...currentRoot, ...initializationFields };
-    const needsEntityInitialization = currentMetadata.entityStorageVersion !== WORKSPACE_ENTITY_STORAGE_VERSION;
+    const expectedFields = Object.fromEntries(EXPECTED_KEYS.map((key) => [key, expectedRoot[key]]));
+    const needsEntityInitialization = currentMetadata.entityStorageVersion !== WORKSPACE_ENTITY_STORAGE_VERSION
+      || currentMetadata.schemaVersion !== WORKSPACE_SCHEMA_VERSION
+      || !hasCompleteWorkspaceEntitySidecar(rawCurrentRoot, expectedFields);
     const entityWrites = needsEntityInitialization
       ? buildWorkspaceEntityInitializationWrites(
-        Object.fromEntries(EXPECTED_KEYS.map((key) => [key, expectedRoot[key]])),
+        expectedFields,
         crypto.randomUUID(),
       )
       : {};
@@ -1618,8 +1588,7 @@ async function ensureUnifiedWorkspaceConvergence(
 
     // A populated cloud field is authoritative once the durable local queue is
     // empty. Rehydrate stale Zustand slices from that exact cloud snapshot.
-    applyWorkspaceFields(remoteFields, 'convergence');
-    await Promise.resolve();
+    await applyWorkspaceFields(remoteFields, 'convergence');
     assertCurrent();
 
     // Normalizers can repair legacy values (for example group task copies)
@@ -1893,7 +1862,7 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
       || !await verifyWorkspaceAlternatesPersisted(recoveryIds)) {
       throw new Error('旧冲突自动归档未能通过云端回读，已保留原冲突记录。');
     }
-    applyWorkspaceFields(
+    await applyWorkspaceFields(
       resolved.fields as Partial<Record<WorkspaceStorageField, unknown>>,
       'remote-hydration',
     );
@@ -2055,7 +2024,7 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
       // therefore never strand the final click in the queue.
       return flushWorkspaceQueueInternal();
     }
-    applyWorkspaceFields(merged.fields as Partial<Record<WorkspaceStorageField, unknown>>, 'remote-hydration');
+    await applyWorkspaceFields(merged.fields as Partial<Record<WorkspaceStorageField, unknown>>, 'remote-hydration');
     // A newer local revision may have landed after the last pre-batch check.
     // Never report a successful flush while a journal entry is still pending:
     // keep suppression active and immediately drain the newest revision. This

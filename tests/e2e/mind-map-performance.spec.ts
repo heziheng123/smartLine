@@ -26,8 +26,10 @@ for (const count of [500, 2_000, 5_000]) {
     expect(result.elapsed).toBeLessThan(count === 5_000 ? 15_000 : 10_000);
     await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
 
-    if (count === 5_000) {
+    if (count >= 2_000) {
       await expect(page.getByTestId('mind-map-canvas')).toHaveAttribute('data-renderer', 'webgl');
+    }
+    if (count === 5_000) {
       await page.getByTestId('mind-map-layout-menu').click();
       const layoutWorker = page.waitForEvent('worker');
       await page.getByTestId('mind-map-layout-tree').click();

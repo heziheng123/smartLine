@@ -143,6 +143,26 @@ test('Markdown outlines import as trees and export in a stable outline form', ()
   assert.throws(() => parseMindMapMarkdownOutline(' \n\t'), /没有可导入/);
 });
 
+test('Markdown import preserves task lists, quotes, tables, and code blocks', () => {
+  const source = '# 计划\n- [ ] 收集资料\n- [x] 完成初稿\n\n> 这是一段引用\n> 保留第二行\n\n| 名称 | 状态 |\n| --- | --- |\n| 提纲 | 进行中 |\n\n```ts\nconst done = true;\n```\n';
+  const document = parseMindMapMarkdownOutline(source);
+  const nodes = Object.values(document.nodes);
+  assert.deepEqual(nodes.filter((node) => node.taskStatus !== 'none').map((node) => [node.text, node.taskStatus]), [
+    ['收集资料', 'todo'], ['完成初稿', 'done'],
+  ]);
+  assert.deepEqual(nodes.filter((node) => node.type === 'markdown').map((node) => node.text), [
+    '> 这是一段引用\n> 保留第二行',
+    '| 名称 | 状态 |\n| --- | --- |\n| 提纲 | 进行中 |',
+    '```ts\nconst done = true;\n```',
+  ]);
+  const serialized = serializeMindMapMarkdownOutline(document);
+  assert.match(serialized, /- \[ \] 收集资料/);
+  assert.match(serialized, /- \[x\] 完成初稿/);
+  assert.match(serialized, /> 这是一段引用\n\s*> 保留第二行/);
+  assert.match(serialized, /\| 名称 \| 状态 \|\n\s*\| --- \| --- \|\n\s*\| 提纲 \| 进行中 \|/);
+  assert.match(serialized, /```ts\n\s*const done = true;\n\s*```/);
+});
+
 test('tree validation downgrades extra parents and cycles to references', () => {
   const document = createEmptyMindMapDocument('校验', { id: 'forest', now: 1 });
   for (const id of ['root', 'other', 'child']) {

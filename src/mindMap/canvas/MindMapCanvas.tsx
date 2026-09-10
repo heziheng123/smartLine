@@ -276,6 +276,8 @@ const NODE_ACTION_SPACING = 24;
 const NODE_COLLAPSE_OFFSET = 14;
 const MINIMAP_WIDTH = 144;
 const MINIMAP_HEIGHT = 90;
+// 2D edge routing becomes the dominant cost while zooming before 2,500 nodes.
+const WEBGL_NODE_THRESHOLD = 1_000;
 const CLIPBOARD_PREFIX = 'smart-line-mind-map-clipboard:';
 
 const TASK_STATUS_ICON = { todo: '○', doing: '◐', done: '✓' } as const;
@@ -1255,7 +1257,7 @@ export default function MindMapCanvas({
 
   useEffect(() => {
     const canvas = webglCanvasRef.current;
-    if (!canvas || Object.keys(canvasNodes).length < 2_500) {
+    if (!canvas || Object.keys(canvasNodes).length < WEBGL_NODE_THRESHOLD) {
       setWebglActive(false);
       return;
     }

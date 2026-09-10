@@ -169,3 +169,11 @@ export function buildWorkspaceEntityInitializationWrites(
 ): Record<string, WorkspaceEntityRecord> {
   return buildWorkspaceEntityWrites({}, fields, writeId);
 }
+
+export function hasCompleteWorkspaceEntitySidecar(
+  root: Record<string, unknown>,
+  fields: Record<string, unknown>,
+): boolean {
+  return Object.keys(buildWorkspaceEntityInitializationWrites(fields, 'coverage-check'))
+    .every((key) => Object.prototype.hasOwnProperty.call(root, key));
+}
