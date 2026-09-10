@@ -622,9 +622,20 @@
 .focus-quality-metrics > div { display: grid; gap: 5px; padding-bottom: 10px; border-bottom: 1px solid #edf0f5; }
 .focus-quality-metrics span { color: #667085; font-size: 12px; }
 .focus-quality-metrics strong { color: #1d2939; font-size: 20px; font-weight: 680; font-variant-numeric: tabular-nums; }
-.focus-category-content { min-height: 0; margin-top: 10px; }
-.focus-review .focus-donut { width: min(124px, 42%); }
-.focus-review .focus-category-legend { gap: 7px; }
+.focus-category-content { grid-template-columns: 108px minmax(0, 1fr); gap: 20px; min-height: 0; margin-top: 10px; padding: 14px 0 4px; }
+.focus-review .focus-donut { width: 108px; }
+.focus-review .focus-donut strong { line-height: 1.15; white-space: nowrap; }
+.focus-review .focus-category-legend { gap: 0; }
+.focus-review .focus-category-legend li { grid-template-columns: 8px minmax(0, 1fr) auto auto; min-height: 34px; border-bottom: 1px solid #edf0f5; }
+.focus-review .focus-category-legend li:last-child { border-bottom: 0; }
+.focus-time-bucket-card { min-height: 0; }
+.focus-time-bucket-chart { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; height: 162px; margin: 16px 0 2px; padding: 0; list-style: none; }
+.focus-time-bucket-chart li { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; align-items: end; gap: 5px; min-width: 0; text-align: center; }
+.focus-time-bucket-chart li > span { display: flex; align-items: end; height: 100%; border-bottom: 1px solid #e7ebf1; background: linear-gradient(#f7f8ff 1px, transparent 1px); background-size: 100% 50%; }
+.focus-time-bucket-chart i { display: block; width: min(40px, 72%); min-height: 4px; margin: 0 auto; border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg, #818cf8, #6366f1); }
+.focus-time-bucket-chart i.is-empty { min-height: 0; }
+.focus-time-bucket-chart strong { color: #667085; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.focus-time-bucket-chart em { overflow: hidden; color: #98a2b3; font-size: 10px; font-style: normal; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .focus-review .focus-subject-bar-chart { gap: 11px; margin: 14px 0 0; }
 .focus-review .focus-subject-bar-chart li { min-height: 30px; }
 .focus-review .focus-ranking-card { min-height: 0; }
@@ -638,8 +649,8 @@
 
 .focus-panel { padding: 20px 32px; }
 .focus-panel__surface { width: min(1280px, 100%); height: min(920px, calc(100vh - 40px)); border-radius: 16px; }
-.focus-panel .focus-view { padding-right: 54px; }
-.focus-panel .focus-view__header { position: sticky; top: 0; z-index: 20; margin: -24px -54px 16px -26px; padding: 18px 54px 12px 26px; background: #f6f7f9; }
+.focus-panel .focus-view { padding-top: 0; padding-right: 54px; }
+.focus-panel .focus-view__header { position: sticky; top: 0; z-index: 20; margin: 0 -54px 16px -26px; padding: 18px 54px 12px 26px; background: #f6f7f9; }
 
 @media (max-width: 1099px) {
   .focus-review-analysis-row { grid-template-columns: 1fr; }
@@ -650,11 +661,18 @@
 @media (max-width: 767px) {
   .focus-panel { padding: 0; }
   .focus-panel__surface { width: 100%; height: 100%; border: 0; border-radius: 0; }
-  .focus-panel .focus-view { padding-right: 18px; }
+  .focus-panel .focus-view { padding-top: 0; padding-right: 18px; }
   .focus-review__toolbar { align-items: flex-start; flex-direction: column; }
   .focus-review__controls { width: 100%; justify-content: space-between; flex-wrap: wrap; }
   .focus-review .focus-range-switch { max-width: 100%; overflow-x: auto; }
   .focus-review-summary .focus-overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .focus-weekly-review-card > .focus-weekly-review-columns { grid-template-columns: 1fr; gap: 14px; }
-  .focus-panel .focus-view__header { top: 0; margin: -18px -18px 14px; padding: 14px 48px 10px 18px; }
+  .focus-panel .focus-view__header { top: 0; margin: 0 -18px 14px; padding: 14px 48px 10px 18px; }
+}
+
+@media (max-width: 420px) {
+  .focus-category-content { grid-template-columns: 1fr; gap: 12px; }
+  .focus-review .focus-donut { justify-self: start; }
+  .focus-time-bucket-chart { gap: 6px; }
+  .focus-time-bucket-chart strong { font-size: 10px; }
 }

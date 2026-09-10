@@ -173,7 +173,7 @@ const FocusView: React.FC<FocusViewProps> = ({ panel = false, mode = 'manage', o
   const [editingSessionSubjectId, setEditingSessionSubjectId] = React.useState('');
   const [editingSessionStartedAt, setEditingSessionStartedAt] = React.useState('');
   const [editingSessionEndedAt, setEditingSessionEndedAt] = React.useState('');
-  const [editingSessionSeconds, setEditingSessionSeconds] = React.useState('');
+  const [editingSessionMinutes, setEditingSessionMinutes] = React.useState('');
   const [editingSessionMode, setEditingSessionMode] = React.useState<'free' | 'pomodoro'>('free');
   const [editingSessionTarget, setEditingSessionTarget] = React.useState('25');
   const [editingSessionNote, setEditingSessionNote] = React.useState('');
@@ -400,7 +400,7 @@ const FocusView: React.FC<FocusViewProps> = ({ panel = false, mode = 'manage', o
     setEditingSessionSubjectId(session.subjectId);
     setEditingSessionStartedAt(formatInputInTimeZone(session.startedAt, session.timeZone));
     setEditingSessionEndedAt(formatInputInTimeZone(session.endedAt, session.timeZone));
-    setEditingSessionSeconds(String(session.activeSeconds));
+    setEditingSessionMinutes(String(Number((session.activeSeconds / 60).toFixed(4))));
     setEditingSessionMode(session.mode);
     setEditingSessionTarget(session.mode === 'pomodoro' ? String(session.targetMinutes) : '25');
     setEditingSessionNote(session.note ?? '');
@@ -416,7 +416,7 @@ const FocusView: React.FC<FocusViewProps> = ({ panel = false, mode = 'manage', o
       const endedAtIso = parseInputInTimeZone(editingSessionEndedAt, editingSession.timeZone);
       const startedAt = new Date(startedAtIso);
       const endedAt = new Date(endedAtIso);
-      const activeSeconds = Number(editingSessionSeconds);
+      const activeSeconds = Math.round(Number(editingSessionMinutes) * 60);
       const targetMinutes = Number(editingSessionTarget);
       if (!editingSessionSubjectId || !Number.isFinite(startedAt.getTime()) || !Number.isFinite(endedAt.getTime()) || endedAt > new Date()) {
         throw new Error('请填写已有主题、有效的起止时间，且结束时间不能晚于现在。');
@@ -488,7 +488,7 @@ const FocusView: React.FC<FocusViewProps> = ({ panel = false, mode = 'manage', o
       <label>专注主题<select value={editingSessionSubjectId} onChange={(event) => setEditingSessionSubjectId(event.target.value)}>{focusSubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label>
       <label>开始时间<input type="datetime-local" step="1" value={editingSessionStartedAt} onChange={(event) => setEditingSessionStartedAt(event.target.value)} /></label>
       <label>结束时间<input type="datetime-local" step="1" value={editingSessionEndedAt} onChange={(event) => setEditingSessionEndedAt(event.target.value)} /></label>
-      <label>有效秒数<input type="number" min="60" step="1" value={editingSessionSeconds} onChange={(event) => setEditingSessionSeconds(event.target.value)} /></label>
+      <label>有效时长（分钟）<input type="number" min="1" step="0.01" value={editingSessionMinutes} onChange={(event) => setEditingSessionMinutes(event.target.value)} /><small>可输入小数；系统按秒保存，打断时间不计入有效时长。</small></label>
       <label>模式<select value={editingSessionMode} onChange={(event) => setEditingSessionMode(event.target.value === 'pomodoro' ? 'pomodoro' : 'free')}><option value="free">自由计时</option><option value="pomodoro">番茄钟</option></select></label>
       {editingSessionMode === 'pomodoro' && <label>番茄目标（5–240 分钟）<input type="number" min="5" max="240" step="5" value={editingSessionTarget} onChange={(event) => setEditingSessionTarget(event.target.value)} /></label>}
       <label className="focus-form__full">备注（可选）<input maxLength={200} value={editingSessionNote} onChange={(event) => setEditingSessionNote(event.target.value.replace(/[\r\n]/g, ''))} /></label>

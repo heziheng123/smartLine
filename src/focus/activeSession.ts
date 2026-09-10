@@ -117,7 +117,9 @@ export const useActiveFocusStore = create<ActiveFocusStore>()((set, get) => {
       try {
         const active = await loadActiveFocusSession();
         const continuityConfirmed = active?.state === 'running' && await anotherTabOwnsRunningSession(active.sessionId);
-        const recovered = active?.state === 'running' && !continuityConfirmed ? markFocusRecoveryNeeded(active) : active;
+        const recovered = active?.state === 'running' && !continuityConfirmed
+          ? resumeRecoveredFocusSession(markFocusRecoveryNeeded(active), true)
+          : active;
         if (recovered && recovered !== active) await persistActiveFocusSession(recovered, active ?? undefined);
         set({ active: recovered, finishRequestedAt: null, isHydrated: true, error: null });
       } catch (error) {

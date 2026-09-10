@@ -92,6 +92,8 @@ test('management and review use separate panels while keeping the same saved dat
   await expect(analytics).toContainText('本周专注');
   await expect(analytics).toContainText('平均单次');
   await expect(page.getByRole('img', { name: /专注时长趋势/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '投入时段' })).toBeVisible();
+  await expect(page.getByRole('img', { name: /分时段专注投入/ })).toBeVisible();
   await page.getByRole('button', { name: '日', exact: true }).click();
   await expect(analytics).toContainText('会话');
   await expect(analytics).toContainText('活跃主题');
@@ -268,11 +270,11 @@ test('history editing preserves exact seconds and fixed metadata while supportin
   await page.getByRole('button', { name: '查看复盘' }).click();
 
   await page.getByRole('button', { name: '修正', exact: true }).click();
-  const form = page.locator('form.focus-create').filter({ has: page.getByLabel('有效秒数') });
+  const form = page.locator('form.focus-create').filter({ has: page.getByLabel('有效时长（分钟）') });
   await expect(form.getByLabel('开始时间')).toHaveValue(seeded.startedAt);
   await expect(form.getByLabel('结束时间')).toHaveValue(seeded.endedAt);
-  await expect(form.getByLabel('有效秒数')).toHaveValue('91');
-  await form.getByLabel('有效秒数').fill('123');
+  await expect(form.getByLabel('有效时长（分钟）')).toHaveValue('1.5167');
+  await form.getByLabel('有效时长（分钟）').fill('2.05');
   await form.getByRole('button', { name: '添加打断记录' }).click();
   const interruptions = form.locator('fieldset');
   await interruptions.getByLabel('开始').fill(seeded.interruptionStart);
@@ -298,7 +300,7 @@ test('history editing preserves exact seconds and fixed metadata while supportin
   expect(updated?.correctedAt).toEqual(expect.any(String));
 });
 
-test('interrupted running sessions require truthful recovery before they can continue', async ({ page }) => {
+test('interrupted running sessions automatically include the intervening time', async ({ page }) => {
   await page.evaluate(async () => {
     const { createActiveFocusSession } = await import('/src/focus/session.ts');
     const { createActiveFocusSessionAtomically, persistActiveFocusSession } = await import('/src/focus/persistence.ts');
@@ -314,11 +316,13 @@ test('interrupted running sessions require truthful recovery before they can con
   await page.getByRole('button', { name: '快速开始专注' }).click();
   await page.getByRole('button', { name: '打开专注面板' }).click();
 
-  await expect(page.getByText(/等待恢复确认/).first()).toBeVisible();
-  await expect(page.getByText('网页无法确认关闭页面后的真实学习状态，因此默认不计未知时段。')).toBeVisible();
-  await expect(page.getByRole('button', { name: '确认中间持续专注并计入至现在' })).toHaveCount(0);
-  await page.getByRole('button', { name: '更多处理方式' }).click();
-  await expect(page.getByRole('button', { name: '确认中间持续专注并计入至现在' })).toBeVisible();
+  await expect(page.getByText('进行中', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('等待恢复确认', { exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async () => {
+    const { useActiveFocusStore } = await import('/src/focus/activeSession.ts');
+    const active = useActiveFocusStore.getState().active;
+    return active ? Math.floor((active.accumulatedActiveMs + Date.now() - Date.parse(active.runningSince ?? active.lastTrustedAt)) / 1000) : 0;
+  })).toBeGreaterThanOrEqual(120);
 });
 
 test('concurrent tabs permit one active timer and reject a stale transition', async ({ page, context }) => {
