@@ -218,9 +218,9 @@ export const KnowledgeGraphView: React.FC = () => {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const svgRef = useRef<SVGSVGElement>(null);
-  const gRef = useRef<SVGGElement>(null);
-  const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const zoomViewportRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const zoomBehaviorRef = useRef<ZoomBehavior<HTMLDivElement, unknown> | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomTransformRef = useRef<ZoomTransform | null>(null);
   const userZoomInProgressRef = useRef(false);
@@ -680,30 +680,21 @@ export const KnowledgeGraphView: React.FC = () => {
 
   // Setup D3 Zoom
   useEffect(() => {
-    if (!isHydrated || !svgRef.current || !gRef.current) return;
-    const svg = select(svgRef.current);
-    const graphGroup = gRef.current;
+    if (!isHydrated || !zoomViewportRef.current || !sceneRef.current) return;
+    const zoomViewport = select(zoomViewportRef.current);
+    const scene = sceneRef.current;
     const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${k}, ${x}, ${y})`;
     const commitPendingZoomTransform = () => {
       const transform = pendingZoomTransformRef.current;
-      if (transform) graphGroup.style.transform = toTransformMatrix(transform);
+      if (transform) scene.style.transform = toTransformMatrix(transform);
     };
-    const commitFinalZoomTransform = () => {
-      const transform = pendingZoomTransformRef.current;
-      if (!transform) return;
-      graphGroup.setAttribute('transform', toTransformMatrix(transform));
-      graphGroup.style.transform = '';
-      graphGroup.style.willChange = '';
-    };
-    zoomBehaviorRef.current = zoom<SVGSVGElement, unknown>()
+    zoomBehaviorRef.current = zoom<HTMLDivElement, unknown>()
       .scaleExtent([0.1, 4])
       .on('start', (event) => {
         if (event.sourceEvent) {
-          svg.interrupt();
+          zoomViewport.interrupt();
           userZoomInProgressRef.current = true;
         }
-        graphGroup.style.transformOrigin = '0 0';
-        graphGroup.style.willChange = 'transform';
       })
       .on('zoom', (event) => {
         pendingZoomTransformRef.current = event.transform;
@@ -718,7 +709,7 @@ export const KnowledgeGraphView: React.FC = () => {
         userZoomInProgressRef.current = false;
         if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
         zoomFrameRef.current = null;
-        commitFinalZoomTransform();
+        commitPendingZoomTransform();
         if (programmaticZoomInProgressRef.current) {
           programmaticZoomInProgressRef.current = false;
           viewportShiftedRef.current = false;
@@ -728,22 +719,21 @@ export const KnowledgeGraphView: React.FC = () => {
           recenterButtonRef.current?.removeAttribute('hidden');
         }
       });
-    svg.call(zoomBehaviorRef.current);
+    zoomViewport.call(zoomBehaviorRef.current);
     return () => {
       if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
       zoomFrameRef.current = null;
       pendingZoomTransformRef.current = null;
       userZoomInProgressRef.current = false;
       programmaticZoomInProgressRef.current = false;
-      graphGroup.style.transform = '';
-      graphGroup.style.willChange = '';
-      svg.on('.zoom', null);
+      scene.style.transform = '';
+      zoomViewport.on('.zoom', null);
     };
   }, [isHydrated]);
 
   const zoomToFit = useCallback((animate = true) => {
-    if (!svgRef.current || !zoomBehaviorRef.current) return;
-    const svg = select(svgRef.current);
+    if (!zoomViewportRef.current || !zoomBehaviorRef.current) return;
+    const zoomViewport = select(zoomViewportRef.current);
     programmaticZoomInProgressRef.current = true;
     viewportShiftedRef.current = false;
     recenterButtonRef.current?.setAttribute('hidden', '');
@@ -767,11 +757,11 @@ export const KnowledgeGraphView: React.FC = () => {
       .scale(scale)
       .translate(-centerX, -centerY);
 
-    svg.interrupt();
+    zoomViewport.interrupt();
     if (animate) {
-      svg.transition().duration(220).call(zoomBehaviorRef.current.transform, transform);
+      zoomViewport.transition().duration(220).call(zoomBehaviorRef.current.transform, transform);
     } else {
-      svg.call(zoomBehaviorRef.current.transform, transform);
+      zoomViewport.call(zoomBehaviorRef.current.transform, transform);
     }
   }, [islandsData.islands, dimensions.height, dimensions.width]);
 
@@ -1325,26 +1315,34 @@ export const KnowledgeGraphView: React.FC = () => {
       {capsuleNodeId && <TimeCapsuleModal nodeId={capsuleNodeId} onClose={() => setCapsuleNodeId(null)} />}
       <ArchiveLibraryModal isOpen={isArchiveLibraryOpen} onClose={() => setIsArchiveLibraryOpen(false)} />
 
-      {/* SVG Sunburst Canvas */}
-      <svg
-        ref={svgRef}
-        className="kg-canvas-stage ui-workspace-content-stage w-full h-full cursor-grab active:cursor-grabbing"
+      {/* Keep D3's hit surface fixed; only the HTML scene below is composited. */}
+      <div
+        ref={zoomViewportRef}
+        className="absolute inset-0 cursor-grab active:cursor-grabbing"
         style={{ touchAction: 'none' }}
-        data-radius-mode={radiusMode}
-        data-island-radius={islandsData.islands[0]?.radius ?? 0}
-      >
-        <rect width="100%" height="100%" fill="transparent" style={{ pointerEvents: 'all' }} onClick={() => {
+        onClick={() => {
           if (bindingSession.active) return;
           if (isMoveMode && selectedNodeId) {
-            // Move to root
             updateNode(selectedNodeId, { parentId: null });
             setIsMoveMode(false);
           } else {
             setSelectedNodeId(null);
             setIsMoveMode(false);
           }
-        }} />
-        <g ref={gRef}>
+        }}
+      >
+        <div
+          ref={sceneRef}
+          className="kg-canvas-scene absolute inset-0"
+          style={{ transformOrigin: '0 0', willChange: 'transform' }}
+        >
+          <svg
+            className="kg-canvas-stage ui-workspace-content-stage h-full w-full overflow-visible"
+            data-radius-mode={radiusMode}
+            data-island-radius={islandsData.islands[0]?.radius ?? 0}
+          >
+            <rect width="100%" height="100%" fill="transparent" style={{ pointerEvents: 'all' }} />
+            <g>
           <g transform={`translate(${dimensions.width / 2}, ${dimensions.height / 2})`}>
             {islandsData.islands.map(island => {
               const islandRotation = islandRotations[island.rootId] || 0;
@@ -1510,8 +1508,10 @@ export const KnowledgeGraphView: React.FC = () => {
               </g>
             )})}
           </g>
-        </g>
-      </svg>
+            </g>
+          </svg>
+        </div>
+      </div>
 
       {/* Floating Control Panel */}
       {!bindingSession.active && (isPanelOpen ? (

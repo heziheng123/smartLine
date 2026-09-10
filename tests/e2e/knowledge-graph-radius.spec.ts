@@ -145,3 +145,18 @@ test('knowledge graph keeps labels visible while the scale is changing', async (
   expect(Math.abs(settledScale - inFlightScale)).toBeLessThan(0.001);
   await expect(label).toBeVisible();
 });
+
+test('knowledge graph keeps zoom transforms on the HTML scene layer', async ({ page }) => {
+  const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  const scene = page.locator('.knowledge-graph-view .kg-canvas-scene');
+  const graph = canvas.locator(':scope > g');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.wheel(0, -240);
+
+  await expect.poll(() => scene.evaluate((element) => element.style.transform))
+    .toContain('matrix(');
+  await expect(graph).not.toHaveAttribute('transform');
+});
