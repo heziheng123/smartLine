@@ -127,6 +127,16 @@ type GraphCanvasCommand = {
   fill: string;
   stroke: string;
   strokeWidth: number;
+} | {
+  kind: 'text';
+  matrix: CanvasMatrix;
+  opacity: number;
+  text: string;
+  x: number;
+  y: number;
+  fill: string;
+  font: string;
+  textAlign: CanvasTextAlign;
 };
 
 type ZoomCanvasController = {
@@ -181,21 +191,37 @@ const toCanvasMatrix = (matrix: DOMMatrix): CanvasMatrix =>
 
 const buildGraphCanvasCommands = (source: SVGSVGElement): GraphCanvasCommand[] => {
   const commands: GraphCanvasCommand[] = [];
-  source.querySelectorAll<SVGPathElement>('path').forEach((element) => {
+  source.querySelectorAll<SVGPathElement | SVGTextElement>('path, text').forEach((element) => {
     const matrix = element.getCTM();
     if (!matrix) return;
     const style = getComputedStyle(element);
     const opacity = getElementOpacity(element, source);
-    const d = element.getAttribute('d');
-    if (!d) return;
+    if (element instanceof SVGPathElement) {
+      const d = element.getAttribute('d');
+      if (!d) return;
+      commands.push({
+        kind: 'path',
+        matrix: toCanvasMatrix(matrix),
+        opacity,
+        path: new Path2D(d),
+        fill: style.fill,
+        stroke: style.stroke,
+        strokeWidth: Number.parseFloat(style.strokeWidth) || 0,
+      });
+      return;
+    }
+    const anchor = element.getAttribute('text-anchor');
+    const dy = element.dy.baseVal.length > 0 ? element.dy.baseVal[0].value : 0;
     commands.push({
-      kind: 'path',
+      kind: 'text',
       matrix: toCanvasMatrix(matrix),
       opacity,
-      path: new Path2D(d),
+      text: element.textContent ?? '',
+      x: element.x.baseVal.length > 0 ? element.x.baseVal[0].value : 0,
+      y: (element.y.baseVal.length > 0 ? element.y.baseVal[0].value : 0) + dy,
       fill: style.fill,
-      stroke: style.stroke,
-      strokeWidth: Number.parseFloat(style.strokeWidth) || 0,
+      font: style.font,
+      textAlign: anchor === 'end' ? 'right' : anchor === 'middle' ? 'center' : 'left',
     });
   });
   return commands;
@@ -226,6 +252,12 @@ const drawGraphCanvas = (
         context.lineWidth = command.strokeWidth;
         context.stroke(command.path);
       }
+    } else {
+      context.fillStyle = command.fill;
+      context.font = command.font;
+      context.textAlign = command.textAlign;
+      context.textBaseline = 'alphabetic';
+      context.fillText(command.text, command.x, command.y);
     }
     context.restore();
   }
@@ -808,10 +840,9 @@ export const KnowledgeGraphView: React.FC = () => {
 
   // Setup D3 Zoom
   useEffect(() => {
-    if (!isHydrated || !zoomViewportRef.current || !sceneRef.current || !svgRef.current || !zoomCanvasRef.current) return;
+    if (!isHydrated || !zoomViewportRef.current || !sceneRef.current || !zoomCanvasRef.current) return;
     const zoomViewport = select(zoomViewportRef.current);
     const scene = sceneRef.current;
-    const source = svgRef.current;
     const canvas = zoomCanvasRef.current;
     const canvasLayer = zoomCanvasLayerRef.current;
     const controller = zoomCanvasControllerRef.current;
@@ -832,9 +863,7 @@ export const KnowledgeGraphView: React.FC = () => {
       if (!drawGraphCanvas(canvas, controller.commands, transform)) return false;
       canvas.dataset.drawMs = (performance.now() - startedAt).toFixed(1);
       canvas.style.opacity = '1';
-      source.dataset.zoomCanvasPaths = 'true';
-      source.classList.add(styles.zoomCanvasPathsHidden);
-      scene.style.opacity = '';
+      scene.style.opacity = '0';
       controller.active = true;
       setCanvasState('active');
       return true;
@@ -848,8 +877,7 @@ export const KnowledgeGraphView: React.FC = () => {
           controller.releaseFrames = [];
           controller.active = false;
           canvas.style.opacity = '0';
-          delete source.dataset.zoomCanvasPaths;
-          source.classList.remove(styles.zoomCanvasPathsHidden);
+          scene.style.opacity = '';
           setCanvasState(controller.ready ? 'ready' : 'building');
         });
         controller.releaseFrames = [secondFrame];
@@ -927,8 +955,6 @@ export const KnowledgeGraphView: React.FC = () => {
       controller.active = false;
       controller.scaleRequested = false;
       canvas.style.opacity = '0';
-      delete source.dataset.zoomCanvasPaths;
-      source.classList.remove(styles.zoomCanvasPathsHidden);
       scene.style.opacity = '';
       userZoomInProgressRef.current = false;
       programmaticZoomInProgressRef.current = false;
@@ -956,8 +982,6 @@ export const KnowledgeGraphView: React.FC = () => {
     controller.active = false;
     controller.scaleRequested = false;
     controller.commands = [];
-    delete source.dataset.zoomCanvasPaths;
-    source.classList.remove(styles.zoomCanvasPathsHidden);
     scene.style.transform = toTransformMatrix(latestZoomTransformRef.current);
     scene.style.opacity = '';
     canvas.style.opacity = '0';
@@ -1610,11 +1634,11 @@ export const KnowledgeGraphView: React.FC = () => {
         <div
           ref={sceneRef}
           className="kg-canvas-scene absolute inset-0"
-          style={{ transformOrigin: '0 0', willChange: 'transform', zIndex: 1 }}
+          style={{ transformOrigin: '0 0', willChange: 'transform' }}
         >
           <svg
             ref={svgRef}
-            className={`${styles.zoomCanvasStage} kg-canvas-stage ui-workspace-content-stage h-full w-full overflow-visible`}
+            className="kg-canvas-stage ui-workspace-content-stage h-full w-full overflow-visible"
             data-radius-mode={radiusMode}
             data-island-radius={islandsData.islands[0]?.radius ?? 0}
           >
@@ -1791,7 +1815,6 @@ export const KnowledgeGraphView: React.FC = () => {
         <div
           ref={zoomCanvasLayerRef}
           className="pointer-events-none absolute inset-0"
-          style={{ zIndex: 0 }}
           data-testid="knowledge-graph-zoom-cache"
           data-zoom-cache-state="building"
         >
