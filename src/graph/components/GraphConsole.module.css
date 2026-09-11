@@ -369,6 +369,12 @@
   color: #94a3b8;
 }
 
+/* During zoom, Canvas renders only the expensive node geometry. SVG labels
+   stay vector-sharp above it instead of being replaced by raster text. */
+.zoomCanvasStage.zoomCanvasPathsHidden path {
+  visibility: hidden;
+}
+
 .statDivider {
   width: 1px;
   height: 12px;

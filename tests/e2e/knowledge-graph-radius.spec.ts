@@ -136,6 +136,7 @@ test('knowledge graph keeps labels visible while panning', async ({ page }) => {
 test('knowledge graph uses canvas while scaling and restores sharp SVG labels', async ({ page }) => {
   const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
   const cache = page.getByTestId('knowledge-graph-zoom-cache');
+  const scene = page.locator('.knowledge-graph-view .kg-canvas-scene');
   const graph = canvas.locator(':scope > g');
   const label = canvas.locator('[data-node-id="radius-leaf"] text');
   const box = await canvas.boundingBox();
@@ -152,11 +153,15 @@ test('knowledge graph uses canvas while scaling and restores sharp SVG labels', 
   await page.mouse.wheel(0, -240);
   await expect.poll(() => cache.getAttribute('data-zoom-cache-state')).toBe('active');
   await expect(cache.locator('canvas')).toHaveCSS('opacity', '1');
+  await expect(canvas).toHaveAttribute('data-zoom-canvas-paths', 'true');
+  await expect(label).toBeVisible();
+  await expect.poll(() => scene.evaluate((element) => element.style.opacity)).toBe('');
   await page.waitForTimeout(220);
   const settledScale = await readScale();
 
   expect(Math.abs(settledScale - initialScale)).toBeGreaterThan(0.01);
   await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
+  await expect(canvas).not.toHaveAttribute('data-zoom-canvas-paths');
   await expect(label).toBeVisible();
 });
 
