@@ -165,6 +165,16 @@ const isScaleGesture = (event: Event | undefined) =>
   || event instanceof TouchEvent
   || (event instanceof PointerEvent && event.pointerType === 'touch');
 
+// d3-zoom treats browser pinch gestures (ctrlKey) as ten times more sensitive
+// than an ordinary wheel. Preserve that native pinch mapping, but make the
+// coarse, discrete wheel steps from a desktop mouse feel equally intentional.
+const getGraphWheelDelta = (event: WheelEvent) => {
+  const unit = event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002;
+  const isDiscreteMouseWheel = event.deltaMode !== 0 || Math.abs(event.deltaY) >= 40;
+  const multiplier = event.ctrlKey ? 10 : isDiscreteMouseWheel ? 3 : 1;
+  return -event.deltaY * unit * multiplier;
+};
+
 const getElementOpacity = (element: SVGElement, root: SVGSVGElement) => {
   let opacity = 1;
   let current: SVGElement | null = element;
@@ -890,6 +900,7 @@ export const KnowledgeGraphView: React.FC = () => {
     };
     zoomBehaviorRef.current = zoom<HTMLDivElement, unknown>()
       .scaleExtent([0.1, 4])
+      .wheelDelta(getGraphWheelDelta)
       .on('start', (event) => {
         if (event.sourceEvent) {
           zoomViewport.interrupt();
@@ -898,11 +909,21 @@ export const KnowledgeGraphView: React.FC = () => {
         }
       })
       .on('zoom', (event) => {
-        if (
-          isScaleGesture(event.sourceEvent)
-          && Math.abs(event.transform.k - latestZoomTransformRef.current.k) > 0.000001
-        ) controller.scaleRequested = true;
+        const isScaling = isScaleGesture(event.sourceEvent)
+          && Math.abs(event.transform.k - latestZoomTransformRef.current.k) > 0.000001;
+        if (isScaling) controller.scaleRequested = true;
         pendingZoomTransformRef.current = event.transform;
+        // Canvas is cheap enough to draw inside the input event. This avoids
+        // holding a scale update until the next animation frame, while pan and
+        // every fallback path retain the existing frame-coalesced behavior.
+        if (isScaling && controller.ready) {
+          if (zoomFrameRef.current !== null) {
+            cancelAnimationFrame(zoomFrameRef.current);
+            zoomFrameRef.current = null;
+          }
+          commitPendingZoomTransform();
+          return;
+        }
         if (zoomFrameRef.current !== null) return;
         zoomFrameRef.current = requestAnimationFrame(() => {
           zoomFrameRef.current = null;

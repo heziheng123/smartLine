@@ -230,7 +230,7 @@ test('knowledge graph accelerates every sparse desktop wheel event', async ({ pa
   expect(box).not.toBeNull();
 
   await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
-  const states = await page.evaluate(async ({ x, y }) => {
+  const result = await page.evaluate(async ({ x, y }) => {
     const viewport = document.querySelector('.kg-canvas-scene')?.parentElement;
     const layer = document.querySelector<HTMLElement>('[data-testid="knowledge-graph-zoom-cache"]');
     if (!viewport) throw new Error('知识大盘缩放视口不存在。');
@@ -242,17 +242,22 @@ test('knowledge graph accelerates every sparse desktop wheel event', async ({ pa
       clientY: y,
       deltaY: -100,
     }));
-    const results: string[] = [];
+    const initialScale = (viewport as HTMLElement & { __zoom?: { k: number } }).__zoom?.k ?? 1;
+    const results: Array<{ state: string; scale: number }> = [];
     for (let index = 0; index < 3; index += 1) {
       wheel();
       await new Promise((resolve) => window.setTimeout(resolve, 30));
-      results.push(layer.dataset.zoomCacheState ?? '');
+      results.push({
+        state: layer.dataset.zoomCacheState ?? '',
+        scale: (viewport as HTMLElement & { __zoom?: { k: number } }).__zoom?.k ?? 0,
+      });
       await new Promise((resolve) => window.setTimeout(resolve, 170));
     }
-    return results;
+    return { initialScale, results };
   }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
 
-  expect(states).toEqual(['active', 'active', 'active']);
+  expect(result.results.map(({ state }) => state)).toEqual(['active', 'active', 'active']);
+  expect(result.results[0].scale / result.initialScale).toBeGreaterThan(1.45);
   await expect(cache.locator('canvas')).toHaveCount(1);
   await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
 });
