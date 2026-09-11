@@ -160,3 +160,64 @@ test('knowledge graph keeps zoom transforms on the HTML scene layer', async ({ p
     .toContain('matrix(');
   await expect(graph).not.toHaveAttribute('transform');
 });
+
+test('knowledge graph snapshots one sustained scale gesture and restores the SVG afterwards', async ({ page }) => {
+  const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  const scene = page.locator('.knowledge-graph-view .kg-canvas-scene');
+  const cache = page.getByTestId('knowledge-graph-zoom-cache');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.evaluate(async ({ x, y }) => {
+    const viewport = document.querySelector('.kg-canvas-scene')?.parentElement;
+    if (!viewport) throw new Error('知识大盘缩放视口不存在。');
+    for (let index = 0; index < 10; index += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        deltaY: -8,
+      }));
+      await new Promise((resolve) => window.setTimeout(resolve, 10));
+    }
+    (window as Window & { __knowledgeGraphZoomKeepAlive?: number }).__knowledgeGraphZoomKeepAlive = window.setInterval(() => {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        deltaY: 0,
+      }));
+    }, 20);
+  }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
+
+  await expect.poll(() => cache.getAttribute('data-zoom-cache-state')).toBe('active');
+  const generation = await cache.getAttribute('data-zoom-cache-generation');
+  await expect(cache.locator('canvas')).toHaveCount(1);
+
+  await page.evaluate(({ x, y }) => {
+    const viewport = document.querySelector('.kg-canvas-scene')?.parentElement;
+    viewport?.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      deltaY: -8,
+    }));
+  }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
+  await page.waitForTimeout(10);
+  await expect.poll(() => scene.evaluate((element) => element.style.opacity)).toBe('0');
+  await expect(cache).toHaveAttribute('data-zoom-cache-generation', generation ?? '');
+  await page.evaluate(() => {
+    const target = window as Window & { __knowledgeGraphZoomKeepAlive?: number };
+    if (target.__knowledgeGraphZoomKeepAlive) window.clearInterval(target.__knowledgeGraphZoomKeepAlive);
+    delete target.__knowledgeGraphZoomKeepAlive;
+  });
+  await page.waitForTimeout(180);
+
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'idle');
+  await expect(cache.locator('canvas')).toHaveCount(0);
+  await expect.poll(() => scene.evaluate((element) => element.style.opacity)).toBe('');
+  await expect.poll(() => scene.evaluate((element) => element.style.transform)).toContain('matrix(');
+});

@@ -117,6 +117,107 @@ type GraphIsland = {
   radius: number;
 };
 
+type ZoomSnapshot = {
+  baseTransform: ZoomTransform;
+  canvas: HTMLCanvasElement;
+  overscan: number;
+};
+
+type ZoomSnapshotController = {
+  captureTimer: number | null;
+  settleTimer: number | null;
+  releaseFrames: number[];
+  generation: number;
+  scaleEvents: number;
+  firstScaleEventAt: number;
+  cacheAttempted: boolean;
+  cacheCapturing: boolean;
+  cacheActive: boolean;
+  cacheReleasing: boolean;
+  snapshot: ZoomSnapshot | null;
+};
+
+const ZOOM_SNAPSHOT_START_DELAY = 48;
+const ZOOM_SNAPSHOT_SETTLE_DELAY = 100;
+const ZOOM_SNAPSHOT_MAX_PIXELS = 9_000_000;
+
+const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${k}, ${x}, ${y})`;
+
+const getZoomSnapshotOverscan = (width: number, height: number) =>
+  Math.round(Math.min(192, Math.max(96, Math.min(width, height) * 0.16)));
+
+const getZoomSnapshotDpr = (width: number, height: number) => {
+  const deviceDpr = Math.min(window.devicePixelRatio || 1, 2);
+  const candidates = [deviceDpr, 1.5, 1.25, 1]
+    .filter((value, index, values) => value <= deviceDpr && values.indexOf(value) === index);
+  return candidates.find((dpr) => width * height * dpr * dpr <= ZOOM_SNAPSHOT_MAX_PIXELS) ?? 1;
+};
+
+const isScaleGesture = (event: Event | undefined) =>
+  event instanceof WheelEvent
+  || event instanceof TouchEvent
+  || (event instanceof PointerEvent && event.pointerType === 'touch');
+
+const createZoomSnapshot = async (
+  source: SVGSVGElement,
+  viewport: HTMLElement,
+  transform: ZoomTransform,
+): Promise<ZoomSnapshot> => {
+  const { width, height } = viewport.getBoundingClientRect();
+  const overscan = getZoomSnapshotOverscan(width, height);
+  const sourceBounds = {
+    x: (-overscan - transform.x) / transform.k,
+    y: (-overscan - transform.y) / transform.k,
+    width: (width + overscan * 2) / transform.k,
+    height: (height + overscan * 2) / transform.k,
+  };
+  const clone = source.cloneNode(true) as SVGSVGElement;
+  const sourceStyle = getComputedStyle(source);
+  clone.style.fontFamily = sourceStyle.fontFamily;
+  clone.style.fontSize = sourceStyle.fontSize;
+  clone.querySelectorAll('.opacity-20').forEach((element) => element.setAttribute('opacity', '.2'));
+  clone.querySelectorAll('.opacity-50').forEach((element) => element.setAttribute('opacity', '.5'));
+  const sourcePaths = [...source.querySelectorAll('.hover\\:opacity-90')];
+  const clonePaths = [...clone.querySelectorAll('.hover\\:opacity-90')];
+  sourcePaths.forEach((path, index) => {
+    if (path.matches(':hover')) clonePaths[index]?.setAttribute('opacity', '.9');
+  });
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', String(sourceBounds.width));
+  clone.setAttribute('height', String(sourceBounds.height));
+  clone.setAttribute('viewBox', `${sourceBounds.x} ${sourceBounds.y} ${sourceBounds.width} ${sourceBounds.height}`);
+
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const url = URL.createObjectURL(new Blob([serialized], { type: 'image/svg+xml' }));
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = url;
+    await image.decode();
+    const cacheWidth = width + overscan * 2;
+    const cacheHeight = height + overscan * 2;
+    const dpr = getZoomSnapshotDpr(cacheWidth, cacheHeight);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(cacheWidth * dpr);
+    canvas.height = Math.ceil(cacheHeight * dpr);
+    canvas.style.cssText = `position:absolute;left:-${overscan}px;top:-${overscan}px;width:${cacheWidth}px;height:${cacheHeight}px;`;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('知识大盘缩放缓存不可用。');
+    context.setTransform(
+      dpr * transform.k,
+      0,
+      0,
+      dpr * transform.k,
+      dpr * (transform.x + overscan),
+      dpr * (transform.y + overscan),
+    );
+    context.drawImage(image, sourceBounds.x, sourceBounds.y, sourceBounds.width, sourceBounds.height);
+    return { baseTransform: transform, canvas, overscan };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+};
+
 const getAccessibleTextColor = (hexcolor: string) => {
   const normalized = hexcolor.replace('#', '');
   if (!/^[0-9a-f]{6}$/i.test(normalized)) return '#ffffff';
@@ -220,9 +321,25 @@ export const KnowledgeGraphView: React.FC = () => {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const zoomViewportRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const zoomSnapshotLayerRef = useRef<HTMLDivElement>(null);
   const zoomBehaviorRef = useRef<ZoomBehavior<HTMLDivElement, unknown> | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
   const pendingZoomTransformRef = useRef<ZoomTransform | null>(null);
+  const latestZoomTransformRef = useRef<ZoomTransform>(zoomIdentity);
+  const zoomSnapshotRef = useRef<ZoomSnapshotController>({
+    captureTimer: null,
+    settleTimer: null,
+    releaseFrames: [],
+    generation: 0,
+    scaleEvents: 0,
+    firstScaleEventAt: 0,
+    cacheAttempted: false,
+    cacheCapturing: false,
+    cacheActive: false,
+    cacheReleasing: false,
+    snapshot: null,
+  });
   const userZoomInProgressRef = useRef(false);
   const programmaticZoomInProgressRef = useRef(false);
   const didInitialViewportFitRef = useRef(false);
@@ -680,13 +797,153 @@ export const KnowledgeGraphView: React.FC = () => {
 
   // Setup D3 Zoom
   useEffect(() => {
-    if (!isHydrated || !zoomViewportRef.current || !sceneRef.current) return;
+    if (!isHydrated || !zoomViewportRef.current || !sceneRef.current || !svgRef.current) return;
     const zoomViewport = select(zoomViewportRef.current);
     const scene = sceneRef.current;
-    const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${k}, ${x}, ${y})`;
+    const sourceSvg = svgRef.current;
+    const snapshotLayer = zoomSnapshotLayerRef.current;
+    const controller = zoomSnapshotRef.current;
+
+    const setSnapshotState = (state: 'idle' | 'capturing' | 'active' | 'releasing') => {
+      if (snapshotLayer) snapshotLayer.dataset.zoomCacheState = state;
+    };
+    const clearTimer = (key: 'captureTimer' | 'settleTimer') => {
+      const timer = controller[key];
+      if (timer !== null) window.clearTimeout(timer);
+      controller[key] = null;
+    };
+    const clearReleaseFrames = () => {
+      controller.releaseFrames.forEach((frame) => cancelAnimationFrame(frame));
+      controller.releaseFrames = [];
+      controller.cacheReleasing = false;
+    };
+    const disposeSnapshot = () => {
+      const snapshot = controller.snapshot;
+      if (snapshot) {
+        snapshot.canvas.width = 0;
+        snapshot.canvas.height = 0;
+      }
+      controller.snapshot = null;
+      controller.cacheActive = false;
+      controller.cacheCapturing = false;
+      controller.cacheReleasing = false;
+      controller.releaseFrames = [];
+      if (snapshotLayer) {
+        snapshotLayer.replaceChildren();
+        snapshotLayer.style.transform = '';
+      }
+      scene.style.opacity = '';
+      setSnapshotState('idle');
+    };
+    const syncScene = (transform: ZoomTransform) => {
+      scene.style.transform = toTransformMatrix(transform);
+    };
+    const getRelativeTransform = (transform: ZoomTransform, base: ZoomTransform) => {
+      const k = transform.k / base.k;
+      return { k, x: transform.x - k * base.x, y: transform.y - k * base.y };
+    };
+    const snapshotStillCoversViewport = (transform: ZoomTransform) => {
+      const snapshot = controller.snapshot;
+      const viewport = zoomViewportRef.current;
+      if (!snapshot || !viewport) return false;
+      const relative = getRelativeTransform(transform, snapshot.baseTransform);
+      const { width, height } = viewport.getBoundingClientRect();
+      return relative.k * -snapshot.overscan + relative.x <= 0
+        && relative.k * (width + snapshot.overscan) + relative.x >= width
+        && relative.k * -snapshot.overscan + relative.y <= 0
+        && relative.k * (height + snapshot.overscan) + relative.y >= height;
+    };
+    const applySnapshotTransform = (transform: ZoomTransform) => {
+      const snapshot = controller.snapshot;
+      if (!snapshot || !snapshotLayer) return;
+      const relative = getRelativeTransform(transform, snapshot.baseTransform);
+      snapshotLayer.style.transform = `matrix(${relative.k}, 0, 0, ${relative.k}, ${relative.x}, ${relative.y})`;
+    };
+    const releaseSnapshot = (transform = latestZoomTransformRef.current) => {
+      clearTimer('captureTimer');
+      clearTimer('settleTimer');
+      controller.generation += 1;
+      if (controller.cacheCapturing && !controller.snapshot) {
+        controller.cacheCapturing = false;
+        setSnapshotState('idle');
+        return;
+      }
+      if (!controller.snapshot || controller.cacheReleasing) return;
+      controller.cacheReleasing = true;
+      syncScene(transform);
+      setSnapshotState('releasing');
+      const releaseGeneration = controller.generation;
+      const firstFrame = requestAnimationFrame(() => {
+        const secondFrame = requestAnimationFrame(() => {
+          if (controller.generation !== releaseGeneration) return;
+          disposeSnapshot();
+        });
+        controller.releaseFrames = [secondFrame];
+      });
+      controller.releaseFrames = [firstFrame];
+    };
+    const scheduleSnapshotRelease = () => {
+      clearTimer('settleTimer');
+      controller.settleTimer = window.setTimeout(() => releaseSnapshot(), ZOOM_SNAPSHOT_SETTLE_DELAY);
+    };
+    const beginSnapshotCapture = () => {
+      if (controller.cacheAttempted || controller.cacheCapturing || controller.cacheActive) return;
+      const viewport = zoomViewportRef.current;
+      if (!viewport) return;
+      controller.cacheAttempted = true;
+      controller.cacheCapturing = true;
+      const captureGeneration = ++controller.generation;
+      const baseTransform = latestZoomTransformRef.current;
+      const captureStartedAt = performance.now();
+      if (snapshotLayer) snapshotLayer.dataset.zoomCacheGeneration = String(captureGeneration);
+      setSnapshotState('capturing');
+      void createZoomSnapshot(sourceSvg, viewport, baseTransform)
+        .then((snapshot) => {
+          if (controller.generation !== captureGeneration || !zoomSnapshotLayerRef.current) {
+            snapshot.canvas.width = 0;
+            snapshot.canvas.height = 0;
+            return;
+          }
+          controller.cacheCapturing = false;
+          controller.cacheActive = true;
+          controller.snapshot = snapshot;
+          zoomSnapshotLayerRef.current.dataset.zoomCacheCaptureMs = (performance.now() - captureStartedAt).toFixed(1);
+          zoomSnapshotLayerRef.current.replaceChildren(snapshot.canvas);
+          scene.style.opacity = '0';
+          applySnapshotTransform(latestZoomTransformRef.current);
+          setSnapshotState('active');
+        })
+        .catch(() => {
+          if (controller.generation !== captureGeneration) return;
+          controller.cacheCapturing = false;
+          setSnapshotState('idle');
+        });
+    };
+    const scheduleSnapshotCapture = () => {
+      if (controller.cacheAttempted || controller.cacheCapturing || controller.cacheActive) return;
+      const elapsed = performance.now() - controller.firstScaleEventAt;
+      clearTimer('captureTimer');
+      controller.captureTimer = window.setTimeout(beginSnapshotCapture, Math.max(0, ZOOM_SNAPSHOT_START_DELAY - elapsed));
+    };
     const commitPendingZoomTransform = () => {
       const transform = pendingZoomTransformRef.current;
-      if (transform) scene.style.transform = toTransformMatrix(transform);
+      if (!transform) return;
+      latestZoomTransformRef.current = transform;
+      if (controller.cacheReleasing) {
+        clearReleaseFrames();
+        controller.cacheReleasing = false;
+        setSnapshotState('active');
+      }
+      if (controller.cacheActive) {
+        if (snapshotStillCoversViewport(transform)) {
+          applySnapshotTransform(transform);
+          return;
+        }
+        syncScene(transform);
+        disposeSnapshot();
+        return;
+      }
+      syncScene(transform);
     };
     zoomBehaviorRef.current = zoom<HTMLDivElement, unknown>()
       .scaleExtent([0.1, 4])
@@ -694,10 +951,22 @@ export const KnowledgeGraphView: React.FC = () => {
         if (event.sourceEvent) {
           zoomViewport.interrupt();
           userZoomInProgressRef.current = true;
+          if (isScaleGesture(event.sourceEvent)) {
+            clearReleaseFrames();
+            controller.scaleEvents = 0;
+            controller.firstScaleEventAt = 0;
+            controller.cacheAttempted = false;
+          }
         }
       })
       .on('zoom', (event) => {
         pendingZoomTransformRef.current = event.transform;
+        if (isScaleGesture(event.sourceEvent)) {
+          controller.scaleEvents += 1;
+          if (controller.scaleEvents === 1) controller.firstScaleEventAt = performance.now();
+          if (controller.scaleEvents === 2) scheduleSnapshotCapture();
+          scheduleSnapshotRelease();
+        }
         if (zoomFrameRef.current !== null) return;
         zoomFrameRef.current = requestAnimationFrame(() => {
           zoomFrameRef.current = null;
@@ -724,12 +993,44 @@ export const KnowledgeGraphView: React.FC = () => {
       if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
       zoomFrameRef.current = null;
       pendingZoomTransformRef.current = null;
+      clearTimer('captureTimer');
+      clearTimer('settleTimer');
+      clearReleaseFrames();
+      controller.generation += 1;
+      disposeSnapshot();
       userZoomInProgressRef.current = false;
       programmaticZoomInProgressRef.current = false;
       scene.style.transform = '';
       zoomViewport.on('.zoom', null);
     };
   }, [isHydrated]);
+
+  useEffect(() => {
+    const controller = zoomSnapshotRef.current;
+    if (!controller.cacheActive && !controller.cacheCapturing) return;
+    controller.generation += 1;
+    if (controller.captureTimer !== null) window.clearTimeout(controller.captureTimer);
+    if (controller.settleTimer !== null) window.clearTimeout(controller.settleTimer);
+    controller.releaseFrames.forEach((frame) => cancelAnimationFrame(frame));
+    controller.captureTimer = null;
+    controller.settleTimer = null;
+    controller.releaseFrames = [];
+    controller.cacheReleasing = false;
+    controller.cacheCapturing = false;
+    controller.cacheActive = false;
+    if (controller.snapshot) {
+      controller.snapshot.canvas.width = 0;
+      controller.snapshot.canvas.height = 0;
+      controller.snapshot = null;
+    }
+    sceneRef.current?.style.setProperty('transform', toTransformMatrix(latestZoomTransformRef.current));
+    if (sceneRef.current) sceneRef.current.style.opacity = '';
+    if (zoomSnapshotLayerRef.current) {
+      zoomSnapshotLayerRef.current.replaceChildren();
+      zoomSnapshotLayerRef.current.style.transform = '';
+      zoomSnapshotLayerRef.current.dataset.zoomCacheState = 'idle';
+    }
+  }, [bindingSession.active, bindingSession.selectedNodeIds, dimensions.height, dimensions.width, islandsData, islandRotations, matchingNodeIds, selectedNodeId]);
 
   const zoomToFit = useCallback((animate = true) => {
     if (!zoomViewportRef.current || !zoomBehaviorRef.current) return;
@@ -1337,6 +1638,7 @@ export const KnowledgeGraphView: React.FC = () => {
           style={{ transformOrigin: '0 0', willChange: 'transform' }}
         >
           <svg
+            ref={svgRef}
             className="kg-canvas-stage ui-workspace-content-stage h-full w-full overflow-visible"
             data-radius-mode={radiusMode}
             data-island-radius={islandsData.islands[0]?.radius ?? 0}
@@ -1511,6 +1813,13 @@ export const KnowledgeGraphView: React.FC = () => {
             </g>
           </svg>
         </div>
+        <div
+          ref={zoomSnapshotLayerRef}
+          className="pointer-events-none absolute inset-0"
+          data-testid="knowledge-graph-zoom-cache"
+          data-zoom-cache-state="idle"
+          style={{ transformOrigin: '0 0' }}
+        />
       </div>
 
       {/* Floating Control Panel */}
