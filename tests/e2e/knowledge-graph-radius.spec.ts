@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
       response,
       headers: {
         ...response.headers(),
-        'content-security-policy': "img-src 'self' data: blob: https://images.unsplash.com https://picsum.photos",
+        'content-security-policy': "img-src 'self' data: https://images.unsplash.com https://picsum.photos",
       },
     });
   });
@@ -133,8 +133,9 @@ test('knowledge graph keeps labels visible while panning', async ({ page }) => {
   await expect(label).toBeVisible();
 });
 
-test('knowledge graph keeps labels visible while the scale is changing', async ({ page }) => {
+test('knowledge graph uses canvas while scaling and restores sharp SVG labels', async ({ page }) => {
   const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  const cache = page.getByTestId('knowledge-graph-zoom-cache');
   const graph = canvas.locator(':scope > g');
   const label = canvas.locator('[data-node-id="radius-leaf"] text');
   const box = await canvas.boundingBox();
@@ -146,17 +147,16 @@ test('knowledge graph keeps labels visible while the scale is changing', async (
   });
   const initialScale = await readScale();
 
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.wheel(0, -240);
-  await page.waitForTimeout(50);
-  const inFlightScale = await readScale();
-
-  expect(Math.abs(inFlightScale - initialScale)).toBeGreaterThan(0.01);
-  await expect(label).toBeVisible();
-  await page.waitForTimeout(160);
+  await expect.poll(() => cache.getAttribute('data-zoom-cache-state')).toBe('active');
+  await expect(cache.locator('canvas')).toHaveCSS('opacity', '1');
+  await page.waitForTimeout(220);
   const settledScale = await readScale();
 
-  expect(Math.abs(settledScale - inFlightScale)).toBeLessThan(0.001);
+  expect(Math.abs(settledScale - initialScale)).toBeGreaterThan(0.01);
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
   await expect(label).toBeVisible();
 });
 
@@ -175,13 +175,14 @@ test('knowledge graph keeps zoom transforms on the HTML scene layer', async ({ p
   await expect(graph).not.toHaveAttribute('transform');
 });
 
-test('knowledge graph snapshots one sustained scale gesture and restores the SVG afterwards', async ({ page }) => {
+test('knowledge graph renders one sustained scale gesture on canvas and restores the SVG afterwards', async ({ page }) => {
   const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
   const scene = page.locator('.knowledge-graph-view .kg-canvas-scene');
   const cache = page.getByTestId('knowledge-graph-zoom-cache');
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
 
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
   await page.evaluate(async ({ x, y }) => {
     const viewport = document.querySelector('.kg-canvas-scene')?.parentElement;
     if (!viewport) throw new Error('知识大盘缩放视口不存在。');
@@ -195,19 +196,10 @@ test('knowledge graph snapshots one sustained scale gesture and restores the SVG
       }));
       await new Promise((resolve) => window.setTimeout(resolve, 10));
     }
-    (window as Window & { __knowledgeGraphZoomKeepAlive?: number }).__knowledgeGraphZoomKeepAlive = window.setInterval(() => {
-      viewport.dispatchEvent(new WheelEvent('wheel', {
-        bubbles: true,
-        cancelable: true,
-        clientX: x,
-        clientY: y,
-        deltaY: 0,
-      }));
-    }, 20);
   }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
 
   await expect.poll(() => cache.getAttribute('data-zoom-cache-state')).toBe('active');
-  const generation = await cache.getAttribute('data-zoom-cache-generation');
+  const buildMs = await cache.locator('canvas').getAttribute('data-build-ms');
   await expect(cache.locator('canvas')).toHaveCount(1);
 
   await page.evaluate(({ x, y }) => {
@@ -222,46 +214,76 @@ test('knowledge graph snapshots one sustained scale gesture and restores the SVG
   }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
   await page.waitForTimeout(10);
   await expect.poll(() => scene.evaluate((element) => element.style.opacity)).toBe('0');
-  await expect(cache).toHaveAttribute('data-zoom-cache-generation', generation ?? '');
-  await page.evaluate(() => {
-    const target = window as Window & { __knowledgeGraphZoomKeepAlive?: number };
-    if (target.__knowledgeGraphZoomKeepAlive) window.clearInterval(target.__knowledgeGraphZoomKeepAlive);
-    delete target.__knowledgeGraphZoomKeepAlive;
-  });
+  await expect(cache.locator('canvas')).toHaveAttribute('data-build-ms', buildMs ?? '');
   await page.waitForTimeout(240);
 
-  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'idle');
-  await expect(cache.locator('canvas')).toHaveCount(0);
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
+  await expect(cache.locator('canvas')).toHaveCount(1);
   await expect.poll(() => scene.evaluate((element) => element.style.opacity)).toBe('');
   await expect.poll(() => scene.evaluate((element) => element.style.transform)).toContain('matrix(');
 });
 
-test('knowledge graph keeps one cache across sparse desktop wheel events', async ({ page }) => {
+test('knowledge graph accelerates every sparse desktop wheel event', async ({ page }) => {
   const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
   const cache = page.getByTestId('knowledge-graph-zoom-cache');
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
 
-  await page.evaluate(async ({ x, y }) => {
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
+  const states = await page.evaluate(async ({ x, y }) => {
     const viewport = document.querySelector('.kg-canvas-scene')?.parentElement;
+    const layer = document.querySelector<HTMLElement>('[data-testid="knowledge-graph-zoom-cache"]');
     if (!viewport) throw new Error('知识大盘缩放视口不存在。');
+    if (!layer) throw new Error('知识大盘 Canvas 不存在。');
     const wheel = () => viewport.dispatchEvent(new WheelEvent('wheel', {
       bubbles: true,
       cancelable: true,
       clientX: x,
       clientY: y,
-      deltaY: -12,
+      deltaY: -100,
     }));
-    wheel();
-    await new Promise((resolve) => window.setTimeout(resolve, 120));
-    wheel();
-    await new Promise((resolve) => window.setTimeout(resolve, 120));
-    wheel();
+    const results: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      wheel();
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+      results.push(layer.dataset.zoomCacheState ?? '');
+      await new Promise((resolve) => window.setTimeout(resolve, 170));
+    }
+    return results;
   }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
 
-  await expect.poll(() => cache.getAttribute('data-zoom-cache-state')).toBe('active');
+  expect(states).toEqual(['active', 'active', 'active']);
   await expect(cache.locator('canvas')).toHaveCount(1);
-  await expect(cache).not.toHaveAttribute('data-zoom-cache-error');
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
+});
+
+test('knowledge graph keeps canvas active throughout continuous zoom-out', async ({ page }) => {
+  const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  const cache = page.getByTestId('knowledge-graph-zoom-cache');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
+  const states = await page.evaluate(async ({ x, y }) => {
+    const viewport = document.querySelector('.kg-canvas-scene')?.parentElement;
+    const layer = document.querySelector<HTMLElement>('[data-testid="knowledge-graph-zoom-cache"]');
+    if (!viewport || !layer) throw new Error('知识大盘 Canvas 不存在。');
+    const results: string[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        deltaY: 20,
+      }));
+      await new Promise((resolve) => window.setTimeout(resolve, 16));
+      results.push(layer.dataset.zoomCacheState ?? '');
+    }
+    return results;
+  }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
+
+  expect(states.slice(1).every((state) => state === 'active')).toBe(true);
   await page.waitForTimeout(240);
-  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'idle');
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
 });
