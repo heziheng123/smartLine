@@ -37,6 +37,9 @@ for (const requiredHeader of [
 ]) {
   if (!responseHeaders.includes(requiredHeader)) findings.push(`public/_headers: missing ${requiredHeader}`);
 }
+if (!/img-src[^;]*\bblob:/.test(responseHeaders)) {
+  findings.push('public/_headers: img-src must allow blob: for the knowledge graph zoom snapshot');
+}
 const entryHtml = await readFile(join(root, 'index.html'), 'utf8').catch(() => '');
 if (/\son[a-z]+\s*=/i.test(entryHtml)) findings.push('index.html: inline event handler bypasses the CSP policy');
 const sanitizer = await readFile(join(root, 'src', 'utils', 'sanitize.ts'), 'utf8').catch(() => '');

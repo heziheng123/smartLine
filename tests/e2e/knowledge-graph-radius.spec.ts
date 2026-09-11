@@ -9,6 +9,20 @@ const nodes = [
 ];
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/*', async (route) => {
+    if (route.request().resourceType() !== 'document') {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      headers: {
+        ...response.headers(),
+        'content-security-policy': "img-src 'self' data: blob: https://images.unsplash.com https://picsum.photos",
+      },
+    });
+  });
   await page.addInitScript((seedNodes) => {
     localStorage.clear();
     localStorage.setItem('line-graph-storage:mirror', JSON.stringify({ nodes: seedNodes }));
@@ -214,10 +228,40 @@ test('knowledge graph snapshots one sustained scale gesture and restores the SVG
     if (target.__knowledgeGraphZoomKeepAlive) window.clearInterval(target.__knowledgeGraphZoomKeepAlive);
     delete target.__knowledgeGraphZoomKeepAlive;
   });
-  await page.waitForTimeout(180);
+  await page.waitForTimeout(240);
 
   await expect(cache).toHaveAttribute('data-zoom-cache-state', 'idle');
   await expect(cache.locator('canvas')).toHaveCount(0);
   await expect.poll(() => scene.evaluate((element) => element.style.opacity)).toBe('');
   await expect.poll(() => scene.evaluate((element) => element.style.transform)).toContain('matrix(');
+});
+
+test('knowledge graph keeps one cache across sparse desktop wheel events', async ({ page }) => {
+  const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
+  const cache = page.getByTestId('knowledge-graph-zoom-cache');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.evaluate(async ({ x, y }) => {
+    const viewport = document.querySelector('.kg-canvas-scene')?.parentElement;
+    if (!viewport) throw new Error('知识大盘缩放视口不存在。');
+    const wheel = () => viewport.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      deltaY: -12,
+    }));
+    wheel();
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    wheel();
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    wheel();
+  }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
+
+  await expect.poll(() => cache.getAttribute('data-zoom-cache-state')).toBe('active');
+  await expect(cache.locator('canvas')).toHaveCount(1);
+  await expect(cache).not.toHaveAttribute('data-zoom-cache-error');
+  await page.waitForTimeout(240);
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'idle');
 });

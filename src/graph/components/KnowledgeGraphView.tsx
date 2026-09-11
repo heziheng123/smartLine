@@ -138,7 +138,9 @@ type ZoomSnapshotController = {
 };
 
 const ZOOM_SNAPSHOT_START_DELAY = 48;
-const ZOOM_SNAPSHOT_SETTLE_DELAY = 100;
+// d3-zoom ends wheel gestures after 150ms; release just after that boundary so
+// sparse desktop wheel events do not tear down the cache mid-gesture.
+const ZOOM_SNAPSHOT_SETTLE_DELAY = 160;
 const ZOOM_SNAPSHOT_MAX_PIXELS = 9_000_000;
 
 const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${k}, ${x}, ${y})`;
@@ -907,15 +909,18 @@ export const KnowledgeGraphView: React.FC = () => {
           controller.cacheCapturing = false;
           controller.cacheActive = true;
           controller.snapshot = snapshot;
+          delete zoomSnapshotLayerRef.current.dataset.zoomCacheError;
           zoomSnapshotLayerRef.current.dataset.zoomCacheCaptureMs = (performance.now() - captureStartedAt).toFixed(1);
           zoomSnapshotLayerRef.current.replaceChildren(snapshot.canvas);
           scene.style.opacity = '0';
           applySnapshotTransform(latestZoomTransformRef.current);
           setSnapshotState('active');
         })
-        .catch(() => {
+        .catch((error) => {
           if (controller.generation !== captureGeneration) return;
           controller.cacheCapturing = false;
+          if (snapshotLayer) snapshotLayer.dataset.zoomCacheError = error instanceof Error ? error.message : String(error);
+          console.warn('[knowledge-graph] zoom snapshot unavailable; continuing with SVG rendering.', error);
           setSnapshotState('idle');
         });
     };
