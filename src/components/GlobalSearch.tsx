@@ -7,34 +7,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { MOTION_SPRING_GENTLE, MOTION_TRANSITION_STANDARD } from '@/motion/system';
 import { getValidGraphNodeIds } from '@/utils/blocks';
 import { requestConfirmation } from '@/services/confirmation';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
-import { useEbbStore } from '@/ebb/store';
-import NodeRetrospectiveRecords from '@/graph/components/NodeRetrospectiveRecords';
-import { isRetrospectiveEntryCurrentlyCompleted } from '@/domain/dailyRetrospective';
 
 // 时光胶囊模态框：展示归档节点的内容
 export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose: () => void }) => {
   const { nodes, archiveNodeCascade } = useGraphStore();
-  const { tasks: tlTasks, groups } = useTimelineStore();
-  const reviewTasks = useEbbStore((state) => state.reviewTasks);
-  const { retrospectives, schedules } = useDailyScheduleStore();
-  const retrospectiveEntries = useMemo(
-    () => Object.values(retrospectives)
-      .filter((retrospective) => retrospective.status === 'completed')
-      .flatMap((retrospective) => retrospective.entries)
-      .filter((entry) => (entry.nodeIds ?? []).includes(nodeId))
-      .map((entry) => ({
-        ...entry,
-        completionStatusChanged: !isRetrospectiveEntryCurrentlyCompleted(
-          entry,
-          tlTasks,
-          groups,
-          reviewTasks,
-          schedules,
-        ),
-      })),
-    [groups, nodeId, retrospectives, reviewTasks, schedules, tlTasks],
-  );
+  const { tasks: tlTasks } = useTimelineStore();
   
   const node = nodes.find(n => n.id === nodeId);
   if (!node) return null;
@@ -107,7 +84,7 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-            {relatedBlocks.length > 0 || retrospectiveEntries.length > 0 ? (
+            {relatedBlocks.length > 0 ? (
               <div className="space-y-6">
                 {/* 历史任务块 */}
                 {relatedBlocks.length > 0 && (
@@ -149,9 +126,6 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
                       ))}
                     </div>
                   </div>
-                )}
-                {retrospectiveEntries.length > 0 && (
-                  <NodeRetrospectiveRecords entries={retrospectiveEntries} />
                 )}
               </div>
             ) : (

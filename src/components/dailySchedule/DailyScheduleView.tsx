@@ -13,11 +13,9 @@ import {
   type DropResult,
 } from '@hello-pangea/dnd';
 import {
-  BookOpenCheck,
   ArrowLeft,
   CalendarCheck2,
   CalendarClock,
-  Clock3,
   RotateCcw,
   Settings2,
   X,
@@ -79,8 +77,6 @@ import {
   isTaskPoolDroppable,
 } from './dndIds';
 import DailyReviewPlanner from '@/ebb/components/DailyReviewPlanner';
-import DailyRetrospectiveDialog from './DailyRetrospectiveDialog';
-import { collectCompletedActivities } from '@/domain/dailyRetrospective';
 import WorkspaceHeader from '@/components/WorkspaceHeader';
 import {
   openKnowledgeNode,
@@ -111,11 +107,9 @@ const REVIEW_ADJUSTMENT_INTENT_KEY = 'smart-line-review-adjustment-intent';
 interface DailyScheduleViewProps {
   targetDate?: string | null;
   weekReturnContext?: WeekMatrixContext | null;
-  onOpenFocusStart?: () => void;
-  onOpenFocusReview?: () => void;
 }
 
-const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekReturnContext: bridgeWeekReturnContext, onOpenFocusStart, onOpenFocusReview }) => {
+const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekReturnContext: bridgeWeekReturnContext }) => {
   const today = todayStr();
   const [selectedDate, setSelectedDate] = useState(() => {
     try {
@@ -138,7 +132,6 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
   const undoOperation = useOperationHistory((state) => state.undo);
   const [progressTask, setProgressTask] = useState<{ taskId: string; block: SmartTaskBlock } | null>(null);
   const [dailyPlanOpen, setDailyPlanOpen] = useState(false);
-  const [retrospectiveOpen, setRetrospectiveOpen] = useState(false);
   const [dailyPlanFeedback, setDailyPlanFeedback] = useState<string | null>(null);
   const [poolPreference, setPoolPreference] = useState<'auto' | 'open' | 'closed'>('auto');
   const [isCompactLayout, setIsCompactLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches);
@@ -340,8 +333,6 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
     removeTimeBlock,
     updateScheduledItem,
     updateTimeBlock,
-    retrospectives,
-    upsertRetrospective,
   } = useDailyScheduleStore(
     useShallow((s) => ({
       isHydrated: s.isHydrated,
@@ -353,8 +344,6 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
       removeTimeBlock: s.removeTimeBlock,
       updateScheduledItem: s.updateScheduledItem,
       updateTimeBlock: s.updateTimeBlock,
-      retrospectives: s.retrospectives,
-      upsertRetrospective: s.upsertRetrospective,
     })),
   );
 
@@ -450,24 +439,6 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
   );
   const todayReviewTasks = reviewProjection.pending;
   const completedReviewTasks = reviewProjection.completed;
-
-  const completedActivities = useMemo(
-    () => collectCompletedActivities(
-      selectedDate,
-      rawTlTasks,
-      rawTlGroups,
-      rawEbbReviewTasks,
-      graphNodes,
-      daySchedule,
-    ),
-    [selectedDate, rawTlTasks, rawTlGroups, rawEbbReviewTasks, graphNodes, daySchedule],
-  );
-  const selectedRetrospective = retrospectives[selectedDate];
-  const retrospectiveNewCount = useMemo(() => {
-    if (!selectedRetrospective || selectedRetrospective.status !== 'completed') return 0;
-    const savedIds = new Set(selectedRetrospective.entries.map((entry) => entry.id));
-    return completedActivities.filter((activity) => !savedIds.has(activity.id)).length;
-  }, [completedActivities, selectedRetrospective]);
 
   // ── 判断是否未绑定节点 ──────────────────────────────────
   const checkIsUnlinkedTask = useCallback((sourceId: string) => {
@@ -1052,16 +1023,6 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
     };
   }, [getSlotItems, slotConfigs]);
 
-  const retrospectiveStatus = retrospectiveNewCount > 0
-    ? { label: `待补充 +${retrospectiveNewCount}`, tone: 'attention' }
-    : selectedRetrospective?.status === 'completed'
-      ? { label: '已完成', tone: 'completed' }
-      : selectedRetrospective
-        ? { label: '草稿', tone: 'draft' }
-        : selectedDate < today || (dailyOverview.scheduled > 0 && dailyOverview.completed === dailyOverview.scheduled)
-          ? { label: '可开始', tone: 'ready' }
-          : { label: '尚未复盘', tone: 'idle' };
-
   // 异步加载 IndexedDB 数据
   useEffect(() => {
     if (!isHydrated) {
@@ -1116,19 +1077,6 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             </div>
           </div>
           <div className="ds-header-right ui-workspace-header__actions">
-            <button type="button" className="ds-header-btn ds-header-btn--focus" onClick={onOpenFocusStart} aria-label="快速开始专注"><Clock3 size={15} />开始专注</button>
-            <button type="button" className="ds-header-btn" onClick={onOpenFocusReview} aria-label="打开专注复盘">专注复盘</button>
-            <button
-              type="button"
-              className="ds-header-btn"
-              onClick={() => setRetrospectiveOpen(true)}
-              aria-label="每日复盘"
-              title={retrospectiveNewCount > 0 ? `新增 ${retrospectiveNewCount} 项待补充` : undefined}
-            >
-              <BookOpenCheck size={15} />
-              每日复盘
-              <span className={`ds-review-status ds-review-status--${retrospectiveStatus.tone}`}>{retrospectiveStatus.label}</span>
-            </button>
             <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日负荷规划">
               <CalendarCheck2 size={15} />明日负荷规划
             </button>
@@ -1343,16 +1291,6 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             block={progressTask.block}
             date={selectedDate}
             onClose={() => setProgressTask(null)}
-          />
-        )}
-        {retrospectiveOpen && (
-          <DailyRetrospectiveDialog
-            date={selectedDate}
-            activities={completedActivities}
-            graphNodes={graphNodes}
-            existing={selectedRetrospective}
-            onSave={upsertRetrospective}
-            onClose={() => setRetrospectiveOpen(false)}
           />
         )}
         {dailyPlanOpen && (

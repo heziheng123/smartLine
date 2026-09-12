@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { MOTION_EASE_EXIT, MOTION_SPRING_GENTLE, MOTION_TRANSITION_EXIT } from '@/motion/system';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, Settings2, FolderOpen, Tag, LayoutGrid } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, FolderOpen, Tag, LayoutGrid } from 'lucide-react';
 import type { Task, TaskGroup, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
@@ -11,18 +11,6 @@ import { isTaskOverdueOnDate } from '@/domain/taskRules';
 import { resolveProjectTask, rescheduleProjectTask } from '@/services/projectTaskCommands';
 import { requestProjectTaskCompletion } from '@/services/projectTaskCompletion';
 import { scheduleBacklogTaskToDate } from '@/services/backlogCommands';
-import { useEbbStore } from '@/ebb/store';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
-import {
-  calculateDateWorkloads,
-  getWorkloadTone,
-  type WorkloadPreferences,
-} from '@/domain/taskBacklog';
-import {
-  loadWorkloadPreferences,
-  saveWorkloadPreferences,
-  WORKLOAD_PREFERENCES_EVENT,
-} from '@/services/workloadPreferences';
 import { requestConfirmation } from '@/services/confirmation';
 import { buildProjectDescriptorMap } from '@/domain/projectDescriptor';
 import {
@@ -118,10 +106,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ rowKey: string; date: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [showLoadSettings, setShowLoadSettings] = useState(false);
-  const [workloadPreferences, setWorkloadPreferences] = useState<WorkloadPreferences>(
-    loadWorkloadPreferences,
-  );
   const toastTimerRef = useRef<number | null>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -130,9 +114,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
     block: ViewBlock;
     isDragging: boolean;
   } | null>(null);
-  const reviewTasks = useEbbStore((state) => state.reviewTasks);
-  const schedules = useDailyScheduleStore((state) => state.schedules);
-
   const DRAG_ACTIVATION_DISTANCE = 6;
 
   useEffect(() => {
@@ -272,17 +253,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
 
     return map;
   }, [allBlocks, groupMode]);
-
-  const workloads = useMemo(
-    () => calculateDateWorkloads({
-      dates: dateRange,
-      tasks,
-      reviewTasks,
-      schedules,
-      preferences: workloadPreferences,
-    }),
-    [dateRange, reviewTasks, schedules, tasks, workloadPreferences],
-  );
 
   const offRangeInfo = useMemo(() => {
     const rangeStartStr = dateRange[0];
@@ -612,15 +582,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
     };
   }, [cancelDrag, draggingId]);
 
-  useEffect(() => {
-    const handlePreferences = (event: Event) => {
-      const detail = (event as CustomEvent<WorkloadPreferences>).detail;
-      setWorkloadPreferences(detail ?? loadWorkloadPreferences());
-    };
-    window.addEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
-    return () => window.removeEventListener(WORKLOAD_PREFERENCES_EVENT, handlePreferences);
-  }, []);
-
   const jumpTo = useCallback((dateStr: string) => {
     setCursor(dateStr);
   }, []);
@@ -744,84 +705,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
               月
             </button>
           </div>
-          <div className="wmv-load-settings-wrap">
-            <button
-              type="button"
-              className="wmv-nav-btn"
-              onClick={() => setShowLoadSettings((value) => !value)}
-              aria-expanded={showLoadSettings}
-              aria-label="每日负载设置"
-            >
-              <Settings2 size={15} />
-            </button>
-            {showLoadSettings && (
-              <div className="wmv-load-settings">
-                <strong>每日可用容量</strong>
-                <label>
-                  <span>工作日</span>
-                  <input
-                    type="number"
-                    min={30}
-                    max={1440}
-                    step={30}
-                    value={workloadPreferences.weekdayCapacityMinutes}
-                    onChange={(event) => {
-                      const next = {
-                        ...workloadPreferences,
-                        weekdayCapacityMinutes: Math.min(1440, Math.max(30, Number(event.target.value) || 30)),
-                      };
-                      setWorkloadPreferences(next);
-                      saveWorkloadPreferences(next);
-                    }}
-                  />
-                  <span>分钟</span>
-                </label>
-                <label>
-                  <span>周末</span>
-                  <input
-                    type="number"
-                    min={30}
-                    max={1440}
-                    step={30}
-                    value={workloadPreferences.weekendCapacityMinutes}
-                    onChange={(event) => {
-                      const next = {
-                        ...workloadPreferences,
-                        weekendCapacityMinutes: Math.min(1440, Math.max(30, Number(event.target.value) || 30)),
-                      };
-                      setWorkloadPreferences(next);
-                      saveWorkloadPreferences(next);
-                    }}
-                  />
-                  <span>分钟</span>
-                </label>
-                <label className="wmv-load-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={workloadPreferences.showTaskCount}
-                    onChange={(event) => {
-                      const next = { ...workloadPreferences, showTaskCount: event.target.checked };
-                      setWorkloadPreferences(next);
-                      saveWorkloadPreferences(next);
-                    }}
-                  />
-                  显示任务数
-                </label>
-                <label className="wmv-load-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={workloadPreferences.showDuration}
-                    onChange={(event) => {
-                      const next = { ...workloadPreferences, showDuration: event.target.checked };
-                      setWorkloadPreferences(next);
-                      saveWorkloadPreferences(next);
-                    }}
-                  />
-                  显示分钟负载
-                </label>
-              </div>
-            )}
-          </div>
           <SyncStatusIndicator />
         </div>
       </WorkspaceHeader>
@@ -833,9 +716,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
             const isToday = dateStr === todayString;
             const dow = getDayOfWeek(dateStr);
             const isWeekend = dow === 0 || dow === 6;
-            const workload = workloads.get(dateStr);
-            const ratio = workload?.ratio ?? 0;
-            const tone = getWorkloadTone(ratio);
             return (
               <div
                 key={dateStr}
@@ -859,18 +739,6 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
               >
                 <span className="wmv-date-weekday">{WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}</span>
                 <span className="wmv-date-num">{splitDate(dateStr).day}</span>
-                {(workloadPreferences.showTaskCount || workloadPreferences.showDuration) && (
-                  <div className={`wmv-load wmv-load--${tone}`}>
-                    <span className="wmv-load-label">
-                      {workloadPreferences.showTaskCount && `${workload?.taskCount ?? 0}项`}
-                      {workloadPreferences.showTaskCount && workloadPreferences.showDuration && ' · '}
-                      {workloadPreferences.showDuration && `${workload?.totalMinutes ?? 0}/${workload?.capacityMinutes ?? 0}m`}
-                    </span>
-                    <span className="wmv-load-track" aria-label={`负载 ${Math.round(ratio * 100)}%`}>
-                      <span style={{ width: `${Math.min(100, Math.round(ratio * 100))}%` }} />
-                    </span>
-                  </div>
-                )}
               </div>
             );
           })}

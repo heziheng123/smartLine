@@ -19,35 +19,6 @@ async function waitForApp(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
-test('cloud Focus hydration resolves only after the local durable copy is updated', async ({ page }) => {
-  await waitForApp(page);
-
-  const result = await page.evaluate(async () => {
-    const sync = await import('/src/services/workspaceOfflineQueue.ts');
-    const focus = await import('/src/focus/store.ts');
-    const persistence = await import('/src/focus/persistence.ts');
-    const timestamp = '2026-09-10T00:00:00.000Z';
-    const subject = {
-      id: 'remote-focus', name: '远端专注主题', color: '#ffffff', order: 0,
-      createdAt: timestamp, updatedAt: timestamp,
-    };
-    const operation = sync.applyWorkspaceFields({ focusSubjects: [subject] }, 'remote-hydration');
-    const returnedPromise = operation instanceof Promise;
-    await operation;
-    return {
-      returnedPromise,
-      storeIds: focus.useFocusStore.getState().focusSubjects.map((item) => item.id),
-      persistedIds: (await persistence.loadFocusData()).focusSubjects.map((item) => item.id),
-    };
-  });
-
-  expect(result).toEqual({
-    returnedPromise: true,
-    storeIds: ['remote-focus'],
-    persistedIds: ['remote-focus'],
-  });
-});
-
 test('edits made while first connection is being inspected enter the durable queue', async ({ page }) => {
   await waitForApp(page);
 

@@ -22,7 +22,7 @@
 ```text
 {roomCode}             Timeline
 ebb-{roomCode}         EBB
-daily-{roomCode}       Daily + retrospectives
+daily-{roomCode}       Daily schedules
 graph-{roomCode}       Knowledge Graph
 life-map-{roomCode}    Independent Life Map
 ```

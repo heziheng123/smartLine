@@ -33,8 +33,7 @@ function emptyBackup(): WorkspaceBackup {
       ebbSettings: { intervals: [1, 2, 4, 7], defaultRoundCount: 4, tagColors: {} },
     },
     graph: { nodes: [] },
-    daily: { schedules: {}, retrospectives: {} },
-    focus: { focusSubjects: [], focusSessions: [] },
+    daily: { schedules: {} },
     settings: {},
   };
 }
@@ -44,21 +43,6 @@ test('old workspace backups remain valid without a mind map field', () => {
   assert.equal(result.errors.length, 0);
   assert.equal(result.summary?.mindMapDocuments, 0);
   assert.equal(result.backup?.mindMap, undefined);
-});
-
-test('backups from before Focus preserve the current Focus section during restore', () => {
-  const legacy = { ...emptyBackup(), schemaVersion: 8 } as Record<string, unknown>;
-  delete legacy.focus;
-  const result = validateWorkspaceBackup(legacy);
-  assert.equal(result.errors.length, 0);
-  assert.deepEqual(result.backup?.omittedSections, ['focus']);
-  assert.ok(result.summary?.issues.some((issue) => issue.includes('保留当前专注数据')));
-});
-
-test('current backups must include the Focus section', () => {
-  const current = { ...emptyBackup(), schemaVersion: 9 } as Record<string, unknown>;
-  delete current.focus;
-  assert.ok(validateWorkspaceBackup(current).errors.some((error) => error.includes('缺少专注数据')));
 });
 
 test('workspace backups can carry map documents', () => {
@@ -131,18 +115,4 @@ test('first connection can keep cloud projects and local daily data by domain', 
 
   assert.equal(merged.timeline.tasks[0]?.id, 'cloud-project');
   assert.deepEqual(Object.keys(merged.daily.schedules), ['2026-09-05']);
-});
-
-test('custom conflict resolution includes focus subjects and sessions', () => {
-  const local = emptyBackup();
-  const remote = emptyBackup();
-  local.focus.focusSubjects = [{ id: 'local-subject' }] as WorkspaceBackup['focus']['focusSubjects'];
-  local.focus.focusSessions = [{ id: 'local-session' }] as WorkspaceBackup['focus']['focusSessions'];
-  remote.focus.focusSubjects = [{ id: 'cloud-subject' }] as WorkspaceBackup['focus']['focusSubjects'];
-  remote.focus.focusSessions = [{ id: 'cloud-session' }] as WorkspaceBackup['focus']['focusSessions'];
-
-  const merged = createMergedBackup(local, remote, { focusSubjects: 'cloud', focusSessions: 'cloud' });
-
-  assert.equal(merged.focus.focusSubjects[0]?.id, 'cloud-subject');
-  assert.equal(merged.focus.focusSessions[0]?.id, 'cloud-session');
 });

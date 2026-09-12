@@ -21,7 +21,7 @@ const businessSnapshot = async (page: Page) => page.evaluate(async () => {
       milestones: timeline.milestones,
       lifeStages: timeline.lifeStages,
     },
-    daily: { schedules: daily.schedules, retrospectives: daily.retrospectives },
+    daily: { schedules: daily.schedules },
     ebb: {
       reviewTasks: ebb.reviewTasks,
       inboxItems: ebb.inboxItems,

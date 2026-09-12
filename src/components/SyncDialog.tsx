@@ -53,7 +53,6 @@ import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConfl
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { currentWorkspaceHistoryDate, loadWorkspaceDailyHistory } from '@/services/workspaceHistory';
 import { createCurrentWorkspaceAuditReport, downloadCurrentWorkspaceAuditReport } from '@/services/workspaceAudit';
-import { assertNoActiveFocusSessionForWorkspace } from '@/focus/persistence';
 import type { WorkspaceAuditReport } from '@/services/workspaceAuditCore';
 import { isCurrentTabSyncLeader, readWorkspaceTabLeadershipEpoch } from '@/services/workspaceTabCoordinator';
 import { useShallow } from 'zustand/react/shallow';
@@ -70,9 +69,8 @@ const WORKSPACE_FIELD_LABELS: Partial<Record<WorkspaceStorageField, string>> = {
   lifeMapAreas: '人生领域', lifeMapPlanGroups: '项目展示大类', lifeMapStages: '人生时期', lifeMapThemes: '时期重点（历史主题）', lifeMapGoals: '目标与项目',
   lifeMapSystems: '长期系统', lifeMapSystemCheckIns: '系统完成记录', lifeMapEvents: '关键日期', lifeMapFocuses: '阶段重点',
   lifeMapNotes: '人生便签', lifeMapReviews: '周期复盘', tasks: '项目任务', groups: '项目分组',
-  notes: '时间轴便签', milestones: '里程碑', lifeStages: '旧人生时期', schedules: '每日安排', retrospectives: '每日复盘',
+  notes: '时间轴便签', milestones: '里程碑', lifeStages: '旧人生时期', schedules: '每日安排',
   reviewTasks: '复习任务', inboxItems: 'EBB 收集箱', outlineNodes: 'EBB 大纲', ebbSettings: 'EBB 设置', nodes: '知识节点',
-  focusSubjects: '专注主题', focusSessions: '专注记录', focusWeeklyReviews: '专注周度复盘',
 };
 const CONFLICT_DOMAINS: Array<{
   id: ModuleKey | 'focus';
@@ -82,9 +80,8 @@ const CONFLICT_DOMAINS: Array<{
 }> = [
   { id: 'timeline', label: '项目与时间轴', description: '项目、分组、便签、里程碑与旧人生时期', fields: ['tasks', 'groups', 'notes', 'milestones', 'lifeStages'] },
   { id: 'ebb', label: 'EBB 复习', description: '复习任务、收集箱、大纲与设置', fields: ['reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings'] },
-  { id: 'daily', label: '每日安排', description: '每日安排与每日复盘', fields: ['schedules', 'retrospectives'] },
+  { id: 'daily', label: '每日安排', description: '每日安排', fields: ['schedules'] },
   { id: 'graph', label: '知识大盘', description: '知识节点', fields: ['nodes'] },
-  { id: 'focus', label: '独立专注', description: '专注主题、会话与周度复盘', fields: ['focusSubjects', 'focusSessions', 'focusWeeklyReviews'] },
   { id: 'lifeMap', label: '旧人生地图', description: '迁移与恢复用的旧人生规划字段', fields: ['lifeMapAreas', 'lifeMapPlanGroups', 'lifeMapStages', 'lifeMapThemes', 'lifeMapGoals', 'lifeMapSystems', 'lifeMapSystemCheckIns', 'lifeMapEvents', 'lifeMapFocuses', 'lifeMapNotes', 'lifeMapReviews'] },
 ];
 
@@ -146,7 +143,6 @@ function describeConflictPath(field: WorkspaceStorageField, entityId: string): s
     notes: '时间轴便签',
     milestones: '里程碑',
     schedules: '每日安排',
-    retrospectives: '每日复盘',
     reviewTasks: '复习轮次',
     nodes: '知识节点',
     lifeMapAreas: '人生领域',
@@ -160,9 +156,6 @@ function describeConflictPath(field: WorkspaceStorageField, entityId: string): s
     lifeMapFocuses: '阶段重点',
     lifeMapNotes: '人生便签',
     lifeMapReviews: '周期复盘',
-    focusSubjects: '专注主题',
-    focusSessions: '专注记录',
-    focusWeeklyReviews: '专注周度复盘',
   };
   return `${kindLabels[field] ?? field}[${entityId.slice(0, 12)}]`;
 }
@@ -864,12 +857,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, []);
 
   const handleChangeWorkspace = useCallback(async () => {
-    try {
-      await assertNoActiveFocusSessionForWorkspace();
-    } catch (error) {
-      setRestoreMessage(error instanceof Error ? error.message : '请先处理进行中的专注会话。');
-      return;
-    }
     if (!await requestConfirmation('确定在这台设备上忘记当前工作区并更换房间号吗？本机数据不会删除，账号云端绑定也不会删除；输入新房间号后会重新建立绑定。')) return;
     disconnectWorkspace(true);
     setArchitecture(readWorkspaceSyncSettings());
@@ -906,7 +893,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
           : '';
         const confirmed = await requestConfirmation(
-          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n地图文档 ${result.summary.mindMapDocuments}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.retrospectiveDays} 天（${result.summary.retrospectiveEntries} 条）\n知识节点 ${result.summary.graphNodes}\n专注主题 ${result.summary.focusSubjects} 个，专注记录 ${result.summary.focusSessions} 条${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
+          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n地图文档 ${result.summary.mindMapDocuments}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
         );
         if (!confirmed) return;
         await restoreWorkspaceBackup(result.backup);
@@ -923,7 +910,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
 
   const handleLogout = useCallback(async () => {
     try {
-      await assertNoActiveFocusSessionForWorkspace();
       await auth.logout();
       onClose();
     } catch (error) {
@@ -1033,7 +1019,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       isCurrentTabSyncLeader() && readWorkspaceTabLeadershipEpoch() === leaderEpoch
     );
     const summary = migrationCheck.summary;
-    if (!await requestConfirmation(`将旧模块房间复制到一个认证工作区：\n项目任务 ${summary.tasks}\n人生规划 ${summary.lifeMapItems}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n每日复盘 ${summary.retrospectiveDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
+    if (!await requestConfirmation(`将旧模块房间复制到一个认证工作区：\n项目任务 ${summary.tasks}\n人生规划 ${summary.lifeMapItems}\nEBB ${summary.reviewTasks}\n每日安排 ${summary.dailyDays} 天\n知识节点 ${summary.graphNodes}\n\n旧房间不会删除。是否继续？`)) return;
     if (!isStillLeader()) {
       const message = '同步领导权已切换，迁移已取消。请在当前主标签页重新执行。';
       setMigrationStatus(message);
@@ -1064,7 +1050,6 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const handleLegacyFallback = useCallback(async () => {
     if (!activeCode || !await requestConfirmation('确定暂时返回旧模块房间吗？统一工作区数据不会删除。')) return;
     try {
-      await assertNoActiveFocusSessionForWorkspace();
       resetToLegacyArchitecture(activeCode);
       setArchitecture(readWorkspaceSyncSettings());
       setRestoreMessage('已切回旧模块房间恢复通道。');
@@ -1588,7 +1573,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             <h4 className="tl-sync-backup-title"><Database size={15} />同步架构</h4>
             {architecture.architecture === 'legacy' ? <>
               <p className="tl-sync-backup-hint">旧架构迁移操作已显示在连接状态下方，完成迁移后五个数据域将共享一个认证工作区。</p>
-              {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.groups} 个项目组、{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.lifeMapItems} 项独立人生规划、{migrationCheck.summary.projectDocuments} 份项目文档、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.retrospectiveDays} 天复盘、{migrationCheck.summary.graphNodes} 个节点。</p>}
+              {migrationCheck && <p className="tl-sync-backup-hint">待迁移：{migrationCheck.summary.groups} 个项目组、{migrationCheck.summary.tasks} 个任务、{migrationCheck.summary.lifeMapItems} 项独立人生规划、{migrationCheck.summary.projectDocuments} 份项目文档、{migrationCheck.summary.reviewTasks} 个轮次、{migrationCheck.summary.dailyDays} 天安排、{migrationCheck.summary.graphNodes} 个节点。</p>}
             </> : <>
               <p className="tl-sync-backup-hint">五个数据域共享同一底层房间连接，人生地图作为独立数据域同步。旧模块房间保持不变，仅在主动回退时重新连接。</p>
               <button type="button" className="tl-sync-backup-btn" onClick={handleLegacyFallback}><RefreshCw size={14} />暂时返回旧房间</button>
@@ -1635,7 +1620,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             </div>
             {restoreSummary && (
               <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#374151' }}>
-                最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.mindMapDocuments} 份地图文档、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.retrospectiveEntries} 条复盘、{restoreSummary.graphNodes} 个节点。
+                最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.mindMapDocuments} 份地图文档、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.graphNodes} 个节点。
               </small>
             )}
           </div>

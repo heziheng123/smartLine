@@ -60,21 +60,19 @@ function backup(): WorkspaceBackup {
         tagColors: {},
       },
     },
-    daily: { schedules: {}, retrospectives: {} },
+    daily: { schedules: {} },
     graph: { nodes: [] },
     lifeMap: {
       areas: [], themes: [], goals: [], systems: [], systemLogs: [],
       events: [], focuses: [], notes: [], relations: [], reviews: [],
     },
-    focus: { focusSubjects: [], focusSessions: [] },
     settings: {},
   };
 }
 
 const emptyCounts = {
   tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0,
-  reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0,
-  focusSubjects: 0, focusSessions: 0,
+  reviewTasks: 0, dailyDays: 0, graphNodes: 0,
 };
 
 test('first unified connection never overlays two different non-empty workspaces', () => {
@@ -87,12 +85,12 @@ test('first unified connection never overlays two different non-empty workspaces
 });
 
 test('future cloud schemas are rejected before the room can hydrate local stores', () => {
-  assert.equal(WORKSPACE_SCHEMA_VERSION, 9);
-  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-  assert.doesNotThrow(() => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 9 } }, 9));
+  assert.equal(WORKSPACE_SCHEMA_VERSION, 11);
+  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.doesNotThrow(() => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 11 } }, 11));
   assert.throws(
-    () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 9 } }, 8),
-    /9/,
+    () => assertWorkspaceSchemaSupported({ metadata: { schemaVersion: 11 } }, 10),
+    /11/,
   );
 });
 
@@ -137,7 +135,7 @@ test('entity tombstones prevent a stale array projection from resurrecting delet
 test('schema upgrades rebuild entity sidecars for newly synchronized collections', () => {
   const fields = {
     tasks: [{ id: 'task-1', title: 'existing' }],
-    focusSubjects: [{ id: 'focus-1', name: '新增同步字段' }],
+    nodes: [{ id: 'node-1', name: '新增同步字段' }],
   };
   const oldRoot = {
     metadata: { schemaVersion: 8, entityStorageVersion: WORKSPACE_ENTITY_STORAGE_VERSION },
@@ -148,7 +146,7 @@ test('schema upgrades rebuild entity sidecars for newly synchronized collections
 
   const upgradedRoot = {
     ...oldRoot,
-    ...buildWorkspaceEntityInitializationWrites(fields, 'schema-9'),
+    ...buildWorkspaceEntityInitializationWrites(fields, 'schema-10'),
   };
   assert.equal(hasCompleteWorkspaceEntitySidecar(upgradedRoot, fields), true);
 });
@@ -324,14 +322,11 @@ test('workspace hashes ignore object key insertion order but detect data changes
     await hashWorkspaceBackup(first),
     await hashWorkspaceBackup(changedStage),
   );
-  const changedFocus = backup();
-  changedFocus.focus.focusSubjects.push({
-    id: 'focus-subject-1', name: '写作', color: '#6366f1', order: 0,
-    createdAt: '2026-07-21T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z',
-  });
+  const changedGraph = backup();
+  changedGraph.graph.nodes.push({ id: 'node-1', name: '写作' } as WorkspaceBackup['graph']['nodes'][number]);
   assert.notEqual(
     await hashWorkspaceBackup(first),
-    await hashWorkspaceBackup(changedFocus),
+    await hashWorkspaceBackup(changedGraph),
   );
 });
 
@@ -663,42 +658,6 @@ test('a deletion by device A conflicts with a concurrent modification by device 
     { tasks: remote },
   );
   assert.ok(modifyAndDelete.conflicts.length > 0, 'modify-vs-delete should produce a conflict');
-});
-
-test('focus session tombstones win over a concurrent edit and cannot be resurrected', () => {
-  const base = [{ id: 'focus-1', subjectId: 'math', note: 'original' }];
-  const local = [{ id: 'focus-1', subjectId: 'math', note: 'edited on device A' }];
-  const remote = [{ id: 'focus-1', subjectId: 'math', note: 'original', deletedAt: '2026-09-05T01:00:00.000Z' }];
-  const result = mergeWorkspaceFieldChanges(
-    { focusSessions: local },
-    { focusSessions: base },
-    { focusSessions: remote },
-  );
-  const session = (result.fields.focusSessions as Array<{ deletedAt?: string }>)[0];
-  assert.equal(session.deletedAt, '2026-09-05T01:00:00.000Z');
-});
-
-test('focus weekly reviews merge by week start instead of treating the full collection as one value', () => {
-  const base = [{ weekStart: '2026-09-01', reflection: 'base' }];
-  const local = [
-    { weekStart: '2026-09-01', reflection: 'local' },
-    { weekStart: '2026-09-08', reflection: 'new local week' },
-  ];
-  const remote = [
-    { weekStart: '2026-09-01', reflection: 'base' },
-    { weekStart: '2026-09-15', reflection: 'new remote week' },
-  ];
-  const result = mergeWorkspaceFieldChanges(
-    { focusWeeklyReviews: local },
-    { focusWeeklyReviews: base },
-    { focusWeeklyReviews: remote },
-  );
-  assert.deepEqual(result.conflicts, []);
-  assert.deepEqual(result.fields.focusWeeklyReviews, [
-    { weekStart: '2026-09-01', reflection: 'local' },
-    { weekStart: '2026-09-15', reflection: 'new remote week' },
-    { weekStart: '2026-09-08', reflection: 'new local week' },
-  ]);
 });
 
 test('both devices independently adding the same entity id with different content raises a conflict', () => {

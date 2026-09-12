@@ -32,7 +32,7 @@ function backupWithBlocks(blocks: Array<Record<string, unknown>>): WorkspaceBack
       lifeMapFocuses: [], lifeMapNotes: [], lifeMapReviews: [],
     },
     ebb: { reviewTasks: [], inboxItems: [], outlineNodes: [], ebbSettings: {} as WorkspaceBackup['ebb']['ebbSettings'] },
-    graph: { nodes: [] }, daily: { schedules: {}, retrospectives: {} }, settings: {},
+    graph: { nodes: [] }, daily: { schedules: {} }, settings: {},
   };
 }
 

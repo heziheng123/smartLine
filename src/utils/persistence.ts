@@ -83,6 +83,41 @@ function ensureStorageSchema(): Promise<void> {
   return storageSchemaReady;
 }
 
+/** Removes obsolete IndexedDB stores during a storage-schema migration. */
+export async function removeScopedStorageStores(storeNames: readonly string[]): Promise<void> {
+  if (typeof indexedDB === 'undefined' || storeNames.length === 0) return;
+  const remove = async () => {
+    const database = await openCurrentDatabase();
+    const obsolete = storeNames.filter((storeName) => database.objectStoreNames.contains(storeName));
+    const nextVersion = database.version + 1;
+    database.close();
+    if (obsolete.length === 0) return;
+
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(STORAGE_DB_NAME, nextVersion);
+      request.onupgradeneeded = () => {
+        const upgrading = request.result;
+        for (const storeName of obsolete) {
+          if (upgrading.objectStoreNames.contains(storeName)) upgrading.deleteObjectStore(storeName);
+        }
+        createMissingStores(upgrading);
+      };
+      request.onsuccess = () => {
+        request.result.close();
+        resolve();
+      };
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB 旧仓库删除失败。'));
+      request.onblocked = () => reject(new Error('IndexedDB 正被其他标签页使用，无法删除旧仓库。'));
+    });
+  };
+
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    await navigator.locks.request(STORAGE_SCHEMA_LOCK, { mode: 'exclusive' }, remove);
+  } else {
+    await remove();
+  }
+}
+
 function isRetryableStorageError(error: unknown): boolean {
   return error instanceof DOMException
     && ['VersionError', 'AbortError', 'InvalidStateError', 'NotFoundError'].includes(error.name);

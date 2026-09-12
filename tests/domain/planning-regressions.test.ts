@@ -12,7 +12,6 @@ import type { ReviewTask } from '../../src/ebb/types.ts';
 import type { Task } from '../../src/types/index.ts';
 import { isValidCalendarDate, makeLocalDayjs } from '../../src/utils/dateSafe.ts';
 import { analyzeProjectTaskCompletion } from '../../src/domain/projectTaskCompletion.ts';
-import { collectCompletedActivities } from '../../src/domain/dailyRetrospective.ts';
 import { planProjectTaskEffects } from '../../src/domain/projectTaskEffects.ts';
 
 const task = (id: string, date: string, patch: Record<string, unknown> = {}): Task => ({
@@ -319,46 +318,6 @@ test('past completion previews overdue new rounds while future completion disabl
   assert.equal(past.nodes[0].overdueNewRoundCount > 0, true);
   assert.equal(future.nodes[0].canRelearn, false);
   assert.match(future.nodes[0].relearnBlockedReason ?? '', /未来/);
-});
-
-test('daily retrospective keeps the linked old round after relearn archival', () => {
-  const project = task('reflection-project', '2026-09-01', {
-    title: '极限强化课',
-    isCompleted: true,
-    completedDate: '2026-09-01',
-    graphNodeIds: ['reflection-node'],
-  });
-  const oldRound = review('reflection-old', '极限', '2026-09-01', 2, {
-    graphNodeId: 'reflection-node',
-    isCompleted: true,
-    completedDate: '2026-09-01',
-    completionSource: 'project-task',
-    completionSourceTaskId: 'reflection-project',
-    completionSourceBlockId: 'reflection-project-block',
-    isArchived: true,
-    archivedReason: 'relearned',
-    archivedAt: '2026-09-01T12:00:00.000Z',
-    cycleTotalRounds: 7,
-  });
-  const nextRound = review('reflection-new', '极限', '2026-09-02', 1, {
-    graphNodeId: 'reflection-node',
-    scheduleCreatedDate: '2026-09-01',
-    scheduleSourceTaskId: 'reflection-project',
-    scheduleSourceBlockId: 'reflection-project-block',
-  });
-  const activities = collectCompletedActivities(
-    '2026-09-01',
-    [project],
-    [],
-    [oldRound, nextRound],
-    [{ id: 'reflection-node', name: '极限', parentId: null, createdAt: 1 }],
-  );
-  const linked = activities.find((activity) => activity.reviewTaskId === 'reflection-old');
-
-  assert.equal(linked?.completionSource, 'project-task');
-  assert.equal(linked?.round, 2);
-  assert.equal(linked?.totalRounds, 7);
-  assert.equal(linked?.restartedNextDueDate, '2026-09-02');
 });
 
 test('multi-node completion restarts only selected nodes and continues the others', () => {

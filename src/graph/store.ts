@@ -9,7 +9,6 @@ import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal
 
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 
 const GRAPH_STORAGE_KEY = 'line-graph-storage';
 const GRAPH_SYNC_SETTINGS_KEY = 'line-graph-liveblocks';
@@ -86,7 +85,6 @@ function removeDeletedNodeReferences(nodeIds: string[]): void {
   if (nodeIds.length === 0) return;
   useTimelineStore.getState().removeGraphNodeReferences(nodeIds);
   useEbbStore.getState().removeGraphNodeReferences(nodeIds);
-  useDailyScheduleStore.getState().removeRetrospectiveNodeReferences(nodeIds);
 }
 
 export function normalizeGraphNodes(value: unknown): GraphNode[] {

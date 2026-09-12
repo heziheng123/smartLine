@@ -6,9 +6,6 @@ const today = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 }).format(new Date());
-const todayDayOfWeek = new Date(`${today}T12:00:00+08:00`).getDay();
-const todayCapacityMinutes = todayDayOfWeek === 0 || todayDayOfWeek === 6 ? 360 : 240;
-
 function addIsoDays(date: string, amount: number): string {
   const value = new Date(`${date}T00:00:00Z`);
   value.setUTCDate(value.getUTCDate() + amount);
@@ -218,11 +215,10 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
 });
 
-test('week matrix shows de-duplicated workload and the filtered backlog count', async ({ page }) => {
+test('week matrix omits daily workload controls and keeps the filtered backlog count', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
-  const todayHeader = page.locator(`.wmv-row--header [data-date="${today}"]`);
-  // 60m project + 30m project + 30m quantity daily investment + 15m normal review.
-  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(`4项 · 135/${todayCapacityMinutes}m`);
+  await expect(page.getByRole('button', { name: '每日负载设置' })).toHaveCount(0);
+  await expect(page.locator('.wmv-load')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '待排期箱，26 个任务' })).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) > 900) {
     const [workspaceBox, contentBox] = await Promise.all([
@@ -248,10 +244,8 @@ test('week matrix shows de-duplicated workload and the filtered backlog count', 
   await expect(backlog.getByRole('option', { name: '今天起 7 天' })).toBeAttached();
 });
 
-test('week matrix groups by real project identity without changing workload and remembers the view', async ({ page }) => {
+test('week matrix groups by real project identity and remembers the view', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
-  const todayHeader = page.locator(`.wmv-row--header [data-date="${today}"]`);
-  const originalLoad = await todayHeader.locator('.wmv-load-label').textContent();
 
   await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
 
@@ -265,7 +259,6 @@ test('week matrix groups by real project identity without changing workload and 
     rows.filter((row) => !row.querySelector('.wmv-block-card')).length,
   )).toBe(0);
   await expect(primaryRow.getByText('学习', { exact: true })).toBeVisible();
-  await expect(todayHeader.locator('.wmv-load-label')).toHaveText(originalLoad ?? '');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('week-matrix-group-mode-v1'))).toBe('project');
 
   await page.reload();

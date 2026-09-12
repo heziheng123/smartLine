@@ -10,8 +10,7 @@ export type WorkspaceStorageField =
   | 'lifeMapAreas' | 'lifeMapPlanGroups' | 'lifeMapStages' | 'lifeMapThemes' | 'lifeMapGoals'
   | 'lifeMapSystems' | 'lifeMapSystemCheckIns' | 'lifeMapEvents' | 'lifeMapFocuses' | 'lifeMapNotes' | 'lifeMapReviews'
   | 'reviewTasks' | 'inboxItems' | 'outlineNodes' | 'ebbSettings'
-  | 'schedules' | 'retrospectives' | 'nodes'
-  | 'focusSubjects' | 'focusSessions' | 'focusWeeklyReviews';
+  | 'schedules' | 'nodes';
 
 export interface PendingWorkspaceSync {
   version: 1;

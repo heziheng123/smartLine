@@ -3,8 +3,6 @@ import { expect, test } from '@playwright/test';
 const EXPECTED_STORES = [
   'daily_schedule_data',
   'ebb_data',
-  'focus_active',
-  'focus_data',
   'graph_data',
   'life_map_data',
   'local-forage-detect-blob-support',
@@ -129,83 +127,16 @@ test('simultaneous offline edits in the same collection preserve both entities',
   })).toEqual(['tab-a-task', 'tab-b-task']);
 });
 
-test('simultaneous focus writes from two tabs preserve both sessions', async ({ context }) => {
-  const [first, second] = await Promise.all([context.newPage(), context.newPage()]);
-  await Promise.all([first.goto('/'), second.goto('/')]);
-  const base = {
-    focusSubjects: [{
-      id: 'subject', name: '并发专注', color: '#2563eb', order: 0,
-      createdAt: '2026-09-09T00:00:00.000Z', updatedAt: '2026-09-09T00:00:00.000Z',
-    }],
-    focusSessions: [],
-    focusWeeklyReviews: [],
-  };
-  await first.evaluate(async (value) => {
-    const focus = await import('/src/focus/persistence.ts');
-    await focus.persistFocusData(value);
-  }, base);
-
-  const writeSession = (page: typeof first, id: string) => page.evaluate(async ({ baseline, sessionId }) => {
-    const focus = await import('/src/focus/persistence.ts');
-    await focus.persistFocusData({
-      ...baseline,
-      focusSessions: [{
-        id: sessionId, source: 'manual', subjectId: 'subject',
-        startedAt: '2026-09-09T00:00:00.000Z', endedAt: '2026-09-09T00:01:00.000Z',
-        activeSeconds: 60, interruptions: [], localDate: '2026-09-09', timeZone: 'UTC',
-        mode: 'free', createdAt: '2026-09-09T00:01:00.000Z', updatedAt: '2026-09-09T00:01:00.000Z',
-      }],
-    }, baseline);
-  }, { baseline: base, sessionId: id });
-
-  await Promise.all([writeSession(first, 'session-a'), writeSession(second, 'session-b')]);
-  const ids = await first.evaluate(async () => {
-    const focus = await import('/src/focus/persistence.ts');
-    return (await focus.loadFocusData()).focusSessions.map((session) => session.id).sort();
-  });
-  expect(ids).toEqual(['session-a', 'session-b']);
-});
-
-test('restoring a pre-Focus backup preserves current Focus data', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('.tl-dock')).toBeVisible();
-  await expect.poll(() => page.evaluate(async () => {
-    const stores = await import('/src/testing/workspaceStoreAccess.ts');
-    const { useFocusStore } = await import('/src/focus/store.ts');
-    return stores.useTimelineStore.getState().isHydrated
-      && stores.useEbbStore.getState().isHydrated
-      && stores.useDailyScheduleStore.getState().isHydrated
-      && stores.useGraphStore.getState().isHydrated
-      && stores.useLifeMapStore.getState().isHydrated
-      && useFocusStore.getState().isHydrated;
-  })).toBe(true);
-
-  const preserved = await page.evaluate(async () => {
-    const { useFocusStore } = await import('/src/focus/store.ts');
-    const backup = await import('/src/services/workspaceBackup.ts');
-    const subject = await useFocusStore.getState().createSubject({ name: '必须保留', color: '#2563eb', defaultBackgroundPolicy: 'continue' });
-    const legacy = { ...backup.createWorkspaceBackup(), schemaVersion: 8 } as Record<string, unknown>;
-    delete legacy.focus;
-    const validation = backup.validateWorkspaceBackup(legacy);
-    if (!validation.backup) throw new Error(validation.errors.join('\n'));
-    await backup.restoreWorkspaceBackup(validation.backup);
-    return useFocusStore.getState().focusSubjects.some((candidate) => candidate.id === subject.id);
-  });
-  expect(preserved).toBe(true);
-});
-
 test('workspace restore resolves only after EBB and graph data are durable', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.tl-dock')).toBeVisible();
   await expect.poll(() => page.evaluate(async () => {
     const stores = await import('/src/testing/workspaceStoreAccess.ts');
-    const { useFocusStore } = await import('/src/focus/store.ts');
     return stores.useTimelineStore.getState().isHydrated
       && stores.useEbbStore.getState().isHydrated
       && stores.useDailyScheduleStore.getState().isHydrated
       && stores.useGraphStore.getState().isHydrated
-      && stores.useLifeMapStore.getState().isHydrated
-      && useFocusStore.getState().isHydrated;
+      && stores.useLifeMapStore.getState().isHydrated;
   })).toBe(true);
 
   const stored = await page.evaluate(async () => {

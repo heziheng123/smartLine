@@ -15,6 +15,11 @@ export interface SmartLineR2Bucket {
   }): Promise<unknown>;
   get(key: string): Promise<R2StoredObject | null>;
   delete(key: string): Promise<void>;
+  list?(options: { prefix: string; cursor?: string }): Promise<{
+    objects: Array<{ key: string }>;
+    truncated: boolean;
+    cursor?: string;
+  }>;
 }
 
 export interface StorageEnv extends AuthEnv {

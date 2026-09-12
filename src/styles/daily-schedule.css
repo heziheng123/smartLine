@@ -98,17 +98,6 @@
   color: #4F46C7;
 }
 
-.ds-header-btn--focus {
-  border-color: rgba(99, 102, 241, 0.22);
-  background: rgba(99, 102, 241, 0.08);
-  color: #4F46C7;
-}
-
-.ds-header-btn--focus:hover {
-  background: rgba(99, 102, 241, 0.14);
-  color: #4338CA;
-}
-
 /* ── 时间段设置面板 ──────────────────────────────────────── */
 .ds-slot-settings {
   display: grid;
@@ -2387,37 +2376,6 @@
   background: #EEF7F2;
   color: #287553;
   font-weight: 650;
-}
-
-.ds-review-status {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 2px 6px;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.ds-review-status--idle {
-  background: #F0F1F4;
-  color: #7A808C;
-}
-
-.ds-review-status--ready,
-.ds-review-status--draft {
-  background: #EEF2FF;
-  color: #5554C9;
-}
-
-.ds-review-status--completed {
-  background: #EAF7F0;
-  color: #287553;
-}
-
-.ds-review-status--attention {
-  background: #FFF4DB;
-  color: #9A6812;
 }
 
 .ds-slot-capacity {

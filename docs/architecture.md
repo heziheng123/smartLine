@@ -44,7 +44,7 @@ Timeline store 的 header 更新先运行任务规则校验，再规划知识节
 
 ### 3.2 Daily 域
 
-`schedules` 以 `YYYY-MM-DD` 为键，每日包含 `items`（时段有序事项）和 `blocks`（带起止时间的时间块）；`retrospectives` 单独按日期保存。
+`schedules` 以 `YYYY-MM-DD` 为键，每日包含 `items`（时段有序事项）和 `blocks`（带起止时间的时间块）。
 
 项目任务和复习任务不会复制完整业务对象，只保留稳定 `sourceId` 及显示快照。读取时从 Timeline/EBB 域解析源对象，避免用名称关联。
 
@@ -112,11 +112,11 @@ flowchart TD
 
 ## 7. 统一工作区同步
 
-当前 schema 为 `9`。统一房间 ID 形如 `workspace-{identity}-{roomCode}`，工作区 store 进入同一 room 并映射到不同 storage 字段。
+当前 schema 为 `10`。统一房间 ID 形如 `workspace-{identity}-{roomCode}`，工作区 store 进入同一 room 并映射到不同 storage 字段。
 
-schema 演进：schema 5 引入固定项目大类；schema 6 支持全局关键日期及项目—目标、关键日期—项目可选关系；schema 7 增加 `planningAreaId`；schema 8 增加实体投影和地图备份；schema 9 增加正式专注数据。
+schema 演进：schema 5 引入固定项目大类；schema 6 支持全局关键日期及项目—目标、关键日期—项目可选关系；schema 7 增加 `planningAreaId`；schema 8 增加实体投影和地图备份；schema 9 曾引入专注数据；schema 10 完整移除该功能及其同步字段。
 
-支持的 schema 版本：1–9。远端 schema 高于 9 时拒绝连接。
+支持的 schema 版本：1–10。远端 schema 高于 10 时拒绝连接。
 
 - **首次连接保护**：比较远端与本地完整内容 hash 和摘要；双方非空且不同则拒绝连接，需用户显式选择以哪端为准。
 - **版本门禁**：远端 schema 高于本地支持版本时立即拒绝连接，防止旧客户端覆盖更新格式的数据。

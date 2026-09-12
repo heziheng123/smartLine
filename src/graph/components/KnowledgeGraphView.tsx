@@ -27,9 +27,6 @@ import { useGraphBindingStore } from '../bindingStore';
 import NodeLearningSummary, { type NodeDetailScope, type NodeLearningSummaryData, type NodeMasteryState } from './NodeLearningSummary';
 import type { SmartTaskBlock, Task } from '@/types';
 import { getUniqueTasks } from '@/store/timelineData';
-import { useDailyScheduleStore } from '@/components/dailySchedule/store';
-import NodeRetrospectiveRecords from './NodeRetrospectiveRecords';
-import { isRetrospectiveEntryCurrentlyCompleted } from '@/domain/dailyRetrospective';
 import { clearKnowledgeNodeFocus, peekKnowledgeNodeFocus } from '@/services/actionBridge';
 
 import { stratify, partition, type HierarchyNode, type HierarchyRectangularNode } from 'd3-hierarchy';
@@ -320,10 +317,6 @@ export const KnowledgeGraphView: React.FC = () => {
     [getSubtreeNodeIds],
   );
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
-  const { retrospectives, schedules } = useDailyScheduleStore(useShallow((state) => ({
-    retrospectives: state.retrospectives,
-    schedules: state.schedules,
-  })));
   const { tasks, groups } = useTimelineStore(useShallow((state) => ({ tasks: state.tasks, groups: state.groups })));
   const allProjectTasks = useMemo(() => getUniqueTasks(tasks, groups), [tasks, groups]);
   const bindingSession = useGraphBindingStore(useShallow((state) => ({
@@ -1143,24 +1136,6 @@ export const KnowledgeGraphView: React.FC = () => {
       });
   }, [reviewTasks, selectedNodeId, selectedScopeIds]);
 
-  const selectedRetrospectiveEntries = useMemo(() => {
-    if (!selectedNodeId) return [];
-    return Object.values(retrospectives)
-      .filter((retrospective) => retrospective.status === 'completed')
-      .flatMap((retrospective) => retrospective.entries)
-      .filter((entry) => (entry.nodeIds ?? []).some((nodeId) => selectedScopeIds.has(nodeId)))
-      .map((entry) => ({
-        ...entry,
-        completionStatusChanged: !isRetrospectiveEntryCurrentlyCompleted(
-          entry,
-          tasks,
-          groups,
-          reviewTasks,
-          schedules,
-        ),
-      }));
-  }, [groups, retrospectives, reviewTasks, schedules, selectedNodeId, selectedScopeIds, tasks]);
-
   const selectedNodeReviewPreview = useMemo(
     () => selectedReviewTasks.slice(0, 5),
     [selectedReviewTasks],
@@ -1897,7 +1872,6 @@ export const KnowledgeGraphView: React.FC = () => {
                   canIncludeSubtree={canIncludeSelectedSubtree}
                   onScopeChange={setDetailScope}
                 />
-                <NodeRetrospectiveRecords entries={selectedRetrospectiveEntries} />
                 {selectedActivationState && (
                   <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
                     <span className="font-medium text-slate-600">

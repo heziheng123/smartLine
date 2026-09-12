@@ -63,7 +63,6 @@ function mapLiveblocksStatus(status: string | undefined, isStorageLoading = fals
 const loadTimelineView = () => import('@/components/TimelineView');
 const loadEbbView = () => import('@/ebb/components/EbbView');
 const loadDailyScheduleView = () => import('@/components/dailySchedule/DailyScheduleView');
-const loadFocusView = () => import('@/components/focus/FocusView');
 const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDocumentView');
 const loadWeekMatrixView = () => import('@/components/smartBlock/WeekMatrixView');
 const loadKnowledgeGraphView = () => import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView }));
@@ -97,7 +96,6 @@ const EbbView = React.lazy(async () => {
   }
 });
 const DailyScheduleView = React.lazy(loadDailyScheduleView);
-const FocusView = React.lazy(loadFocusView);
 const ProjectDocumentView = React.lazy(loadProjectDocumentView);
 const WeekMatrixView = React.lazy(loadWeekMatrixView);
 const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
@@ -123,10 +121,6 @@ import { useGraphStore } from '@/graph/store';
 import { useEbbStore } from '@/ebb/store';
 import { useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { useLifeMapStore } from '@/lifeMap/store';
-import { useFocusStore } from '@/focus/store';
-import { startActiveFocusRuntime, useActiveFocusStore } from '@/focus/activeSession';
-import FocusControlBar from '@/components/focus/FocusControlBar';
-import FocusQuickStart from '@/components/focus/FocusQuickStart';
 import type { WeekMatrixContext } from '@/services/actionBridge';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
 import {
@@ -139,6 +133,7 @@ import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking, WORKSPACE_
 import { disconnectWorkspace } from '@/services/workspaceSync';
 import { isCurrentTabSyncLeader, readWorkspaceTabLeadershipEpoch, startWorkspaceTabCoordinator } from '@/services/workspaceTabCoordinator';
 import { requestConfirmation } from '@/services/confirmation';
+import { clearRetiredFeatureArchives, clearRetiredFeatureData } from '@/services/retiredFeatureData';
 import { useAuth } from '@/auth/AuthContext';
 import { resolveProjectTask, rescheduleProjectTask } from '@/services/projectTaskCommands';
 import '@/services/backlogCommands';
@@ -230,22 +225,6 @@ const PANEL_MOTION_VARIANTS: Variants = {
   }),
 };
 
-const FOCUS_PANEL_MOTION_VARIANTS: Variants = {
-  initial: { opacity: 0 },
-  animate: ({ reducedMotion }: PanelMotionContext) => ({
-    opacity: 1,
-    transition: reducedMotion
-      ? { duration: MOTION_DURATION.instant }
-      : { duration: MOTION_DURATION.panel, ease: MOTION_EASE_ENTER },
-  }),
-  exit: ({ reducedMotion }: PanelMotionContext) => ({
-    opacity: 0,
-    transition: reducedMotion
-      ? { duration: MOTION_DURATION.instant }
-      : { duration: MOTION_DURATION.fast, ease: MOTION_EASE_EXIT },
-  }),
-};
-
 const App: React.FC = () => {
   const auth = useAuth();
   const prefersReducedMotion = useReducedMotion();
@@ -281,10 +260,6 @@ const App: React.FC = () => {
       hydrateStore: state.hydrateStore,
     })),
   );
-  const { isHydrated: isFocusHydrated, hydrateStore: hydrateFocusStore } = useFocusStore(
-    useShallow((state) => ({ isHydrated: state.isHydrated, hydrateStore: state.hydrateStore })),
-  );
-  const hydrateActiveFocus = useActiveFocusStore((state) => state.hydrate);
 
   // 选择性订阅：只关心 tasks/groups/notes/milestones 数据切片 + 各 CRUD 方法。
   // CRUD 方法在 zustand 中是 store 创建时一次性定义的稳定引用，
@@ -448,9 +423,6 @@ const App: React.FC = () => {
   const [phoneFullView, setPhoneFullView] = useState(false);
   const [viewDirection, setViewDirection] = useState(1);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
-  const [focusPanelOpen, setFocusPanelOpen] = useState(false);
-  const [focusPanelMode, setFocusPanelMode] = useState<'manage' | 'review'>('manage');
-  const [focusQuickStartOpen, setFocusQuickStartOpen] = useState(false);
   const viewMotionContext = useMemo<ViewMotionContext>(() => ({
     direction: viewDirection,
     reducedMotion: Boolean(prefersReducedMotion),
@@ -489,6 +461,17 @@ const App: React.FC = () => {
   }, []);
 
   React.useEffect(() => {
+    void clearRetiredFeatureData().catch((error) => console.warn('[cleanup] 已移除功能的本机数据清理失败：', error));
+  }, []);
+
+  React.useEffect(() => {
+    if (!auth.enabled || auth.status !== 'authenticated') return;
+    const accountId = auth.userId ?? auth.login;
+    if (!accountId) return;
+    void clearRetiredFeatureArchives(accountId).catch((error) => console.warn('[cleanup] 已移除功能的历史归档清理失败：', error));
+  }, [auth.enabled, auth.login, auth.status, auth.userId]);
+
+  React.useEffect(() => {
     const handleConflict = () => setSyncNotice('检测到多设备同步冲突，本地修改已保留。请打开同步设置处理。');
     const handleQueueError = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
@@ -520,12 +503,6 @@ const App: React.FC = () => {
     handleViewChangeRef.current = handleViewChange;
   }, [handleViewChange]);
 
-  React.useEffect(() => startActiveFocusRuntime(), []);
-
-  React.useEffect(() => {
-    void hydrateActiveFocus();
-  }, [hydrateActiveFocus]);
-
   // 异步加载 IndexedDB 数据
   React.useEffect(() => {
     if (hasStartedHydration.current) return;
@@ -542,7 +519,6 @@ const App: React.FC = () => {
       if (!isGraphHydrated) hydrateGraphStore();
       if (!isEbbHydrated) hydrateEbbStore();
       if (!isDailyHydrated) hydrateDailyStore();
-      if (!isFocusHydrated) hydrateFocusStore();
     };
     const requestIdle = window.requestIdleCallback;
     if (typeof requestIdle === 'function') {
@@ -561,14 +537,12 @@ const App: React.FC = () => {
     hydrateDailyStore,
     isLifeMapHydrated,
     hydrateLifeMapStore,
-    isFocusHydrated,
-    hydrateFocusStore,
   ]);
 
   React.useEffect(() => {
     // “应用已就绪”意味着所有业务与恢复数据域均已恢复，避免自动化或用户操作
     // 与任一模块的异步 hydration 发生竞争。
-    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated || !isFocusHydrated) return;
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;
     let secondFrame = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
@@ -579,7 +553,7 @@ const App: React.FC = () => {
       window.cancelAnimationFrame(firstFrame);
       window.cancelAnimationFrame(secondFrame);
     };
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, isFocusHydrated]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated]);
 
   React.useEffect(() => {
     if (!isHydrated || hasAlignedDisplayYear.current) return;
@@ -598,7 +572,6 @@ const App: React.FC = () => {
       || !isEbbHydrated
       || !isDailyHydrated
       || !isLifeMapHydrated
-      || !isFocusHydrated
       || hasAttemptedAutoReconnect.current
     ) {
       return;
@@ -640,17 +613,17 @@ const App: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       stopCoordinator();
     };
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, isFocusHydrated, auth.login, auth.userId]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, auth.login, auth.userId]);
 
   React.useEffect(() => {
-    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated || !isFocusHydrated) return;
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;
     const stopTracking = startWorkspaceQueueTracking();
     const stopCrossTab = startWorkspaceCrossTabDataSync();
     return () => { stopTracking(); stopCrossTab(); };
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, isFocusHydrated]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated]);
 
   React.useEffect(() => {
-    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated || !isFocusHydrated) return;
+    if (!isHydrated || !isGraphHydrated || !isEbbHydrated || !isDailyHydrated || !isLifeMapHydrated) return;
     const stores = [
       useTimelineStore.getState(),
       useEbbStore.getState(),
@@ -668,7 +641,7 @@ const App: React.FC = () => {
     createLocalSnapshot('每日自动快照')
       .then(() => localStorage.setItem(key, today))
       .catch((error) => console.warn('[workspace] 自动快照失败：', error));
-  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, isFocusHydrated, timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus, lifeMapLiveStatus]);
+  }, [isHydrated, isGraphHydrated, isEbbHydrated, isDailyHydrated, isLifeMapHydrated, timelineLiveStatus, ebbLiveStatus, dailyLiveStatus, graphLiveStatus, lifeMapLiveStatus]);
 
   React.useEffect(() => {
     if (timelineLiveStatus) {
@@ -1065,8 +1038,6 @@ const App: React.FC = () => {
             setDrawerFocusRequest((value) => value + 1);
           }}
           onOpenFullView={() => setPhoneFullView(true)}
-          onOpenFocusStart={() => setFocusQuickStartOpen(true)}
-          onOpenFocusReview={() => { setFocusPanelMode('review'); setFocusPanelOpen(true); }}
         />
       ) : (
       <AnimatePresence mode="popLayout" initial={false} custom={viewMotionContext}>
@@ -1107,8 +1078,6 @@ const App: React.FC = () => {
                 <DailyScheduleView
                   targetDate={dailyTargetDate}
                   weekReturnContext={dailyWeekReturnContext}
-                  onOpenFocusStart={() => setFocusQuickStartOpen(true)}
-                  onOpenFocusReview={() => { setFocusPanelMode('review'); setFocusPanelOpen(true); }}
                 />
               </Suspense>
             </div>
@@ -1285,11 +1254,6 @@ const App: React.FC = () => {
         </button>
       )}
 
-      <FocusControlBar onOpen={() => { setFocusPanelMode('manage'); setFocusPanelOpen(true); }} />
-      <FocusQuickStart open={focusQuickStartOpen} onClose={() => setFocusQuickStartOpen(false)} onOpenPanel={() => { setFocusPanelMode('manage'); setFocusPanelOpen(true); }} />
-      <AnimatePresence>
-        {focusPanelOpen && <motion.aside className="focus-panel" role="dialog" aria-modal="true" aria-label={focusPanelMode === 'review' ? '专注复盘' : '专注面板'} custom={panelMotionContext} variants={FOCUS_PANEL_MOTION_VARIANTS} initial="initial" animate="animate" exit="exit"><div className="focus-panel__surface"><button type="button" className="focus-panel__close" aria-label={focusPanelMode === 'review' ? '关闭专注复盘' : '关闭专注面板'} onClick={() => setFocusPanelOpen(false)}>×</button><Suspense fallback={<div className="focus-panel__loading" role="status">正在加载专注面板…</div>}><FocusView panel mode={focusPanelMode} onOpenReview={() => setFocusPanelMode('review')} /></Suspense></div></motion.aside>}
-      </AnimatePresence>
 
       <AnimatePresence>
         {drawerTask && (currentView !== 'timeline' || isPhoneLayout) && (

@@ -113,8 +113,8 @@ test('主计划与月度阶段沿用目标集合并过滤悬空阶段', () => {
 });
 
 test('current schema preserves global key dates and cleans invalid references', () => {
-  assert.equal(WORKSPACE_SCHEMA_VERSION, 9);
-  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(WORKSPACE_SCHEMA_VERSION, 11);
+  assert.deepEqual([...SUPPORTED_WORKSPACE_SCHEMA_VERSIONS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
   const data = normalizeLifeMapData({
     lifeMapGoals: [

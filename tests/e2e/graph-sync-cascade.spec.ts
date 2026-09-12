@@ -35,7 +35,6 @@ test('remote graph hydration does not cascade, while explicit deletion still cle
         useGraphStore,
         useTimelineStore,
         useEbbStore,
-        useDailyScheduleStore,
       } = await import('/src/testing/workspaceStoreAccess.ts');
     const {
       setWorkspaceQueueSuppressed,
@@ -44,16 +43,12 @@ test('remote graph hydration does not cascade, while explicit deletion still cle
     const calls = {
       timeline: [] as string[][],
       ebb: [] as string[][],
-      daily: [] as string[][],
     };
     useTimelineStore.setState({
       removeGraphNodeReferences: (ids: string[]) => calls.timeline.push([...ids]),
     });
     useEbbStore.setState({
       removeGraphNodeReferences: (ids: string[]) => calls.ebb.push([...ids]),
-    });
-    useDailyScheduleStore.setState({
-      removeRetrospectiveNodeReferences: (ids: string[]) => calls.daily.push([...ids]),
     });
 
     const current = useGraphStore.getState();
@@ -71,7 +66,6 @@ test('remote graph hydration does not cascade, while explicit deletion still cle
     const afterHydration = {
       timeline: calls.timeline.length,
       ebb: calls.ebb.length,
-      daily: calls.daily.length,
     };
 
     useGraphStore.setState({
@@ -87,9 +81,8 @@ test('remote graph hydration does not cascade, while explicit deletion still cle
     };
   }, { root: rootNode, child: childNode });
 
-  expect(result.afterHydration).toEqual({ timeline: 0, ebb: 0, daily: 0 });
+  expect(result.afterHydration).toEqual({ timeline: 0, ebb: 0 });
   expect(result.calls.timeline).toEqual([[rootNode.id, childNode.id]]);
   expect(result.calls.ebb).toEqual([[rootNode.id, childNode.id]]);
-  expect(result.calls.daily).toEqual([[rootNode.id, childNode.id]]);
   expect(result.remainingNodeIds).toEqual([]);
 });

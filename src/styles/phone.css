@@ -815,6 +815,3 @@
     transition-duration: 0.01ms !important;
   }
 }
-.phone-focus-actions { display: flex; gap: 8px; margin: 0 16px 12px; }
-.phone-focus-actions button { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 6px; min-height: 44px; border: 1px solid #dfe3ea; border-radius: 10px; background: #fff; color: #475467; font-size: 13px; font-weight: 600; }
-.phone-focus-actions button:first-child { border-color: #6366f1; background: #6366f1; color: #fff; }

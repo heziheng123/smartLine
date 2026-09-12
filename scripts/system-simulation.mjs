@@ -77,9 +77,7 @@ try {
     taskBacklogModule,
     ebbComplexity,
     operationHistoryModule,
-    dailyRetrospectiveModule,
     lifeMapModule,
-    focusModule,
   ] = await Promise.all([
     load('/src/ebb/scheduler.ts'),
     load('/src/graph/activation.ts'),
@@ -111,16 +109,13 @@ try {
     load('/src/domain/taskBacklog.ts'),
     load('/src/ebb/complexity.ts'),
     load('/src/services/operationHistory.ts'),
-    load('/src/domain/dailyRetrospective.ts'),
     load('/src/lifeMap/store.ts'),
-    load('/src/focus/store.ts'),
   ]);
 
   const { useTimelineStore } = timelineModule;
   const { useGraphStore } = graphModule;
   const { useEbbStore } = ebbModule;
   const { useDailyScheduleStore } = dailyModule;
-  const { useFocusStore } = focusModule;
   const { useLifeMapStore } = lifeMapModule;
   const { useGraphBindingStore } = graphBindingModule;
   const {
@@ -223,7 +218,6 @@ try {
     lifeStages = [],
     reviewTasks = [],
     schedules = {},
-    retrospectives = {},
   } = {}) => {
     useTimelineStore.setState({ tasks, groups, notes: [], milestones: [], lifeStages, isHydrated: true });
     useGraphStore.setState({ nodes, isHydrated: true });
@@ -235,9 +229,8 @@ try {
       undoStack: [],
       isHydrated: true,
     });
-    useDailyScheduleStore.setState({ schedules, retrospectives, isHydrated: true });
+    useDailyScheduleStore.setState({ schedules, isHydrated: true });
     useLifeMapStore.setState({ isHydrated: true });
-    useFocusStore.setState({ focusSubjects: [], focusSessions: [], isHydrated: true });
   };
 
   const smartBlock = (id, title, graphNodeIds, autoSyncEbb = true) => ({
@@ -868,134 +861,6 @@ try {
     assert.equal(normalized['2026-07-18'].items[1].duration, undefined);
   });
 
-  check('每日复盘兼容旧数据并隔离无效生活安排完成日期', () => {
-    const schedules = dailyModule.normalizeDailySchedules({
-      '2026-07-18': {
-        date: '2026-07-18',
-        items: [{
-          id: 'free-old',
-          sourceId: 'free-old',
-          name: '旧生活安排',
-          source: 'free',
-          timeSlot: 'evening',
-          order: 0,
-          completedDate: '2026-07-17',
-        }],
-        blocks: [],
-      },
-    });
-    assert.equal(schedules['2026-07-18'].items[0].completedDate, undefined);
-
-    const retrospectives = dailyModule.normalizeDailyRetrospectives({
-      '2026-07-18': {
-        id: 'retrospective:2026-07-18',
-        date: '2026-07-18',
-        status: 'completed',
-        entries: [{
-          id: '2026-07-18:project-old',
-          sourceId: 'project-old',
-          sourceType: 'project',
-          title: '旧复盘',
-          completedDate: '2026-07-18',
-          nodeIds: ['node-a'],
-          nodeSnapshots: [],
-          reflection: { content: '旧内容' },
-          updatedAt: '2026-07-18T12:00:00.000Z',
-        }],
-        overall: { summary: '' },
-        createdAt: '2026-07-18T12:00:00.000Z',
-        updatedAt: '2026-07-18T12:00:00.000Z',
-      },
-    });
-    const entry = retrospectives['2026-07-18'].entries[0];
-    assert.deepEqual(entry.categories, []);
-    assert.equal(entry.completionStatusChanged, false);
-    assert.deepEqual(entry.nodeSnapshots, [{ id: 'node-a', name: 'node-a' }]);
-  });
-
-  check('每日复盘锁定历史名称和节点，并在来源不再完成时保留正文', () => {
-    const existing = {
-      id: 'retrospective:2026-07-18',
-      date: '2026-07-18',
-      status: 'completed',
-      entries: [{
-        id: '2026-07-18:project-old',
-        sourceId: 'project-old',
-        sourceType: 'project',
-        title: '完成时名称',
-        projectName: '完成时项目',
-        completedDate: '2026-07-18',
-        nodeIds: ['node-a'],
-        nodeSnapshots: [{ id: 'node-a', name: '原节点' }],
-        categories: ['insight'],
-        completionStatusChanged: false,
-        reflection: { content: '历史正文' },
-        updatedAt: '2026-07-18T12:00:00.000Z',
-      }],
-      overall: { summary: '历史汇总' },
-      createdAt: '2026-07-18T12:00:00.000Z',
-      updatedAt: '2026-07-18T12:00:00.000Z',
-    };
-    const rebound = dailyRetrospectiveModule.mergeRetrospectiveWithActivities(
-      '2026-07-18',
-      [{
-        id: '2026-07-18:project-old',
-        sourceId: 'project-old',
-        sourceType: 'project',
-        title: '后来改名',
-        projectName: '后来项目',
-        completedDate: '2026-07-18',
-        nodeIds: ['node-b'],
-        nodeSnapshots: [{ id: 'node-b', name: '新节点' }],
-      }],
-      existing,
-    );
-    assert.equal(rebound.entries[0].title, '完成时名称');
-    assert.equal(rebound.entries[0].projectName, '完成时项目');
-    assert.deepEqual(rebound.entries[0].nodeIds, ['node-a']);
-
-    const reverted = dailyRetrospectiveModule.mergeRetrospectiveWithActivities(
-      '2026-07-18',
-      [],
-      existing,
-    );
-    assert.equal(reverted.entries[0].completionStatusChanged, true);
-    assert.equal(reverted.entries[0].reflection.content, '历史正文');
-  });
-
-  check('彻底删除知识节点只解除复盘关联，不删除复盘正文', () => {
-    resetStores({
-      nodes: [node('node-a')],
-      retrospectives: {
-        '2026-07-18': {
-          id: 'retrospective:2026-07-18',
-          date: '2026-07-18',
-          status: 'completed',
-          entries: [{
-            id: '2026-07-18:project-old',
-            sourceId: 'project-old',
-            sourceType: 'project',
-            title: '历史任务',
-            completedDate: '2026-07-18',
-            nodeIds: ['node-a'],
-            nodeSnapshots: [{ id: 'node-a', name: 'node-a' }],
-            categories: [],
-            completionStatusChanged: false,
-            reflection: { content: '不可丢失的正文' },
-            updatedAt: '2026-07-18T12:00:00.000Z',
-          }],
-          overall: { summary: '' },
-          createdAt: '2026-07-18T12:00:00.000Z',
-          updatedAt: '2026-07-18T12:00:00.000Z',
-        },
-      },
-    });
-    useGraphStore.getState().deleteNode('node-a');
-    const entry = useDailyScheduleStore.getState().retrospectives['2026-07-18'].entries[0];
-    assert.deepEqual(entry.nodeIds, []);
-    assert.equal(entry.reflection.content, '不可丢失的正文');
-  });
-
   check('IndexedDB成功写入后会清除localStorage完整数据镜像', async () => {
     resetStores({ tasks: [project('p1', [smartBlock('b1', '镜像任务', [])])] });
     useTimelineStore.getState().updateBlockHeader('p1', 'b1', { title: '已保存' });
@@ -1172,9 +1037,7 @@ try {
             blocks: [{ id: 'tb1', sourceId: 'project::missing::block', name: '异常', source: 'project', startTime: '25:00', endTime: '09:00' }],
           },
         },
-        retrospectives: {},
       },
-      focus: backupModule.createWorkspaceBackup().focus,
       settings: {},
     };
     const result = backupModule.validateWorkspaceBackup(valid);
@@ -2028,36 +1891,6 @@ try {
     assert.equal(ebbComplexity.getPointWeight(10, 'hard'), 0.5);
   });
 
-  check('continuous quantity tasks contribute to every active week workload date', () => {
-    const quantity = smartBlock('weekly-quantity', 'Weekly quantity', [], false);
-    quantity.header = {
-      ...quantity.header,
-      taskKind: 'quantity',
-      date: '2026-07-20',
-      duration: 0,
-      quantityUnit: 'item',
-      quantityTotal: 100,
-      quantityInitialCompleted: 0,
-      quantityRecords: {},
-    };
-    const dates = ['2026-07-20', '2026-07-21', '2026-07-22'];
-    const workloads = taskBacklogModule.calculateDateWorkloads({
-      dates,
-      tasks: [project('weekly-project', [quantity])],
-      reviewTasks: [],
-      schedules: {},
-      preferences: {
-        weekdayCapacityMinutes: 240,
-        weekendCapacityMinutes: 360,
-        showTaskCount: true,
-        showDuration: true,
-      },
-    });
-    assert.deepEqual(dates.map((date) => workloads.get(date).quantityCount), [1, 1, 1]);
-    assert.deepEqual(dates.map((date) => workloads.get(date).taskCount), [1, 1, 1]);
-    assert.deepEqual(dates.map((date) => workloads.get(date).totalMinutes), [30, 30, 30]);
-  });
-
   check('backlog project filters use stable IDs and full paths for duplicate project names', () => {
     const firstBlock = smartBlock('same-name-one', 'First backlog task', []);
     const secondBlock = smartBlock('same-name-two', 'Second backlog task', []);
@@ -2101,7 +1934,7 @@ try {
       targetDate: '2026-09-30',
     });
     const backup = backupModule.createWorkspaceBackup();
-    assert.equal(backup.schemaVersion, 9);
+    assert.equal(backup.schemaVersion, 11);
     assert.equal(backup.lifeMap.lifeMapGoals.length, 1);
     assert.equal(backup.lifeMap.lifeMapPlanGroups.length, 3);
     assert.equal(backup.timeline.tasks[0].planningAreaId, 'health');
@@ -2115,7 +1948,7 @@ try {
     schemaFourBackup.lifeMap.lifeMapAreas.forEach((area) => { delete area.planGroupId; });
     const schemaSixUpgrade = backupModule.validateWorkspaceBackup(schemaFourBackup);
     assert.equal(schemaSixUpgrade.errors.length, 0);
-    assert.equal(schemaSixUpgrade.backup.schemaVersion, 9);
+    assert.equal(schemaSixUpgrade.backup.schemaVersion, 11);
     assert.deepEqual(schemaSixUpgrade.backup.lifeMap.lifeMapPlanGroups.map(({ id, placement }) => ({ id, placement })), [
       { id: 'learning', placement: 'above' },
       { id: 'work', placement: 'below' },
@@ -2127,7 +1960,7 @@ try {
     schemaSixBackup.schemaVersion = 6;
     const schemaSevenUpgrade = backupModule.validateWorkspaceBackup(schemaSixBackup);
     assert.equal(schemaSevenUpgrade.errors.length, 0);
-    assert.equal(schemaSevenUpgrade.backup.schemaVersion, 9);
+    assert.equal(schemaSevenUpgrade.backup.schemaVersion, 11);
     assert.equal(schemaSevenUpgrade.backup.timeline.tasks[0].planningAreaId, 'health');
 
     const oldBackup = structuredClone(backup);
@@ -2135,7 +1968,7 @@ try {
     delete oldBackup.lifeMap;
     const upgraded = backupModule.validateWorkspaceBackup(oldBackup);
     assert.equal(upgraded.errors.length, 0);
-    assert.equal(upgraded.backup.schemaVersion, 9);
+    assert.equal(upgraded.backup.schemaVersion, 11);
     assert.equal(upgraded.summary.lifeMapItems, 0);
   });
 

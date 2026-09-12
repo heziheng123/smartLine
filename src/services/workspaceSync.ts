@@ -4,7 +4,6 @@ import { useEbbStore, EBB_ROOM_PREFIX } from '@/ebb/store';
 import { useDailyScheduleStore, DAILY_ROOM_PREFIX } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
 import { LIFE_MAP_ROOM_PREFIX, useLifeMapStore } from '@/lifeMap/store';
-import { normalizeFocusData } from '@/focus/persistence';
 import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeTimelineData } from '@/store/timelineData';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
@@ -182,8 +181,23 @@ const EXPECTED_KEYS = [
   'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
   ...LIFE_MAP_FIELDS,
   'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
-  'schedules', 'retrospectives', 'nodes', 'focusSubjects', 'focusSessions', 'focusWeeklyReviews',
+  'schedules', 'nodes',
 ] as const;
+const RETIRED_FOCUS_ROOT_KEYS = new Set(['focusSubjects', 'focusSessions', 'focusWeeklyReviews']);
+
+async function clearRetiredFocusCloudData(room: {
+  getStorage: () => Promise<{ root: { toJSON: () => unknown; delete: (key: string) => void } }>;
+  batch: (callback: () => void) => void;
+}): Promise<void> {
+  const { root } = await room.getStorage();
+  const keys = Object.keys(root.toJSON() as Record<string, unknown>).filter((key) => (
+    RETIRED_FOCUS_ROOT_KEYS.has(key)
+    || key.startsWith('workspace-entity:focusSubjects:')
+    || key.startsWith('workspace-entity:focusSessions:')
+  ));
+  if (keys.length === 0) return;
+  room.batch(() => keys.forEach((key) => root.delete(key)));
+}
 
 function isJsonRecord(value: unknown): value is Record<string, Json> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -437,6 +451,8 @@ export async function connectUnifiedWorkspace(
     // completed the reconnect handshake and synchronized its storage state.
     await waitForRoomStorageSynchronized(connectedRoom);
     assertCurrent();
+    await clearRetiredFocusCloudData(connectedRoom);
+    assertCurrent();
     reportWorkspaceConnectionProgress('云端已连接，正在补传本机离线修改…', 'flushing');
     if (queueFlushTimer) {
       window.clearTimeout(queueFlushTimer);
@@ -627,16 +643,8 @@ function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): Wor
       schedules: root.schedules && typeof root.schedules === 'object'
         ? root.schedules as WorkspaceBackup['daily']['schedules']
         : {},
-      retrospectives: root.retrospectives && typeof root.retrospectives === 'object'
-        ? root.retrospectives as WorkspaceBackup['daily']['retrospectives']
-        : {},
     },
     graph: { nodes: Array.isArray(root.nodes) ? root.nodes as WorkspaceBackup['graph']['nodes'] : [] },
-    focus: normalizeFocusData({
-      focusSubjects: Array.isArray(root.focusSubjects) ? root.focusSubjects : base.focus.focusSubjects,
-      focusSessions: Array.isArray(root.focusSessions) ? root.focusSessions : base.focus.focusSessions,
-      focusWeeklyReviews: Array.isArray(root.focusWeeklyReviews) ? root.focusWeeklyReviews : base.focus.focusWeeklyReviews,
-    }),
     lifeMap: LIFE_MAP_FIELDS.some((field) => root[field] !== undefined)
       ? normalizeLifeMapData(root)
       : base.lifeMap,
@@ -833,19 +841,10 @@ export function createMergedBackup(
   };
 
   // Merge daily data
-  const mergedDaily = {
-    schedules: selectSource('schedules', local.daily.schedules, remote.daily.schedules),
-    retrospectives: selectSource('retrospectives', local.daily.retrospectives, remote.daily.retrospectives),
-  };
+  const mergedDaily = { schedules: selectSource('schedules', local.daily.schedules, remote.daily.schedules) };
 
   // Merge graph data
   const mergedGraph = { nodes: selectSource('nodes', local.graph.nodes, remote.graph.nodes) };
-
-  const mergedFocus = {
-    focusSubjects: selectSource('focusSubjects', local.focus.focusSubjects, remote.focus.focusSubjects),
-    focusSessions: selectSource('focusSessions', local.focus.focusSessions, remote.focus.focusSessions),
-    focusWeeklyReviews: selectSource('focusWeeklyReviews', local.focus.focusWeeklyReviews, remote.focus.focusWeeklyReviews),
-  };
 
   return {
     ...local, // Keep local metadata, settings, etc.
@@ -854,7 +853,6 @@ export function createMergedBackup(
     ebb: mergedEbb,
     daily: mergedDaily,
     graph: mergedGraph,
-    focus: mergedFocus,
     // Map documents use their own room and are deliberately not copied through
     // the unified workspace channel. Keep the local backup payload untouched.
     mindMap: local.mindMap,
@@ -899,7 +897,7 @@ async function activateUnifiedWorkspaceSafelyInternal(
   // A newly opened device contains only product samples until it downloads the
   // workspace. Count that state as empty so it can safely adopt cloud data.
   const localDecisionSummary = isBundledDemoWorkspace(local)
-    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0, focusSubjects: 0, focusSessions: 0 }
+    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, graphNodes: 0 }
     : localSummary;
   const decision = decideUnifiedWorkspaceActivation(hasRemoteStorage, localHash, remoteHash, localDecisionSummary, remoteSummary);
   if (decision !== 'conflict') {
@@ -974,7 +972,7 @@ async function activateWorkspaceWithLegacyDiscoveryInternal(
   ]);
   assertCurrent();
   const localDecisionSummary = isBundledDemoWorkspace(local)
-    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, retrospectiveDays: 0, graphNodes: 0, focusSubjects: 0, focusSessions: 0 }
+    ? { ...localSummary, tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0, reviewTasks: 0, dailyDays: 0, graphNodes: 0 }
     : localSummary;
   const discoveryDecision = decideLegacyWorkspaceDiscovery(
     false,
@@ -1338,9 +1336,8 @@ function createEmptyWorkspaceBase(): WorkspaceBackup {
       outlineNodes: [],
       ebbSettings: base.ebb.ebbSettings,
     },
-    daily: { schedules: {}, retrospectives: {} },
+    daily: { schedules: {} },
     graph: { nodes: [] },
-    focus: { focusSubjects: [], focusSessions: [], focusWeeklyReviews: [] },
   };
 }
 
@@ -2059,11 +2056,7 @@ function workspaceRootFromBackup(backup: WorkspaceBackup): Record<string, Json> 
     outlineNodes: backup.ebb.outlineNodes as unknown as Json,
     ebbSettings: backup.ebb.ebbSettings as unknown as Json,
     schedules: backup.daily.schedules as unknown as Json,
-    retrospectives: backup.daily.retrospectives as unknown as Json,
     nodes: backup.graph.nodes as unknown as Json,
-    focusSubjects: backup.focus.focusSubjects as unknown as Json,
-    focusSessions: backup.focus.focusSessions as unknown as Json,
-    focusWeeklyReviews: backup.focus.focusWeeklyReviews as unknown as Json,
     ...Object.fromEntries(LIFE_MAP_FIELDS.map((field) => [field, backup.lifeMap[field] as unknown as Json])),
   };
 }

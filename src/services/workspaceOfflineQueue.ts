@@ -1,18 +1,12 @@
 import { useTimelineStore } from '@/store';
 import { useEbbStore } from '@/ebb/store';
-import {
-  normalizeDailyRetrospectives,
-  normalizeDailySchedules,
-  useDailyScheduleStore,
-} from '@/components/dailySchedule/store';
+import { normalizeDailySchedules, useDailyScheduleStore } from '@/components/dailySchedule/store';
 import { useGraphStore } from '@/graph/store';
 import { normalizeGraphNodes } from '@/graph/store';
 import { normalizeTimelineData } from '@/store/timelineData';
 import { useLifeMapStore } from '@/lifeMap/store';
 import { LIFE_MAP_FIELDS, normalizeLifeMapData } from '@/lifeMap/data';
 import { normalizeEbbData } from '@/ebb/dataNormalization';
-import { useFocusStore } from '@/focus/store';
-import { normalizeFocusData, persistFocusData } from '@/focus/persistence';
 import { createLocalSnapshot } from './workspaceBackup';
 import {
   isWorkspaceTrackedTransactionActive,
@@ -36,7 +30,6 @@ import {
   setWorkspaceQueueSuppressed,
   setWorkspaceSystemMutationSuppressed,
   WORKSPACE_QUEUE_EVENT,
-  WORKSPACE_QUEUE_ERROR_EVENT,
   workspaceQueueChannel,
   workspaceQueueTabId,
   type WorkspaceStorageField,
@@ -63,7 +56,6 @@ export async function applyWorkspaceFields(
   fields: Partial<Record<WorkspaceStorageField, unknown>>,
   origin: WorkspaceMutationOrigin,
 ): Promise<void> {
-  let focusPersistence = Promise.resolve();
   runWorkspaceMutationWithOrigin(origin, () => {
   const hasTimelineFields = ['tasks', 'groups', 'notes', 'milestones', 'lifeStages']
     .some((key) => fields[key as WorkspaceStorageField] !== undefined);
@@ -110,36 +102,10 @@ export async function applyWorkspaceFields(
       schedules: normalizeDailySchedules(fields.schedules),
     });
   }
-  if (fields.retrospectives !== undefined) {
-    useDailyScheduleStore.setState({
-      retrospectives: normalizeDailyRetrospectives(fields.retrospectives),
-    });
-  }
   if (fields.nodes !== undefined) {
     useGraphStore.setState({ nodes: normalizeGraphNodes(fields.nodes) });
   }
-  if (fields.focusSubjects !== undefined || fields.focusSessions !== undefined || fields.focusWeeklyReviews !== undefined) {
-    const current = useFocusStore.getState();
-    const normalized = normalizeFocusData({
-      focusSubjects: fields.focusSubjects ?? current.focusSubjects,
-      focusSessions: fields.focusSessions ?? current.focusSessions,
-      focusWeeklyReviews: fields.focusWeeklyReviews ?? current.focusWeeklyReviews,
-    });
-    focusPersistence = persistFocusData(normalized).then((persisted) => {
-      runWorkspaceMutationWithOrigin(origin, () => useFocusStore.setState(persisted));
-    }).catch((error) => {
-      console.warn('[focus] 同步数据落盘失败：', error);
-      window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, {
-        detail: {
-          kind: 'storage_write_failed',
-          message: '专注同步数据无法安全写入本机，已保留当前界面数据，请勿关闭页面并重试。',
-        },
-      }));
-      throw error;
-    });
-  }
   });
-  await focusPersistence;
 }
 
 function isWorkspaceMessage(value: unknown): value is {
@@ -162,7 +128,7 @@ function isWorkspaceMessage(value: unknown): value is {
     'tasks', 'groups', 'notes', 'milestones', 'lifeStages',
     ...LIFE_MAP_FIELDS,
     'reviewTasks', 'inboxItems', 'outlineNodes', 'ebbSettings',
-    'schedules', 'retrospectives', 'nodes', 'focusSubjects', 'focusSessions', 'focusWeeklyReviews',
+    'schedules', 'nodes',
   ]);
   return Object.keys(record.fields).every((key) => allowed.has(key as WorkspaceStorageField));
 }
@@ -333,7 +299,6 @@ export function startWorkspaceQueueTracking(): () => void {
   let daily = useDailyScheduleStore.getState();
   let graph = useGraphStore.getState();
   let lifeMap = useLifeMapStore.getState();
-  let focus = useFocusStore.getState();
 
   const shouldQueue = () => (
     (isUnifiedWorkspaceConfigured() || isWorkspaceConnectionMutationCaptureActive())
@@ -426,10 +391,6 @@ export function startWorkspaceQueueTracking(): () => void {
         changed.schedules = state.schedules;
         base.schedules = previous.schedules;
       }
-      if (state.retrospectives !== previous.retrospectives) {
-        changed.retrospectives = state.retrospectives;
-        base.retrospectives = previous.retrospectives;
-      }
       if (
         !isWorkspaceQueueSuppressed()
         && shouldQueue()
@@ -462,28 +423,6 @@ export function startWorkspaceQueueTracking(): () => void {
           base[field] = previous[field];
         }
       });
-      if (!isWorkspaceQueueSuppressed() && shouldQueue() && Object.keys(changed).length) {
-        queueTrackedFields(changed, base);
-      }
-      if (Object.keys(changed).length) broadcastHydratedFields(changed);
-    }),
-    useFocusStore.subscribe((state) => {
-      const previous = focus;
-      focus = state;
-      const changed: Partial<Record<WorkspaceStorageField, unknown>> = {};
-      const base: Partial<Record<WorkspaceStorageField, unknown>> = {};
-      if (state.focusSubjects !== previous.focusSubjects) {
-        changed.focusSubjects = state.focusSubjects;
-        base.focusSubjects = previous.focusSubjects;
-      }
-      if (state.focusSessions !== previous.focusSessions) {
-        changed.focusSessions = state.focusSessions;
-        base.focusSessions = previous.focusSessions;
-      }
-      if (state.focusWeeklyReviews !== previous.focusWeeklyReviews) {
-        changed.focusWeeklyReviews = state.focusWeeklyReviews;
-        base.focusWeeklyReviews = previous.focusWeeklyReviews;
-      }
       if (!isWorkspaceQueueSuppressed() && shouldQueue() && Object.keys(changed).length) {
         queueTrackedFields(changed, base);
       }

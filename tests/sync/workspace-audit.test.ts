@@ -35,8 +35,7 @@ function emptyBackup(): WorkspaceBackup {
       ebbSettings: {} as WorkspaceBackup['ebb']['ebbSettings'],
     },
     graph: { nodes: [] },
-    daily: { schedules: {}, retrospectives: {} },
-    focus: { focusSubjects: [], focusSessions: [] },
+    daily: { schedules: {} },
     settings: {},
   };
 }
