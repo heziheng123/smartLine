@@ -59,6 +59,11 @@ export { normalizeEbbData } from './dataNormalization';
 import { loadEbbData, loadEbbSyncSettings, saveEbbData, saveEbbSyncSettings } from './persistence';
 import { planEbbTaskSync } from './taskSyncPlanner';
 import type { ProjectTaskEbbBatchPlan, ProjectTaskEbbNodeResult } from './projectTaskSyncBatch';
+import {
+  archiveReviewPlan as buildArchivedReviewPlan,
+  archiveReviewPlans as buildArchivedReviewPlans,
+  restoreArchivedReviewPlan as buildRestoredReviewPlan,
+} from './reviewPlanArchive';
 
 // ── 数据加载/保存 ───────────────────────────────────────────
 
@@ -118,6 +123,15 @@ export type CompleteFinalReviewRoundResult =
     }
   | { ok: false; error: string };
 
+export interface ReviewPlanArchiveReport {
+  archivedTaskIds: string[];
+}
+
+export interface ReviewPlanRestoreReport {
+  activeTaskIds: string[];
+  restoredTaskIds: string[];
+}
+
 interface FinalReviewRoundUndoPayload {
   previousTask: ReviewTask;
   expectedCompletedTask: ReviewTask;
@@ -152,6 +166,9 @@ interface EbbStore extends EbbData {
   applyDailyReviewPlan: (request: DailyReviewPlanRequest) => DailyReviewPlan;
   restoreDailyReviewPlan: (payload: DailyReviewPlanUndoPayload) => string | null;
   restartReviewCycle: (topicKey: string, startDate: string) => boolean;
+  archiveReviewPlan: (topicKey: string) => ReviewPlanArchiveReport;
+  archiveReviewPlansForGraphNodes: (graphNodeIds: string[]) => ReviewPlanArchiveReport;
+  restoreArchivedReviewPlan: (taskIds: string[]) => ReviewPlanRestoreReport;
   deleteReviewTask: (id: string) => void;
   toggleReviewTask: (id: string) => string | null; // 返回错误消息，null 表示成功
   completeFinalReviewRound: (input: CompleteFinalReviewRoundInput) => CompleteFinalReviewRoundResult;
@@ -619,7 +636,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           set((current) => {
             const activeIds = new Set(activeTasks.map((task) => task.id));
             const reviewTasks = [
-              ...current.reviewTasks.map((task) => activeIds.has(task.id) ? { ...task, isArchived: true } : task),
+              ...current.reviewTasks.map((task) => activeIds.has(task.id) ? {
+                ...task,
+                isArchived: true,
+                archivedReason: 'relearned' as const,
+                archivedAt: createdAt,
+                cycleTotalRounds: activeTasks.length,
+              } : task),
               ...replacementTasks,
             ];
             const newData: EbbData = {
@@ -632,6 +655,69 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             return newData;
           });
           return true;
+        },
+
+        archiveReviewPlan: (topicKey) => {
+          const result = buildArchivedReviewPlan(get().reviewTasks, topicKey, new Date().toISOString());
+          if (result.archivedTaskIds.length === 0) return result;
+          set((current) => {
+            const newData: EbbData = {
+              reviewTasks: result.reviewTasks,
+              inboxItems: current.inboxItems,
+              outlineNodes: current.outlineNodes,
+              ebbSettings: current.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          useDailyScheduleStore.getState().removeBySourceIds(
+            result.archivedTaskIds.map((id) => getReviewSourceId(id)),
+          );
+          return result;
+        },
+
+        archiveReviewPlansForGraphNodes: (graphNodeIds) => {
+          const nodeIds = new Set(graphNodeIds.filter(Boolean));
+          if (nodeIds.size === 0) return { archivedTaskIds: [] };
+          const currentTasks = get().reviewTasks;
+          const topicKeys = currentTasks
+            .filter((task) => !task.isArchived && task.graphNodeId && nodeIds.has(task.graphNodeId))
+            .map(getReviewTopicKey);
+          const result = buildArchivedReviewPlans(currentTasks, topicKeys, new Date().toISOString());
+          if (result.archivedTaskIds.length === 0) return result;
+          set((current) => {
+            const newData: EbbData = {
+              reviewTasks: result.reviewTasks,
+              inboxItems: current.inboxItems,
+              outlineNodes: current.outlineNodes,
+              ebbSettings: current.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          useDailyScheduleStore.getState().removeBySourceIds(
+            result.archivedTaskIds.map((id) => getReviewSourceId(id)),
+          );
+          return result;
+        },
+
+        restoreArchivedReviewPlan: (taskIds) => {
+          const result = buildRestoredReviewPlan(get().reviewTasks, taskIds, new Date().toISOString());
+          if (result.restoredTaskIds.length === 0) return result;
+          set((current) => {
+            const newData: EbbData = {
+              reviewTasks: result.reviewTasks,
+              inboxItems: current.inboxItems,
+              outlineNodes: current.outlineNodes,
+              ebbSettings: current.ebbSettings,
+            };
+            saveEbbData(newData);
+            return newData;
+          });
+          useDailyScheduleStore.getState().removeBySourceIds(
+            [...result.activeTaskIds, ...result.restoredTaskIds].map((id) => getReviewSourceId(id)),
+          );
+          return result;
         },
 
         rescheduleOverdue: (taskIds) => {

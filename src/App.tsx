@@ -124,9 +124,8 @@ import { useLifeMapStore } from '@/lifeMap/store';
 import type { WeekMatrixContext } from '@/services/actionBridge';
 import { createLocalSnapshot } from '@/services/workspaceBackup';
 import {
-  isWorkspaceConnectionInProgress,
   pauseWorkspaceVerification,
-  reconnectConfiguredWorkspace,
+  resumeConfiguredWorkspace,
   WORKSPACE_CONFLICT_EVENT,
 } from '@/services/workspaceSync';
 import { startWorkspaceCrossTabDataSync, startWorkspaceQueueTracking, WORKSPACE_QUEUE_ERROR_EVENT } from '@/services/workspaceOfflineQueue';
@@ -583,9 +582,8 @@ const App: React.FC = () => {
       if (
         document.visibilityState === 'hidden'
         || !isCurrentTabSyncLeader()
-        || isWorkspaceConnectionInProgress()
       ) return;
-      void reconnectConfiguredWorkspace(
+      void resumeConfiguredWorkspace(
         auth.userId || auth.login,
         auth.login,
         () => isCurrentTabSyncLeader() && readWorkspaceTabLeadershipEpoch() === leaderEpoch,

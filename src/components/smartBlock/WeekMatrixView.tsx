@@ -105,6 +105,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
   const [externalBacklogDrag, setExternalBacklogDrag] = useState<SmartBlockDragPayload | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ rowKey: string; date: string } | null>(null);
+  const hoverCellRef = useRef<{ rowKey: string; date: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const dragStateRef = useRef<{
@@ -299,6 +300,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
 
   const clearDragState = useCallback(() => {
     setDraggingId(null);
+    hoverCellRef.current = null;
     setHoverCell(null);
     setExternalBacklogDrag(null);
   }, []);
@@ -419,12 +421,14 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
 
       const next = findDropCell(event.clientX, event.clientY);
       if (next) {
+        hoverCellRef.current = next;
         setHoverCell((current) => (
           current && current.rowKey === next.rowKey && current.date === next.date
             ? current
             : next
         ));
       } else {
+        hoverCellRef.current = null;
         setHoverCell((current) => (current ? null : current));
       }
     },
@@ -445,7 +449,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
       ) >= DRAG_ACTIVATION_DISTANCE;
 
       const block = state.block;
-      const liveHover = hoverCell;
+      // React state can lag one pointer event behind a fast final move. Keep
+      // the commit tied to the actual release location, not the last paint.
+      const liveHover = findDropCell(event.clientX, event.clientY) ?? hoverCellRef.current;
       dragStateRef.current = null;
       clearDragState();
 
@@ -462,7 +468,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
         void commitReschedule(block, liveHover.rowKey, liveHover.date);
       }
     },
-    [clearDragState, commitReschedule, hoverCell],
+    [clearDragState, commitReschedule, findDropCell],
   );
 
   const handleBlockPointerCancel = useCallback(() => {

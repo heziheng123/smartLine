@@ -15,7 +15,10 @@ import {
   verifyWorkspaceRepairManifest,
 } from '../../src/services/workspaceRepairSafety.ts';
 import { mergeWorkspaceFieldChangesDetailed } from '../../src/services/workspaceSyncCore.ts';
-import { buildPendingWorkspaceSyncRemainder } from '../../src/services/workspaceSyncQueueCore.ts';
+import {
+  buildPendingWorkspaceSyncRemainder,
+  rebasePendingWorkspaceSyncFields,
+} from '../../src/services/workspaceSyncQueueCore.ts';
 import { assertUniqueBlockIds, genBlockId } from '../../src/utils/blocks.ts';
 
 function backupWithBlocks(blocks: Array<Record<string, unknown>>): WorkspaceBackup {
@@ -144,4 +147,19 @@ test('field acknowledgement retains blocked fields and their original baseline',
     baseHashes: { nodes: 'nodes-base' },
     forceFields: undefined,
   });
+});
+
+test('newer local queue revisions advance to the confirmed predecessor baseline', async () => {
+  const before = [{ id: 'task-1', date: '2026-09-01' }];
+  const confirmed = [{ id: 'task-1', date: '2026-09-02' }];
+  const laterLocal = [{ id: 'task-1', date: '2026-09-03' }];
+  const rebased = await rebasePendingWorkspaceSyncFields({
+    version: 1, writeId: 'later-write', deviceId: 'device-a',
+    createdAt: '2026-09-03T00:00:00.000Z', updatedAt: '2026-09-03T00:00:01.000Z',
+    fields: { tasks: laterLocal }, baseFields: { tasks: before },
+  }, ['tasks'], { tasks: confirmed });
+
+  assert.deepEqual(rebased?.fields.tasks, laterLocal);
+  assert.deepEqual(rebased?.baseFields?.tasks, confirmed);
+  assert.match(rebased?.baseHashes?.tasks ?? '', /^[a-f0-9]{64}$/);
 });

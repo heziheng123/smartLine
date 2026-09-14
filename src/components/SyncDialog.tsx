@@ -38,6 +38,7 @@ import {
   reconnectConfiguredWorkspace,
   readPendingWorkspaceActivationConflict,
   clearPendingWorkspaceActivationConflict,
+  retryWorkspaceSyncNow,
   resolveUnifiedWorkspaceConflict,
   resetToLegacyArchitecture,
   isWorkspaceConnectionInProgress,
@@ -49,6 +50,11 @@ import {
   type WorkspaceMigrationReport,
   type WorkspaceSyncRuntimeState,
 } from '@/services/workspaceSync';
+import {
+  readWorkspaceSyncDiagnostics,
+  WORKSPACE_SYNC_DIAGNOSTICS_EVENT,
+  type WorkspaceSyncDiagnostics,
+} from '@/services/workspaceSyncDiagnostics';
 import { listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, WORKSPACE_QUEUE_EVENT, type WorkspaceConflictRecord, type WorkspaceStorageField } from '@/services/workspaceOfflineQueue';
 import { loadWorkspacePeriodArchive, saveWorkspacePeriodArchive } from '@/services/workspaceArchive';
 import { currentWorkspaceHistoryDate, loadWorkspaceDailyHistory } from '@/services/workspaceHistory';
@@ -117,6 +123,10 @@ function formatTime(value?: string): string {
   if (!value) return '暂无记录';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '暂无记录' : date.toLocaleString('zh-CN');
+}
+
+function formatDuration(value?: number): string {
+  return typeof value === 'number' ? `${value} ms` : '暂无记录';
 }
 
 function describeMindMapRuntime(state: MindMapSyncRuntimeState): string {
@@ -404,6 +414,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [syncConflicts, setSyncConflicts] = useState<WorkspaceConflictRecord[]>([]);
   const [connectionBusy, setConnectionBusy] = useState(isWorkspaceConnectionInProgress);
   const [runtimeState, setRuntimeState] = useState(readWorkspaceSyncRuntimeState);
+  const [syncDiagnostics, setSyncDiagnostics] = useState(readWorkspaceSyncDiagnostics);
+  const [retryBusy, setRetryBusy] = useState(false);
   const [mindMapRuntimeState, setMindMapRuntimeState] = useState(readMindMapSyncRuntimeState);
   const [activationConflict, setActivationConflict] = useState<{
     roomCode: string;
@@ -592,6 +604,16 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   }, []);
 
   useEffect(() => {
+    const refresh = (event?: Event) => setSyncDiagnostics(
+      (event as CustomEvent<WorkspaceSyncDiagnostics | undefined> | undefined)?.detail
+        ?? readWorkspaceSyncDiagnostics(),
+    );
+    refresh();
+    window.addEventListener(WORKSPACE_SYNC_DIAGNOSTICS_EVENT, refresh);
+    return () => window.removeEventListener(WORKSPACE_SYNC_DIAGNOSTICS_EVENT, refresh);
+  }, []);
+
+  useEffect(() => {
     const refreshMindMapRuntime = (event?: Event) => {
       setMindMapRuntimeState(
         (event as CustomEvent<MindMapSyncRuntimeState | undefined> | undefined)?.detail
@@ -692,6 +714,29 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
       lifeMap.liveblocks?.enterRoom?.(`${LIFE_MAP_ROOM_PREFIX}${code}`);
     }
   }, [timeline, ebb, daily, graph, lifeMap, architecture, auth.login, auth.userId]);
+
+  const handleRetryPending = useCallback(async () => {
+    if (!isCurrentTabSyncLeader()) {
+      setRestoreMessage('另一个标签页正在负责云同步。请在主标签页执行重试。');
+      return;
+    }
+    setRetryBusy(true);
+    setRestoreMessage('正在重试最新本机修改…');
+    try {
+      const result = await retryWorkspaceSyncNow();
+      const pending = await readPendingWorkspaceSync();
+      setPendingFieldCount(Object.keys(pending?.fields ?? {}).length);
+      setRestoreMessage(pending
+        ? '本机修改仍在等待云端确认，会继续自动重试。'
+        : result.conflict
+          ? '安全字段已同步，冲突字段已保留等待处理。'
+          : '本机修改已收到云端确认。');
+    } catch (error) {
+      setRestoreMessage(error instanceof Error ? error.message : '立即重试失败，本机修改仍安全保留。');
+    } finally {
+      setRetryBusy(false);
+    }
+  }, []);
 
   const handleConnectAll = useCallback(async () => {
     if (!isCurrentTabSyncLeader()) {
@@ -1175,7 +1220,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               : allConnected && activeConflictCount > 0
                 ? `同步暂停，正在自动归档 ${activeConflictCount} 个旧冲突`
                 : allConnected && pendingFieldCount !== null && pendingFieldCount > 0
-                  ? `已连接，等待补传 ${pendingFieldCount} 个字段`
+                  ? `本地已保存，等待云端确认 ${pendingFieldCount} 个字段`
                   : enabledCount > 0 ? `部分同步 ${connectedCount}/5` : '尚未连接'}
             {MIND_MAP_ENABLED && mindMapRuntimeState.status !== 'connected' && (
               <span style={{ color: '#D97706', fontSize: 12, fontWeight: 500, marginLeft: 8 }}>
@@ -1186,6 +1231,11 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               {enabledCount > 0 && (
                 <button type="button" className="tl-sync-backup-btn" onClick={handleConnectAll} disabled={connectionBusy}>
                   <RefreshCw size={14} />{connectionBusy ? '连接中…' : '全部重新连接'}
+                </button>
+              )}
+              {(pendingFieldCount ?? 0) > 0 && (
+                <button type="button" className="tl-sync-backup-btn" onClick={() => void handleRetryPending()} disabled={retryBusy || connectionBusy}>
+                  <RefreshCw size={14} />{retryBusy ? '重试中…' : '立即重试'}
                 </button>
               )}
               {enabledCount === 0 && (
@@ -1212,6 +1262,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             <div style={{ paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span>认证：{liveblocksAuthMode === 'authenticated' ? `用户身份认证${auth.login ? ` · GitHub：${auth.login}` : ''}` : '公钥兼容模式'}</span>
               <span>本机最近完成云端内容校验：{formatTime(lastConnected.workspace)}{requiresUnifiedMigration ? ' · 仅连接旧模块房间，请在高级设置中迁移后再比较多端。' : ''}</span>
+              <span>同步诊断：本地保存 {formatDuration(syncDiagnostics.lastLocalSaveMs)}（{formatTime(syncDiagnostics.lastLocalSavedAt)}）；云端确认 {formatDuration(syncDiagnostics.lastCloudWaitMs)}（{formatTime(syncDiagnostics.lastCloudConfirmedAt)}）</span>
+              {syncDiagnostics.lastFailure && <span>最近失败：{syncDiagnostics.lastFailure}（{formatTime(syncDiagnostics.lastFailureAt)}）{syncDiagnostics.retry ? ` · 第 ${syncDiagnostics.retry.attempt} 次自动重试将在 ${formatTime(syncDiagnostics.retry.nextAt)} 进行` : ''}</span>}
               {MIND_MAP_ENABLED && (
                 <span>地图同步：{mindMapSyncConfigured
                   ? `${mindMapStatusLabel}${mindMapRuntimeState.error ? ` · ${mindMapRuntimeState.error}` : ''}`

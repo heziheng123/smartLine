@@ -42,10 +42,10 @@ type NodeRollupStats = {
   overdueCount: number;
 };
 
-type NodeVisualState = 'inactive' | 'completed-no-review' | 'reviewing' | 'mastered';
+type NodeVisualState = 'inactive' | 'completed-no-review' | 'archived-no-review' | 'reviewing' | 'mastered';
 
 type GraphRadiusMode = 'overview' | 'reading' | 'expanded';
-type GraphStatusFilter = 'all' | 'inactive' | 'overdue' | 'reviewing' | 'completed-no-review' | 'mastered';
+type GraphStatusFilter = 'all' | 'inactive' | 'overdue' | 'reviewing' | 'completed-no-review' | 'archived-no-review' | 'mastered';
 type DockPanel = 'view' | 'filter' | 'search' | null;
 
 const GRAPH_RADIUS_FLOOR: Record<GraphRadiusMode, number> = {
@@ -62,6 +62,7 @@ const GRAPH_STATUS_OPTIONS: Array<{
   { value: 'inactive', label: '未激活', dotClass: 'bg-slate-500' },
   { value: 'overdue', label: '严重逾期', dotClass: 'bg-rose-500' },
   { value: 'completed-no-review', label: '已激活 · 无复习计划', dotClass: 'bg-blue-500' },
+  { value: 'archived-no-review', label: '旧复习已归档', dotClass: 'bg-slate-400' },
   { value: 'reviewing', label: '复习中', dotClass: 'bg-emerald-500' },
   { value: 'mastered', label: '复习已完成', dotClass: 'bg-amber-500' },
 ];
@@ -69,6 +70,7 @@ const GRAPH_STATUS_OPTIONS: Array<{
 const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
   inactive: '#64748b',
   'completed-no-review': '#3b82f6',
+  'archived-no-review': '#94a3b8',
   reviewing: '#10b981',
   mastered: '#eab308',
 };
@@ -76,6 +78,7 @@ const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
 const NODE_STATE_LABEL: Record<NodeVisualState, string> = {
   inactive: '未激活',
   'completed-no-review': '已激活 · 无复习计划',
+  'archived-no-review': '旧复习已归档',
   reviewing: '复习中',
   mastered: '复习已完成',
 };
@@ -141,6 +144,7 @@ type ZoomCanvasController = {
   ready: boolean;
   active: boolean;
   scaleRequested: boolean;
+  useCompositedScene: boolean;
   releaseFrames: number[];
   buildTimer: number | null;
   buildIdleCallback: number | null;
@@ -162,14 +166,21 @@ const isScaleGesture = (event: Event | undefined) =>
   || event instanceof TouchEvent
   || (event instanceof PointerEvent && event.pointerType === 'touch');
 
+const prefersCompositedScaleGesture = (event: Event | undefined) =>
+  event instanceof TouchEvent
+  || (event instanceof PointerEvent && event.pointerType === 'touch')
+  || (event instanceof WheelEvent
+    && (event.ctrlKey || (event.deltaMode === 0 && Math.abs(event.deltaY) < 40)));
+
 // d3-zoom treats browser pinch gestures (ctrlKey) as ten times more sensitive
-// than an ordinary wheel. Preserve that native pinch mapping, but make the
-// coarse, discrete wheel steps from a desktop mouse feel equally intentional.
+// than an ordinary wheel. Preserve that native pinch mapping without making
+// high-resolution mouse-wheel steps jump between scales.
 const getGraphWheelDelta = (event: WheelEvent) => {
-  const unit = event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002;
-  const isDiscreteMouseWheel = event.deltaMode !== 0 || Math.abs(event.deltaY) >= 40;
-  const multiplier = event.ctrlKey ? 10 : isDiscreteMouseWheel ? 3 : 1;
-  return -event.deltaY * unit * multiplier;
+  const maxDelta = event.ctrlKey ? 16 : 120;
+  const deltaY = Math.max(-maxDelta, Math.min(maxDelta, event.deltaY));
+  const unit = event.deltaMode === 1 ? 0.02 : event.deltaMode ? 0.25 : 0.001;
+  const multiplier = event.ctrlKey ? 10 : 1;
+  return -deltaY * unit * multiplier;
 };
 
 const getElementOpacity = (element: SVGElement, root: SVGSVGElement) => {
@@ -317,6 +328,7 @@ export const KnowledgeGraphView: React.FC = () => {
     [getSubtreeNodeIds],
   );
   const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const archiveReviewPlansForGraphNodes = useEbbStore((state) => state.archiveReviewPlansForGraphNodes);
   const { tasks, groups } = useTimelineStore(useShallow((state) => ({ tasks: state.tasks, groups: state.groups })));
   const allProjectTasks = useMemo(() => getUniqueTasks(tasks, groups), [tasks, groups]);
   const bindingSession = useGraphBindingStore(useShallow((state) => ({
@@ -372,6 +384,7 @@ export const KnowledgeGraphView: React.FC = () => {
     ready: false,
     active: false,
     scaleRequested: false,
+    useCompositedScene: false,
     releaseFrames: [],
     buildTimer: null,
     buildIdleCallback: null,
@@ -534,6 +547,12 @@ export const KnowledgeGraphView: React.FC = () => {
     return map;
   }, [reviewTasks]);
 
+  const archivedReviewsByNode = useMemo(() => new Set(
+    reviewTasks
+      .filter((task) => task.isArchived && task.graphNodeId)
+      .map((task) => task.graphNodeId!),
+  ), [reviewTasks]);
+
   const completedBindingsByNode = useMemo(() => {
     const map = new Map<string, { hasAutoReview: boolean; hasNoAutoReview: boolean }>();
     allProjectTasks.forEach((task) => {
@@ -572,7 +591,9 @@ export const KnowledgeGraphView: React.FC = () => {
         const rounds = reviewsByNode.get(nodeId) ?? [];
         state = rounds.length > 0
           ? (rounds.every((task) => task.isCompleted) ? 'mastered' : 'reviewing')
-          : (completedBindingsByNode.get(nodeId)?.hasAutoReview ? 'reviewing' : 'completed-no-review');
+          : archivedReviewsByNode.has(nodeId)
+            ? 'archived-no-review'
+            : (completedBindingsByNode.get(nodeId)?.hasAutoReview ? 'reviewing' : 'completed-no-review');
       } else {
         const childStates = childIds.map(visit);
         state = childStates.every((childState) => childState === 'mastered')
@@ -588,7 +609,7 @@ export const KnowledgeGraphView: React.FC = () => {
 
     nodes.forEach((node) => visit(node.id));
     return states;
-  }, [activationStates, childrenByParent, completedBindingsByNode, nodes, reviewsByNode]);
+  }, [activationStates, archivedReviewsByNode, childrenByParent, completedBindingsByNode, nodes, reviewsByNode]);
 
   const getNodeVisualState = useCallback(
     (nodeId: string): NodeVisualState => nodeVisualStates.get(nodeId) ?? 'inactive',
@@ -787,6 +808,7 @@ export const KnowledgeGraphView: React.FC = () => {
       overdue: 0,
       reviewing: 0,
       'completed-no-review': 0,
+      'archived-no-review': 0,
       mastered: 0,
     };
     islandsData.allFlatNodes.forEach((node: ViewNode) => {
@@ -794,6 +816,7 @@ export const KnowledgeGraphView: React.FC = () => {
       if (node.isActivated && node.overdueCount > 0) counts.overdue += 1;
       if (node.visualState === 'reviewing' && node.overdueCount === 0) counts.reviewing += 1;
       if (node.visualState === 'completed-no-review') counts['completed-no-review'] += 1;
+      if (node.visualState === 'archived-no-review') counts['archived-no-review'] += 1;
       if (node.visualState === 'mastered') counts.mastered += 1;
     });
     return counts;
@@ -811,6 +834,7 @@ export const KnowledgeGraphView: React.FC = () => {
         || (statusFilter === 'overdue' && node.isActivated && node.overdueCount > 0)
         || (statusFilter === 'reviewing' && node.visualState === 'reviewing' && node.overdueCount === 0)
         || (statusFilter === 'completed-no-review' && node.visualState === 'completed-no-review')
+        || (statusFilter === 'archived-no-review' && node.visualState === 'archived-no-review')
         || (statusFilter === 'mastered' && node.visualState === 'mastered');
 
       const matchQuery = !query || node.name.toLowerCase().includes(query);
@@ -881,6 +905,11 @@ export const KnowledgeGraphView: React.FC = () => {
       const transform = pendingZoomTransformRef.current;
       if (!transform) return;
       latestZoomTransformRef.current = transform;
+      if (controller.useCompositedScene) {
+        controller.scaleRequested = false;
+        syncScene(transform);
+        return;
+      }
       if (controller.releaseFrames.length > 0) {
         clearReleaseFrames();
         setCanvasState('active');
@@ -898,25 +927,26 @@ export const KnowledgeGraphView: React.FC = () => {
         if (event.sourceEvent) {
           zoomViewport.interrupt();
           userZoomInProgressRef.current = true;
-          if (controller.active) clearReleaseFrames();
+          controller.useCompositedScene = prefersCompositedScaleGesture(event.sourceEvent);
+          if (controller.useCompositedScene) {
+            clearReleaseFrames();
+            controller.active = false;
+            canvas.style.opacity = '0';
+            scene.style.opacity = '';
+            setCanvasState(controller.ready ? 'ready' : 'building');
+          } else if (controller.active) {
+            clearReleaseFrames();
+          }
         }
       })
       .on('zoom', (event) => {
+        if (prefersCompositedScaleGesture(event.sourceEvent)) controller.useCompositedScene = true;
         const isScaling = isScaleGesture(event.sourceEvent)
           && Math.abs(event.transform.k - latestZoomTransformRef.current.k) > 0.000001;
         if (isScaling) controller.scaleRequested = true;
         pendingZoomTransformRef.current = event.transform;
-        // Canvas is cheap enough to draw inside the input event. This avoids
-        // holding a scale update until the next animation frame, while pan and
-        // every fallback path retain the existing frame-coalesced behavior.
-        if (isScaling && controller.ready) {
-          if (zoomFrameRef.current !== null) {
-            cancelAnimationFrame(zoomFrameRef.current);
-            zoomFrameRef.current = null;
-          }
-          commitPendingZoomTransform();
-          return;
-        }
+        // A full canvas redraw can be expensive for larger graphs. Coalesce
+        // every pan and scale event so a frame is painted at most once.
         if (zoomFrameRef.current !== null) return;
         zoomFrameRef.current = requestAnimationFrame(() => {
           zoomFrameRef.current = null;
@@ -930,6 +960,7 @@ export const KnowledgeGraphView: React.FC = () => {
         zoomFrameRef.current = null;
         commitPendingZoomTransform();
         releaseCanvas();
+        controller.useCompositedScene = false;
         if (programmaticZoomInProgressRef.current) {
           programmaticZoomInProgressRef.current = false;
           viewportShiftedRef.current = false;
@@ -947,6 +978,7 @@ export const KnowledgeGraphView: React.FC = () => {
       clearReleaseFrames();
       controller.active = false;
       controller.scaleRequested = false;
+      controller.useCompositedScene = false;
       canvas.style.opacity = '0';
       scene.style.opacity = '';
       userZoomInProgressRef.current = false;
@@ -974,6 +1006,7 @@ export const KnowledgeGraphView: React.FC = () => {
     controller.ready = false;
     controller.active = false;
     controller.scaleRequested = false;
+    controller.useCompositedScene = false;
     controller.commands = [];
     scene.style.transform = toTransformMatrix(latestZoomTransformRef.current);
     scene.style.opacity = '';
@@ -1136,6 +1169,29 @@ export const KnowledgeGraphView: React.FC = () => {
       });
   }, [reviewTasks, selectedNodeId, selectedScopeIds]);
 
+  const selectedSubtreeNodeIds = useMemo(
+    () => selectedNodeId ? getSubtreeNodeIds(selectedNodeId) : [],
+    [getSubtreeNodeIds, selectedNodeId],
+  );
+  const selectedSubtreeReviewTasks = useMemo(() => {
+    const nodeIds = new Set(selectedSubtreeNodeIds);
+    return reviewTasks.filter((task) => !task.isArchived && task.graphNodeId && nodeIds.has(task.graphNodeId));
+  }, [reviewTasks, selectedSubtreeNodeIds]);
+  const handleArchiveSelectedSubtreeReviews = useCallback(async () => {
+    if (!selectedNode || selectedSubtreeReviewTasks.length === 0) return;
+    const confirmed = await requestConfirmation({
+      title: `归档“${selectedNode.name}”的阶段复习？`,
+      message: '复习任务会从 EBB 和每日安排中隐藏；知识节点和基础课任务记录会保留。',
+      confirmLabel: '归档复习',
+      tone: 'warning',
+      impact: [
+        `${selectedSubtreeNodeIds.length} 个知识节点`,
+        `${selectedSubtreeReviewTasks.length} 条活动复习任务`,
+      ],
+    });
+    if (confirmed) archiveReviewPlansForGraphNodes(selectedSubtreeNodeIds);
+  }, [archiveReviewPlansForGraphNodes, selectedNode, selectedSubtreeNodeIds, selectedSubtreeReviewTasks.length]);
+
   const selectedNodeReviewPreview = useMemo(
     () => selectedReviewTasks.slice(0, 5),
     [selectedReviewTasks],
@@ -1175,6 +1231,9 @@ export const KnowledgeGraphView: React.FC = () => {
       ? Math.min(100, Math.round((taskProgress / taskTotal) * 100))
       : 0;
     const reviewTotal = selectedReviewTasks.length;
+    const archivedReviewCount = reviewTasks.filter(
+      (task) => task.isArchived && task.graphNodeId && selectedScopeIds.has(task.graphNodeId),
+    ).length;
     const reviewCompleted = selectedReviewTasks.filter(task => task.isCompleted).length;
     const pendingReviews = selectedReviewTasks.filter(task => !task.isCompleted);
     const reviewOverdue = pendingReviews.filter(task => diffDays(todayStr(), task.dueDate) > 0).length;
@@ -1221,6 +1280,10 @@ export const KnowledgeGraphView: React.FC = () => {
         masteryLabel = '已掌握';
         masteryReason = '关联任务和当前计划中的复习轮次均已完成。';
       }
+    } else if (taskTotal > 0 && taskProgressPercent === 100 && reviewTotal === 0 && archivedReviewCount > 0) {
+      masteryState = 'completed-no-review';
+      masteryLabel = '旧复习已归档';
+      masteryReason = '基础课任务记录仍保留；当前没有活动复习计划，可在 EBB 归档库恢复或由新任务生成强化复习。';
     } else if (
       taskTotal > 0
       && taskProgressPercent === 100
@@ -1252,7 +1315,7 @@ export const KnowledgeGraphView: React.FC = () => {
       reviewOverdue,
       nextReviewDate,
     };
-  }, [relatedTaskBlocks, selectedReviewTasks, selectedScopeIds, selectedActivationState]);
+  }, [relatedTaskBlocks, reviewTasks, selectedReviewTasks, selectedScopeIds, selectedActivationState]);
 
   useEffect(() => {
     if (!selectedNode) {
@@ -1872,6 +1935,17 @@ export const KnowledgeGraphView: React.FC = () => {
                   canIncludeSubtree={canIncludeSelectedSubtree}
                   onScopeChange={setDetailScope}
                 />
+                {selectedSubtreeReviewTasks.length > 0 && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-700">阶段复习</div>
+                      <div className="mt-0.5 text-slate-500">本节点及 {selectedSubtreeNodeIds.length - 1} 个子节点，共 {selectedSubtreeReviewTasks.length} 条活动复习</div>
+                    </div>
+                    <button type="button" className="shrink-0 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-semibold text-slate-600 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700" onClick={handleArchiveSelectedSubtreeReviews}>
+                      <Archive size={13} className="mr-1 inline-block" />归档复习
+                    </button>
+                  </div>
+                )}
                 {selectedActivationState && (
                   <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
                     <span className="font-medium text-slate-600">

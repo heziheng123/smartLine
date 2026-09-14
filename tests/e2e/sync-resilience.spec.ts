@@ -19,6 +19,76 @@ async function waitForApp(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
+test('healthy foreground resume reuses the unified rooms instead of entering them again', async ({ page }) => {
+  await waitForApp(page);
+
+  const result = await page.evaluate(async () => {
+    const stores = await import('/src/testing/workspaceStoreAccess.ts');
+    const sync = await import('/src/services/workspaceSync.ts');
+    const roomId = 'workspace-resume-fast-path';
+    let enterCount = 0;
+    const room = {
+      id: roomId,
+      getStatus: () => 'connected',
+      getStorageStatus: () => 'synchronized',
+      reconnect: () => undefined,
+    };
+    localStorage.setItem('smart-line-sync-architecture-v1', JSON.stringify({
+      architecture: 'unified', roomCode: 'resume-fast-path', unifiedRoomId: roomId,
+    }));
+    for (const store of [
+      stores.useTimelineStore,
+      stores.useEbbStore,
+      stores.useDailyScheduleStore,
+      stores.useGraphStore,
+      stores.useLifeMapStore,
+    ]) {
+      const current = store.getState();
+      store.setState({
+        syncEnabled: true,
+        syncRoomCode: 'resume-fast-path',
+        syncStatus: 'connected',
+        liveblocks: {
+          ...current.liveblocks,
+          room,
+          status: 'connected',
+          isStorageLoading: false,
+          enterRoom: () => { enterCount += 1; },
+        },
+      });
+    }
+    const resumed = await sync.resumeConfiguredWorkspace('resume-owner');
+    return { enterCount, roomId: resumed?.roomId };
+  });
+
+  expect(result).toEqual({ enterCount: 0, roomId: 'workspace-resume-fast-path' });
+});
+
+test('a local save waiting more than two seconds shows its cloud-confirmation delay', async ({ page }) => {
+  await waitForApp(page);
+
+  await page.evaluate(async () => {
+    const stores = await import('/src/testing/workspaceStoreAccess.ts');
+    const queue = await import('/src/services/workspaceOfflineQueue.ts');
+    for (const store of [
+      stores.useTimelineStore,
+      stores.useEbbStore,
+      stores.useDailyScheduleStore,
+      stores.useGraphStore,
+      stores.useLifeMapStore,
+    ]) {
+      store.setState({ syncEnabled: true, syncStatus: 'connected' });
+    }
+    await queue.queueWorkspaceFields({ tasks: [] }, { tasks: [] }, { origin: 'user' });
+  });
+
+  const indicator = page.locator('[data-sync-state="pending"]').first();
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveAttribute('title', /本地已保存，等待云端确认/);
+  await expect.poll(() => indicator.getAttribute('title')).toMatch(/已等待 [2-9]\d* 秒/);
+  await expect(indicator.locator('.workspace-sync-status__badge')).toHaveText(/[2-9]\d*秒/);
+});
+
 test('edits made while first connection is being inspected enter the durable queue', async ({ page }) => {
   await waitForApp(page);
 

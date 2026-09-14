@@ -70,6 +70,7 @@ export function reviewTasksForDate(
   const completed: ReviewTask[] = [];
 
   for (const task of tasks) {
+    if (task.isArchived) continue;
     if (task.isCompleted) {
       if ((task.completedDate ?? task.dueDate) === date) completed.push(task);
       continue;

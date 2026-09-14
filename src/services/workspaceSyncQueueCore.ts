@@ -4,6 +4,7 @@ import {
   canWorkspaceMutationEnqueue,
   type WorkspaceMutationOrigin,
 } from './workspaceMutationOrigin';
+import { recordWorkspaceLocalSaved } from './workspaceSyncDiagnostics';
 
 export type WorkspaceStorageField =
   | 'tasks' | 'groups' | 'notes' | 'milestones' | 'lifeStages'
@@ -321,6 +322,7 @@ export function queueWorkspaceFields(
   if (isWorkspaceQueueSuppressed() && !options.bypassSuppression) return Promise.resolve();
   if (Object.keys(fields).length === 0) return Promise.resolve();
 
+  const localSaveStartedAt = Date.now();
   let attemptedPending: PendingWorkspaceSync | null = null;
   const operation = writeChain.then(() => withQueueStorageLock(async () => {
     let durablePending: PendingWorkspaceSync | null = null;
@@ -368,6 +370,7 @@ export function queueWorkspaceFields(
     };
     attemptedPending = next;
     await queueStorage.setItem(QUEUE_KEY, next);
+    recordWorkspaceLocalSaved(Date.now() - localSaveStartedAt);
     if (existing && conflictingFields.length > 0) {
       const conflicts = await queueStorage.getItem<WorkspaceConflictRecord[]>(CONFLICTS_KEY) ?? [];
       await queueStorage.setItem(CONFLICTS_KEY, retainWorkspaceConflictRecords([{
@@ -404,8 +407,37 @@ export function queueWorkspaceFields(
       source: workspaceQueueTabId,
     });
   }));
-  writeChain = operation.catch((error) => {
-    if (attemptedPending) preserveEmergencyPending(attemptedPending);
+  writeChain = operation.catch(async (error) => {
+    if (attemptedPending) {
+      preserveEmergencyPending(attemptedPending);
+    } else {
+      // A compatibility lock can time out before the durable transaction has
+      // started. Keep this user intent in the emergency outbox instead of
+      // silently leaving a local-only edit that can never be uploaded.
+      let durablePending: PendingWorkspaceSync | null = null;
+      try { durablePending = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY); } catch { /* emergency copy still protects */ }
+      const existing = volatilePending ?? readEmergencyPending() ?? durablePending;
+      const now = new Date().toISOString();
+      const baseFieldsForEmergency = { ...(existing?.baseFields ?? {}) };
+      for (const [key, value] of Object.entries(baseFields) as Array<[WorkspaceStorageField, unknown]>) {
+        if (!Object.prototype.hasOwnProperty.call(baseFieldsForEmergency, key)) {
+          baseFieldsForEmergency[key] = value;
+        }
+      }
+      preserveEmergencyPending({
+        version: 1,
+        generation: existing?.generation ?? Date.now(),
+        writeId: crypto.randomUUID(),
+        deviceId: existing?.deviceId || deviceId(),
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+        fields: { ...(existing?.fields ?? {}), ...fields },
+        baseFields: baseFieldsForEmergency,
+        baseHashes: existing?.baseHashes,
+        forceFields: [...new Set([...(existing?.forceFields ?? []), ...(options.forceFields ?? [])])],
+        origin: queueOrigin,
+      });
+    }
     console.warn('[workspace-queue] 保存待同步变更失败：', error);
   });
   return operation;
@@ -577,6 +609,104 @@ export async function acknowledgeWorkspaceSyncFields(
       else await queueStorage.removeItem(QUEUE_KEY);
     }
     return true;
+  }));
+  writeChain = operation.then(() => undefined, () => undefined);
+  return await operation;
+}
+
+export type WorkspaceSyncFieldAcknowledgement = 'acknowledged' | 'rebased' | 'superseded';
+
+/** Advances only fields that remain pending to a cloud value already confirmed
+ * for this device. It deliberately preserves the newer local values. */
+export async function rebasePendingWorkspaceSyncFields(
+  pending: PendingWorkspaceSync,
+  fields: Iterable<WorkspaceStorageField>,
+  confirmedFields: Partial<Record<WorkspaceStorageField, unknown>>,
+): Promise<PendingWorkspaceSync | null> {
+  const fieldsToRebase = [...fields].filter((field) => (
+    Object.prototype.hasOwnProperty.call(pending.fields, field)
+      && Object.prototype.hasOwnProperty.call(confirmedFields, field)
+  ));
+  if (fieldsToRebase.length === 0) return null;
+  const baseFields = { ...(pending.baseFields ?? {}) };
+  const baseHashes = { ...(pending.baseHashes ?? {}) };
+  for (const field of fieldsToRebase) {
+    const confirmed = confirmedFields[field];
+    baseFields[field] = confirmed;
+    baseHashes[field] = await hashWorkspaceValue(confirmed);
+  }
+  return { ...pending, baseFields, baseHashes };
+}
+
+/**
+ * Confirms the fields that reached the cloud, or advances a newer local
+ * revision to that confirmed cloud baseline. The latter is the normal shape
+ * of rapid edits: A→B is in flight while the user has already changed B→C.
+ * Without the rebase, the next three-way merge compares C with the old A and
+ * mistakes our own confirmed B for a competing edit.
+ */
+export async function acknowledgeOrRebaseWorkspaceSyncFields(
+  expected: PendingWorkspaceSync,
+  fields: WorkspaceStorageField[],
+  confirmedFields: Partial<Record<WorkspaceStorageField, unknown>>,
+): Promise<WorkspaceSyncFieldAcknowledgement> {
+  const acknowledged = new Set(fields);
+  if (acknowledged.size === 0) return 'acknowledged';
+  const expectedToken = getPendingWorkspaceSyncToken(expected);
+  const operation = writeChain.then(() => withQueueStorageLock(async () => {
+    const emergency = volatilePending ?? readEmergencyPending();
+    const durable = await queueStorage.getItem<PendingWorkspaceSync>(QUEUE_KEY);
+    const candidates = [emergency, durable].filter((item): item is PendingWorkspaceSync => Boolean(item));
+    if (candidates.length === 0) return 'acknowledged' as const;
+
+    let rebasedAny = false;
+    let acknowledgedAny = false;
+    const advance = async (pending: PendingWorkspaceSync | null): Promise<PendingWorkspaceSync | null> => {
+      if (!pending) return null;
+      if (getPendingWorkspaceSyncToken(pending) === expectedToken) return null;
+      const rebased = await rebasePendingWorkspaceSyncFields(pending, acknowledged, confirmedFields);
+      if (!rebased) return pending;
+      rebasedAny = true;
+      return {
+        ...rebased,
+        writeId: crypto.randomUUID(),
+        generation: nextWorkspaceQueueGeneration(),
+      };
+    };
+    const acknowledge = (pending: PendingWorkspaceSync): PendingWorkspaceSync | null => {
+      acknowledgedAny = true;
+      return buildPendingWorkspaceSyncRemainder(pending, [...acknowledged], remainderWriteId);
+    };
+
+    const remainderWriteId = crypto.randomUUID();
+    const nextEmergency = emergency && getPendingWorkspaceSyncToken(emergency) === expectedToken
+      ? acknowledge(emergency)
+      : await advance(emergency);
+    const nextDurable = durable && getPendingWorkspaceSyncToken(durable) === expectedToken
+      ? acknowledge(durable)
+      : await advance(durable);
+    if (!rebasedAny && !acknowledgedAny) return 'superseded' as const;
+
+    volatilePending = nextEmergency;
+    try {
+      if (nextEmergency) localStorage.setItem(EMERGENCY_QUEUE_KEY, JSON.stringify(nextEmergency));
+      else localStorage.removeItem(EMERGENCY_QUEUE_KEY);
+    } catch { /* in-memory copy remains */ }
+    if (nextDurable) await queueStorage.setItem(QUEUE_KEY, nextDurable);
+    else if (durable) await queueStorage.removeItem(QUEUE_KEY);
+    const broadcast = nextDurable ?? nextEmergency;
+    if (broadcast) {
+      workspaceQueueChannel?.postMessage({
+        version: 1,
+        type: 'fields',
+        source: workspaceQueueTabId,
+        generation: broadcast.generation,
+        fields: broadcast.fields,
+      });
+      window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_EVENT));
+      workspaceQueueChannel?.postMessage({ version: 1, type: 'queue-ready', source: workspaceQueueTabId });
+    }
+    return rebasedAny ? 'rebased' as const : 'acknowledged' as const;
   }));
   writeChain = operation.then(() => undefined, () => undefined);
   return await operation;

@@ -2,6 +2,7 @@ import { createWorkspaceBackup, validateWorkspaceBackup } from './workspaceBacku
 import { readWorkspaceSyncSettings } from './workspaceSync';
 import { listWorkspaceConflicts, readPendingWorkspaceSync } from './workspaceOfflineQueue';
 import { createWorkspaceAuditReport, type WorkspaceAuditReport } from './workspaceAuditCore';
+import { readWorkspaceSyncDiagnostics } from './workspaceSyncDiagnostics';
 
 interface LastConnectedRecord {
   workspace?: string;
@@ -39,6 +40,7 @@ export async function createCurrentWorkspaceAuditReport(): Promise<WorkspaceAudi
       pendingFields: Object.keys(pending?.fields ?? {}),
       activeConflictCount: activeConflicts.length,
       historicalConflictCount: historicalConflicts.length,
+      diagnostics: readWorkspaceSyncDiagnostics(),
     },
   });
 }

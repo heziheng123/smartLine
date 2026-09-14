@@ -22,6 +22,7 @@ import {
   WORKSPACE_QUEUE_EVENT,
   WORKSPACE_QUEUE_ERROR_EVENT,
   acknowledgeAppliedWorkspaceSync,
+  acknowledgeOrRebaseWorkspaceSyncFields,
   acknowledgeWorkspaceSyncFields,
   clearPendingWorkspaceSync,
   getPendingWorkspaceSyncToken,
@@ -90,6 +91,12 @@ import {
   timelineBlocksNeedRepair,
   type TimelineBlocksRepairUpload,
 } from './workspaceTimelineRepair';
+import {
+  clearWorkspaceSyncRetry,
+  recordWorkspaceCloudConfirmed,
+  recordWorkspaceSyncFailure,
+  recordWorkspaceSyncRetry,
+} from './workspaceSyncDiagnostics';
 export { buildUnifiedRoomId, hashWorkspaceBackup } from './workspaceSyncCore';
 export {
   readWorkspaceSyncRuntimeState,
@@ -100,8 +107,11 @@ export {
 
 export type SyncArchitecture = 'legacy' | 'unified';
 
-const MAX_QUEUE_FLUSH_RESTARTS = 8;
 const WORKSPACE_VERIFICATION_INTERVAL_MS = 60_000;
+const QUEUE_FLUSH_LEADING_MS = 75;
+const QUEUE_FLUSH_TRAILING_MS = 250;
+const QUEUE_FLUSH_MAX_WAIT_MS = 1_000;
+const QUEUE_RETRY_DELAYS_MS = [1_000, 2_000, 5_000] as const;
 
 export interface WorkspaceSyncSettings {
   architecture: SyncArchitecture;
@@ -214,7 +224,13 @@ function workspaceProtocolMetadata(metadata: Record<string, Json>): Record<strin
 }
 let queueListenerStarted = false;
 let queueFlushTimer: number | null = null;
+let queueFlushTimerMode: 'leading' | 'trailing' | null = null;
+let queueFlushMaxWaitAt: number | null = null;
+let queueFlushLastChangeAt: number | null = null;
+let queueFlushFollowUpPending = false;
 let queueFlushInFlight: Promise<{ applied: number; conflict: boolean }> | null = null;
+let queueRetryTimer: number | null = null;
+let queueRetryAttempt = 0;
 let workspaceVerificationTimer: number | null = null;
 let workspaceVerificationInFlight: Promise<'connected' | 'pending' | 'conflict' | 'deferred'> | null = null;
 let workspaceVerificationRoomId: string | null = null;
@@ -222,6 +238,7 @@ let workspaceVerificationGeneration = 0;
 let workspaceVerificationActivity: WorkspaceSyncActivity | null = null;
 let workspaceConnectionOperation: Promise<unknown> | null = null;
 let workspaceConnectionActivity: WorkspaceSyncActivity | null = null;
+let workspaceResumeOperation: Promise<UnifiedWorkspaceConnectionResult | null> | null = null;
 export const WORKSPACE_CONFLICT_EVENT = 'smartline:workspace-conflict';
 export const WORKSPACE_VERIFIED_EVENT = 'smartline:workspace-verified';
 
@@ -342,11 +359,10 @@ function enterOrReconnectUnifiedRoom(
 ): void {
   const currentRoom = liveblocks?.room;
   const currentStatus = currentRoom?.getStatus();
-  if (
-    currentRoom?.id === roomId
-    && (currentStatus === 'initial' || currentStatus === 'disconnected')
-  ) {
-    currentRoom.reconnect();
+  if (currentRoom?.id === roomId) {
+    if (currentStatus === 'initial' || currentStatus === 'disconnected') currentRoom.reconnect();
+    // A foreground event can race with a normal connection. Re-entering an
+    // already healthy room restarts work without making the data any fresher.
     return;
   }
   liveblocks?.enterRoom?.(roomId);
@@ -375,6 +391,7 @@ function waitForRoomConnected(
 
 export function disconnectWorkspace(disable = false): void {
   stopWorkspaceVerificationMonitor();
+  resetWorkspaceQueueFlushSchedule();
   setWorkspaceSyncRuntimeOutcome('idle', disable ? '同步已关闭。' : '工作区已断开。');
   const stores = [useTimelineStore.getState(), useEbbStore.getState(), useDailyScheduleStore.getState(), useGraphStore.getState(), useLifeMapStore.getState()];
   stores.forEach((store) => store.liveblocks?.leaveRoom?.());
@@ -454,10 +471,7 @@ export async function connectUnifiedWorkspace(
     await clearRetiredFocusCloudData(connectedRoom);
     assertCurrent();
     reportWorkspaceConnectionProgress('云端已连接，正在补传本机离线修改…', 'flushing');
-    if (queueFlushTimer) {
-      window.clearTimeout(queueFlushTimer);
-      queueFlushTimer = null;
-    }
+    resetWorkspaceQueueFlushSchedule(false);
     const flushed = await flushWorkspaceQueue();
     assertCurrent();
     const remaining = await readPendingWorkspaceSync();
@@ -571,6 +585,50 @@ export function reconnectConfiguredWorkspace(
   return runWorkspaceConnectionOperation(() => captureWorkspaceMutationsDuring(
     () => reconnectConfiguredWorkspaceInternal(identity, historicalIdentity, shouldContinue),
   ));
+}
+
+/**
+ * Restores normal syncing after a foreground/network event without replacing a
+ * healthy room.  The expensive initialization path remains reserved for an
+ * actual reconnect, migration, or first activation.
+ */
+export function resumeConfiguredWorkspace(
+  identity?: string,
+  historicalIdentity?: string,
+  shouldContinue: () => boolean = () => true,
+): Promise<UnifiedWorkspaceConnectionResult | null> {
+  if (workspaceResumeOperation) return workspaceResumeOperation;
+  if (workspaceConnectionOperation) {
+    return workspaceConnectionOperation as Promise<UnifiedWorkspaceConnectionResult | null>;
+  }
+
+  const operation = (async (): Promise<UnifiedWorkspaceConnectionResult | null> => {
+    if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+    const settings = readWorkspaceSyncSettings();
+    if (
+      settings.architecture === 'unified'
+      && settings.unifiedRoomId
+      && isUnifiedStorageReady(settings.unifiedRoomId)
+    ) {
+      ensureQueueListener();
+      startWorkspaceVerificationMonitor(settings.unifiedRoomId);
+      const pending = await readPendingWorkspaceSync();
+      if (!shouldContinue()) throw new Error('当前标签页已失去同步领导权，已取消旧连接。');
+      if (pending) scheduleWorkspaceQueueFlush('leading');
+      setWorkspaceSyncRuntimeOutcome(
+        'connected',
+        pending ? '云端连接已复用，本机修改等待云端确认。' : '云端连接已复用。',
+      );
+      return { roomId: settings.unifiedRoomId, applied: 0, repairedFields: [] };
+    }
+    return await reconnectConfiguredWorkspace(identity, historicalIdentity, shouldContinue);
+  })();
+  workspaceResumeOperation = operation;
+  void operation.then(
+    () => { if (workspaceResumeOperation === operation) workspaceResumeOperation = null; },
+    () => { if (workspaceResumeOperation === operation) workspaceResumeOperation = null; },
+  );
+  return operation;
 }
 
 function rootToBackup(root: Record<string, unknown>, base: WorkspaceBackup): WorkspaceBackup {
@@ -1665,8 +1723,142 @@ function classifyQueueFlushFailure(error: unknown): WorkspaceQueueErrorKind {
 function reportQueueFlushFailure(error: unknown): void {
   const message = error instanceof Error ? error.message : '待同步数据补传失败，请保持页面开启并重试。';
   const detail: WorkspaceQueueErrorDetail = { kind: classifyQueueFlushFailure(error), message };
-  setWorkspaceSyncRuntimeOutcome('error', message, message);
+  recordWorkspaceSyncFailure(message);
+  if (detail.kind === 'flush_failed') {
+    const retryScheduled = scheduleWorkspaceQueueRetry();
+    setWorkspaceSyncRuntimeOutcome(
+      'idle',
+      retryScheduled ? '云端确认暂时失败，正在自动重试。' : '云端确认暂时失败，本机修改仍安全保留。',
+      message,
+    );
+  } else {
+    setWorkspaceSyncRuntimeOutcome('error', message, message);
+  }
   window.dispatchEvent(new CustomEvent(WORKSPACE_QUEUE_ERROR_EVENT, { detail }));
+}
+
+function clearScheduledWorkspaceQueueFlush(): void {
+  if (queueFlushTimer) window.clearTimeout(queueFlushTimer);
+  queueFlushTimer = null;
+  queueFlushTimerMode = null;
+}
+
+/** Clear a cancelled connection's entire scheduler generation, not just its timer. */
+function resetWorkspaceQueueFlushSchedule(resetRetry = true): void {
+  clearScheduledWorkspaceQueueFlush();
+  queueFlushMaxWaitAt = null;
+  queueFlushLastChangeAt = null;
+  queueFlushFollowUpPending = false;
+  if (resetRetry) resetWorkspaceQueueRetry();
+}
+
+function resetWorkspaceQueueRetry(): void {
+  if (queueRetryTimer) window.clearTimeout(queueRetryTimer);
+  queueRetryTimer = null;
+  queueRetryAttempt = 0;
+  clearWorkspaceSyncRetry();
+}
+
+function scheduleWorkspaceQueueRetry(): boolean {
+  if (queueRetryTimer || (typeof navigator !== 'undefined' && !navigator.onLine)) return false;
+  // Upload failures are transport failures, not edit failures. Keep the
+  // durable outbox draining in the background; after the short ramp, retry at
+  // the capped interval until the network or room recovers.
+  const delayMs = QUEUE_RETRY_DELAYS_MS[Math.min(queueRetryAttempt, QUEUE_RETRY_DELAYS_MS.length - 1)];
+  const attempt = ++queueRetryAttempt;
+  recordWorkspaceSyncRetry(attempt, delayMs);
+  queueRetryTimer = window.setTimeout(() => {
+    queueRetryTimer = null;
+    void (async () => {
+      if (!await readPendingWorkspaceSync()) {
+        resetWorkspaceQueueRetry();
+        return;
+      }
+      try {
+        await resumeConfiguredWorkspace();
+        await flushWorkspaceQueue();
+        if (await readPendingWorkspaceSync()) scheduleWorkspaceQueueRetry();
+        else resetWorkspaceQueueRetry();
+      } catch (error) {
+        reportQueueFlushFailure(error);
+      }
+    })();
+  }, delayMs);
+  return true;
+}
+
+/** Retries the latest durable revision; no stale batch is ever replayed. */
+export async function retryWorkspaceSyncNow(): Promise<{ applied: number; conflict: boolean }> {
+  resetWorkspaceQueueRetry();
+  if (!await readPendingWorkspaceSync()) return { applied: 0, conflict: false };
+  try {
+    await resumeConfiguredWorkspace();
+    const result = await flushWorkspaceQueue();
+    if (await readPendingWorkspaceSync()) scheduleWorkspaceQueueRetry();
+    return result;
+  } catch (error) {
+    reportQueueFlushFailure(error);
+    throw error;
+  }
+}
+
+function runScheduledWorkspaceQueueFlush(): void {
+  queueFlushTimer = null;
+  queueFlushTimerMode = null;
+  // This deadline belongs to the batch about to leave the browser. Changes
+  // observed while it is in flight receive their own trailing/max-wait window.
+  queueFlushMaxWaitAt = null;
+  void flushWorkspaceQueue().catch(reportQueueFlushFailure);
+}
+
+function armWorkspaceQueueFlush(delayMs: number, mode: 'leading' | 'trailing'): void {
+  clearScheduledWorkspaceQueueFlush();
+  queueFlushTimerMode = mode;
+  queueFlushTimer = window.setTimeout(runScheduledWorkspaceQueueFlush, Math.max(0, delayMs));
+}
+
+/**
+ * Leading/trailing scheduler for the single durable workspace queue.
+ * The first change is not repeatedly pushed back, while continued edits during
+ * an upload are folded into one later batch instead of recursively flushing.
+ */
+function scheduleWorkspaceQueueFlush(mode: 'leading' | 'trailing'): void {
+  const now = Date.now();
+  queueFlushLastChangeAt = now;
+  if (queueFlushInFlight) {
+    queueFlushFollowUpPending = true;
+    queueFlushMaxWaitAt ??= now + QUEUE_FLUSH_MAX_WAIT_MS;
+    return;
+  }
+
+  if (mode === 'leading' && !queueFlushTimer) {
+    queueFlushMaxWaitAt = now + QUEUE_FLUSH_MAX_WAIT_MS;
+    armWorkspaceQueueFlush(QUEUE_FLUSH_LEADING_MS, 'leading');
+    return;
+  }
+
+  // Do not postpone the first fast upload merely because another click landed.
+  if (queueFlushTimerMode === 'leading') return;
+
+  queueFlushMaxWaitAt ??= now + QUEUE_FLUSH_MAX_WAIT_MS;
+  const dueAt = Math.min(now + QUEUE_FLUSH_TRAILING_MS, queueFlushMaxWaitAt);
+  armWorkspaceQueueFlush(dueAt - now, 'trailing');
+}
+
+function scheduleWorkspaceQueueFollowUp(): void {
+  if (!queueFlushFollowUpPending) return;
+  queueFlushFollowUpPending = false;
+  const now = Date.now();
+  const lastChangeAt = queueFlushLastChangeAt ?? now;
+  const maxWaitAt = queueFlushMaxWaitAt ?? now + QUEUE_FLUSH_MAX_WAIT_MS;
+  const dueAt = Math.min(lastChangeAt + QUEUE_FLUSH_TRAILING_MS, maxWaitAt);
+  armWorkspaceQueueFlush(dueAt - now, 'trailing');
+}
+
+function deferWorkspaceQueueFlush(): void {
+  queueFlushFollowUpPending = true;
+  queueFlushLastChangeAt = Date.now();
+  queueFlushMaxWaitAt ??= queueFlushLastChangeAt + QUEUE_FLUSH_MAX_WAIT_MS;
 }
 
 function ensureQueueListener(): void {
@@ -1674,11 +1866,8 @@ function ensureQueueListener(): void {
   queueListenerStarted = true;
   window.addEventListener(WORKSPACE_QUEUE_EVENT, () => {
     if (readWorkspaceSyncSettings().architecture !== 'unified') return;
-    if (queueFlushTimer) window.clearTimeout(queueFlushTimer);
-    queueFlushTimer = window.setTimeout(() => {
-      queueFlushTimer = null;
-      void flushWorkspaceQueue().catch(reportQueueFlushFailure);
-    }, 700);
+    resetWorkspaceQueueRetry();
+    scheduleWorkspaceQueueFlush('leading');
   });
 }
 
@@ -1698,6 +1887,7 @@ export function flushWorkspaceQueue(): Promise<{ applied: number; conflict: bool
           ? '安全字段已同步，修复或自动归档门禁未通过的字段保持暂停。'
           : '本机待同步修改已由云端确认。',
       );
+      scheduleWorkspaceQueueFollowUp();
     },
     (error) => {
       if (queueFlushInFlight === operation) queueFlushInFlight = null;
@@ -1707,7 +1897,7 @@ export function flushWorkspaceQueue(): Promise<{ applied: number; conflict: bool
   return operation;
 }
 
-async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied: number; conflict: boolean }> {
+async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflict: boolean }> {
   const room = useTimelineStore.getState().liveblocks?.room;
   if (!room || room.getStatus() !== 'connected') return { applied: 0, conflict: false };
   const { root } = await room.getStorage();
@@ -1893,7 +2083,8 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
      rootJson,
     );
   const fieldsWithoutBaseline = pendingKeys.filter((key) =>
-    !forcedKeys.has(key) && !pending.baseHashes?.[key]);
+    !forcedKeys.has(key)
+      && !Object.prototype.hasOwnProperty.call(pending.baseFields ?? {}, key));
   // A clock-based metadataConflict is unreliable: device clocks can be skewed,
   // and "remoteUpdatedAt > pending.updatedAt" can be false even when the remote
   // legitimately wrote a new field. Instead, conflict if the remote already has
@@ -1933,10 +2124,11 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
   const latest = await readPendingWorkspaceSync();
   if (!latest) return { applied: 0, conflict: false };
   if (getPendingWorkspaceSyncToken(latest) !== getPendingWorkspaceSyncToken(pending)) {
-    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) {
-      throw Object.assign(new Error('本机同步队列持续变化，请稍后重试。'), { workspaceQueueErrorKind: 'flush_restart_exhausted' as WorkspaceQueueErrorKind });
-    }
-    return flushWorkspaceQueueInternal(restartCount + 1);
+    // The durable queue now has a newer immutable revision. Let the scheduler
+    // apply its trailing/max-wait policy instead of recursively sending every
+    // click that arrived while hashing and merging this snapshot.
+    deferWorkspaceQueueFlush();
+    return { applied: 0, conflict: false };
   }
 
   // Hashing and conflict analysis above are asynchronous. A remote Liveblocks
@@ -1945,10 +2137,10 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
   // remote snapshot.
   const latestRootJson = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
   if (hasWorkspaceFieldSnapshotChanged(rootJson, latestRootJson, [...pendingKeys, 'metadata'])) {
-    if (restartCount >= MAX_QUEUE_FLUSH_RESTARTS) {
-      throw Object.assign(new Error('云端工作区持续变化，请等待其他设备完成同步后重试。'), { workspaceQueueErrorKind: 'cloud_drift_exhausted' as WorkspaceQueueErrorKind });
-    }
-    return flushWorkspaceQueueInternal(restartCount + 1);
+    // A later scheduled attempt will merge against the latest remote root.
+    // This prevents an active remote editor from causing a hot retry loop.
+    deferWorkspaceQueueFlush();
+    return { applied: 0, conflict: false };
   }
 
   if (flushKeys.length === 0) {
@@ -2011,15 +2203,21 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
         // A user edit can land after the last pre-batch read. That newer
         // revision must remain queued, but it is not a failed confirmation of
         // the revision we just wrote. Continue draining it below.
-        queueAdvancedDuringConfirmation = !await acknowledgeWorkspaceSyncFields(pending, flushKeys);
+        const acknowledgement = await acknowledgeOrRebaseWorkspaceSyncFields(
+          pending,
+          flushKeys,
+          merged.fields as Partial<Record<WorkspaceStorageField, unknown>>,
+        );
+        queueAdvancedDuringConfirmation = acknowledgement !== 'acknowledged';
+        recordWorkspaceCloudConfirmed(pending.updatedAt);
+        resetWorkspaceQueueRetry();
       },
     });
     if (queueAdvancedDuringConfirmation) {
-      // This is a fresh user revision, not a failed attempt against the same
-      // cloud snapshot. Reset the stale-snapshot retry budget and keep
-      // draining until the user stops editing; rapid consecutive completions
-      // therefore never strand the final click in the queue.
-      return flushWorkspaceQueueInternal();
+      // A later local revision remains durable. Do not immediately recurse:
+      // the scheduler sends it after its trailing/max-wait deadline.
+      deferWorkspaceQueueFlush();
+      return { applied: recoveredApplied + Object.keys(merged.fields).length, conflict: false };
     }
     await applyWorkspaceFields(merged.fields as Partial<Record<WorkspaceStorageField, unknown>>, 'remote-hydration');
     // A newer local revision may have landed after the last pre-batch check.
@@ -2032,7 +2230,7 @@ async function flushWorkspaceQueueInternal(restartCount = 0): Promise<{ applied:
       remaining = await readPendingWorkspaceSync();
     }
     if (remaining && blockedKeys.size === 0) {
-      return flushWorkspaceQueueInternal();
+      deferWorkspaceQueueFlush();
     }
   } finally {
     window.setTimeout(() => setWorkspaceQueueSuppressed(false), 0);

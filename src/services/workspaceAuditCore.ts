@@ -1,6 +1,7 @@
 import type { WorkspaceBackup } from './workspaceBackup.ts';
 import { hashWorkspaceBackup } from './workspaceSyncCore.ts';
 import { getUniqueTasks } from '@/store/timelineData';
+import type { WorkspaceSyncDiagnostics } from './workspaceSyncDiagnostics.ts';
 
 export type WorkspaceAuditSeverity = 'info' | 'warning' | 'blocker';
 
@@ -29,6 +30,7 @@ export interface WorkspaceAuditSyncState {
   pendingFields: string[];
   activeConflictCount: number;
   historicalConflictCount: number;
+  diagnostics?: WorkspaceSyncDiagnostics;
 }
 
 export interface WorkspaceAuditReport {
@@ -247,6 +249,7 @@ export async function createWorkspaceAuditReport(
     pendingFields: [...(context.sync?.pendingFields ?? [])].sort(),
     activeConflictCount: context.sync?.activeConflictCount ?? 0,
     historicalConflictCount: context.sync?.historicalConflictCount ?? 0,
+    diagnostics: context.sync?.diagnostics,
   };
   if (sync.pendingFieldCount > 0) {
     deduplicatedFindings.push({ severity: 'warning', code: 'pending-sync', message: `当前设备仍有 ${sync.pendingFieldCount} 个字段等待补传。` });

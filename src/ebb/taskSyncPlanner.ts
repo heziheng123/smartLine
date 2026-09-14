@@ -143,6 +143,15 @@ export function planEbbTaskSync({
   if (!triggerSchedule) return unchanged(reviewTasks);
 
   if (existingTasks.length === 0) {
+    const isRepeatOfManuallyArchivedSource = !!sourceTaskId && !!sourceBlockId && reviewTasks.some((task) =>
+      task.isArchived
+      && task.archivedReason === 'manual'
+      && task.graphNodeId === graphNodeId
+      && task.scheduleSourceTaskId === sourceTaskId
+      && task.scheduleSourceBlockId === sourceBlockId,
+    );
+    if (isRepeatOfManuallyArchivedSource) return unchanged(reviewTasks);
+
     const intervals = ebbSettings.complexityConfigs[complexity].intervals;
     const dueDates = buildAbsoluteScheduleDates(today, intervals);
     const generated = intervals.map((_, index): ReviewTask => ({

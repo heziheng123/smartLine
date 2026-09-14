@@ -20,6 +20,11 @@ import {
   WORKSPACE_VERIFIED_EVENT,
   type WorkspaceSyncRuntimeState,
 } from '@/services/workspaceSync';
+import {
+  readWorkspaceSyncDiagnostics,
+  WORKSPACE_SYNC_DIAGNOSTICS_EVENT,
+  type WorkspaceSyncDiagnostics,
+} from '@/services/workspaceSyncDiagnostics';
 import { useAuth } from '@/auth/AuthContext';
 import { liveblocksAuthMode } from '@/auth/config';
 import { MIND_MAP_ENABLED, MIND_MAP_SYNC_ENABLED } from '@/mindMap/config';
@@ -80,11 +85,14 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   const [queueErrorKind, setQueueErrorKind] = useState<WorkspaceQueueErrorKind | null>(null);
   const [queueErrorMessage, setQueueErrorMessage] = useState<string | null>(null);
   const [queueLoaded, setQueueLoaded] = useState(false);
+  const [pendingUpdatedAt, setPendingUpdatedAt] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [lastConnectedAt, setLastConnectedAt] = useState<string | null>(readLastConnectedAt);
   const [unifiedArchitecture, setUnifiedArchitecture] = useState(
     () => readWorkspaceSyncSettings().architecture === 'unified',
   );
   const [runtimeState, setRuntimeState] = useState(readWorkspaceSyncRuntimeState);
+  const [diagnostics, setDiagnostics] = useState(readWorkspaceSyncDiagnostics);
   const [mindMapRuntimeState, setMindMapRuntimeState] = useState(readMindMapSyncRuntimeState);
 
   const modules = useMemo<ModuleSyncState[]>(
@@ -103,6 +111,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       ]);
       const verification = readLastVerifiedWorkspace();
       setPendingCount(pending ? Object.keys(pending.fields ?? {}).length : 0);
+      setPendingUpdatedAt(pending?.updatedAt ?? null);
       const activeConflicts = conflicts.filter((conflict) => conflict.status !== 'resolved');
       setActiveConflictCount(activeConflicts.length);
       setHistoricalConflictCount(conflicts.length - activeConflicts.length);
@@ -146,6 +155,9 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     const handleMindMapRuntime = (event: Event) => {
       setMindMapRuntimeState((event as CustomEvent<MindMapSyncRuntimeState>).detail ?? readMindMapSyncRuntimeState());
     };
+    const handleDiagnostics = (event: Event) => {
+      setDiagnostics((event as CustomEvent<WorkspaceSyncDiagnostics>).detail ?? readWorkspaceSyncDiagnostics());
+    };
     const interval = window.setInterval(() => void refreshQueueState(), 15_000);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -154,6 +166,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
     window.addEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
     window.addEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
     window.addEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, handleRuntime);
+    window.addEventListener(WORKSPACE_SYNC_DIAGNOSTICS_EVENT, handleDiagnostics);
     window.addEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, handleMindMapRuntime);
     return () => {
       window.clearInterval(interval);
@@ -164,9 +177,17 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       window.removeEventListener(WORKSPACE_QUEUE_EVENT, handleQueue);
       window.removeEventListener(WORKSPACE_QUEUE_ERROR_EVENT, handleQueueError);
       window.removeEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, handleRuntime);
+      window.removeEventListener(WORKSPACE_SYNC_DIAGNOSTICS_EVENT, handleDiagnostics);
       window.removeEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, handleMindMapRuntime);
     };
   }, [refreshQueueState]);
+
+  useEffect(() => {
+    if (!pendingUpdatedAt) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [pendingUpdatedAt]);
 
   const auth = useAuth();
   const mapHint = !MIND_MAP_ENABLED
@@ -208,9 +229,21 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
           : queueErrorKind === 'cloud_drift_exhausted'
             ? '云端工作区持续变化，请等待其他设备完成同步。'
             : queueErrorKind === 'flush_failed'
-              ? '待同步数据补传失败，请保持页面开启。'
+              ? diagnostics.retry
+                ? `云端确认暂时失败，第 ${diagnostics.retry.attempt} 次自动重试已安排。`
+                : '待同步数据补传失败，请保持页面开启。'
               : null
     );
+  const pendingWaitMs = pendingUpdatedAt ? Math.max(0, now - Date.parse(pendingUpdatedAt)) : 0;
+  const pendingWaitSeconds = Math.ceil(pendingWaitMs / 1_000);
+  const pendingWaitHint = online && pendingWaitMs >= 2_000
+    ? ` · 已等待 ${pendingWaitSeconds} 秒`
+    : '';
+  const badgeLabel = activeConflictCount > 0
+    ? Math.min(99, activeConflictCount)
+    : online && pendingWaitMs >= 2_000
+      ? `${Math.min(99, pendingWaitSeconds)}秒`
+      : Math.min(99, pendingCount);
   const description = indicatorState === 'off'
     ? '同步未开启'
     : requiresUnifiedMigration
@@ -218,9 +251,9 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       : indicatorState === 'connecting'
       ? runtimeState.message || `正在同步 ${connectedCount}/${enabledModules.length} 个数据模块`
       : indicatorState === 'connected'
-        ? `已同步 ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
+        ? `本地已保存 · 云端已确认 · ${connectedCount} 个数据模块 · ${formatLastConnected(lastConnectedAt)}`
         : indicatorState === 'pending'
-          ? `${online ? '正在上传' : '网络离线，改动保存在本机'}${pendingCount > 0 ? ` · 待上传 ${pendingCount} 个数据字段` : ''}${errorHint ? ` · ${errorHint}` : ''}`
+          ? `${online ? '本地已保存，等待云端确认' : '网络离线，改动保存在本机'}${pendingCount > 0 ? ` · 待上传 ${pendingCount} 个数据字段` : ''}${pendingWaitHint}${errorHint ? ` · ${errorHint}` : ''}`
           : indicatorState === 'needs-action'
             ? `需要你选择如何合并 · ${activeConflictCount} 处冲突已保留双方数据${historicalHint}`
             : `同步已暂停${issueCount > 0 ? ` · ${issueCount} 项已暂停并保留` : ''}${errorHint || runtimeState.error ? ` · ${errorHint ?? runtimeState.error}` : ''}${historicalHint}`;
@@ -240,7 +273,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       {(indicatorState === 'needs-action' || indicatorState === 'stopped') && <TriangleAlert size={17} />}
       {indicatorState === 'off' && <CloudOff size={17} />}
       {(activeConflictCount > 0 || pendingCount > 0) && (
-        <span className="workspace-sync-status__badge">{Math.min(99, activeConflictCount || pendingCount)}</span>
+        <span className="workspace-sync-status__badge">{badgeLabel}</span>
       )}
     </button>
   );

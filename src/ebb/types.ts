@@ -45,8 +45,8 @@ export interface ReviewTask {
   durationOverrideMinutes?: number;
   smStatus?: SmStatus;
   isArchived?: boolean;   // 是否已归档（冷数据区）
-  /** 旧周期因一次“重新学习”结束；仅用于历史展示和审计。 */
-  archivedReason?: 'relearned';
+  /** 旧周期进入历史的原因；仅用于展示和审计。 */
+  archivedReason?: 'relearned' | 'manual' | 'superseded';
   /** 旧周期被归档的时间。 */
   archivedAt?: string;
   /** 归档前所属周期的总轮数，避免被新周期的轮数干扰。 */

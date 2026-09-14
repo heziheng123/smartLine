@@ -35,6 +35,7 @@ import {
   CalendarRange,
   Inbox,
   ListChecks,
+  Archive,
 } from 'lucide-react';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { useEbbStore } from '../store';
@@ -51,6 +52,7 @@ import AddContentModal from './AddContentModal';
 import SettingsPanel from './SettingsPanel';
 import EbbDatePicker from './EbbDatePicker';
 import RoundsPanel from './RoundsPanel';
+import ArchivedReviewPlansPanel from './ArchivedReviewPlansPanel';
 import MatrixView from './MatrixView';
 import BoardView from './BoardView';
 import InboxPanel from './InboxPanel';
@@ -175,6 +177,7 @@ const EbbView: React.FC = () => {
   const [planViewMode, setPlanViewMode] = useState<PlanViewMode>('list');
   const [addOpen, setAddOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [modal, setModal] = useState<'none' | 'settings'>('none');
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [datePicker, setDatePicker] = useState<{ taskId: string; anchor: HTMLElement | null } | null>(null);
@@ -579,6 +582,10 @@ const EbbView: React.FC = () => {
                   <Inbox size={15} />
                   暂存内容
                 </button>
+                <button type="button" role="menuitem" onClick={() => setArchiveOpen(true)}>
+                  <Archive size={15} />
+                  复习归档库
+                </button>
                 <button type="button" role="menuitem" onClick={() => setModal('settings')}>
                   <SettingsIcon size={15} />
                   设置
@@ -787,6 +794,7 @@ const EbbView: React.FC = () => {
         />
 
         {inboxOpen && <InboxPanel onClose={() => setInboxOpen(false)} />}
+        {archiveOpen && <ArchivedReviewPlansPanel onClose={() => setArchiveOpen(false)} />}
 
         {/* 日期选择器（改期） */}
         {datePicker && (

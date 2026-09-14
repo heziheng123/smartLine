@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, Trash2, Plus, CalendarRange, RotateCcw, Clock3, ArrowRight, Sparkles } from 'lucide-react';
+import { X, Calendar, Trash2, Plus, CalendarRange, RotateCcw, Clock3, ArrowRight, Sparkles, Archive } from 'lucide-react';
 import { addDays, diffDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { useEbbStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
@@ -31,7 +31,8 @@ type PendingChange =
   | { kind: 'reschedule'; title: string; description: string; updates: Array<{ id: string; dueDate: string }> }
   | { kind: 'delete'; title: string; description: string; taskId: string }
   | { kind: 'add'; title: string; description: string; task: ReturnType<typeof buildNextRoundTask> }
-  | { kind: 'restart'; title: string; description: string; startDate: string };
+  | { kind: 'restart'; title: string; description: string; startDate: string }
+  | { kind: 'archive'; title: string; description: string };
 
 const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const {
@@ -41,6 +42,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     addReviewTasks,
     rescheduleReviewRounds,
     restartReviewCycle,
+    archiveReviewPlan,
     updateReviewTask,
     updateReviewTopicDuration,
   } = useEbbStore(
@@ -51,6 +53,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
       addReviewTasks: s.addReviewTasks,
       rescheduleReviewRounds: s.rescheduleReviewRounds,
       restartReviewCycle: s.restartReviewCycle,
+      archiveReviewPlan: s.archiveReviewPlan,
       updateReviewTask: s.updateReviewTask,
       updateReviewTopicDuration: s.updateReviewTopicDuration,
     })),
@@ -229,9 +232,13 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     }
     if (pendingChange.kind === 'add' && pendingChange.task) addReviewTasks([pendingChange.task]);
     if (pendingChange.kind === 'restart') restartReviewCycle(topicKey, pendingChange.startDate);
+    if (pendingChange.kind === 'archive') {
+      archiveReviewPlan(topicKey);
+      onClose();
+    }
     setPendingChange(null);
     setActionError('');
-  }, [addReviewTasks, deleteReviewTask, onClose, pendingChange, rescheduleReviewRounds, restartReviewCycle, topicKey, topicTasks.length]);
+  }, [addReviewTasks, archiveReviewPlan, deleteReviewTask, onClose, pendingChange, rescheduleReviewRounds, restartReviewCycle, topicKey, topicTasks.length]);
 
   // 勾选
   const handleToggle = useCallback(
@@ -451,6 +458,18 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
 
         {/* 底部操作 */}
         <div className="eb-panel-footer">
+          <button
+            type="button"
+            className="eb-btn eb-btn--ghost eb-btn--sm"
+            onClick={() => setPendingChange({
+              kind: 'archive',
+              title: '归档当前复习计划',
+              description: `“${topicName}”的 ${topicTasks.length} 个复习轮次会从 EBB 和每日安排中隐藏；知识节点与基础课任务记录会保留。以后可在“复习归档库”恢复。`,
+            })}
+            disabled={topicTasks.length === 0}
+          >
+            <Archive size={14} />归档当前计划
+          </button>
           <button type="button" className="eb-btn eb-btn--ghost eb-btn--sm" onClick={() => setIsRestartDatePickerOpen(true)}>
             <RotateCcw size={14} />
             重新开始完整周期

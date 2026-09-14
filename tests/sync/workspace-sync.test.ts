@@ -30,6 +30,14 @@ import {
   readWorkspaceSyncRuntimeState,
   setWorkspaceSyncRuntimeOutcome,
 } from '../../src/services/workspaceSyncRuntime.ts';
+import {
+  clearWorkspaceSyncRetry,
+  readWorkspaceSyncDiagnostics,
+  recordWorkspaceCloudConfirmed,
+  recordWorkspaceLocalSaved,
+  recordWorkspaceSyncFailure,
+  recordWorkspaceSyncRetry,
+} from '../../src/services/workspaceSyncDiagnostics.ts';
 import type { WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
 import { createEmptyLifeMapData } from '../../src/lifeMap/data.ts';
 import { SUPPORTED_WORKSPACE_SCHEMA_VERSIONS, WORKSPACE_SCHEMA_VERSION } from '../../src/services/workspaceSchema.ts';
@@ -74,6 +82,24 @@ const emptyCounts = {
   tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0,
   reviewTasks: 0, dailyDays: 0, graphNodes: 0,
 };
+
+test('sync diagnostics distinguish local durability, cloud confirmation, and a queued retry', () => {
+  recordWorkspaceLocalSaved(12.6);
+  const afterLocalSave = readWorkspaceSyncDiagnostics();
+  assert.equal(afterLocalSave.lastLocalSaveMs, 13);
+  assert.ok(afterLocalSave.lastLocalSavedAt);
+
+  recordWorkspaceCloudConfirmed(new Date(Date.now() - 45).toISOString());
+  const afterConfirmation = readWorkspaceSyncDiagnostics();
+  assert.ok((afterConfirmation.lastCloudWaitMs ?? 0) >= 0);
+  assert.ok(afterConfirmation.lastCloudConfirmedAt);
+
+  recordWorkspaceSyncFailure('temporary transport failure');
+  recordWorkspaceSyncRetry(2, 2_000);
+  assert.deepEqual(readWorkspaceSyncDiagnostics().retry?.attempt, 2);
+  clearWorkspaceSyncRetry();
+  assert.equal(readWorkspaceSyncDiagnostics().retry, undefined);
+});
 
 test('first unified connection never overlays two different non-empty workspaces', () => {
   const nonEmpty = { ...emptyCounts, tasks: 1 };
@@ -410,6 +436,27 @@ test('two clients from the same revision preserve disjoint edits and stop same-p
     firstCommit.fields,
   );
   assert.deepEqual(samePropertyCommit.conflicts, ['tasks[one].title']);
+});
+
+test('a later local reschedule rebases on its own confirmed predecessor', () => {
+  const before = [{ id: 'task-1', blocks: [{ id: 'block-1', header: { date: '2026-09-01' } }] }];
+  const confirmed = [{ id: 'task-1', blocks: [{ id: 'block-1', header: { date: '2026-09-02' } }] }];
+  const latestLocal = [{ id: 'task-1', blocks: [{ id: 'block-1', header: { date: '2026-09-03' } }] }];
+
+  // This is the old failure: B has reached the cloud but C still compares to
+  // A, so the merge treats B as a competing change and discards C.
+  const staleBaseline = mergeWorkspaceFieldChanges(
+    { tasks: latestLocal }, { tasks: before }, { tasks: confirmed },
+  );
+  assert.deepEqual(staleBaseline.conflicts, ['tasks[task-1].blocks[block-1].header.date']);
+  assert.deepEqual(staleBaseline.fields.tasks, confirmed);
+
+  // Queue confirmation must advance C's baseline to B before its next flush.
+  const rebased = mergeWorkspaceFieldChanges(
+    { tasks: latestLocal }, { tasks: confirmed }, { tasks: confirmed },
+  );
+  assert.deepEqual(rebased.conflicts, []);
+  assert.deepEqual(rebased.fields.tasks, latestLocal);
 });
 
 test('sync runtime keeps nested phases ordered and ignores stale completions', () => {
