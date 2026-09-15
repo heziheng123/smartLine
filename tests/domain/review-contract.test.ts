@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeReview } from '../../functions/_lib/reviews.ts';
 import { appendTextSegment, appendVoiceSegment, completeDailyReview, createDailyReview } from '../../src/review/model.ts';
+import { normalizeDailyReview } from '../../src/review/repository.ts';
 import { validateAiCandidates } from '../../functions/_lib/reviewAi.ts';
 
 test('review persistence contract drops untrusted audio fields', () => {
@@ -38,4 +39,19 @@ test('voice metadata can sync but original audio cannot enter D1', () => {
   assert.equal(normalized.inputSegments[0]?.type, 'voice');
   assert.equal(JSON.stringify(normalized).includes('audioBase64'), false);
   assert.equal(JSON.stringify(normalized).includes('must-not-reach-d1'), false);
+});
+
+test('older review records missing new arrays still open safely', () => {
+  const review = createDailyReview('2026-09-14', '2026-09-14T08:00:00.000Z') as unknown as Record<string, unknown>;
+  delete review.inputSegments;
+  delete review.completedVersions;
+  delete review.conflictSnapshots;
+  review.workingDraft = { ...(review.workingDraft as Record<string, unknown>), items: undefined };
+
+  const normalized = normalizeDailyReview(review);
+  assert.ok(normalized);
+  assert.deepEqual(normalized.inputSegments, []);
+  assert.deepEqual(normalized.completedVersions, []);
+  assert.deepEqual(normalized.conflictSnapshots, []);
+  assert.deepEqual(normalized.workingDraft.items, []);
 });

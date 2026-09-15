@@ -1,5 +1,5 @@
 import { createDedicatedStorage } from '@/utils/persistence';
-import type { DailyReview } from './model';
+import { createDailyReview, type DailyReview, type ReviewVersion } from './model';
 
 const storage = createDedicatedStorage('smart-line-review', 'reviews');
 const REVIEWS_KEY = 'daily-reviews-v1';
@@ -23,9 +23,35 @@ export interface ReviewOutboxJob {
   createdAt: string;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+function normalizeVersion(value: unknown, fallback: ReviewVersion): ReviewVersion {
+  if (!isRecord(value)) return fallback;
+  return { ...fallback, ...value, items: Array.isArray(value.items) ? value.items : [] } as ReviewVersion;
+}
+
+/** Older local and cloud records may predate a newly added optional review field. */
+export function normalizeDailyReview(value: unknown): DailyReview | null {
+  if (!isRecord(value) || typeof value.reviewDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.reviewDate)) return null;
+  const fallback = createDailyReview(value.reviewDate);
+  const workingDraft = normalizeVersion(value.workingDraft, fallback.workingDraft);
+  const completedVersions = Array.isArray(value.completedVersions)
+    ? value.completedVersions.map((version) => normalizeVersion(version, fallback.workingDraft))
+    : [];
+  return {
+    ...fallback,
+    ...value,
+    reviewStatus: value.reviewStatus === 'completed' ? 'completed' : 'draft',
+    inputSegments: Array.isArray(value.inputSegments) ? value.inputSegments : [],
+    workingDraft,
+    completedVersions,
+    conflictSnapshots: Array.isArray(value.conflictSnapshots) ? value.conflictSnapshots : [],
+  } as DailyReview;
+}
+
 export async function loadDailyReviews(): Promise<DailyReview[]> {
   const value = await storage.getItem<unknown>(REVIEWS_KEY);
-  return Array.isArray(value) ? value as DailyReview[] : [];
+  return Array.isArray(value) ? value.map(normalizeDailyReview).filter((review): review is DailyReview => Boolean(review)) : [];
 }
 
 export function saveDailyReviews(reviews: DailyReview[]): Promise<void> {
