@@ -6,14 +6,13 @@ import type { VoiceAudioRetention } from '@/review/model';
 interface VoiceCaptureButtonProps {
   disabled?: boolean;
   retention: VoiceAudioRetention;
-  onStarted: (segmentId: string) => Promise<void> | void;
-  onUnavailable: (segmentId: string) => Promise<void> | void;
+  onStarted: (segmentId: string) => void;
   onPaused: (audio: CapturedVoiceAudio) => Promise<void> | void;
   onFinished: (audio: CapturedVoiceAudio[]) => Promise<void> | void;
   onError: (message: string) => void;
 }
 
-export default function VoiceCaptureButton({ disabled, retention, onStarted, onUnavailable, onPaused, onFinished, onError }: VoiceCaptureButtonProps) {
+export default function VoiceCaptureButton({ disabled, retention, onStarted, onPaused, onFinished, onError }: VoiceCaptureButtonProps) {
   const capture = useRef<LocalOnlyAudioCapture | null>(null);
   const captured = useRef<CapturedVoiceAudio[]>([]);
   const channel = useRef<BroadcastChannel | null>(null);
@@ -33,14 +32,14 @@ export default function VoiceCaptureButton({ disabled, retention, onStarted, onU
   const start = async () => {
     const segmentId = `voice-segment-${crypto.randomUUID()}`;
     try {
-      await onStarted(segmentId);
       const next = new LocalOnlyAudioCapture(segmentId, retention);
+      // Request microphone access in the click handler before any async app work.
       await next.start();
+      onStarted(segmentId);
       capture.current = next;
       setState('recording');
       channel.current?.postMessage({ tabId: tabId.current, recording: true });
     } catch (error) {
-      await Promise.resolve(onUnavailable(segmentId));
       setState(captured.current.length ? 'paused' : 'idle');
       onError(error instanceof Error ? error.message : '无法开始录音，请改用文字输入。');
     }

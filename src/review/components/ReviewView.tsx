@@ -158,7 +158,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
       setStorageError(error instanceof Error ? error.message : '语音识别失败，请稍后重试。');
     } finally { setTranscribingSegmentId(null); }
   };
-  const beginVoice = async (segmentId: string) => {
+  const beginVoice = (segmentId: string) => {
     const base = reviewsRef.current?.find((item) => item.reviewDate === reviewDate) ?? createDailyReview(reviewDate);
     const next = appendVoiceSegment(base, {
       id: segmentId,
@@ -170,10 +170,6 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
       audio: { mimeType: 'audio/wav', durationMs: 0, chunkCount: 0, byteLength: 0, sampleRate: 16_000 },
     });
     update(next, false);
-  };
-  const markVoiceUnavailable = async (segmentId: string) => {
-    const base = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
-    if (base) update(setVoiceTranscriptionState(base, segmentId, 'audio_unavailable'), false);
   };
   const pauseVoice = async (audio: CapturedVoiceAudio) => {
     const base = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
@@ -239,7 +235,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
         <div><span className="review-card__eyebrow">直接输入</span><h2>先把今天发生的事记下来</h2><p>输入会立即保存到本机；保存为记录后，整理不会改写原文。</p></div>
         <textarea value={sourceText} onChange={(event) => updateSourceText(event.target.value)} placeholder="随便写写今天做了什么、哪里没做好、接下来怎么调整。" />
         <div className="review-voice-settings"><label><input type="checkbox" checked={voiceConsent} onChange={(event) => { setVoiceConsent(event.target.checked); localStorage.setItem('smart-line-review-voice-consent-v1', event.target.checked ? 'accepted' : ''); }} />我知晓：仅在点击“说完了”后，录音才会一次性发送给语音服务转写；原始音频不会同步到云端。</label><label>本机音频<select value={audioRetention} onChange={(event) => { const value = event.target.value as VoiceAudioRetention; setAudioRetention(value); localStorage.setItem('smart-line-review-audio-retention', value); }}><option value="delete_after_transcription">转写确认后删除</option><option value="keep_7_days">保留 7 天</option><option value="keep_30_days">保留 30 天</option></select></label></div>
-        <div className="review-source-actions"><button type="button" className="review-button review-button--primary" onClick={saveSource} disabled={!sourceText.trim()}><Save size={16} />保存为记录</button><VoiceCaptureButton disabled={!voiceConsent} retention={audioRetention} onStarted={beginVoice} onUnavailable={markVoiceUnavailable} onPaused={pauseVoice} onFinished={finishVoice} onError={setStorageError} /></div>
+        <div className="review-source-actions"><button type="button" className="review-button review-button--primary" onClick={saveSource} disabled={!sourceText.trim()}><Save size={16} />保存为记录</button><VoiceCaptureButton disabled={!voiceConsent} retention={audioRetention} onStarted={beginVoice} onPaused={pauseVoice} onFinished={finishVoice} onError={setStorageError} /></div>
       </section>
 
       <section className="review-card">
