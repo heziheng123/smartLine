@@ -9,3 +9,7 @@ SMARTLINE_SESSION_SECRET=replace_with_at_least_32_random_characters
 # 可选：只允许 localhost 绕过 GitHub 登录，不得用于正式部署。
 AUTH_ALLOW_DEV_BYPASS=false
 DEV_AUTH_USER_ID=local-development-user
+
+# 文字复盘 AI。仅在 Pages Function 环境中读取，绝不以 VITE_ 前缀暴露到客户端。
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL=deepseek-flash

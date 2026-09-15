@@ -71,6 +71,7 @@ const VIEW_LABEL: Record<AppModule, string> = {
   'life-map': '人生地图',
   timeline: '项目规划',
   'daily-schedule': '今日',
+  'daily-review': '复盘',
   'week-matrix': '本周',
   ebb: '复习',
   'knowledge-graph': '知识',
