@@ -1,10 +1,10 @@
 import { type ReactNode } from 'react';
-import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network, NotebookPen } from 'lucide-react';
+import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
 import { MIND_MAP_ENABLED } from '@/mindMap/config';
 
-export type AppModule = 'life-map' | 'timeline' | 'daily-review' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph' | 'mind-map';
+export type AppModule = 'life-map' | 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph' | 'mind-map';
 
 interface ToolbarProps {
   currentView: AppModule;
@@ -18,7 +18,6 @@ const NAV_ITEMS: { module: AppModule; label: string; phoneLabel: string; icon: R
     : [{ module: 'life-map' as const, label: '人生地图', phoneLabel: '人生', icon: <Map size={18} /> }]),
   { module: 'timeline', label: '项目规划', phoneLabel: '项目', icon: <CalendarDays size={18} /> },
   { module: 'daily-schedule', label: '每日安排', phoneLabel: '今日', icon: <CalendarClock size={18} /> },
-  { module: 'daily-review', label: '每日复盘', phoneLabel: '复盘', icon: <NotebookPen size={18} /> },
   { module: 'week-matrix', label: '周矩阵', phoneLabel: '本周', icon: <LayoutGrid size={18} /> },
   { module: 'ebb', label: '艾宾浩斯复习', phoneLabel: '复习', icon: <BrainCircuit size={18} /> },
   { module: 'knowledge-graph', label: '知识大盘', phoneLabel: '知识', icon: <Network size={18} /> },

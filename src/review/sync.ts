@@ -1,4 +1,4 @@
-import type { DailyReview } from './model';
+import { mergeDailyReviews, type DailyReview } from './model';
 import {
   loadReviewOutbox,
   loadReviewSyncStates,
@@ -36,17 +36,18 @@ export async function enqueueReviewSync(review: DailyReview): Promise<Record<str
   });
 }
 
-export async function resolveReviewConflict(review: DailyReview): Promise<Record<string, ReviewSyncState>> {
+export async function resolveReviewConflict(review: DailyReview): Promise<{ states: Record<string, ReviewSyncState>; review: DailyReview }> {
   return serialize(async () => {
   const [jobs, states] = await Promise.all([loadReviewOutbox(), loadReviewSyncStates()]);
   const current = states[review.id];
-  if (!current?.remoteReview || current.serverRevision === null) return states;
+  if (!current?.remoteReview || current.serverRevision === null) return { states, review };
+  const merged = mergeDailyReviews(review, current.remoteReview);
   const job: ReviewOutboxJob = {
-    operationId: newOperationId(), review, baseRevision: current.serverRevision, attempts: 0, createdAt: new Date().toISOString(),
+    operationId: newOperationId(), review: merged, baseRevision: current.serverRevision, attempts: 0, createdAt: new Date().toISOString(),
   };
   const nextStates = { ...states, [review.id]: { serverRevision: current.serverRevision, status: 'sync_pending' as const } };
   await Promise.all([saveReviewOutbox([...jobs.filter((item) => item.review.id !== review.id), job]), saveReviewSyncStates(nextStates)]);
-  return nextStates;
+  return { states: nextStates, review: merged };
   });
 }
 
@@ -101,4 +102,19 @@ export async function structureReview(review: DailyReview): Promise<import('./mo
   const data = await response.json() as { candidates?: import('./model').AiReviewItem[] };
   if (!data.candidates) throw new Error('AI 未返回可用整理结果。');
   return data.candidates;
+}
+
+export interface VoiceTranscriptReceipt { transcript: string; operationId: string; providerLogId?: string; review: DailyReview; serverRevision: number }
+
+export interface PersonalTerm { from: string; to: string }
+
+export async function transcribeVoiceSegment(reviewDate: string, segmentId: string, audio: Blob, force = false, terms: PersonalTerm[] = []): Promise<VoiceTranscriptReceipt> {
+  const operationId = force ? `transcribe-${segmentId}-${crypto.randomUUID()}` : `transcribe-${segmentId}`;
+  const form = new FormData();
+  form.set('segmentId', segmentId); form.set('operationId', operationId); form.set('audio', audio, `${segmentId}.wav`);
+  form.set('terms', JSON.stringify(terms.slice(0, 30)));
+  const response = await fetch(`/api/reviews/${encodeURIComponent(reviewDate)}/transcribe`, { method: 'POST', body: form });
+  const data = await response.json().catch(() => null) as VoiceTranscriptReceipt | { error?: string } | null;
+  if (!response.ok || !data || !('transcript' in data) || typeof data.transcript !== 'string' || typeof data.operationId !== 'string' || !('review' in data) || !('serverRevision' in data) || typeof data.serverRevision !== 'number') throw new Error(data && 'error' in data && data.error ? data.error : '语音识别暂时不可用。');
+  return data;
 }

@@ -13,3 +13,8 @@ DEV_AUTH_USER_ID=local-development-user
 # 文字复盘 AI。仅在 Pages Function 环境中读取，绝不以 VITE_ 前缀暴露到客户端。
 DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_MODEL=deepseek-flash
+
+# 语音复盘 ASR。填写新火山引擎控制台密钥即可；可选资源 ID 保持默认值。
+# 这些值只由 Pages Function 读取，客户端与 D1 均不会保存原始音频。
+VOLCENGINE_ASR_API_KEY=your_volcengine_asr_api_key
+VOLCENGINE_ASR_RESOURCE_ID=volc.bigasr.auc_turbo

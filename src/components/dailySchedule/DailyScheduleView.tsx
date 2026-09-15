@@ -6,6 +6,7 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import '@/styles/daily-schedule.css';
+import '@/styles/daily-review.css';
 import { addDays, formatDate, todayStr } from '@/utils/dateSafe';
 import { projectTasksForDate, reviewTasksForDate } from '@/domain/dailyTaskProjection';
 import {
@@ -16,6 +17,7 @@ import {
   ArrowLeft,
   CalendarCheck2,
   CalendarClock,
+  NotebookPen,
   RotateCcw,
   Settings2,
   X,
@@ -88,6 +90,7 @@ import {
   takeDailyWeekReturnContext,
   type WeekMatrixContext,
 } from '@/services/actionBridge';
+import ReviewView from '@/review/components/ReviewView';
 
 const formatPlanningMinutes = (minutes: number): string => {
   if (minutes < 60) return `${minutes} 分钟`;
@@ -135,6 +138,7 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
   const [dailyPlanFeedback, setDailyPlanFeedback] = useState<string | null>(null);
   const [poolPreference, setPoolPreference] = useState<'auto' | 'open' | 'closed'>('auto');
   const [isCompactLayout, setIsCompactLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const openReviewAdjustmentDetails = useCallback(() => {
     try { sessionStorage.setItem(REVIEW_ADJUSTMENT_INTENT_KEY, 'daily-plan'); } catch { /* optional storage */ }
@@ -148,6 +152,13 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);
+
+  useEffect(() => {
+    if (!reviewOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setReviewOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [reviewOpen]);
 
   useEffect(() => setPoolPreference('auto'), [selectedDate]);
 
@@ -1077,6 +1088,9 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             </div>
           </div>
           <div className="ds-header-right ui-workspace-header__actions">
+            <button type="button" className="ds-header-btn" onClick={() => setReviewOpen(true)}>
+              <NotebookPen size={15} />每日复盘
+            </button>
             <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日负荷规划">
               <CalendarCheck2 size={15} />明日负荷规划
             </button>
@@ -1307,6 +1321,13 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             }}
             onClose={() => setDailyPlanOpen(false)}
           />
+        )}
+        {reviewOpen && (
+          <div className="ds-review-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
+            <section className="ds-review-dialog" role="dialog" aria-modal="true" aria-label={`${selectedDate}每日复盘`}>
+              <ReviewView targetDate={selectedDate} onClose={() => setReviewOpen(false)} />
+            </section>
+          </div>
         )}
       </div>
   );

@@ -9,6 +9,26 @@ export interface TextInputSegment {
   text: string;
 }
 
+export type VoiceTranscriptionState = 'recording' | 'interrupted' | 'waiting_transcription' | 'transcribing' | 'transcribed' | 'retryable_failed' | 'audio_unavailable';
+export type VoiceAudioRetention = 'delete_after_transcription' | 'keep_7_days' | 'keep_30_days';
+
+export interface VoiceInputSegment {
+  id: string;
+  type: 'voice';
+  clientSeq: number;
+  capturedAt: string;
+  originDeviceId: string;
+  audioStorageScope: 'local_only';
+  audioRetention: VoiceAudioRetention;
+  transcriptionState: VoiceTranscriptionState;
+  audio: { mimeType: 'audio/wav'; durationMs: number; chunkCount: number; byteLength: number; sampleRate: number };
+  asrText?: string;
+  correctedText?: string;
+  providerReceipt?: { operationId: string; providerLogId?: string };
+}
+
+export type InputSegment = TextInputSegment | VoiceInputSegment;
+
 export interface ReviewItem {
   itemId: string;
   section: ReviewSection;
@@ -30,6 +50,14 @@ export interface ReviewVersion {
   completedAt?: string;
 }
 
+export interface ReviewConflictSnapshot {
+  id: string;
+  createdAt: string;
+  localItems: ReviewItem[];
+  remoteItems: ReviewItem[];
+  message: string;
+}
+
 export interface DailyReview {
   id: string;
   reviewDate: string;
@@ -39,9 +67,10 @@ export interface DailyReview {
   reviewStatus: ReviewStatus;
   activeCompletedVersionId?: string;
   workingDraftVersionId: string;
-  inputSegments: TextInputSegment[];
+  inputSegments: InputSegment[];
   workingDraft: ReviewVersion;
   completedVersions: ReviewVersion[];
+  conflictSnapshots: ReviewConflictSnapshot[];
   createdAt: string;
   updatedAt: string;
 }
@@ -84,6 +113,7 @@ export function createDailyReview(reviewDate: string, now = new Date().toISOStri
       createdAt: now,
     },
     completedVersions: [],
+    conflictSnapshots: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -115,6 +145,79 @@ export function appendTextSegment(review: DailyReview, text: string, now = new D
   };
 }
 
+export function appendVoiceSegment(
+  review: DailyReview,
+  voice: Omit<VoiceInputSegment, 'clientSeq' | 'capturedAt'>,
+  now = new Date().toISOString(),
+): DailyReview {
+  return {
+    ...change(review, now, (draft) => ({ ...draft })),
+    inputSegments: [...review.inputSegments, { ...voice, clientSeq: review.inputSegments.length + 1, capturedAt: now }],
+  };
+}
+
+export function updateVoiceAudio(
+  review: DailyReview,
+  segmentId: string,
+  audio: VoiceInputSegment['audio'],
+  transcriptionState: VoiceTranscriptionState,
+  now = new Date().toISOString(),
+): DailyReview {
+  const voice = review.inputSegments.find((segment): segment is VoiceInputSegment => segment.id === segmentId && segment.type === 'voice');
+  if (!voice) return review;
+  return {
+    ...change(review, now, (draft) => ({ ...draft })),
+    inputSegments: review.inputSegments.map((segment) => segment.id === segmentId && segment.type === 'voice' ? { ...segment, audio, transcriptionState } : segment),
+  };
+}
+
+export function setVoiceTranscriptionState(
+  review: DailyReview,
+  segmentId: string,
+  transcriptionState: VoiceTranscriptionState,
+  now = new Date().toISOString(),
+): DailyReview {
+  const voice = review.inputSegments.find((segment): segment is VoiceInputSegment => segment.id === segmentId && segment.type === 'voice');
+  if (!voice || voice.transcriptionState === transcriptionState) return review;
+  return {
+    ...change(review, now, (draft) => ({ ...draft })),
+    inputSegments: review.inputSegments.map((segment) => segment.id === segmentId && segment.type === 'voice' ? { ...segment, transcriptionState } : segment),
+  };
+}
+
+export function applyVoiceTranscript(
+  review: DailyReview,
+  segmentId: string,
+  asrText: string,
+  providerReceipt: VoiceInputSegment['providerReceipt'],
+  now = new Date().toISOString(),
+): DailyReview {
+  const text = asrText.trim();
+  const voice = review.inputSegments.find((segment): segment is VoiceInputSegment => segment.id === segmentId && segment.type === 'voice');
+  if (!voice || !text) return review;
+  return {
+    ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked) })),
+    inputSegments: review.inputSegments.map((segment) => segment.id === segmentId && segment.type === 'voice'
+      ? { ...segment, transcriptionState: 'transcribed' as const, asrText: text, providerReceipt }
+      : segment),
+  };
+}
+
+export function updateVoiceTranscript(review: DailyReview, segmentId: string, text: string, now = new Date().toISOString()): DailyReview {
+  const correctedText = text.trim();
+  const voice = review.inputSegments.find((segment): segment is VoiceInputSegment => segment.id === segmentId && segment.type === 'voice');
+  if (!voice || !correctedText || voice.correctedText === correctedText) return review;
+  return {
+    ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked) })),
+    inputSegments: review.inputSegments.map((segment) => segment.id === segmentId && segment.type === 'voice' ? { ...segment, correctedText } : segment),
+  };
+}
+
+export function effectiveSegmentText(segment: InputSegment): string | null {
+  if (segment.type === 'text') return segment.text;
+  return segment.correctedText ?? segment.asrText ?? null;
+}
+
 export function addReviewItem(review: DailyReview, section: ReviewSection, text: string, now = new Date().toISOString()): DailyReview {
   const trimmed = text.trim();
   if (!trimmed) return review;
@@ -135,11 +238,20 @@ export function addReviewItem(review: DailyReview, section: ReviewSection, text:
 
 export function updateTextSegment(review: DailyReview, segmentId: string, text: string, now = new Date().toISOString()): DailyReview {
   const trimmed = text.trim();
-  const segment = review.inputSegments.find((item) => item.id === segmentId);
+  const segment = review.inputSegments.find((item): item is TextInputSegment => item.id === segmentId && item.type === 'text');
   if (!segment || !trimmed || segment.text === trimmed) return review;
   return {
     ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked) })),
     inputSegments: review.inputSegments.map((item) => item.id === segmentId ? { ...item, text: trimmed } : item),
+  };
+}
+
+export function withdrawLastInputSegment(review: DailyReview, now = new Date().toISOString()): DailyReview {
+  const removed = review.inputSegments.at(-1);
+  if (!removed) return review;
+  return {
+    ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked || !item.sourceSegmentIds.includes(removed.id)) })),
+    inputSegments: review.inputSegments.slice(0, -1),
   };
 }
 
@@ -199,6 +311,42 @@ export function completeDailyReview(review: DailyReview, now = new Date().toISOS
     activeCompletedVersionId: snapshot.id,
     completedVersions: [...review.completedVersions, snapshot],
     workingDraft: { ...review.workingDraft, versionNo: versionNo + 1, baseRevision: review.revision + 1 },
+    updatedAt: now,
+  };
+}
+
+function uniqueById<T extends { id: string }>(items: T[]): T[] {
+  return [...new Map(items.map((item) => [item.id, item])).values()];
+}
+
+/** Merges independent device edits without discarding either device's raw evidence. */
+export function mergeDailyReviews(local: DailyReview, remote: DailyReview, now = new Date().toISOString()): DailyReview {
+  const localItems = new Map(local.workingDraft.items.map((item) => [item.itemId, item]));
+  const remoteItems = new Map(remote.workingDraft.items.map((item) => [item.itemId, item]));
+  const overlappingEdits = [...localItems].filter(([id, item]) => {
+    const peer = remoteItems.get(id);
+    return peer && peer.text !== item.text && item.userEdited && peer.userEdited;
+  }).map(([id]) => id);
+  const mergedSegments = uniqueById([...remote.inputSegments, ...local.inputSegments])
+    .sort((left, right) => left.capturedAt.localeCompare(right.capturedAt) || left.id.localeCompare(right.id))
+    .map((segment, index) => ({ ...segment, clientSeq: index + 1 }));
+  const mergedItems = [...new Map([...remote.workingDraft.items, ...local.workingDraft.items].map((item) => [item.itemId, item])).values()].map((item) => {
+    const peer = remoteItems.get(item.itemId);
+    const own = localItems.get(item.itemId);
+    return peer && own && peer.text !== own.text ? (peer.updatedAt > own.updatedAt ? peer : own) : item;
+  });
+  const snapshots = [...local.conflictSnapshots, ...remote.conflictSnapshots];
+  if (overlappingEdits.length) snapshots.push({ id: newId('review-conflict'), createdAt: now, localItems: overlappingEdits.map((id) => ({ ...localItems.get(id)! })), remoteItems: overlappingEdits.map((id) => ({ ...remoteItems.get(id)! })), message: '两台设备修改了同一条人工编辑；已保留较新的工作稿，另一版本可从冲突快照追溯。' });
+  const completedVersions = uniqueById([...remote.completedVersions, ...local.completedVersions]);
+  const winner = local.updatedAt >= remote.updatedAt ? local : remote;
+  return {
+    ...winner,
+    id: local.id,
+    revision: Math.max(local.revision, remote.revision) + 1,
+    inputSegments: mergedSegments,
+    workingDraft: { ...winner.workingDraft, items: mergedItems, baseRevision: Math.max(local.revision, remote.revision) },
+    completedVersions,
+    conflictSnapshots: uniqueById(snapshots).slice(-20),
     updatedAt: now,
   };
 }

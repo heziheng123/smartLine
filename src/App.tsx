@@ -37,7 +37,6 @@ import '@/styles/timeline.css';
 import '@/styles/smart-block.css';
 import '@/styles/lazy-dialog.css';
 import '@/styles/motion-system.css';
-import '@/styles/daily-review.css';
 
 type DialogType = 'task' | 'group' | 'note' | 'milestone' | 'sync' | null;
 type TimelineNavigateDetail = {
@@ -64,7 +63,6 @@ function mapLiveblocksStatus(status: string | undefined, isStorageLoading = fals
 const loadTimelineView = () => import('@/components/TimelineView');
 const loadEbbView = () => import('@/ebb/components/EbbView');
 const loadDailyScheduleView = () => import('@/components/dailySchedule/DailyScheduleView');
-const loadReviewView = () => import('@/review/components/ReviewView');
 const loadProjectDocumentView = () => import('@/components/smartBlock/ProjectDocumentView');
 const loadWeekMatrixView = () => import('@/components/smartBlock/WeekMatrixView');
 const loadKnowledgeGraphView = () => import('@/graph/components/KnowledgeGraphView').then((module) => ({ default: module.KnowledgeGraphView }));
@@ -98,7 +96,6 @@ const EbbView = React.lazy(async () => {
   }
 });
 const DailyScheduleView = React.lazy(loadDailyScheduleView);
-const ReviewView = React.lazy(loadReviewView);
 const ProjectDocumentView = React.lazy(loadProjectDocumentView);
 const WeekMatrixView = React.lazy(loadWeekMatrixView);
 const KnowledgeGraphView = React.lazy(loadKnowledgeGraphView);
@@ -158,7 +155,6 @@ const APP_VIEW_ORDER: AppModule[] = [
   'life-map',
   'timeline',
   'daily-schedule',
-  'daily-review',
   'week-matrix',
   'ebb',
   'knowledge-graph',
@@ -992,7 +988,6 @@ const App: React.FC = () => {
     if (view === 'timeline') { void loadTimelineView(); return; }
     if (view === 'ebb') { void loadEbbView(); return; }
     if (view === 'daily-schedule') { void loadDailyScheduleView(); return; }
-    if (view === 'daily-review') { void loadReviewView(); return; }
     if (view === 'week-matrix') { void loadWeekMatrixView(); return; }
     if (view === 'knowledge-graph') { void loadKnowledgeGraphView(); return; }
     if (view === 'mind-map' && MIND_MAP_ENABLED) void loadMindMapWorkspace();
@@ -1007,7 +1002,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`tl-app ${isPhoneLayout ? 'tl-app--phone' : ''} ${(currentView === 'life-map' || currentView === 'daily-review' || currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph' || currentView === 'mind-map') ? 'tl-app--ebb' : ''} ${currentView === 'timeline' && drawerTask ? 'tl-app--project-split-open' : ''}`}>
+    <div className={`tl-app ${isPhoneLayout ? 'tl-app--phone' : ''} ${(currentView === 'life-map' || currentView === 'ebb' || currentView === 'daily-schedule' || currentView === 'week-matrix' || currentView === 'knowledge-graph' || currentView === 'mind-map') ? 'tl-app--ebb' : ''} ${currentView === 'timeline' && drawerTask ? 'tl-app--project-split-open' : ''}`}>
       <Toolbar
         currentView={currentView}
         onViewChange={handleViewChange}
@@ -1024,12 +1019,12 @@ const App: React.FC = () => {
 
       {/* 提升并统一的 Suspense 边界，避免视图切换时频繁销毁重建导致闪烁 */}
       <ViewErrorBoundary
-        viewName={currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-review' ? '每日复盘' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'mind-map' ? '地图工作区' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
+        viewName={currentView === 'ebb' ? '艾宾浩斯复习' : currentView === 'daily-schedule' ? '每日安排' : currentView === 'knowledge-graph' ? '知识大盘' : currentView === 'mind-map' ? '地图工作区' : currentView === 'week-matrix' ? '周矩阵' : '项目规划'}
         resetKey={currentView}
         safeModeKey={currentView === 'ebb' ? 'smart-line-ebb-safe-mode' : undefined}
         onExit={currentView === 'timeline' ? undefined : () => handleViewChange('timeline')}
       >
-      {isPhoneLayout && !phoneFullView && currentView !== 'mind-map' && currentView !== 'daily-review' ? (
+      {isPhoneLayout && !phoneFullView && currentView !== 'mind-map' ? (
         <PhoneWorkspace
           currentView={currentView}
           tasks={weekMatrixTasks}
@@ -1044,12 +1039,6 @@ const App: React.FC = () => {
         />
       ) : (
       <AnimatePresence mode="popLayout" initial={false} custom={viewMotionContext}>
-        {currentView === 'daily-review' && (
-          <motion.div key="daily-review" id="view-daily-review" role="tabpanel" className="tl-app-split tl-app-split--ebb" custom={viewMotionContext} variants={VIEW_MOTION_VARIANTS} initial="initial" animate="animate" exit="exit">
-            <div className="tl-app-main"><Suspense fallback={<ViewFallback />}><ReviewView /></Suspense></div>
-          </motion.div>
-        )}
-
         {currentView === 'ebb' && (
           <motion.div 
             key="ebb"

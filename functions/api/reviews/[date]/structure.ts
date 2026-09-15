@@ -33,7 +33,7 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
   } catch {
     return jsonResponse({ error: 'Invalid JSON body.' }, 400);
   }
-  if (!review || !operationId || review.inputSegments.length === 0) return jsonResponse({ error: 'Review needs at least one text segment or valid operation id.' }, 400);
+  if (!review || !operationId || !review.inputSegments.some((segment) => segment.type === 'text' || segment.correctedText || segment.asrText)) return jsonResponse({ error: 'Review needs at least one transcribed text segment or valid operation id.' }, 400);
   const database = env.REVIEW_DB;
   const previous = await database.prepare('SELECT status, response_json FROM review_ai_operations WHERE user_id = ? AND review_date = ? AND operation_id = ?').bind(session.githubUserId, params.date, operationId).first<AiOperationRow>();
   if (previous?.status === 'completed' && previous.response_json) {
