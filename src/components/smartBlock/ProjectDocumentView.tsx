@@ -773,14 +773,14 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                   className="pdv-expand-option pdv-expand-option--icon"
                   onClick={() => { setShowBatchEdit(true); setShowExpandMenu(false); }}
                 >
-                  <ListTree size={14} /> 批量编辑
+                  <ListTree size={14} /> 编辑任务详情
                 </button>
                 <button
                   type="button"
                   className="pdv-expand-option pdv-expand-option--icon"
                   onClick={() => { setShowProjectShift(true); setShowExpandMenu(false); }}
                 >
-                  <CalendarRange size={14} /> 项目整体顺延
+                  <CalendarRange size={14} /> 批量调整排期
                 </button>
               </div>
             )}

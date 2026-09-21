@@ -24,6 +24,7 @@ export interface ProjectShiftPlan {
   previousTask: Task;
   nextTask: Task;
   tasks: ProjectShiftTaskPreview[];
+  projectRangeMoved: boolean;
   skippedCompleted: number;
   skippedUnscheduled: number;
   skippedInvalidDates: number;
@@ -75,17 +76,31 @@ const nextSlotOrder = (items: ScheduledItem[], timeSlot: TimeSlot): number =>
       : highest
   ), -1) + 1;
 
-function shiftBlock(block: Block, days: number, previews: ProjectShiftTaskPreview[], taskId: string): Block {
+const canShiftBlock = (block: SmartTaskBlock): boolean => {
+  const { header } = block;
+  const date = header.date;
+  if (!date) return false;
+  return !header.isCompleted && !header.isArchived && !header.frozenAt
+    && isValidCalendarDate(date) && !isContinuousTask(block);
+};
+
+function shiftBlock(
+  block: Block,
+  days: number,
+  previews: ProjectShiftTaskPreview[],
+  taskId: string,
+  selectedBlockIds?: ReadonlySet<string>,
+): Block {
   if (block.type !== 'smart-task') return block;
   const { header } = block;
-  if (header.isCompleted || header.isArchived || header.frozenAt || !header.date
-    || !isValidCalendarDate(header.date) || isContinuousTask(block)) return block;
-  const toDate = addDays(header.date, days);
+  const fromDate = header.date;
+  if (!fromDate || !canShiftBlock(block) || (selectedBlockIds && !selectedBlockIds.has(block.id))) return block;
+  const toDate = addDays(fromDate, days);
   previews.push({
     blockId: block.id,
     sourceId: getProjectBlockSourceId(taskId, block.id),
     title: header.title,
-    fromDate: header.date,
+    fromDate,
     toDate,
     deadline: header.deadline,
     exceedsDeadline: Boolean(header.deadline && toDate > header.deadline),
@@ -100,7 +115,7 @@ function shiftBlock(block: Block, days: number, previews: ProjectShiftTaskPrevie
   };
 }
 
-export function planProjectShift(task: Task, rawDays: number): ProjectShiftPlan {
+export function planProjectShift(task: Task, rawDays: number, selectedBlockIds?: readonly string[]): ProjectShiftPlan {
   if (!Number.isInteger(rawDays) || rawDays === 0 || Math.abs(rawDays) > 365) {
     throw new Error('顺延天数必须是 -365 到 365 之间的非零整数');
   }
@@ -110,12 +125,15 @@ export function planProjectShift(task: Task, rawDays: number): ProjectShiftPlan 
   }
 
   const smartBlocks = getProjectTaskBlocks(task.blocks ?? []);
+  const selected = selectedBlockIds ? new Set(selectedBlockIds) : undefined;
+  const eligibleBlockIds = smartBlocks.filter(canShiftBlock).map((block) => block.id);
+  const projectRangeMoved = !selected || eligibleBlockIds.every((id) => selected.has(id));
   const tasks: ProjectShiftTaskPreview[] = [];
-  const nextBlocks = (task.blocks ?? []).map((block) => shiftBlock(block, days, tasks, task.id));
+  const nextBlocks = (task.blocks ?? []).map((block) => shiftBlock(block, days, tasks, task.id, selected));
   const nextTask: Task = {
     ...task,
-    start: addDays(task.start, days),
-    end: addDays(task.end, days),
+    start: projectRangeMoved ? addDays(task.start, days) : task.start,
+    end: projectRangeMoved ? addDays(task.end, days) : task.end,
     blocks: nextBlocks,
     blocksUpdatedAt: new Date().toISOString(),
   };
@@ -125,6 +143,7 @@ export function planProjectShift(task: Task, rawDays: number): ProjectShiftPlan 
     previousTask: task,
     nextTask,
     tasks,
+    projectRangeMoved,
     skippedCompleted: smartBlocks.filter((block) => block.header.isCompleted).length,
     skippedArchived: smartBlocks.filter((block) => block.header.isArchived).length,
     skippedUnscheduled: smartBlocks.filter((block) => !block.header.isCompleted && !block.header.isArchived && !block.header.frozenAt && !block.header.date).length,

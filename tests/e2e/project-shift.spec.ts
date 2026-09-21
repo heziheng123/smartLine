@@ -54,9 +54,9 @@ test('project shift moves eligible tasks and daily placements as one undoable op
   await page.getByTitle('项目规划').click();
   await page.locator('.tl-seg').filter({ hasText: 'Shift Project' }).first().click();
   await page.getByTitle('更多操作').click();
-  await page.getByRole('button', { name: '项目整体顺延' }).click();
+  await page.getByRole('button', { name: '批量调整排期' }).click();
 
-  const dialog = page.getByRole('dialog', { name: '项目整体顺延' });
+  const dialog = page.getByRole('dialog', { name: '批量调整排期' });
   await expect(dialog).toContainText('1个任务将顺延');
   await expect(dialog).toContainText('1个每日安排将移动');
   await expect(dialog).toContainText('1个截止日期风险');
@@ -90,4 +90,22 @@ test('project shift moves eligible tasks and daily placements as one undoable op
     const project = data?.tasks?.find((task) => task.id === 'shift-project');
     return { start: project?.start, date: project?.blocks.find((block) => block.id === 'shift-standard')?.header.date };
   }).toEqual({ start: today, date: today });
+});
+
+test('batch schedule adjustment previews selection and both directions before applying', async ({ page }) => {
+  await page.getByTitle('项目规划').click();
+  await page.locator('.tl-seg').filter({ hasText: 'Shift Project' }).first().click();
+  await page.getByTitle('更多操作').click();
+  await page.getByRole('button', { name: '批量调整排期' }).click();
+
+  const dialog = page.getByRole('dialog', { name: '批量调整排期' });
+  const taskCheckbox = dialog.locator('.psd-task-list input[type="checkbox"]');
+  await expect(taskCheckbox).toBeChecked();
+  await dialog.getByRole('button', { name: '取消全选' }).click();
+  await expect(taskCheckbox).not.toBeChecked();
+  await expect(dialog.getByRole('button', { name: '确认顺延 1 天' })).toBeDisabled();
+  await taskCheckbox.check();
+  await dialog.getByRole('button', { name: '提前 1 天' }).click();
+  await expect(dialog).toContainText('1个任务将提前');
+  await expect(dialog.getByRole('button', { name: '确认提前 1 天' })).toBeEnabled();
 });

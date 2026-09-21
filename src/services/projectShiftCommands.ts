@@ -52,10 +52,10 @@ function resolveProject(taskId: string): Task | undefined {
   return getUniqueTasks(state.tasks, state.groups).find((task) => task.id === taskId);
 }
 
-export function previewProjectShift(taskId: string, days: number): ProjectShiftPreview {
+export function previewProjectShift(taskId: string, days: number, selectedBlockIds?: readonly string[]): ProjectShiftPreview {
   const task = resolveProject(taskId);
   if (!task) throw new Error('项目已经不存在，请刷新后重试');
-  const project = planProjectShift(task, days);
+  const project = planProjectShift(task, days, selectedBlockIds);
   const daily = planProjectDailyShift(useDailyScheduleStore.getState().schedules, project.tasks);
   return { project, daily };
 }
@@ -74,7 +74,7 @@ function restoreProjectShift(payload: ProjectShiftUndoPayload): void | string {
   daily.restoreSourceSnapshots(payload.dailySnapshots);
 }
 
-export function shiftProjectSchedule(taskId: string, days: number): ProjectShiftCommandResult {
+export function shiftProjectSchedule(taskId: string, days: number, selectedBlockIds?: readonly string[]): ProjectShiftCommandResult {
   const timeline = useTimelineStore.getState();
   const daily = useDailyScheduleStore.getState();
   if (!timeline.isHydrated || !daily.isHydrated) {
@@ -83,7 +83,7 @@ export function shiftProjectSchedule(taskId: string, days: number): ProjectShift
 
   let preview: ProjectShiftPreview;
   try {
-    preview = previewProjectShift(taskId, days);
+    preview = previewProjectShift(taskId, days, selectedBlockIds);
   } catch (cause) {
     return { ok: false, error: cause instanceof Error ? cause.message : '无法生成项目顺延方案' };
   }

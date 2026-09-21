@@ -252,7 +252,7 @@
   backdrop-filter: blur(3px);
 }
 .psd-dialog {
-  width: min(620px, 100%);
+  width: min(680px, 100%);
   max-height: min(760px, 92vh);
   overflow: auto;
   border: 1px solid #e2e8f0;
@@ -291,6 +291,8 @@
 }
 .psd-header > button:hover { background: #f1f5f9; }
 .psd-body { display: grid; gap: 14px; padding: 20px; }
+.psd-adjustment { display: grid; gap: 8px; }
+.psd-adjustment > span { color: #475569; font-size: 12px; font-weight: 700; }
 .psd-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .psd-presets > button,
 .psd-presets label {
@@ -304,6 +306,23 @@
 .psd-presets > button.is-active { border-color: #818cf8; background: #eef2ff; color: #4338ca; font-weight: 700; }
 .psd-presets label { display: flex; align-items: center; gap: 6px; padding: 5px 9px; }
 .psd-presets input { width: 58px; border: none; outline: none; color: #111827; font: inherit; text-align: center; }
+.psd-task-section { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 11px; }
+.psd-task-section-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid #eef2f7; background: #f8fafc; }
+.psd-task-section-header > div { display: grid; gap: 2px; }
+.psd-task-section-header strong { color: #334155; font-size: 13px; }
+.psd-task-section-header small { color: #64748b; font-size: 12px; }
+.psd-task-section-header button { border: 0; padding: 4px 6px; color: #4f46e5; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.psd-task-section-header button:disabled { cursor: default; opacity: .45; }
+.psd-task-list { display: grid; max-height: 216px; overflow-y: auto; }
+.psd-task-list label { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 48px; padding: 0 13px; border-bottom: 1px solid #f1f5f9; cursor: pointer; }
+.psd-task-list label:last-child { border-bottom: 0; }
+.psd-task-list label.is-selected { background: #f5f6ff; }
+.psd-task-list input { width: 15px; height: 15px; margin: 0; accent-color: #4f46e5; }
+.psd-task-list span { display: grid; min-width: 0; gap: 2px; }
+.psd-task-list strong { overflow: hidden; color: #334155; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.psd-task-list small { color: #64748b; font-size: 11px; }
+.psd-task-list em { color: #c2410c; font-size: 11px; font-style: normal; white-space: nowrap; }
+.psd-empty { margin: 0; padding: 20px 13px; color: #64748b; font-size: 12px; text-align: center; }
 .psd-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .psd-summary > div { display: grid; gap: 2px; padding: 14px; border-radius: 11px; background: #f8fafc; }
 .psd-summary strong { color: #111827; font-size: 22px; }

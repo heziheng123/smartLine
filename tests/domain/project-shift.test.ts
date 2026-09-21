@@ -39,8 +39,23 @@ test('project shift moves only scheduled unfinished standard tasks and the proje
   assert.equal(plan.skippedUnscheduled, 1);
   assert.equal(plan.skippedContinuous, 1);
   assert.equal(plan.skippedInvalidDates, 1);
+  assert.equal(plan.projectRangeMoved, true);
   const headers = plan.nextTask.blocks.filter((block) => block.type === 'smart-task').map((block) => block.header);
   assert.deepEqual(headers.map((header) => header.date), ['2026-08-04', '2026-08-01', undefined, '2026-08-01', '2026-02-30']);
+});
+
+test('a selected task shift leaves the project range and unrelated tasks unchanged', () => {
+  const selectedProject: Task = {
+    ...project,
+    blocks: [...project.blocks, { type: 'smart-task', id: 'second-standard', body: '', header: { title: '另一项普通任务', tag: '默认', tagColor: '#000', date: '2026-08-05', duration: 30, isCompleted: false } }],
+  };
+  const plan = planProjectShift(selectedProject, -2, ['standard']);
+  assert.equal(plan.projectRangeMoved, false);
+  assert.equal(plan.shiftedStart, '2026-08-01');
+  assert.equal(plan.shiftedEnd, '2026-08-10');
+  assert.deepEqual(plan.tasks.map((task) => [task.blockId, task.toDate]), [['standard', '2026-07-31']]);
+  const headers = plan.nextTask.blocks.filter((block) => block.type === 'smart-task').map((block) => block.header.date);
+  assert.deepEqual(headers, ['2026-07-31', '2026-08-01', undefined, '2026-08-01', '2026-02-30', '2026-08-05']);
 });
 
 test('daily placements follow the shifted task and conflicting time blocks fall back to a slot', () => {

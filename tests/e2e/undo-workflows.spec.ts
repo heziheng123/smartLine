@@ -112,7 +112,7 @@ test('batch edit can explicitly clear a schedule date and keep the task unschedu
   await page.locator('.tl-seg').filter({ hasText: 'E2E项目' }).first().click();
 
   await page.getByTitle('更多操作').click();
-  await page.getByRole('button', { name: '批量编辑' }).click();
+  await page.getByRole('button', { name: '编辑任务详情' }).click();
   const dialog = page.locator('.bi-dialog');
   const taskRow = dialog.locator('tbody tr').first();
   const scheduleDate = taskRow.locator('input[type="date"]').first();
@@ -120,7 +120,7 @@ test('batch edit can explicitly clear a schedule date and keep the task unschedu
   await dialog.getByRole('button', { name: /确认修改/ }).click();
 
   await page.getByTitle('更多操作').click();
-  await page.getByRole('button', { name: '批量编辑' }).click();
+  await page.getByRole('button', { name: '编辑任务详情' }).click();
   const unchangedDate = page.locator('.bi-dialog tbody tr').first().locator('input[type="date"]').first();
   await expect(unchangedDate).toHaveValue(testDate);
   await unchangedDate.fill('');
@@ -130,7 +130,7 @@ test('batch edit can explicitly clear a schedule date and keep the task unschedu
   await expect(projectCard).toContainText('未排期');
 
   await page.getByTitle('更多操作').click();
-  await page.getByRole('button', { name: '批量编辑' }).click();
+  await page.getByRole('button', { name: '编辑任务详情' }).click();
   const reopenedRow = page.locator('.bi-dialog tbody tr').first();
   await expect(reopenedRow.locator('input[type="date"]').first()).toHaveValue('');
   await page.locator('.bi-dialog').getByRole('button', { name: '取消' }).click();
@@ -315,7 +315,7 @@ test('project quantity task suggests a daily target and keeps its daily duration
   await page.getByRole('dialog', { name: '记录今日完成量' }).getByRole('button', { name: '取消' }).click();
 
   await page.getByTitle('更多操作').click();
-  await page.getByRole('button', { name: '批量编辑' }).click();
+  await page.getByRole('button', { name: '编辑任务详情' }).click();
   const batchDialog = page.locator('.bi-dialog');
   const batchDialogLayout = await batchDialog.evaluate((element) => {
     const rect = element.getBoundingClientRect();
