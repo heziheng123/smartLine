@@ -29,6 +29,9 @@ export interface MindMapHistoryEntry {
   zOrderAfter: string[] | null;
   settingsBefore: MindMapSettings | null;
   settingsAfter: MindMapSettings | null;
+  mindMapRootIdBefore: string | null | undefined;
+  mindMapRootIdAfter: string | null | undefined;
+  mindMapRootChanged: boolean;
   lifeMapChanged: boolean;
   lifeMapBefore: LifeMapData | null;
   lifeMapAfter: LifeMapData | null;
@@ -78,10 +81,13 @@ export function createHistoryEntry(
     || before.settings.background !== after.settings.background
     || before.settings.selectionMode !== after.settings.selectionMode
     || before.settings.theme !== after.settings.theme
+    || before.settings.mapTheme !== after.settings.mapTheme
+    || before.settings.mode !== after.settings.mode
   );
+  const mindMapRootChanged = before.mindMapRootId !== after.mindMapRootId;
   const lifeMapChanged = !sameValue(before.lifeMap, after.lifeMap)
     || !sameValue(before.lifeMapMigration, after.lifeMapMigration);
-  if (nodes.length === 0 && edges.length === 0 && sections.length === 0 && groups.length === 0 && projectReferences.length === 0 && timelineSections.length === 0 && !orderChanged && !settingsChanged && !lifeMapChanged) return null;
+  if (nodes.length === 0 && edges.length === 0 && sections.length === 0 && groups.length === 0 && projectReferences.length === 0 && timelineSections.length === 0 && !orderChanged && !settingsChanged && !mindMapRootChanged && !lifeMapChanged) return null;
   return {
     label,
     nodes,
@@ -94,6 +100,9 @@ export function createHistoryEntry(
     zOrderAfter: orderChanged ? after.zOrder : null,
     settingsBefore: settingsChanged ? before.settings : null,
     settingsAfter: settingsChanged ? after.settings : null,
+    mindMapRootIdBefore: mindMapRootChanged ? before.mindMapRootId : undefined,
+    mindMapRootIdAfter: mindMapRootChanged ? after.mindMapRootId : undefined,
+    mindMapRootChanged,
     lifeMapChanged,
     lifeMapBefore: lifeMapChanged ? before.lifeMap : null,
     lifeMapAfter: lifeMapChanged ? after.lifeMap : null,
@@ -136,6 +145,9 @@ export function applyHistoryEntry(
     settings: direction === 'undo'
       ? entry.settingsBefore ?? document.settings
       : entry.settingsAfter ?? document.settings,
+    mindMapRootId: entry.mindMapRootChanged
+      ? (direction === 'undo' ? entry.mindMapRootIdBefore : entry.mindMapRootIdAfter)
+      : document.mindMapRootId,
     lifeMap: entry.lifeMapChanged
       ? (direction === 'undo' ? entry.lifeMapBefore : entry.lifeMapAfter)
       : document.lifeMap,

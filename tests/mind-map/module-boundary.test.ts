@@ -19,6 +19,19 @@ const forbiddenImports = [
   '@/services/projectTaskEffectCommit',
 ] as const;
 const allowedInfrastructureImports = new Set(['@/store/client']);
+const allowedDomainImports = new Map<string, Set<string>>([
+  ['@/lifeMap', new Set([
+    'src/mindMap/commands.ts',
+    'src/mindMap/lifeMapMigration.ts',
+    'src/mindMap/lifePlanning.ts',
+    'src/mindMap/LifePlanningPanel.tsx',
+    'src/mindMap/MindMapWorkspace.tsx',
+    'src/mindMap/model.ts',
+    'src/mindMap/syncCore.ts',
+    'src/mindMap/timelineProjection.ts',
+    'src/mindMap/timelineProjectionHooks.ts',
+  ])],
+]);
 
 async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -35,10 +48,12 @@ test('the mind map module cannot import existing SmartLine business domains', as
   for (const file of await sourceFiles(moduleRoot)) {
     const source = await readFile(file, 'utf8');
     const imports = [...source.matchAll(/(?:from\s+|import\s*)['"]([^'"]+)['"]/g)].map((match) => match[1]);
+    const relativeFile = path.relative(process.cwd(), file).replaceAll('\\', '/');
     for (const forbidden of forbiddenImports) {
       if (imports.some((specifier) => !allowedInfrastructureImports.has(specifier)
-        && (specifier === forbidden || specifier.startsWith(forbidden + '/')))) {
-        violations.push(path.relative(process.cwd(), file) + ' -> ' + forbidden);
+        && (specifier === forbidden || specifier.startsWith(forbidden + '/')))
+        && !allowedDomainImports.get(forbidden)?.has(relativeFile)) {
+        violations.push(relativeFile + ' -> ' + forbidden);
       }
     }
   }

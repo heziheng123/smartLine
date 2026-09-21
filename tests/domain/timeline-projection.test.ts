@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timelineVisibleItems } from '../../src/mindMap/timelineProjection.ts';
 import { createTimelineSection } from '../../src/mindMap/model.ts';
-import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, xToDate } from '../../src/mindMap/timelineLayout.ts';
+import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, timelineRangeForScale, xToDate } from '../../src/mindMap/timelineLayout.ts';
 
 test('project timeline is a live projection with temporal row culling', () => {
   const projectData = {
@@ -76,6 +76,12 @@ test('adaptive timeline ticks remain readable across year, season, month, and we
   assert.deepEqual(labels('2026-08-10', '2026-08-16', 'week'), ['Mon:10', 'Tue:11', 'Wed:12', 'Thu:13', 'Fri:14', 'Sat:15', 'Sun:16']);
   assert.equal(formatTimelineRange('2026-03-01', '2026-06-30'), '2026 年 3–6 月');
   assert.equal(formatTimelineRange('2026-08-01', '2026-08-31'), '2026 年 8 月');
+});
+
+test('changing timeline scale changes the visible calendar window', () => {
+  assert.deepEqual(timelineRangeForScale('long-range', '2026-09-20'), { start: '2026-01-01', end: '2026-12-31' });
+  assert.deepEqual(timelineRangeForScale('month', '2026-09-20'), { start: '2026-09-01', end: '2026-09-30' });
+  assert.deepEqual(timelineRangeForScale('week', '2026-09-20'), { start: '2026-09-14', end: '2026-09-20' });
 });
 
 test('every timeline element shares one reversible coordinate system after resize', () => {

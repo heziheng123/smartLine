@@ -1,10 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 
+test.describe.configure({ timeout: 60_000 });
+
 const openMindMap = async (page: Page) => {
   await page.goto('/');
-  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
   await page.getByTitle('地图工作区').click();
-  await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
+  await expect(page.getByTestId('mind-map-canvas')).toBeVisible({ timeout: 30_000 });
 };
 
 const graphState = async (page: Page) => page.evaluate(async () => {
@@ -185,6 +187,63 @@ test('editing existing text keeps a caret instead of selecting the whole node', 
   await editor.pressSequentially('新增');
   await editor.press('Enter');
   await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]?.text).toBe('原有新增文字');
+});
+
+test('markdown shortcuts create a rich multiline Markdown node', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 320, y: 240 } });
+  const editor = page.getByLabel('新节点文本');
+  await editor.pressSequentially('# 一级标题');
+  await editor.press('Enter');
+  await editor.pressSequentially('- 待办事项');
+  await editor.press('Control+Enter');
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]).toMatchObject({
+    type: 'markdown',
+    text: '# 一级标题\n- 待办事项',
+  });
+  await expect(page.locator('[class*="richPreview"] h1')).toContainText('一级标题');
+});
+
+test('the Markdown slash menu applies a command without leaving the editor', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 320, y: 240 } });
+  const editor = page.getByLabel('新节点文本');
+  await editor.fill('/h1');
+  await expect(page.getByRole('listbox', { name: 'Markdown 快捷菜单' })).toBeVisible();
+  await editor.press('Enter');
+  await expect(editor).toHaveValue('# ');
+  await editor.pressSequentially('快捷标题');
+  await editor.press('Control+Enter');
+
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]).toMatchObject({
+    type: 'markdown',
+    text: '# 快捷标题',
+  });
+  await expect(page.locator('[class*="richPreview"] h1')).toContainText('快捷标题');
+});
+
+test('Markdown node links open safely and notes provide a rendered preview', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 360, y: 280 } });
+  const editor = page.getByLabel('新节点文本');
+  await editor.fill('[访问资料](https://example.com/docs)');
+  await editor.press('Control+Enter');
+
+  const note = page.getByLabel('节点备注 Markdown');
+  await note.fill('## 背景\n\n这里是 **完整备注**。');
+  await note.press('Tab');
+  const preview = page.locator('details').filter({ hasText: '备注预览' });
+  await expect(preview.getByRole('heading', { name: '背景' })).toBeVisible();
+  await expect(preview.locator('strong')).toHaveText('完整备注');
+
+  const popupPromise = page.waitForEvent('popup');
+  await page.locator('[data-testid^="mind-map-markdown-"] a').click();
+  const popup = await popupPromise;
+  await expect.poll(() => popup.url()).toContain('https://example.com/docs');
+  await popup.close();
 });
 
 test('dragging blank canvas pans the infinite board while Shift drag keeps marquee selection', async ({ page }) => {

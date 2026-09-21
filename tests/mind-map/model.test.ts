@@ -142,3 +142,30 @@ test('task metadata is normalized and snapshots retain restorable documents', ()
   assert.equal(snapshots.length, 12);
   assert.equal(restoreMindMapSnapshot(snapshots[0])?.id, document.id);
 });
+
+test('semantic presentation, icon and tags survive normalization with bounded values', () => {
+  const document = createEmptyMindMapDocument('语义节点', { id: 'semantic-doc', now: 1 });
+  document.nodes.topic = {
+    ...node('topic'),
+    semantic: 'summary',
+    icon: '💡',
+    tags: [' 重要 ', '重要', '待确认', 'x'.repeat(40)],
+    marker: 'flag',
+    progress: 120,
+  };
+  document.settings.mapTheme = 'warm';
+
+  const normalized = normalizeMindMapDocument(document);
+  assert.equal(normalized?.nodes.topic.semantic, 'summary');
+  assert.equal(normalized?.nodes.topic.icon, '💡');
+  assert.deepEqual(normalized?.nodes.topic.tags, ['重要', '待确认', 'x'.repeat(24)]);
+  assert.equal(normalized?.nodes.topic.marker, 'flag');
+  assert.equal(normalized?.nodes.topic.progress, 100);
+  assert.equal(normalized?.settings.mapTheme, 'warm');
+
+  const invalid = normalizeMindMapDocument({
+    ...document,
+    nodes: { topic: { ...document.nodes.topic, semantic: 'unsupported' } },
+  });
+  assert.equal(invalid?.nodes.topic.semantic, 'auto');
+});

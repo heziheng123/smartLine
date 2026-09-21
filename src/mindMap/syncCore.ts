@@ -33,6 +33,7 @@ export interface MindMapSyncPatch {
   documentId: string;
   title?: string;
   settings?: MindMapSettings;
+  mindMapRootId?: string | null;
   zOrder?: string[];
   lifeMap?: LifeMapData | null;
   lifeMapMigration?: LifeMapMigrationMeta | null;
@@ -214,6 +215,7 @@ export function mergeMindMapDocuments(
     timelineSections: mergeEntities(base.timelineSections, local.timelineSections, remote.timelineSections),
     lifeMap: mergeValue(base.lifeMap, local.lifeMap, remote.lifeMap, preferLocal),
     lifeMapMigration: mergeValue(base.lifeMapMigration, local.lifeMapMigration, remote.lifeMapMigration, preferLocal),
+    mindMapRootId: mergeValue(base.mindMapRootId, local.mindMapRootId, remote.mindMapRootId, preferLocal),
     zOrder: mergeOrder(base.zOrder, local.zOrder, remote.zOrder, preferLocal),
     viewport: local.viewport,
     settings: mergeValue(base.settings, local.settings, remote.settings, preferLocal),
@@ -255,6 +257,7 @@ export function createMindMapSyncPatch(
     documentId: current.id,
     ...(same(base.title, current.title) ? {} : { title: current.title }),
     ...(same(base.settings, current.settings) ? {} : { settings: current.settings }),
+    ...(same(base.mindMapRootId, current.mindMapRootId) ? {} : { mindMapRootId: current.mindMapRootId ?? null }),
     ...(same(base.zOrder, current.zOrder) ? {} : { zOrder: current.zOrder }),
     ...(same(base.lifeMap, current.lifeMap) ? {} : { lifeMap: current.lifeMap }),
     ...(same(base.lifeMapMigration, current.lifeMapMigration) ? {} : { lifeMapMigration: current.lifeMapMigration }),
@@ -271,6 +274,7 @@ export function createMindMapSyncPatch(
 export function isMindMapSyncPatchEmpty(patch: MindMapSyncPatch): boolean {
   return patch.title === undefined
     && patch.settings === undefined
+    && patch.mindMapRootId === undefined
     && patch.zOrder === undefined
     && patch.lifeMap === undefined
     && patch.lifeMapMigration === undefined
@@ -289,6 +293,7 @@ export function applyMindMapSyncPatch(document: MindMapDocument, patch: MindMapS
     ...document,
     title: patch.title ?? document.title,
     settings: patch.settings ?? document.settings,
+    mindMapRootId: patch.mindMapRootId === undefined ? document.mindMapRootId : patch.mindMapRootId,
     zOrder: patch.zOrder ?? document.zOrder,
     lifeMap: patch.lifeMap === undefined ? document.lifeMap : patch.lifeMap,
     lifeMapMigration: patch.lifeMapMigration === undefined ? document.lifeMapMigration : patch.lifeMapMigration,
@@ -315,6 +320,7 @@ export function mindMapSyncSignature(document: MindMapDocument): string {
     timelineSections: document.timelineSections,
     lifeMap: document.lifeMap,
     lifeMapMigration: document.lifeMapMigration,
+    mindMapRootId: document.mindMapRootId,
     zOrder: document.zOrder,
     settings: document.settings,
   }));

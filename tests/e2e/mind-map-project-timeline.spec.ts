@@ -72,7 +72,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
 });
 
-test('project task bars update canonical dates and offer compensation undo', async ({ page }) => {
+test('project timelines stay readable by keeping individual tasks in task views', async ({ page }) => {
   await page.getByRole('button', { name: '时间规划', exact: true }).click();
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();
@@ -81,30 +81,9 @@ test('project task bars update canonical dates and offer compensation undo', asy
     expect(box?.width).toBeGreaterThan(70);
   }
   await selectTimelineProjects(page, ['Map Project']);
-
-  const taskBar = page.locator('[title^="Map Task ·"]').first();
-  const box = await taskBar.boundingBox();
-  if (!box) throw new Error('Task bar was not rendered.');
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 5 });
-  await page.mouse.up();
-
-  await expect(page.getByRole('status')).toContainText('项目任务日期已更新');
-  await expect.poll(() => taskDates(page)).toEqual({ start: '2026-08-06', end: '2026-08-12' });
-
-  await page.getByRole('button', { name: '撤销项目日期' }).click();
+  await expect(page.locator('[title^="Map Project ·"]').first()).toBeVisible();
+  await expect(page.locator('[title^="Map Task ·"]')).toHaveCount(0);
   await expect.poll(() => taskDates(page)).toEqual({ start: '2026-08-02', end: '2026-08-08' });
-
-  const endHandle = page.getByRole('button', { name: '调整Map Task结束日期' });
-  const handleBox = await endHandle.boundingBox();
-  if (!handleBox) throw new Error('Task end handle was not rendered.');
-  await page.mouse.move(handleBox.x + 2, handleBox.y + handleBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(handleBox.x + 74, handleBox.y + handleBox.height / 2, { steps: 4 });
-  await page.mouse.up();
-
-  await expect.poll(() => taskDates(page)).toEqual({ start: '2026-08-02', end: '2026-08-11' });
 });
 
 test('moving or deleting a timeline never mutates its projected project data', async ({ page }) => {
@@ -197,7 +176,8 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
 
   await timeline.click();
   await selectTimelineProjects(page, ['Map Project']);
-  await expect(page.locator('[title^="Map Task ·"]').first()).toBeVisible();
+  await expect(page.locator('[title^="Map Project ·"]').first()).toBeVisible();
+  await expect(page.locator('[title^="Map Task ·"]')).toHaveCount(0);
 
   await page.evaluate(async () => {
     const { useMindMapStore } = await import('/src/mindMap/testing.ts');

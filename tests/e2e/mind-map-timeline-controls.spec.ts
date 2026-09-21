@@ -11,6 +11,14 @@ test('timeline visibility controls respond and the header remains draggable', as
 
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();
+  const scale = page.getByLabel('时间线尺度');
+  await scale.selectOption('week');
+  await expect(scale).toHaveValue('week');
+  const range = await Promise.all([
+    page.getByLabel('时间线开始日期').inputValue(),
+    page.getByLabel('时间线结束日期').inputValue(),
+  ]);
+  expect((Date.parse(`${range[1]}T00:00:00Z`) - Date.parse(`${range[0]}T00:00:00Z`)) / 86_400_000).toBe(6);
   const stages = page.getByRole('button', { name: '显示阶段' });
   await expect(stages).toHaveAttribute('aria-pressed', 'true');
   await stages.click();

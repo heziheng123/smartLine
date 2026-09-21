@@ -142,6 +142,21 @@ export const timelineScaleLabel = (scale: 'long-range' | 'month' | 'week') => (
   scale === 'long-range' ? '长期' : scale === 'month' ? '月' : '周'
 );
 
+/** Returns the calendar window shown when the user switches timeline scale. */
+export function timelineRangeForScale(
+  scale: 'long-range' | 'month' | 'week',
+  anchor: string,
+) {
+  const { year, month } = splitDate(anchor);
+  if (scale === 'long-range') return { start: `${year}-01-01`, end: `${year}-12-31` };
+  if (scale === 'month') {
+    const end = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return { start: `${year}-${String(month).padStart(2, '0')}-01`, end: `${year}-${String(month).padStart(2, '0')}-${end}` };
+  }
+  const start = addDays(anchor, -(getDayOfWeek(anchor) + 6) % 7);
+  return { start, end: addDays(start, 6) };
+}
+
 export function recommendedTimelineHeight(items: Array<{ kind: string; shape: 'range' | 'marker'; start?: string }>): number {
   const stages = items.filter((item) => item.kind === 'stage').length;
   const milestoneStacks = new Map<string, number>();

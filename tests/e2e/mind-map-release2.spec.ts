@@ -18,8 +18,12 @@ const addNode = async (page: Page, x: number, y: number, text: string) => {
   if (await closeInspector.isVisible()) await closeInspector.click();
   await canvas.dblclick({ position: { x, y } });
   await page.getByLabel('新节点文本').fill(text);
-  await page.getByLabel('新节点文本').press('Enter');
-  await page.getByLabel('新节点文本').press('Escape');
+  if (await page.getByLabel('新节点类型').inputValue() === 'markdown') {
+    await page.getByLabel('新节点文本').press('Control+Enter');
+  } else {
+    await page.getByLabel('新节点文本').press('Enter');
+    await page.getByLabel('新节点文本').press('Escape');
+  }
 };
 
 const graphState = async (page: Page) => page.evaluate(async () => {

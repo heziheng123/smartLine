@@ -3,13 +3,15 @@ import test from 'node:test';
 import {
   parseMindMapDocumentJson,
   parseMindMapMarkdownOutline,
+  isMindMapMarkdownOutline,
   serializeMindMapDocument,
   serializeMindMapMarkdownOutline,
 } from '../../src/mindMap/importExport.ts';
-import { findMindMapTreeRoot, layoutMindMapBranch, layoutMindMapTree } from '../../src/mindMap/layout.ts';
+import { isMindMapMarkdown } from '../../src/mindMap/richText.ts';
+import { findMindMapTreeRoot, layoutMindMap, layoutMindMapBranch, layoutMindMapTree, treeChildIds } from '../../src/mindMap/layout.ts';
 import { layoutMindMapTreeInWorker } from '../../src/mindMap/layoutWorkerClient.ts';
 import { repairMindMapTreeForest, validateMindMapTreeForest } from '../../src/mindMap/treeValidation.ts';
-import { resolveBranchThemeColors, resolveTreeEdgeColor } from '../../src/mindMap/visualTheme.ts';
+import { resolveBranchThemeColors, resolveMindMapNodePresentation, resolveTreeEdgeColor } from '../../src/mindMap/visualTheme.ts';
 import {
   createEmptyMindMapDocument,
   createMindMapEdge,
@@ -38,6 +40,30 @@ test('tree layout orders connected levels without overlap', () => {
   assert.ok(topToBottom.nodes.left.y > topToBottom.nodes.root.y);
   const bottomToTop = layoutMindMapTree(document, 'bottom-top');
   assert.ok(bottomToTop.nodes.left.y < bottomToTop.nodes.root.y);
+});
+
+test('mind-map mode places ordered first-level branches on both sides of its centre topic', () => {
+  const document = createEmptyMindMapDocument('双侧脑图', { id: 'mind-map', now: 1 });
+  const root = createTextMindMapNode({ x: 240, y: 160 }, { id: 'root', now: 1 });
+  const left = { ...createTextMindMapNode({ x: 0, y: 0 }, { id: 'left', now: 1 }), branchSide: 'left' as const };
+  const right = { ...createTextMindMapNode({ x: 0, y: 0 }, { id: 'right', now: 1 }), branchSide: 'right' as const };
+  const leaf = createTextMindMapNode({ x: 0, y: 0 }, { id: 'leaf', now: 1 });
+  document.nodes = { root, left, right, leaf };
+  document.edges = {
+    right: createMindMapEdge('root', 'right', { id: 'right', now: 1, relationship: 'tree', order: 1 }),
+    left: createMindMapEdge('root', 'left', { id: 'left', now: 1, relationship: 'tree', order: 0 }),
+    leaf: createMindMapEdge('left', 'leaf', { id: 'leaf', now: 1, relationship: 'tree', order: 0 }),
+  };
+  document.zOrder = ['root', 'left', 'right', 'leaf'];
+  document.settings.mode = 'mind-map';
+  document.mindMapRootId = 'root';
+
+  const layout = layoutMindMap(document);
+  assert.deepEqual(treeChildIds(layout, 'root'), ['left', 'right']);
+  assert.ok(layout.nodes.left.x < layout.nodes.root.x);
+  assert.ok(layout.nodes.right.x > layout.nodes.root.x);
+  assert.ok(layout.nodes.leaf.x < layout.nodes.left.x);
+  assert.deepEqual([layout.nodes.root.x, layout.nodes.root.y], [240, 160]);
 });
 
 test('tree layout reserves cross-axis space for complete subtrees', () => {
@@ -124,6 +150,25 @@ test('tree edges inherit their first-level branch color unless explicitly overri
   assert.equal(resolveTreeEdgeColor(englishReading, colors), '#123456');
 });
 
+test('brain-map templates assign distinct stable colors and semantic components', () => {
+  const document = createEmptyMindMapDocument('主题模板', { id: 'theme-preset', now: 1 });
+  for (const id of ['root', 'first', 'second', 'leaf']) {
+    document.nodes[id] = createTextMindMapNode({ x: 0, y: 0 }, { id, text: id, now: 1 });
+  }
+  document.edges = {
+    first: createMindMapEdge('root', 'first', { id: 'first', now: 1, relationship: 'tree', order: 0 }),
+    second: createMindMapEdge('root', 'second', { id: 'second', now: 1, relationship: 'tree', order: 1 }),
+    leaf: createMindMapEdge('first', 'leaf', { id: 'leaf', now: 1, relationship: 'tree', order: 0 }),
+  };
+  document.settings.mapTheme = 'rainbow';
+  const colors = resolveBranchThemeColors(document);
+  assert.notEqual(colors.get('first'), colors.get('second'));
+  assert.equal(colors.get('leaf'), colors.get('first'));
+  assert.equal(resolveMindMapNodePresentation(document.nodes.root, 0, colors.get('root')!, 'rainbow').fontSize, 17);
+  assert.equal(resolveMindMapNodePresentation({ ...document.nodes.leaf, semantic: 'branch' }, 2, colors.get('leaf')!, 'rainbow').topic, false);
+  assert.equal(resolveMindMapNodePresentation({ ...document.nodes.leaf, semantic: 'subtopic' }, 1, colors.get('leaf')!, 'professional').topic, true);
+});
+
 test('JSON export and import round-trip while invalid data is rejected', () => {
   const document = createEmptyMindMapDocument('往返', { id: 'doc', now: 1 });
   document.nodes.a = createTextMindMapNode({ x: 10, y: 20 }, { id: 'a', text: '节点', now: 1 });
@@ -141,6 +186,17 @@ test('Markdown outlines import as trees and export in a stable outline form', ()
   assert.equal(Object.values(document.edges).filter((edge) => edge.relationship === 'tree').length, 4);
   assert.equal(serializeMindMapMarkdownOutline(document), '- 学习计划\n  - 英语\n    - 单词\n    - 阅读\n  - 数学\n');
   assert.throws(() => parseMindMapMarkdownOutline(' \n\t'), /没有可导入/);
+  assert.equal(isMindMapMarkdownOutline('# 标题\n- 分支'), true);
+  assert.equal(isMindMapMarkdownOutline('只有普通段落'), false);
+});
+
+test('Markdown export preserves explicit sibling order', () => {
+  const document = parseMindMapMarkdownOutline('# 计划\n- 第一项\n- 第二项\n');
+  const edges = Object.values(document.edges).filter((edge) => edge.sourceId === Object.values(document.nodes).find((node) => node.text === '计划')?.id);
+  assert.equal(edges.length, 2);
+  edges[0].order = 1;
+  edges[1].order = 0;
+  assert.equal(serializeMindMapMarkdownOutline(document), '- 计划\n  - 第二项\n  - 第一项\n');
 });
 
 test('Markdown import preserves task lists, quotes, tables, and code blocks', () => {
@@ -161,6 +217,13 @@ test('Markdown import preserves task lists, quotes, tables, and code blocks', ()
   assert.match(serialized, /> 这是一段引用\n\s*> 保留第二行/);
   assert.match(serialized, /\| 名称 \| 状态 \|\n\s*\| --- \| --- \|\n\s*\| 提纲 \| 进行中 \|/);
   assert.match(serialized, /```ts\n\s*const done = true;\n\s*```/);
+});
+
+test('markdown typing shortcuts identify both block and inline syntax', () => {
+  for (const source of ['# 一级标题', '- [ ] 待办', '> 引用', '```ts\nconst ok = true;', '| 列 | 值 |', '文本 **加粗**', '[链接](https://example.com)']) {
+    assert.equal(isMindMapMarkdown(source), true, source);
+  }
+  assert.equal(isMindMapMarkdown('普通节点文字'), false);
 });
 
 test('tree validation downgrades extra parents and cycles to references', () => {

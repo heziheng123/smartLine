@@ -30,6 +30,9 @@ test('v1 documents migrate to the current schema with containers and safe advanc
   document.sections[section.id] = section;
   document.groups[group.id] = group;
   document.zOrder = [node.id];
+  delete document.nodes.node.marker;
+  delete document.nodes.node.progress;
+  delete document.settings.mapTheme;
 
   const migrated = normalizeMindMapDocument(document);
   assert.ok(migrated);
@@ -37,6 +40,9 @@ test('v1 documents migrate to the current schema with containers and safe advanc
   assert.equal(migrated.nodes.node.type, 'url');
   assert.equal(migrated.nodes.node.link, null);
   assert.equal(migrated.nodes.node.parentSectionId, 'section');
+  assert.equal(migrated.nodes.node.marker, 'none');
+  assert.equal(migrated.nodes.node.progress, null);
+  assert.equal(migrated.settings.mapTheme, 'classic');
   assert.deepEqual(migrated.groups.group.memberIds, ['node']);
 });
 
@@ -88,12 +94,23 @@ test('orthogonal SVG export escapes user text and emits no executable markup', (
   const b = createTextMindMapNode({ x: 300, y: 100 }, { id: 'b', now: 1, text: 'B' });
   const edge = createMindMapEdge('a', 'b', { id: 'edge', now: 1 });
   document.nodes = { a, b };
+  document.nodes.b.marker = 'star';
+  document.nodes.b.priority = 'high';
+  document.nodes.b.progress = 55;
+  document.nodes.b.tags = ['重要'];
+  document.settings.mapTheme = 'rainbow';
   document.edges = { edge: { ...edge, type: 'orthogonal', controlPoints: [{ x: 150, y: 0 }, { x: 150, y: 100 }] } };
   document.zOrder = ['a', 'b'];
   const svg = serializeMindMapSvg(document);
   assert.match(svg, /&lt;script&gt;/);
   assert.doesNotMatch(svg, /<script|foreignObject|\son[a-z]+=/i);
   assert.match(svg, /L 150 0 L 150 100/);
+  assert.match(svg, /font-size="17"/);
+  assert.match(svg, /fill="#ef4444"/);
+  assert.match(svg, />★</);
+  assert.match(svg, />高</);
+  assert.match(svg, /height="3"/);
+  assert.match(svg, /#重要/);
 });
 
 test('rotated node hit testing uses its rotated geometry', () => {

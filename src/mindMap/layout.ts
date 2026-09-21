@@ -3,6 +3,58 @@ import { repairMindMapTreeForest } from './treeValidation';
 
 export type TreeDirection = 'left-right' | 'right-left' | 'top-bottom' | 'bottom-top';
 
+const orderedTreeEdges = (document: MindMapDocument, sourceId?: string) => {
+  const edges = Object.values(document.edges)
+  .filter((edge) => edge.relationship === 'tree'
+    && (sourceId === undefined || edge.sourceId === sourceId)
+    && Boolean(document.nodes[edge.sourceId])
+    && Boolean(document.nodes[edge.targetId]));
+  return edges.some((edge) => edge.order !== undefined) ? edges.sort((left, right) => (left.order ?? 0) - (right.order ?? 0)
+    || left.createdAt - right.createdAt
+    || left.id.localeCompare(right.id)) : edges;
+};
+
+export function treeChildIds(document: MindMapDocument, parentId: string): string[] {
+  return orderedTreeEdges(document, parentId).map((edge) => edge.targetId);
+}
+
+export function resolveMindMapRootId(document: MindMapDocument): string | null {
+  if (document.mindMapRootId && document.nodes[document.mindMapRootId]) return document.mindMapRootId;
+  const children = new Set(orderedTreeEdges(document).map((edge) => edge.targetId));
+  return document.zOrder.find((id) => document.nodes[id] && !children.has(id))
+    ?? Object.keys(document.nodes).find((id) => !children.has(id))
+    ?? null;
+}
+
+export function nextMindMapBranchSide(document: MindMapDocument, rootId: string): 'left' | 'right' {
+  const children = treeChildIds(document, rootId).map((id) => document.nodes[id]);
+  const left = children.filter((node) => node?.branchSide === 'left').length;
+  const right = children.filter((node) => node?.branchSide === 'right').length;
+  return left <= right ? 'left' : 'right';
+}
+
+export function prepareMindMapMode(document: MindMapDocument, requestedRootId?: string): MindMapDocument {
+  const rootId = requestedRootId && document.nodes[requestedRootId]
+    ? requestedRootId
+    : resolveMindMapRootId(document);
+  if (!rootId) return { ...document, settings: { ...document.settings, mode: 'mind-map' }, mindMapRootId: null };
+  let nodes = document.nodes;
+  let left = 0;
+  let right = 0;
+  for (const childId of treeChildIds(document, rootId)) {
+    const node = nodes[childId];
+    if (!node) continue;
+    const side = node.branchSide ?? (left <= right ? 'left' : 'right');
+    if (side === 'left') left += 1;
+    else right += 1;
+    if (node.branchSide !== side) {
+      if (nodes === document.nodes) nodes = { ...document.nodes };
+      nodes[childId] = { ...node, branchSide: side, updatedAt: Date.now() };
+    }
+  }
+  return { ...document, nodes, settings: { ...document.settings, mode: 'mind-map' }, mindMapRootId: rootId };
+}
+
 /** Returns the stable root of the tree containing a node without following reference edges. */
 export function findMindMapTreeRoot(document: MindMapDocument, nodeId: string): string {
   let rootId = nodeId;
@@ -28,8 +80,7 @@ export function layoutMindMapBranch(
   const root = document.nodes[rootId];
   if (!root) return document;
   const children = new Map<string, string[]>();
-  for (const edge of Object.values(document.edges)) {
-    if (edge.relationship === 'reference') continue;
+  for (const edge of orderedTreeEdges(document)) {
     const list = children.get(edge.sourceId) ?? [];
     list.push(edge.targetId);
     children.set(edge.sourceId, list);
@@ -78,8 +129,7 @@ export function layoutMindMapTree(
   if (nodeIds.length < 2) return document;
   const adjacency = new Map<string, string[]>();
   const indegree = new Map(nodeIds.map((id) => [id, 0]));
-  for (const edge of Object.values(document.edges)) {
-    if (!document.nodes[edge.sourceId] || !document.nodes[edge.targetId] || edge.relationship === 'reference') continue;
+  for (const edge of orderedTreeEdges(document)) {
     const list = adjacency.get(edge.sourceId) ?? [];
     list.push(edge.targetId);
     adjacency.set(edge.sourceId, list);
@@ -189,6 +239,52 @@ export function layoutMindMapTree(
     }
   }
   return { ...document, nodes };
+}
+
+/** Lays the direct branches of a centre topic to both sides while preserving every subtree. */
+export function layoutMindMap(document: MindMapDocument, requestedRootId?: string): MindMapDocument {
+  const prepared = prepareMindMapMode(document, requestedRootId);
+  const rootId = prepared.mindMapRootId;
+  if (!rootId) return prepared;
+  const root = prepared.nodes[rootId];
+  if (!root) return prepared;
+  const leftChildren = treeChildIds(prepared, rootId).filter((id) => prepared.nodes[id]?.branchSide === 'left');
+  const rightChildren = treeChildIds(prepared, rootId).filter((id) => prepared.nodes[id]?.branchSide !== 'left');
+  const nodes = { ...prepared.nodes };
+  for (const [childIds, direction] of [[leftChildren, 'right-left'], [rightChildren, 'left-right']] as const) {
+    if (!childIds.length) continue;
+    const included = new Set<string>([rootId]);
+    const pending = [...childIds];
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (included.has(id) || !prepared.nodes[id]) continue;
+      included.add(id);
+      pending.push(...treeChildIds(prepared, id));
+    }
+    const branch: MindMapDocument = {
+      ...prepared,
+      nodes: Object.fromEntries([...included].map((id) => [id, id === rootId
+        ? { ...prepared.nodes[id], locked: false, participatesInLayout: true }
+        : prepared.nodes[id]])),
+      edges: Object.fromEntries(orderedTreeEdges(prepared).filter((edge) => included.has(edge.sourceId)
+        && included.has(edge.targetId)
+        && (edge.sourceId !== rootId || childIds.includes(edge.targetId))).map((edge) => [edge.id, edge])),
+      zOrder: prepared.zOrder.filter((id) => included.has(id)),
+    };
+    const laidOut = layoutMindMapTree(branch, direction);
+    const laidOutRoot = laidOut.nodes[rootId];
+    if (!laidOutRoot) continue;
+    const offset = { x: root.x - laidOutRoot.x, y: root.y - laidOutRoot.y };
+    for (const [id, node] of Object.entries(laidOut.nodes)) {
+      if (id === rootId) continue;
+      nodes[id] = { ...node, x: node.x + offset.x, y: node.y + offset.y };
+    }
+  }
+  return { ...prepared, nodes };
+}
+
+export function layoutActiveMindMap(document: MindMapDocument, direction: TreeDirection = 'left-right'): MindMapDocument {
+  return document.settings.mode === 'mind-map' ? layoutMindMap(document) : layoutMindMapTree(document, direction);
 }
 
 export function alignMindMapNodes(

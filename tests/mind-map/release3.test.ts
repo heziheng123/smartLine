@@ -145,6 +145,19 @@ test('an unchanged document produces no queued patch', () => {
   assert.equal(emptyMindMapSyncBase(document).id, document.id);
 });
 
+test('brain-map theme settings and semantic badges synchronize', () => {
+  const base = documentWithNode('a', 1);
+  const current = {
+    ...base,
+    settings: { ...base.settings, mapTheme: 'professional' as const },
+    nodes: { a: { ...base.nodes.a, semantic: 'summary' as const, marker: 'idea' as const, progress: 45 } },
+    updatedAt: 2,
+  };
+  const replayed = applyMindMapSyncPatch(base, createMindMapSyncPatch(base, current));
+  assert.equal(replayed.settings.mapTheme, 'professional');
+  assert.deepEqual([replayed.nodes.a.semantic, replayed.nodes.a.marker, replayed.nodes.a.progress], ['summary', 'idea', 45]);
+});
+
 test('undoing a synchronized deletion emits an explicit same-id restore', () => {
   const base = documentWithNode('a', 1);
   const deleted = { ...base, nodes: {}, zOrder: [], updatedAt: 2 };

@@ -2,7 +2,7 @@ import { normalizeLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
 import { repairMindMapTreeForest } from './treeValidation';
 
-export const MIND_MAP_SCHEMA_VERSION = 9;
+export const MIND_MAP_SCHEMA_VERSION = 12;
 export const DEFAULT_DOCUMENT_TITLE = '未命名思维导图';
 
 export type MindMapSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -14,6 +14,11 @@ export type EdgeRelationship = 'tree' | 'reference';
 export type CanvasObjectType = 'node' | 'project-reference';
 export type MindMapTaskStatus = 'none' | 'todo' | 'doing' | 'done';
 export type MindMapPriority = 'none' | 'low' | 'medium' | 'high';
+export type MindMapMode = 'canvas' | 'mind-map';
+export type MindMapBranchSide = 'left' | 'right';
+export type MindMapNodeSemantic = 'auto' | 'topic' | 'branch' | 'subtopic' | 'summary' | 'note';
+export type MindMapMarker = 'none' | 'star' | 'flag' | 'question' | 'idea';
+export type MindMapVisualTheme = 'classic' | 'rainbow' | 'professional' | 'warm';
 
 export interface CanvasObjectRef {
   type: CanvasObjectType;
@@ -59,6 +64,13 @@ export interface MindMapNode {
   locked: boolean;
   participatesInLayout: boolean;
   collapsed: boolean;
+  /** Only direct children of the centre topic use this in mind-map mode. */
+  branchSide?: MindMapBranchSide | null;
+  semantic?: MindMapNodeSemantic;
+  icon?: string;
+  tags?: string[];
+  marker?: MindMapMarker;
+  progress?: number | null;
   note: string;
   taskStatus: MindMapTaskStatus;
   priority: MindMapPriority;
@@ -79,6 +91,8 @@ export interface MindMapEdge {
   direction: EdgeDirection;
   relationship: EdgeRelationship;
   label: string;
+  /** Stable sibling position for tree edges; references ignore it. */
+  order?: number;
   controlPoints: Array<{ x: number; y: number }>;
   style: EdgeStyle;
   createdAt: number;
@@ -161,6 +175,8 @@ export interface MindMapSettings {
   background: string;
   selectionMode: 'contain' | 'intersect';
   theme: 'light' | 'dark' | 'minimal';
+  mapTheme?: MindMapVisualTheme;
+  mode?: MindMapMode;
 }
 
 export interface LifeMapMigrationMeta {
@@ -184,6 +200,7 @@ export interface MindMapDocument {
   timelineSections: Record<string, TimelineSection>;
   lifeMap: LifeMapData | null;
   lifeMapMigration: LifeMapMigrationMeta | null;
+  mindMapRootId?: string | null;
   zOrder: string[];
   viewport: ViewportState;
   settings: MindMapSettings;
@@ -309,6 +326,12 @@ export function createMindMapNode(
     locked: false,
     participatesInLayout: true,
     collapsed: false,
+    branchSide: null,
+    semantic: 'auto',
+    icon: '',
+    tags: [],
+    marker: 'none',
+    progress: null,
     note: '',
     taskStatus: 'none',
     priority: 'none',
@@ -333,7 +356,7 @@ export const edgeTouchesCanvasObject = (edge: MindMapEdge, ref: CanvasObjectRef)
 export function createMindMapEdge(
   source: CanvasObjectRef | string,
   target: CanvasObjectRef | string,
-  options: { id?: string; now?: number; relationship?: EdgeRelationship } = {},
+  options: { id?: string; now?: number; relationship?: EdgeRelationship; order?: number } = {},
 ): MindMapEdge {
   const now = options.now ?? Date.now();
   const sourceRef = asCanvasObjectRef(source);
@@ -348,6 +371,7 @@ export function createMindMapEdge(
     direction: 'none',
     relationship: options.relationship === 'tree' && sourceRef.type === 'node' && targetRef.type === 'node' ? 'tree' : 'reference',
     label: '',
+    ...(options.order === undefined ? {} : { order: Math.max(0, Math.floor(options.order)) }),
     controlPoints: [],
     style: { ...DEFAULT_EDGE_STYLE },
     createdAt: now,
@@ -545,9 +569,10 @@ export function createEmptyMindMapDocument(
     timelineSections: {},
     lifeMap: null,
     lifeMapMigration: null,
+    mindMapRootId: null,
     zOrder: [],
     viewport: { x: 0, y: 0, scale: 1 },
-    settings: { grid: 'dots', background: '#f9f9fb', selectionMode: 'contain', theme: 'light' },
+    settings: { grid: 'dots', background: '#f9f9fb', selectionMode: 'contain', theme: 'light', mapTheme: 'classic', mode: 'canvas' },
   };
 }
 
@@ -587,7 +612,15 @@ function normalizeNode(value: unknown, now: number): MindMapNode | null {
     locked: value.locked === true,
     participatesInLayout: value.participatesInLayout !== false,
     collapsed: value.collapsed === true,
-    note: safeString(value.note, '', 2_000),
+    branchSide: value.branchSide === 'left' || value.branchSide === 'right' ? value.branchSide : null,
+    semantic: value.semantic === 'topic' || value.semantic === 'branch' || value.semantic === 'subtopic' || value.semantic === 'summary' || value.semantic === 'note' ? value.semantic : 'auto',
+    icon: safeString(value.icon, '', 24),
+    tags: Array.isArray(value.tags)
+      ? [...new Set(value.tags.slice(0, 12).flatMap((tag) => typeof tag === 'string' ? [safeString(tag.trim(), '', 24)] : []).filter(Boolean))]
+      : [],
+    marker: value.marker === 'star' || value.marker === 'flag' || value.marker === 'question' || value.marker === 'idea' ? value.marker : 'none',
+    progress: value.progress === null || value.progress === undefined ? null : clamp(finite(value.progress, 0), 0, 100),
+    note: safeString(value.note, '', 20_000),
     taskStatus: value.taskStatus === 'todo' || value.taskStatus === 'doing' || value.taskStatus === 'done' ? value.taskStatus : 'none',
     priority: value.priority === 'low' || value.priority === 'medium' || value.priority === 'high' ? value.priority : 'none',
     dueDate: /^\d{4}-\d{2}-\d{2}$/.test(safeString(value.dueDate, '', 10)) ? safeString(value.dueDate, '', 10) : null,
@@ -638,6 +671,9 @@ function normalizeEdge(value: unknown, nodeIds: Set<string>, projectReferenceIds
     direction: direction === 'forward' || direction === 'backward' || direction === 'both' ? direction : 'none',
     relationship: value.relationship === 'reference' || source.type !== 'node' || target.type !== 'node' ? 'reference' : 'tree',
     label: safeString(value.label, '', 1_000),
+    ...(typeof value.order === 'number' && Number.isFinite(value.order)
+      ? { order: Math.max(0, Math.floor(value.order)) }
+      : {}),
     controlPoints: Array.isArray(value.controlPoints)
       ? value.controlPoints.slice(0, 12).flatMap((point) => isRecord(point)
         ? [{
@@ -884,6 +920,9 @@ export function normalizeMindMapDocument(value: unknown): MindMapDocument | null
     timelineSections,
     lifeMap,
     lifeMapMigration,
+    mindMapRootId: safeId(value.mindMapRootId) && nodeIds.has(safeId(value.mindMapRootId)!)
+      ? safeId(value.mindMapRootId)
+      : null,
     zOrder,
     viewport: {
       x: clamp(finite(viewport.x, 0), -1_000_000, 1_000_000),
@@ -895,6 +934,8 @@ export function normalizeMindMapDocument(value: unknown): MindMapDocument | null
       background: safeColor(settings.background, '#f9f9fb'),
       selectionMode: settings.selectionMode === 'intersect' ? 'intersect' : 'contain',
       theme: settings.theme === 'dark' || settings.theme === 'minimal' ? settings.theme : 'light',
+      mapTheme: settings.mapTheme === 'rainbow' || settings.mapTheme === 'professional' || settings.mapTheme === 'warm' ? settings.mapTheme : 'classic',
+      mode: settings.mode === 'mind-map' ? 'mind-map' : 'canvas',
     },
   };
   return repairMindMapTreeForest(document);
@@ -1009,6 +1050,7 @@ export function duplicateMindMapDocument(
     timelineSections,
     lifeMap: source.lifeMap ? normalizeLifeMapData(source.lifeMap) : null,
     lifeMapMigration: source.lifeMapMigration ? { ...source.lifeMapMigration } : null,
+    mindMapRootId: source.mindMapRootId ? nodeIds.get(source.mindMapRootId) ?? null : null,
     zOrder: source.zOrder.map((id) => nodeIds.get(id)).filter((id): id is string => Boolean(id)),
   };
 }

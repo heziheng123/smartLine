@@ -37,10 +37,10 @@ import {
   parseMindMapMarkdownOutline,
   type MindMapPngScope,
 } from './importExport';
-import type { TreeDirection } from './layout';
+import { prepareMindMapMode, type TreeDirection } from './layout';
 import { migrateLifeMapIntoDocument } from './lifeMapMigration';
 import LifePlanningPanel from './LifePlanningPanel';
-import { createEmptyMindMapDocument, createProjectReferenceCard, createTimelineSection, DEFAULT_DOCUMENT_TITLE, type MindMapNodeType, type ProjectReferenceCard } from './model';
+import { createEmptyMindMapDocument, createProjectReferenceCard, createTimelineSection, DEFAULT_DOCUMENT_TITLE, type MindMapNodeType, type MindMapVisualTheme, type ProjectReferenceCard } from './model';
 import { mindMapRepository } from './repository';
 import { useMindMapStore } from './store';
 import { MindMapCatalogSession, MindMapSyncSession, type MindMapSyncViewState } from './sync';
@@ -49,6 +49,7 @@ import { reportMindMapSyncRuntimeState } from './syncRuntime';
 import { useLifeMapDataSnapshot, useLifeMapHydrated } from './timelineProjectionHooks';
 import styles from './styles/MindMapWorkspace.module.css';
 import { mindMapThemeCssVariables, mindMapVisualCssVariables } from './styles/visualTokens';
+import { MIND_MAP_THEME_PRESETS } from './visualTheme';
 
 const SAVE_LABEL = {
   idle: '准备就绪',
@@ -368,6 +369,17 @@ const MindMapWorkspace = () => {
     setTreeDirection(direction);
     setTreeLayoutRequest((request) => request + 1);
     if (layoutMenuRef.current) layoutMenuRef.current.open = false;
+  };
+
+  const toggleMindMapMode = () => {
+    if (!document) return;
+    const enabling = document.settings.mode !== 'mind-map';
+    execute(enabling ? '启用脑图模式' : '切换自由画布', (current) => (
+      enabling
+        ? prepareMindMapMode(current)
+        : { ...current, settings: { ...current.settings, mode: 'canvas' } }
+    ));
+    if (enabling) setTreeLayoutRequest((request) => request + 1);
   };
 
   const closeMoreMenu = () => {
@@ -712,6 +724,15 @@ const MindMapWorkspace = () => {
           >
             <Link2 size={15} aria-hidden="true" />连线
           </button>
+          <button
+            type="button"
+            aria-pressed={document?.settings.mode === 'mind-map'}
+            disabled={!document}
+            title="中心主题双侧布局；可在节点属性中指定中心主题"
+            onClick={toggleMindMapMode}
+          >
+            <GitFork size={15} aria-hidden="true" />{document?.settings.mode === 'mind-map' ? '脑图模式' : '自由画布'}
+          </button>
           <details ref={layoutMenuRef} className={styles.layoutMenu}>
             <summary data-testid="mind-map-layout-menu">
               <GitFork size={15} aria-hidden="true" />
@@ -728,14 +749,14 @@ const MindMapWorkspace = () => {
                   runTreeLayout();
                   if (layoutMenuRef.current) layoutMenuRef.current.open = false;
                 }}
-              >{selectedNodeCount === 1 ? '整理当前分支' : '整理全部节点'}</button>
+              >{document?.settings.mode === 'mind-map' ? '整理脑图' : selectedNodeCount === 1 ? '整理当前分支' : '整理全部节点'}</button>
               <span className={styles.menuDivider} aria-hidden="true" />
               <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('left-right')}>左 → 右</button>
               <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('right-left')}>右 → 左</button>
               <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('top-bottom')}>上 → 下</button>
               <button type="button" role="menuitem" onClick={() => runTreeLayoutInDirection('bottom-top')}>下 → 上</button>
               <span className={styles.menuDivider} aria-hidden="true" />
-              <label className={styles.layoutTheme}><span>主题</span><select aria-label="思维导图主题" value={document?.settings.theme ?? 'light'} onChange={(event) => {
+              <label className={styles.layoutTheme}><span>界面</span><select aria-label="思维导图界面主题" value={document?.settings.theme ?? 'light'} onChange={(event) => {
                 const theme = event.target.value as 'light' | 'dark' | 'minimal';
                 execute('切换主题', (current) => ({
                   ...current,
@@ -747,6 +768,10 @@ const MindMapWorkspace = () => {
                   },
                 }));
               }}><option value="light">浅色</option><option value="dark">深色</option><option value="minimal">简洁</option></select></label>
+              <label className={styles.layoutTheme}><span>脑图模板</span><select aria-label="脑图主题模板" value={document?.settings.mapTheme ?? 'classic'} onChange={(event) => {
+                const mapTheme = event.target.value as MindMapVisualTheme;
+                execute('切换脑图主题', (current) => ({ ...current, settings: { ...current.settings, mapTheme } }));
+              }}>{Object.entries(MIND_MAP_THEME_PRESETS).map(([value, preset]) => <option key={value} value={value}>{preset.label}</option>)}</select></label>
               <span className={styles.menuDivider} aria-hidden="true" />
               <button type="button" role="menuitem" disabled={!hasCanvasContent} onClick={() => {
                 setFitRequest((value) => value + 1);

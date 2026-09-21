@@ -63,3 +63,28 @@ test('new commands clear redo and history keeps only the configured limit', () =
   assert.deepEqual(history.undo.map((entry) => entry.label), ['1', '2', '3']);
   assert.deepEqual(history.redo, []);
 });
+
+test('brain-map mode and its centre topic are undoable document state', () => {
+  const before = createEmptyMindMapDocument('脑图', { id: 'mind-map-history', now: 1 });
+  before.nodes.root = createTextMindMapNode({ x: 0, y: 0 }, { id: 'root', now: 1 });
+  before.zOrder = ['root'];
+  const after = {
+    ...before,
+    settings: { ...before.settings, mode: 'mind-map' as const },
+    mindMapRootId: 'root',
+  };
+  const entry = createHistoryEntry('启用脑图模式', before, after);
+  assert.ok(entry);
+  assert.equal(applyHistoryEntry(after, entry, 'undo').settings.mode, 'canvas');
+  assert.equal(applyHistoryEntry(after, entry, 'undo').mindMapRootId, null);
+  assert.equal(applyHistoryEntry(before, entry, 'redo').mindMapRootId, 'root');
+});
+
+test('brain-map theme templates are undoable settings', () => {
+  const before = createEmptyMindMapDocument('主题', { id: 'theme-history', now: 1 });
+  const after = { ...before, settings: { ...before.settings, mapTheme: 'warm' as const } };
+  const entry = createHistoryEntry('切换脑图主题', before, after);
+  assert.ok(entry);
+  assert.equal(applyHistoryEntry(after, entry, 'undo').settings.mapTheme, 'classic');
+  assert.equal(applyHistoryEntry(before, entry, 'redo').settings.mapTheme, 'warm');
+});

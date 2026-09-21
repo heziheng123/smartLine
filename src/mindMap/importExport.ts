@@ -10,11 +10,38 @@ import {
 import { buildEdgeRoute } from './canvas/edgeRouting';
 import { edgeConnectableObjects } from './canvas/connectableObjects';
 import { mindMapRepository } from './repository';
-import { resolveBranchThemeColors, resolveTreeEdgeColor } from './visualTheme';
+import {
+  MIND_MAP_MARKER_ICON,
+  MIND_MAP_PRIORITY_COLOR,
+  MIND_MAP_PRIORITY_LABEL,
+  MIND_MAP_TASK_STATUS_ICON,
+  mindMapColorWithAlpha,
+  mindMapNodeThemeColor,
+  mixMindMapColor,
+  resolveBranchThemeColors,
+  resolveMindMapNodeDepths,
+  resolveMindMapNodePresentation,
+  resolveTreeEdgeColor,
+} from './visualTheme';
 import { layoutMindMapTree } from './layout';
 import { repairMindMapTreeForest } from './treeValidation';
 
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
+
+const exportVisuals = (document: MindMapDocument) => {
+  const branchColors = resolveBranchThemeColors(document);
+  const depths = resolveMindMapNodeDepths(document);
+  const presentations = new Map(Object.values(document.nodes).map((node) => [
+    node.id,
+    resolveMindMapNodePresentation(
+      node,
+      depths.get(node.id) ?? 0,
+      branchColors.get(node.id) ?? mindMapNodeThemeColor(node, document.settings.mapTheme),
+      document.settings.mapTheme,
+    ),
+  ]));
+  return { branchColors, presentations };
+};
 
 const safeFileName = (title: string) => {
   const normalized = [...title.trim().replace(/[<>:"/\\|?*]/g, '-')]
@@ -67,6 +94,11 @@ const outlineLine = (line: string, headingLevel: number): OutlineLine | null => 
   }
   return null;
 };
+
+export const isMindMapMarkdownOutline = (source: string) => source
+  .replace(/^\uFEFF/, '')
+  .split(/\r?\n/)
+  .some((line) => Boolean(outlineLine(line, 0)));
 
 const fenceStart = (line: string) => /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
 const isTableDivider = (line: string) => /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
@@ -161,16 +193,23 @@ export function parseMindMapMarkdownOutline(source: string, title = '导入的 M
 export function serializeMindMapMarkdownOutline(document: MindMapDocument): string {
   const repaired = repairMindMapTreeForest(document);
   const order = new Map(repaired.zOrder.map((id, index) => [id, index]));
-  const children = new Map<string, string[]>();
+  const children = new Map<string, MindMapEdge[]>();
   const childIds = new Set<string>();
   for (const edge of Object.values(repaired.edges)) {
     if (edge.relationship !== 'tree' || edge.source.type !== 'node' || edge.target.type !== 'node') continue;
     const list = children.get(edge.sourceId) ?? [];
-    list.push(edge.targetId);
+    list.push(edge);
     children.set(edge.sourceId, list);
     childIds.add(edge.targetId);
   }
-  for (const list of children.values()) list.sort((left, right) => (order.get(left) ?? Infinity) - (order.get(right) ?? Infinity));
+  for (const [parentId, list] of children) {
+    const ordered = list.some((edge) => edge.order !== undefined);
+    children.set(parentId, list.sort((left, right) => ordered
+      ? (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER)
+        || left.createdAt - right.createdAt
+        || left.id.localeCompare(right.id)
+      : (order.get(left.targetId) ?? Infinity) - (order.get(right.targetId) ?? Infinity)));
+  }
   const roots = [...repaired.zOrder, ...Object.keys(repaired.nodes)]
     .filter((id, index, ids) => ids.indexOf(id) === index && repaired.nodes[id] && !childIds.has(id));
   const output: string[] = [];
@@ -187,7 +226,7 @@ export function serializeMindMapMarkdownOutline(document: MindMapDocument): stri
     } else {
       output.push(`${'  '.repeat(depth)}- ${serializeOutlineText(node)}`);
     }
-    for (const childId of children.get(id) ?? []) visit(childId, depth + 1);
+    for (const edge of children.get(id) ?? []) visit(edge.targetId, depth + 1);
   };
   for (const rootId of roots) visit(rootId, 0);
   for (const nodeId of repaired.zOrder) visit(nodeId, 0);
@@ -251,10 +290,12 @@ export function serializeMindMapSvg(document: MindMapDocument) {
     '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs>',
     `<rect x="${left - margin}" y="${top - margin}" width="${right - left + margin * 2}" height="${bottom - top + margin * 2}" fill="${document.settings.background}"/>`,
   ];
-  const branchColors = resolveBranchThemeColors(document);
+  const { branchColors, presentations } = exportVisuals(document);
   for (const section of sections) {
-    parts.push(`<rect x="${section.x - section.width / 2}" y="${section.y - section.height / 2}" width="${section.width}" height="${section.collapsed ? 42 : section.height}" rx="14" fill="#f2f2ff" stroke="#7775df" stroke-dasharray="8 5"/>`);
-    parts.push(`<text x="${section.x - section.width / 2 + 14}" y="${section.y - section.height / 2 + 24}" font-family="sans-serif" font-size="13" font-weight="600" fill="#4a48b8">${escapeXml(section.title)}</text>`);
+    const member = nodes.find((node) => node.parentSectionId === section.id);
+    const accent = member ? presentations.get(member.id)?.accent ?? '#7775df' : '#7775df';
+    parts.push(`<rect x="${section.x - section.width / 2}" y="${section.y - section.height / 2}" width="${section.width}" height="${section.collapsed ? 42 : section.height}" rx="14" fill="${mixMindMapColor(accent, '#ffffff', 0.92)}" stroke="${accent}" stroke-dasharray="8 5"/>`);
+    parts.push(`<text x="${section.x - section.width / 2 + 14}" y="${section.y - section.height / 2 + 24}" font-family="sans-serif" font-size="13" font-weight="600" fill="${mixMindMapColor(accent, '#202124', 0.55)}">${escapeXml(section.title)}</text>`);
   }
   for (const edge of Object.values(document.edges)) {
     const route = edgeRouteForExport(edge, document);
@@ -281,7 +322,27 @@ export function serializeMindMapSvg(document: MindMapDocument) {
   for (const node of nodes) {
     const x = node.x - node.width / 2;
     const y = node.y - node.height / 2;
-    parts.push(`<g transform="rotate(${node.rotation} ${node.x} ${node.y})"><rect x="${x}" y="${y}" width="${node.width}" height="${node.height}" rx="${node.style.borderRadius}" fill="${node.style.fill}" fill-opacity="${node.style.fillOpacity}" stroke="${node.style.borderColor}" stroke-width="${node.style.borderWidth}"${node.style.borderStyle === 'dashed' ? ' stroke-dasharray="7 5"' : ''}/><text x="${node.x}" y="${node.y}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${node.style.fontSize}" font-weight="${node.style.fontWeight}" fill="${node.style.textColor}">${escapeXml(node.text || node.type)}</text></g>`);
+    const presentation = presentations.get(node.id)!;
+    const label = `${node.icon ? `${node.icon} ` : ''}${node.type === 'url' ? 'URL · ' : ''}${node.text || node.type}`;
+    const marker = MIND_MAP_MARKER_ICON[node.marker ?? 'none'];
+    const status = node.taskStatus === 'none' ? '' : MIND_MAP_TASK_STATUS_ICON[node.taskStatus];
+    parts.push(`<g transform="rotate(${node.rotation} ${node.x} ${node.y})">`);
+    if (presentation.topic) {
+      parts.push(`<line x1="${x + 10}" y1="${y + node.height - 5}" x2="${x + node.width - 10}" y2="${y + node.height - 5}" stroke="${presentation.accent}" stroke-width="1.25"/>`);
+    } else {
+      parts.push(`<rect x="${x}" y="${y}" width="${node.width}" height="${node.height}" rx="${node.style.borderRadius}" fill="${presentation.fill}" fill-opacity="${node.style.fillOpacity}" stroke="${presentation.border}" stroke-width="${Math.min(1, node.style.borderWidth)}"${node.style.borderStyle === 'dashed' ? ' stroke-dasharray="7 5"' : ''}/>`);
+    }
+    parts.push(`<text x="${node.x}" y="${node.y}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${presentation.fontSize}" font-weight="${presentation.fontWeight}" fill="${presentation.text}">${escapeXml(label)}</text>`);
+    if (marker || status) parts.push(`<text x="${x + 7}" y="${y + 18}" font-family="sans-serif" font-size="13" fill="${presentation.accent}">${escapeXml([marker, status].filter(Boolean).join(' '))}</text>`);
+    if (node.priority !== 'none') {
+      parts.push(`<rect x="${x + node.width - 30}" y="${y + 5}" width="24" height="15" rx="7" fill="${MIND_MAP_PRIORITY_COLOR[node.priority]}"/><text x="${x + node.width - 18}" y="${y + 12.5}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="9" font-weight="700" fill="#ffffff">${MIND_MAP_PRIORITY_LABEL[node.priority]}</text>`);
+    }
+    if (node.tags?.length) parts.push(`<text x="${x + node.width - 7}" y="${y + node.height - (node.progress === null || node.progress === undefined ? 7 : 12)}" text-anchor="end" font-family="sans-serif" font-size="9" font-weight="600" fill="${mixMindMapColor(presentation.accent, '#ffffff', 0.28)}">${escapeXml(node.tags.slice(0, 2).map((tag) => `#${tag}`).join(' '))}</text>`);
+    if (node.progress !== null && node.progress !== undefined) {
+      const width = Math.max(0, node.width - 14);
+      parts.push(`<rect x="${x + 7}" y="${y + node.height - 5}" width="${width}" height="3" fill="${mindMapColorWithAlpha(presentation.accent, 0.14)}"/><rect x="${x + 7}" y="${y + node.height - 5}" width="${width * Math.max(0, Math.min(100, node.progress)) / 100}" height="3" fill="${presentation.accent}"/>`);
+    }
+    parts.push('</g>');
   }
   for (const reference of projectReferences) {
     const x = reference.x - reference.width / 2;
@@ -370,14 +431,19 @@ export function downloadMindMapPng(
   const selected = new Set(selectedNodeIds);
   const nodes = Object.values(document.nodes).filter((node) => scope === 'all' || selected.has(node.id));
   const projectReferences = scope === 'all' ? Object.values(document.projectReferences) : [];
-  if (nodes.length === 0 && projectReferences.length === 0) return false;
+  const sections = Object.values(document.sections).filter((section) => scope === 'all'
+    || nodes.some((node) => node.parentSectionId === section.id));
+  if (nodes.length === 0 && projectReferences.length === 0 && sections.length === 0) return false;
   const visibleNodeIds = new Set(nodes.map((node) => node.id));
   const visibleProjectReferenceIds = new Set(projectReferences.map((reference) => reference.id));
   const edges = Object.values(document.edges).filter((edge) => (
     (edge.source.type === 'node' ? visibleNodeIds.has(edge.source.id) : visibleProjectReferenceIds.has(edge.source.id))
     && (edge.target.type === 'node' ? visibleNodeIds.has(edge.target.id) : visibleProjectReferenceIds.has(edge.target.id))
   ));
-  const objects = [...nodes, ...projectReferences];
+  const objects = [...nodes, ...projectReferences, ...sections.map((section) => ({
+    ...section,
+    height: section.collapsed ? 42 : section.height,
+  }))];
   const objectBounds = objects.map(exportBounds);
   const left = Math.min(...objectBounds.map((bounds) => bounds.left));
   const top = Math.min(...objectBounds.map((bounds) => bounds.top));
@@ -396,7 +462,28 @@ export function downloadMindMapPng(
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.setTransform(scale, 0, 0, scale, (-left + margin) * scale, (-top + margin) * scale);
 
-  const branchColors = resolveBranchThemeColors(document);
+  const { branchColors, presentations } = exportVisuals(document);
+  for (const section of sections) {
+    const member = nodes.find((node) => node.parentSectionId === section.id);
+    const accent = member ? presentations.get(member.id)?.accent ?? '#7775df' : '#7775df';
+    const height = section.collapsed ? 42 : section.height;
+    const x = section.x - section.width / 2;
+    const y = section.y - section.height / 2;
+    context.fillStyle = mixMindMapColor(accent, '#ffffff', 0.92);
+    context.strokeStyle = accent;
+    context.lineWidth = 1;
+    context.setLineDash([8, 5]);
+    context.beginPath();
+    context.roundRect(x, y, section.width, height, 14);
+    context.fill();
+    context.stroke();
+    context.setLineDash([]);
+    context.fillStyle = mixMindMapColor(accent, '#202124', 0.55);
+    context.font = '600 13px sans-serif';
+    context.textAlign = 'left';
+    context.textBaseline = 'middle';
+    context.fillText(section.title, x + 14, y + 21);
+  }
   for (const edge of edges) {
     const routeForExport = edgeRouteForExport(edge, document);
     if (!routeForExport) continue;
@@ -452,33 +539,45 @@ export function downloadMindMapPng(
   for (const node of nodes) {
     const x = node.x - node.width / 2;
     const y = node.y - node.height / 2;
+    const presentation = presentations.get(node.id)!;
     context.save();
     context.translate(node.x, node.y);
     context.rotate(node.rotation * Math.PI / 180);
     context.translate(-node.x, -node.y);
-    if (node.style.shadow) {
+    if (presentation.shadow) {
       context.shadowColor = 'rgba(15, 23, 42, 0.12)';
       context.shadowBlur = 14;
       context.shadowOffsetY = 4;
     }
-    context.globalAlpha = node.style.fillOpacity;
-    context.fillStyle = node.style.fill;
-    context.beginPath();
-    context.roundRect(x, y, node.width, node.height, node.style.borderRadius);
-    context.fill();
-    context.shadowColor = 'transparent';
-    context.globalAlpha = 1;
-    context.strokeStyle = node.style.borderColor;
-    context.lineWidth = node.style.borderWidth;
-    context.setLineDash(node.style.borderStyle === 'dashed' ? [7, 5] : []);
-    context.stroke();
-    context.setLineDash([]);
-    context.fillStyle = node.style.textColor;
-    context.font = `${node.style.fontWeight} ${node.style.fontSize}px sans-serif`;
+    if (presentation.topic) {
+      context.shadowColor = 'transparent';
+      context.strokeStyle = presentation.accent;
+      context.lineWidth = 1.25;
+      context.beginPath();
+      context.moveTo(x + 10, y + node.height - 5);
+      context.lineTo(x + node.width - 10, y + node.height - 5);
+      context.stroke();
+    } else {
+      context.globalAlpha = node.style.fillOpacity;
+      context.fillStyle = presentation.fill;
+      context.beginPath();
+      context.roundRect(x, y, node.width, node.height, node.style.borderRadius);
+      context.fill();
+      context.shadowColor = 'transparent';
+      context.globalAlpha = 1;
+      context.strokeStyle = presentation.border;
+      context.lineWidth = Math.min(1, node.style.borderWidth);
+      context.setLineDash(node.style.borderStyle === 'dashed' ? [7, 5] : []);
+      context.stroke();
+      context.setLineDash([]);
+    }
+    context.fillStyle = presentation.text;
+    context.font = `${presentation.fontWeight} ${presentation.fontSize}px sans-serif`;
     context.textAlign = node.style.textAlign;
     context.textBaseline = 'middle';
-    const lines = wrapNodeText(context, node.text, Math.max(10, node.width - 32));
-    const lineHeight = node.style.fontSize * node.style.lineHeight;
+    const label = `${node.icon ? `${node.icon} ` : ''}${node.type === 'url' ? 'URL · ' : ''}${node.text}`;
+    const lines = wrapNodeText(context, label, Math.max(10, node.width - 32));
+    const lineHeight = presentation.fontSize * node.style.lineHeight;
     const textX = node.style.textAlign === 'left'
       ? x + 16
       : node.style.textAlign === 'right'
@@ -486,6 +585,40 @@ export function downloadMindMapPng(
         : node.x;
     const startY = node.y - (lines.length - 1) * lineHeight / 2;
     lines.forEach((line, index) => context.fillText(line, textX, startY + index * lineHeight));
+    const marker = MIND_MAP_MARKER_ICON[node.marker ?? 'none'];
+    const status = node.taskStatus === 'none' ? '' : MIND_MAP_TASK_STATUS_ICON[node.taskStatus];
+    if (marker || status) {
+      context.fillStyle = presentation.accent;
+      context.font = '13px sans-serif';
+      context.textAlign = 'left';
+      context.textBaseline = 'top';
+      context.fillText([marker, status].filter(Boolean).join(' '), x + 7, y + 6);
+    }
+    if (node.priority !== 'none') {
+      context.fillStyle = MIND_MAP_PRIORITY_COLOR[node.priority];
+      context.beginPath();
+      context.roundRect(x + node.width - 30, y + 5, 24, 15, 7);
+      context.fill();
+      context.fillStyle = '#ffffff';
+      context.font = '700 9px sans-serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(MIND_MAP_PRIORITY_LABEL[node.priority], x + node.width - 18, y + 12.5);
+    }
+    if (node.tags?.length) {
+      context.fillStyle = mixMindMapColor(presentation.accent, '#ffffff', 0.28);
+      context.font = '600 9px sans-serif';
+      context.textAlign = 'right';
+      context.textBaseline = 'alphabetic';
+      context.fillText(node.tags.slice(0, 2).map((tag) => `#${tag}`).join(' '), x + node.width - 7, y + node.height - (node.progress === null || node.progress === undefined ? 7 : 12));
+    }
+    if (node.progress !== null && node.progress !== undefined) {
+      const width = Math.max(0, node.width - 14);
+      context.fillStyle = mindMapColorWithAlpha(presentation.accent, 0.14);
+      context.fillRect(x + 7, y + node.height - 5, width, 3);
+      context.fillStyle = presentation.accent;
+      context.fillRect(x + 7, y + node.height - 5, width * Math.max(0, Math.min(100, node.progress)) / 100, 3);
+    }
     context.restore();
   }
 

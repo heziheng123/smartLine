@@ -544,6 +544,7 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
           nodes,
           edges,
           zOrder: document.zOrder.filter((id) => !targets.has(id)),
+          mindMapRootId: document.mindMapRootId && targets.has(document.mindMapRootId) ? null : document.mindMapRootId,
         };
       });
     },

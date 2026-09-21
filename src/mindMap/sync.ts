@@ -109,6 +109,7 @@ function initialStorage(document: MindMapDocument): MindMapRoomStorage {
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
     settings: jsonObject(document.settings),
+    mindMapRootId: document.mindMapRootId ?? null,
     zOrder: [...document.zOrder],
     lifeMap: document.lifeMap ? jsonObject(document.lifeMap) : null,
     lifeMapMigration: document.lifeMapMigration ? jsonObject(document.lifeMapMigration) : null,
@@ -130,6 +131,7 @@ function documentFromRoot(root: LiveObject<MindMapRoomStorage>, local: MindMapDo
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     settings: value.settings,
+    mindMapRootId: value.mindMapRootId,
     zOrder: value.zOrder,
     lifeMap: value.lifeMap,
     lifeMapMigration: value.lifeMapMigration,
@@ -551,6 +553,7 @@ export class MindMapSyncSession {
     this.room.batch(() => {
       if (patch.title !== undefined) this.root?.set('title', patch.title);
       if (patch.settings !== undefined) this.root?.set('settings', jsonObject(patch.settings));
+      if (patch.mindMapRootId !== undefined) this.root?.set('mindMapRootId', patch.mindMapRootId);
       if (patch.zOrder !== undefined) this.root?.set('zOrder', [...patch.zOrder]);
       if (patch.lifeMap !== undefined) this.root?.set('lifeMap', patch.lifeMap ? jsonObject(patch.lifeMap) : null);
       if (patch.lifeMapMigration !== undefined) this.root?.set('lifeMapMigration', patch.lifeMapMigration ? jsonObject(patch.lifeMapMigration) : null);

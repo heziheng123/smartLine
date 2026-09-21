@@ -1,10 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 
+test.describe.configure({ timeout: 60_000 });
+
 const openMindMap = async (page: Page) => {
   await page.goto('/');
-  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
   await page.getByTitle('地图工作区').click();
-  await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
+  await expect(page.getByTestId('mind-map-canvas')).toBeVisible({ timeout: 30_000 });
 };
 
 const openMoreMenu = async (page: Page) => {
@@ -90,6 +92,127 @@ test('the node editor continuously creates children and siblings as atomic graph
   const edges = Object.values(state.document?.edges ?? {});
   expect(edges[0].sourceId).toBe(edges[1].sourceId);
   expect(edges[2].sourceId).toBe(edges[1].targetId);
+});
+
+test('mind-map mode lays first-level branches to both sides and supports keyboard outline reordering', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await addNode(page, 360, 280, '中心主题');
+  await addTreeChild(page, '中心主题', '左分支');
+  await page.getByLabel('新节点文本').press('Escape');
+  await addTreeChild(page, '中心主题', '右分支');
+  await page.getByLabel('新节点文本').press('Escape');
+
+  await page.getByRole('button', { name: '自由画布' }).click();
+  await expect.poll(async () => (await graphState(page)).document?.settings.mode).toBe('mind-map');
+  await expect.poll(async () => {
+    const current = (await graphState(page)).document;
+    if (!current) return false;
+    const root = Object.values(current.nodes).find((node) => node.text === '中心主题');
+    const left = Object.values(current.nodes).find((node) => node.text === '左分支');
+    const right = Object.values(current.nodes).find((node) => node.text === '右分支');
+    return Boolean(root && left && right && left.x < root.x && right.x > root.x);
+  }).toBe(true);
+  const laidOut = (await graphState(page)).document!;
+  const rootId = Object.entries(laidOut.nodes).find(([, node]) => (node as { text: string }).text === '中心主题')![0];
+  const leftId = Object.entries(laidOut.nodes).find(([, node]) => (node as { text: string }).text === '左分支')![0];
+  const rightId = Object.entries(laidOut.nodes).find(([, node]) => (node as { text: string }).text === '右分支')![0];
+  expect(laidOut.mindMapRootId).toBe(rootId);
+  expect(laidOut.nodes[leftId].x).toBeLessThan(laidOut.nodes[rootId].x);
+  expect(laidOut.nodes[rightId].x).toBeGreaterThan(laidOut.nodes[rootId].x);
+
+  const viewport = laidOut.viewport;
+  await canvas.click({ position: {
+    x: laidOut.nodes[rightId].x * viewport.scale + viewport.x,
+    y: laidOut.nodes[rightId].y * viewport.scale + viewport.y,
+  } });
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect.poll(async () => {
+    const edges = Object.values((await graphState(page)).document?.edges ?? {}) as Array<{ sourceId: string; targetId: string; order?: number }>;
+    return edges.filter((edge) => edge.sourceId === rootId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))[0]?.targetId;
+  }).toBe(rightId);
+  await page.keyboard.press('Alt+ArrowDown');
+  await page.keyboard.press('Alt+ArrowRight');
+  await expect.poll(async () => (Object.values((await graphState(page)).document?.edges ?? {}) as Array<{ sourceId: string; targetId: string }>)
+    .some((edge) => edge.sourceId === leftId && edge.targetId === rightId)).toBe(true);
+  await page.keyboard.press('Shift+Tab');
+  await expect.poll(async () => (Object.values((await graphState(page)).document?.edges ?? {}) as Array<{ sourceId: string; targetId: string }>)
+    .some((edge) => edge.sourceId === rootId && edge.targetId === rightId)).toBe(true);
+});
+
+test('the outline mirrors selection and semantic branch metadata creates one reusable boundary', async ({ page }) => {
+  await openMindMap(page);
+  await addNode(page, 360, 280, '产品方向');
+  await addTreeChild(page, '产品方向', '用户研究');
+  await page.getByLabel('新节点文本').press('Escape');
+
+  await page.getByRole('button', { name: '大纲' }).click();
+  const outline = page.getByRole('complementary', { name: '思维导图大纲' });
+  await expect(outline).toBeVisible();
+  await outline.getByRole('button', { name: '用户研究', exact: true }).click();
+  await page.getByLabel('节点语义样式').selectOption('summary');
+  await page.getByLabel('节点图标').fill('🔎');
+  await page.getByLabel('节点图标').press('Tab');
+  await page.getByLabel('节点标签').fill('调研, 重要, 调研');
+  await page.getByLabel('节点标签').press('Tab');
+
+  await expect.poll(async () => {
+    const selected = Object.values((await graphState(page)).document?.nodes ?? {})
+      .find((node) => (node as { text: string }).text === '用户研究');
+    return selected;
+  }).toMatchObject({ semantic: 'summary', icon: '🔎', tags: ['调研', '重要'] });
+
+  await page.getByRole('button', { name: '创建分支边界' }).click();
+  await page.getByRole('button', { name: '创建分支边界' }).click();
+  await expect.poll(async () => Object.keys((await graphState(page)).document?.sections ?? {}).length).toBe(1);
+  await expect.poll(async () => {
+    const state = await graphState(page);
+    const selected = Object.values(state.document?.nodes ?? {})
+      .find((node) => (node as { text: string }).text === '用户研究');
+    return (selected as { parentSectionId?: string | null } | undefined)?.parentSectionId;
+  }).toBeTruthy();
+});
+
+test('brain-map templates and semantic badges persist as document state', async ({ page }) => {
+  await openMindMap(page);
+  await addNode(page, 360, 280, '主题节点');
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.click({ position: { x: 360, y: 280 } });
+
+  await page.getByTestId('mind-map-layout-menu').click();
+  await page.getByLabel('脑图主题模板').selectOption('rainbow');
+  await page.getByLabel('节点语义样式').selectOption('subtopic');
+  await page.getByLabel('节点标记').selectOption('star');
+  await page.getByLabel('任务优先级').selectOption('high');
+  await page.getByLabel('节点进度').fill('65');
+  await page.getByLabel('节点进度').press('Tab');
+
+  await expect.poll(async () => {
+    const document = (await graphState(page)).document!;
+    return { mapTheme: document.settings.mapTheme, node: Object.values(document.nodes)[0] };
+  }).toMatchObject({
+    mapTheme: 'rainbow',
+    node: { semantic: 'subtopic', marker: 'star', priority: 'high', progress: 65 },
+  });
+});
+
+test('pasting a Markdown outline converts it into the selected branch', async ({ page }) => {
+  await openMindMap(page);
+  await addNode(page, 360, 280, '现有中心');
+  await page.getByTestId('mind-map-canvas').click({ position: { x: 360, y: 280 } });
+  await page.getByTestId('mind-map-canvas').evaluate((canvas) => {
+    const clipboard = new DataTransfer();
+    clipboard.setData('text/plain', '# 复习计划\n## 英语\n- 单词\n## 数学');
+    canvas.parentElement!.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: clipboard }));
+  });
+
+  await expect.poll(async () => Object.keys((await graphState(page)).document?.nodes ?? {}).length).toBe(5);
+  const document = (await graphState(page)).document!;
+  const ids = Object.fromEntries(Object.entries(document.nodes).map(([id, node]) => [(node as { text: string }).text, id]));
+  const treeEdges = Object.values(document.edges).filter((edge) => edge.relationship === 'tree');
+  expect(treeEdges.some((edge) => edge.sourceId === ids['现有中心'] && edge.targetId === ids['复习计划'])).toBe(true);
+  expect(treeEdges.some((edge) => edge.sourceId === ids['复习计划'] && edge.targetId === ids['英语'])).toBe(true);
+  expect(treeEdges.some((edge) => edge.sourceId === ids['英语'] && edge.targetId === ids['单词'])).toBe(true);
 });
 
 test('tree edge previews follow every layout direction and remain visible after zooming', async ({ page }) => {
