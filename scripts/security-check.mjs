@@ -32,7 +32,7 @@ for (const requiredHeader of [
   'Content-Security-Policy:',
   'X-Content-Type-Options: nosniff',
   'Referrer-Policy:',
-  'Permissions-Policy:',
+  'Permissions-Policy: camera=(), microphone=(self), geolocation=()',
   'X-Frame-Options: DENY',
 ]) {
   if (!responseHeaders.includes(requiredHeader)) findings.push(`public/_headers: missing ${requiredHeader}`);
