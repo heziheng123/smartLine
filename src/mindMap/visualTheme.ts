@@ -76,6 +76,12 @@ export const mindMapColorWithAlpha = (color: string, alpha: number) => {
 };
 
 export const mindMapNodeThemeColor = (node: MindMapNode, theme?: MindMapVisualTheme) => {
+  if (node.colorMode === 'inherit') return presetFor(theme).palette[0];
+  if (node.colorMode === 'custom') {
+    return node.style.fill.toLowerCase() === '#fff' || node.style.fill.toLowerCase() === '#ffffff'
+      ? node.style.borderColor
+      : node.style.fill;
+  }
   const fill = node.style.fill.toLowerCase();
   if (fill !== '#fff' && fill !== '#ffffff') return node.style.fill;
   if (node.style.borderColor.toLowerCase() !== '#d9dce3') return node.style.borderColor;

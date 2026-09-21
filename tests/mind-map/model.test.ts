@@ -152,7 +152,11 @@ test('semantic presentation, icon and tags survive normalization with bounded va
     tags: [' 重要 ', '重要', '待确认', 'x'.repeat(40)],
     marker: 'flag',
     progress: 120,
+    colorMode: 'inherit',
+    summarySourceIds: ['source', 'missing', 'topic'],
   };
+  document.nodes.source = node('source');
+  document.sections.boundary = { id: 'boundary', title: '边界', x: 0, y: 0, width: 300, height: 200, sizeMode: 'auto', collapsed: false, shape: 'cloud', createdAt: 1, updatedAt: 1 };
   document.settings.mapTheme = 'warm';
 
   const normalized = normalizeMindMapDocument(document);
@@ -161,6 +165,9 @@ test('semantic presentation, icon and tags survive normalization with bounded va
   assert.deepEqual(normalized?.nodes.topic.tags, ['重要', '待确认', 'x'.repeat(24)]);
   assert.equal(normalized?.nodes.topic.marker, 'flag');
   assert.equal(normalized?.nodes.topic.progress, 100);
+  assert.equal(normalized?.nodes.topic.colorMode, 'inherit');
+  assert.deepEqual(normalized?.nodes.topic.summarySourceIds, ['source']);
+  assert.equal(normalized?.sections.boundary.shape, 'cloud');
   assert.equal(normalized?.settings.mapTheme, 'warm');
 
   const invalid = normalizeMindMapDocument({
@@ -168,4 +175,16 @@ test('semantic presentation, icon and tags survive normalization with bounded va
     nodes: { topic: { ...document.nodes.topic, semantic: 'unsupported' } },
   });
   assert.equal(invalid?.nodes.topic.semantic, 'auto');
+});
+
+test('duplicating structural summaries remaps their source nodes', () => {
+  const document = createEmptyMindMapDocument('摘要', { id: 'summary-doc', now: 1 });
+  document.nodes.source = node('source');
+  document.nodes.summary = { ...node('summary'), semantic: 'summary', summarySourceIds: ['source'] };
+  document.zOrder = ['source', 'summary'];
+  const duplicate = duplicateMindMapDocument(document, { id: 'summary-copy', now: 2 });
+  const summary = Object.values(duplicate.nodes).find((item) => item.semantic === 'summary');
+  assert.ok(summary?.summarySourceIds?.[0]);
+  assert.ok(duplicate.nodes[summary.summarySourceIds[0]]);
+  assert.notEqual(summary.summarySourceIds[0], 'source');
 });

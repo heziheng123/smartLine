@@ -46,12 +46,11 @@ const rotatePoint = (x: number, y: number, centerX: number, centerY: number, rot
   };
 };
 
-function edgePolyline(edge: MindMapEdge, document: MindMapDocument, treeDirection: TreeDirection) {
+function edgePolyline(edge: MindMapEdge, document: MindMapDocument) {
   const endpoints = edgeConnectableObjects(document, edge);
   if (!endpoints) return [];
   const route = buildEdgeRoute(endpoints.source.bounds, endpoints.target.bounds, {
     kind: edge.relationship === 'tree' ? 'hierarchy' : 'relation',
-    hierarchyDirection: treeDirection,
   });
   if (edge.type === 'orthogonal') {
     if (edge.controlPoints.length > 0) return [route.start, ...edge.controlPoints, route.end];
@@ -142,7 +141,7 @@ class Renderer {
       const rgba = edge.relationship === 'reference'
         ? color('#b2bac6', 0.58)
         : color(resolveTreeEdgeColor(edge, branchColors), 0.78);
-      const points = edgePolyline(edge, routingDocument, treeDirection);
+      const points = edgePolyline(edge, routingDocument);
       for (let index = 1; index < points.length; index += 1) {
         pushVertex(edgeData, points[index - 1].x, points[index - 1].y, rgba);
         pushVertex(edgeData, points[index].x, points[index].y, rgba);

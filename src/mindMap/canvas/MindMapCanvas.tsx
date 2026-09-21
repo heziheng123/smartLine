@@ -9,7 +9,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
-  type ReactNode,
 } from 'react';
 import { CalendarRange, MoreHorizontal, Search } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
@@ -27,6 +26,7 @@ import {
   type MindMapDocument,
   type MindMapEdge,
   type MindMapSection,
+  type MindMapBoundaryShape,
   type MindMapNode,
   type MindMapNodeType,
   type CanvasObjectRef,
@@ -60,7 +60,7 @@ import {
   type TreeDirection,
 } from '../layout';
 import { layoutMindMapTreeInWorker } from '../layoutWorkerClient';
-import { isMindMapMarkdown, renderMindMapLatex, renderMindMapMarkdown } from '../richText';
+import { isMindMapMarkdown, mindMapBacklinks, renderMindMapLatex, renderMindMapMarkdown } from '../richText';
 import { MIND_MAP_VISUAL_TOKENS } from '../styles/visualTokens';
 import {
   edgeIsHiddenInsideCollapsedSection,
@@ -84,10 +84,15 @@ import { MindMapSpatialIndex } from './spatialIndex';
 import { buildEdgeRoute, pointOnRoute, type EdgeRoute, type HierarchyPort } from './edgeRouting';
 import { connectableObjects, edgeConnectableObjects, hitConnectableObject, resolveConnectableObject, type ConnectableObject } from './connectableObjects';
 import { renderMindMapWebGl } from './webglRenderer';
-import { projectTimelineItems, timelineProjectionItems, timelineSelectedProjectIds, timelineStatus, timelineUnscheduledItemCount, timelineVisibleItems, type TimelineProjectionItem } from '../timelineProjection';
+import { MindMapOutline } from './MindMapOutline';
+import { MindMapMultiSelectionPanel } from './MindMapMultiSelectionPanel';
+import { mindMapSummaryConnector, traceMindMapBoundary } from './semanticGeometry';
+import { moveMindMapOutlineNode, setMindMapOutlineCollapsed, type OutlineDropPosition } from './treeInteractions';
+import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY, timelineTemporalState, type TimelineFocus, type TimelineVisibility } from './timelineLayer';
+import { projectTimelineItems, timelineProjectionItems, timelineSelectedProjectIds, timelineUnscheduledItemCount, type TimelineProjectionItem } from '../timelineProjection';
 import { useLifeTimelineSnapshot } from '../timelineProjectionHooks';
 import { updateLifePlanningDates } from '../lifePlanning';
-import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, resizeTimelineRect, timelineRangeForScale, timelineScaleLabel } from '../timelineLayout';
+import { createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, resizeTimelineRect, timelineRangeForScale, timelineScaleLabel } from '../timelineLayout';
 import {
   MIND_MAP_MARKER_ICON as MARKER_ICON,
   MIND_MAP_PRIORITY_COLOR as PRIORITY_COLOR,
@@ -247,19 +252,6 @@ interface ClipboardGraph {
   edges: MindMapEdge[];
 }
 
-type TimelineVisibility = {
-  stages: boolean;
-  milestones: boolean;
-  progress: boolean;
-  today: boolean;
-};
-
-const DEFAULT_TIMELINE_VISIBILITY: TimelineVisibility = {
-  stages: true,
-  milestones: true,
-  progress: true,
-  today: true,
-};
 
 interface ContextMenuState {
   x: number;
@@ -431,7 +423,7 @@ function edgeRoute(
   const endpoints = edgeConnectableObjects(document, edge);
   if (!endpoints) return null;
   const rootId = document.settings.mode === 'mind-map' ? resolveMindMapRootId(document) : null;
-  let hierarchyDirection = treeDirection;
+  let hierarchyDirection: TreeDirection | undefined = document.settings.mode === 'mind-map' ? treeDirection : undefined;
   if (rootId && edge.relationship === 'tree') {
     let branchId = edge.targetId;
     let parentId = edge.sourceId;
@@ -449,7 +441,7 @@ function edgeRoute(
     {
       kind: edge.relationship === 'tree' ? 'hierarchy' : 'relation',
       hierarchyDirection,
-      hierarchyPort: treeEdgePorts?.get(edge.id),
+      hierarchyPort: rootId ? treeEdgePorts?.get(edge.id) : undefined,
     },
   );
 }
@@ -661,22 +653,6 @@ const previewTimeline = (timeline: TimelineSection, interaction: Interaction): T
   return timeline;
 };
 
-const dateAfter = (start: string, days: number) => {
-  const date = new Date(`${start}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-};
-
-const timelineRange = (timeline: TimelineSection, items: TimelineProjectionItem[]) => {
-  const today = todayStr();
-  const fallbackDays = timeline.scale === 'week' ? 6 : timeline.scale === 'month' ? 30 : 365;
-  const earliestItemStart = items.reduce((earliest, item) => !earliest || item.start < earliest ? item.start : earliest, '');
-  const start = (timeline.rangeStart ?? earliestItemStart) || today;
-  const end = timeline.rangeEnd
-    ?? (items.reduce((latest, item) => item.end > latest ? item.end : latest, '') || dateAfter(start, fallbackDays));
-  return { start, end: end >= start ? end : start };
-};
-
 const timelineTaskDates = (item: TimelineProjectionItem, edit: TimelineTaskInteraction | null) => {
   const itemId = item.projectTaskId ?? item.lifeItemId;
   if (!itemId || edit?.itemId !== itemId) return { start: item.start, end: item.end };
@@ -728,7 +704,7 @@ export default function MindMapCanvas({
   const presenceCursorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceCursorRef = useRef<Point | null>(null);
   const clipboardRef = useRef<ClipboardGraph | null>(null);
-  const richHtmlCacheRef = useRef(new Map<string, { updatedAt: number; html: string }>());
+  const richHtmlCacheRef = useRef(new Map<string, { revision: string; html: string }>());
   const handledFitRequest = useRef(0);
   const handledTreeLayoutRequest = useRef(0);
   const layoutGeneration = useRef(0);
@@ -760,6 +736,7 @@ export default function MindMapCanvas({
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandSearch, setCommandSearch] = useState('');
   const [searchCursor, setSearchCursor] = useState(0);
+  const [markdownSlashCursor, setMarkdownSlashCursor] = useState(0);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
   const [imageAssetUrls, setImageAssetUrls] = useState<Record<string, string>>({});
@@ -767,6 +744,8 @@ export default function MindMapCanvas({
   const [timelineTaskInteraction, setTimelineTaskInteraction] = useState<TimelineTaskInteraction | null>(null);
   const [timelineEditError, setTimelineEditError] = useState<string | null>(null);
   const [timelineVisibility, setTimelineVisibility] = useState<Record<string, TimelineVisibility>>({});
+  const [timelineFocus, setTimelineFocus] = useState<Record<string, TimelineFocus>>({});
+  const [selectedTimelineItemId, setSelectedTimelineItemId] = useState<string | null>(null);
   const [projectDateUndo, setProjectDateUndo] = useState<ProjectDateUndo | null>(null);
   const [lifeDateUpdated, setLifeDateUpdated] = useState(false);
   const editingSessionKey = editing ? editing.nodeId ?? 'new' : null;
@@ -804,6 +783,10 @@ export default function MindMapCanvas({
       const value = current[timelineId] ?? DEFAULT_TIMELINE_VISIBILITY;
       return { ...current, [timelineId]: { ...value, [key]: !value[key] } };
     });
+  }, []);
+
+  const setTimelineFocusMode = useCallback((timelineId: string, focus: TimelineFocus) => {
+    setTimelineFocus((current) => ({ ...current, [timelineId]: focus }));
   }, []);
 
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
@@ -1327,14 +1310,13 @@ export default function MindMapCanvas({
         const height = rect.height * camera.scale;
         const sectionColor = sectionThemeColors.get(section.id) ?? MIND_MAP_VISUAL_TOKENS.color.accent;
         context.save();
-        context.globalAlpha = section.collapsed ? 0.09 : 0.035;
+        context.globalAlpha = section.collapsed ? 0.09 : section.shape === 'fill' ? 0.1 : 0.035;
         context.fillStyle = sectionColor;
         context.strokeStyle = sectionColor;
         context.lineWidth = selectedSectionId === section.id ? 2 : 1;
-        context.setLineDash([8, 5]);
-        context.beginPath();
-        context.roundRect(topLeft.x, topLeft.y, width, height, 14 * camera.scale);
-        context.fill();
+        context.setLineDash(section.shape === 'cloud' ? [3, 3] : section.shape === 'fill' ? [] : [8, 5]);
+        traceMindMapBoundary(context, section.shape, topLeft.x, topLeft.y, width, height, 14 * camera.scale);
+        if (section.shape !== 'bracket') context.fill();
         context.globalAlpha = selectedSectionId === section.id ? 1 : 0.42;
         context.stroke();
         context.globalAlpha = 1;
@@ -1470,7 +1452,6 @@ export default function MindMapCanvas({
       if (treeEdgePreview && !hiddenNodeIds.has(treeEdgePreview.source.id)) {
         const route = buildEdgeRoute(nodeRect(treeEdgePreview.source), treeEdgePreview.target, {
           kind: 'hierarchy',
-          hierarchyDirection: treeDirection,
         });
         const start = worldToView(route.start, camera);
         const control1 = worldToView(route.control1, camera);
@@ -1486,6 +1467,33 @@ export default function MindMapCanvas({
           : treeEdgePreview.edge.style.width;
         context.lineWidth = Math.max(1, edgeWidth * camera.scale);
         context.setLineDash(treeEdgePreview.edge.style.dash === 'dashed' ? [4, 5] : []);
+        context.stroke();
+        context.restore();
+      }
+
+      for (const summary of Object.values(renderDocument.nodes)) {
+        const sourceIds = summary.summarySourceIds ?? [];
+        if (sourceIds.length < 2) continue;
+        const sources = sourceIds.map((id) => previewNodes[id]).filter((node): node is MindMapNode => Boolean(node) && !hiddenNodeIds.has(node.id));
+        const relation = mindMapSummaryConnector(previewNodes[summary.id] ?? summary, sources);
+        if (!relation) continue;
+        const top = worldToView({ x: relation.sourceX, y: relation.top }, camera);
+        const bottom = worldToView({ x: relation.sourceX, y: relation.bottom }, camera);
+        const target = worldToView({ x: relation.targetX, y: relation.middleY }, camera);
+        const accent = branchThemeColors.get(summary.id) ?? MIND_MAP_VISUAL_TOKENS.color.accent;
+        context.save();
+        context.strokeStyle = accent;
+        context.globalAlpha = 0.58;
+        context.lineWidth = Math.max(1.5, 2 * camera.scale);
+        context.beginPath();
+        context.moveTo(top.x, top.y);
+        context.lineTo(top.x, bottom.y);
+        context.moveTo(top.x, top.y);
+        context.lineTo(top.x + Math.sign(target.x - top.x) * 10 * camera.scale, top.y);
+        context.moveTo(bottom.x, bottom.y);
+        context.lineTo(bottom.x + Math.sign(target.x - bottom.x) * 10 * camera.scale, bottom.y);
+        context.moveTo(top.x, (top.y + bottom.y) / 2);
+        context.lineTo(target.x, target.y);
         context.stroke();
         context.restore();
       }
@@ -1912,6 +1920,12 @@ export default function MindMapCanvas({
       },
     }));
   };
+
+  const moveOutlineNode = (nodeId: string, targetId: string, position: OutlineDropPosition) => {
+    execute('调整大纲层级与顺序', (current) => moveMindMapOutlineNode(current, nodeId, targetId, position));
+  };
+
+  const collapseAllOutlineNodes = (collapsed: boolean) => execute(collapsed ? '全部折叠分支' : '全部展开分支', (current) => setMindMapOutlineCollapsed(current, collapsed));
 
   const commitEditing = (restoreFocus = false, next?: 'child' | 'sibling') => {
     const session = editing;
@@ -2809,7 +2823,7 @@ export default function MindMapCanvas({
     if (selectedNodes.size === 0 && selectedReferences.size === 0) return;
     const selected = (ref: CanvasObjectRef) => ref.type === 'node' ? selectedNodes.has(ref.id) : selectedReferences.has(ref.id);
     const clipboard: ClipboardGraph = {
-      nodes: selectedNodeIds.map((id) => document.nodes[id]).filter((node): node is MindMapNode => Boolean(node)),
+      nodes: [...selectedNodes].map((id) => document.nodes[id]).filter((node): node is MindMapNode => Boolean(node)),
       projectReferences: [...selectedReferences].map((id) => document.projectReferences[id]).filter((reference): reference is ProjectReferenceCard => Boolean(reference)),
       edges: Object.values(document.edges).filter((edge) => selected(edgeSourceRef(edge)) && selected(edgeTargetRef(edge))),
     };
@@ -2828,14 +2842,15 @@ export default function MindMapCanvas({
     const referenceIds = new Map<string, string>();
     const nodes: Record<string, MindMapNode> = {};
     const now = Date.now();
+    for (const node of clipboard.nodes) nodeIds.set(node.id, createMindMapId());
     for (const node of clipboard.nodes) {
-      const id = createMindMapId();
-      nodeIds.set(node.id, id);
+      const id = nodeIds.get(node.id)!;
       nodes[id] = {
         ...node,
         id,
         x: node.x + 24,
         y: node.y + 24,
+        summarySourceIds: (node.summarySourceIds ?? []).map((sourceId) => nodeIds.get(sourceId)).filter((sourceId): sourceId is string => Boolean(sourceId)),
         createdAt: now,
         updatedAt: now,
       };
@@ -3294,6 +3309,8 @@ export default function MindMapCanvas({
     ? document.projectReferences[selectedProjectReferenceId] ?? null
     : null;
   const selectedTimeline = selectedTimelineId ? document.timelineSections[selectedTimelineId] ?? null : null;
+  const internalLinkTargets = Object.values(document.nodes);
+  const selectedBacklinks = selectedNode ? mindMapBacklinks(internalLinkTargets, selectedNode) : [];
   const activeRelationTarget = interaction?.type === 'connect' ? hitConnectable(interaction.currentWorld) : null;
   const normalizedSearch = commandSearch.trim().toLocaleLowerCase();
   const searchResults = normalizedSearch
@@ -3356,10 +3373,11 @@ export default function MindMapCanvas({
   const richPreviews = visibleNodes.flatMap((node) => {
     if (node.type !== 'markdown' && node.type !== 'latex') return [];
     let cached = richHtmlCacheRef.current.get(node.id);
-    if (!cached || cached.updatedAt !== node.updatedAt) {
+    const revision = `${node.updatedAt}:${document.updatedAt}`;
+    if (!cached || cached.revision !== revision) {
       cached = {
-        updatedAt: node.updatedAt,
-        html: node.type === 'markdown' ? renderMindMapMarkdown(node.text) : renderMindMapLatex(node.text),
+        revision,
+        html: node.type === 'markdown' ? renderMindMapMarkdown(node.text, internalLinkTargets) : renderMindMapLatex(node.text),
       };
       richHtmlCacheRef.current.set(node.id, cached);
       while (richHtmlCacheRef.current.size > 300) {
@@ -3386,29 +3404,38 @@ export default function MindMapCanvas({
     updateCamera({ x: size.width / 2 - node.x * scale, y: size.height / 2 - node.y * scale, scale }, true);
     window.requestAnimationFrame(() => surfaceRef.current?.focus());
   };
-  const renderOutlineNode = (nodeId: string, depth = 0): ReactNode => {
-    const node = document.nodes[nodeId];
-    if (!node) return null;
-    const childIds = treeChildrenById.get(nodeId) ?? [];
-    const selected = selectedNodeIds.length === 1 && selectedNodeIds[0] === nodeId;
-    return <li key={nodeId} className={styles.outlineItem}>
-      <div className={`${styles.outlineRow} ${selected ? styles.outlineRowSelected : ''}`} style={{ paddingLeft: 8 + depth * 16 }}>
-        {childIds.length ? <button type="button" className={styles.outlineCollapse} aria-label={`${node.collapsed ? '展开' : '折叠'} ${node.text || '空节点'}`} onClick={() => updateNode(nodeId, { collapsed: !node.collapsed })}>{node.collapsed ? '▸' : '▾'}</button> : <span className={styles.outlineSpacer} />}
-        <button type="button" className={styles.outlineLabel} onDoubleClick={() => {
-          startEditingNode(node);
-          window.requestAnimationFrame(() => editorRef.current?.focus());
-        }} onClick={() => focusOutlineNode(nodeId)} title={node.text || '空节点'}>
-          {(node.marker ?? 'none') !== 'none' && <span className={styles.outlineIcon} aria-hidden="true">{MARKER_ICON[node.marker ?? 'none']}</span>}
-          {node.icon && <span className={styles.outlineIcon} aria-hidden="true">{node.icon}</span>}
-          <span className={styles.outlineText}>{node.text || '空节点'}</span>
-          {node.progress !== null && node.progress !== undefined && <i>{Math.round(node.progress)}%</i>}
-          {node.tags?.slice(0, 2).map((tag) => <i key={tag}>#{tag}</i>)}
-        </button>
-      </div>
-      {!node.collapsed && childIds.length > 0 && <ul>{childIds.map((childId) => renderOutlineNode(childId, depth + 1))}</ul>}
-    </li>;
+  const projectReferenceForTimelineItem = (item: TimelineProjectionItem) => {
+    const targetType = item.kind === 'project' ? 'project' : item.kind === 'task' ? 'task' : item.kind === 'milestone' ? 'milestone' : null;
+    const targetId = item.kind === 'project'
+      ? item.id.replace(/^project:/, '')
+      : item.kind === 'task'
+        ? item.projectTaskId
+        : item.kind === 'milestone'
+          ? item.id.replace(/^milestone:/, '')
+          : null;
+    if (!targetType || !targetId) return null;
+    return Object.values(document.projectReferences).find((reference) => reference.targetType === targetType && reference.targetId === targetId) ?? null;
   };
-
+  const activateTimelineItem = (item: TimelineProjectionItem) => {
+    setSelectedTimelineItemId(item.id);
+    const reference = projectReferenceForTimelineItem(item);
+    if (!reference) return;
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setSelectedSectionId(null);
+    setSelectedTimelineId(null);
+    setSelectedProjectReferenceId(reference.id);
+    const scale = cameraRef.current.scale;
+    updateCamera({ x: size.width / 2 - reference.x * scale, y: size.height / 2 - reference.y * scale, scale }, true);
+  };
+  const activateRenderedLink = (value: string | null | undefined) => {
+    const prefix = '#mind-map-node:';
+    if (value?.startsWith(prefix)) {
+      focusOutlineNode(decodeURIComponent(value.slice(prefix.length)));
+      return;
+    }
+    openMindMapLink(value);
+  };
   return (
     <div
       ref={surfaceRef}
@@ -3452,10 +3479,17 @@ export default function MindMapCanvas({
         }}
       />
       <button className={styles.outlineToggle} type="button" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((open) => !open)}>大纲</button>
-      {outlineOpen && <aside className={styles.outlinePanel} aria-label="思维导图大纲">
-        <header><strong>大纲</strong><small>{Object.keys(document.nodes).length} 个节点</small></header>
-        <ul>{outlineRoots.map((nodeId) => renderOutlineNode(nodeId))}</ul>
-      </aside>}
+      {outlineOpen && <MindMapOutline
+        nodes={document.nodes}
+        roots={outlineRoots}
+        childrenById={treeChildrenById}
+        selectedNodeIds={selectedNodeIds}
+        onFocus={focusOutlineNode}
+        onRename={(nodeId, text) => updateNode(nodeId, { text })}
+        onToggleCollapse={(nodeId) => updateNode(nodeId, { collapsed: !document.nodes[nodeId]?.collapsed })}
+        onCollapseAll={collapseAllOutlineNodes}
+        onMove={moveOutlineNode}
+      />}
       {connectionMode && (
         <div className={styles.connectionHint} role="status">
           {connectionSource
@@ -3491,7 +3525,7 @@ export default function MindMapCanvas({
               const anchor = (event.target as HTMLElement).closest('a');
               if (!anchor) return;
               event.preventDefault();
-              openMindMapLink(anchor.getAttribute('href'));
+              activateRenderedLink(anchor.getAttribute('href'));
             }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
@@ -3500,51 +3534,11 @@ export default function MindMapCanvas({
       {visibleTimelines.map((sourceTimeline) => {
         const timeline = previewTimeline(sourceTimeline, interaction);
         const allItems = timelineProjectionItems(timeline, projectPlanning, document.lifeMap ?? lifeTimeline);
-        const range = timelineRange(timeline, allItems);
-        const summaryMode = camera.scale < 0.45;
-        // The timeline is an overview: individual tasks belong in the task views,
-        // where a dense schedule remains readable.
-        const overviewItems = allItems.filter((item) => item.kind !== 'task');
-        const lodItems = summaryMode
-          ? []
-          : camera.scale < 0.75
-            ? overviewItems.filter((item) => item.kind !== 'note')
-            : overviewItems;
         const visibility = timelineVisibility[timeline.id] ?? DEFAULT_TIMELINE_VISIBILITY;
-        const visibleItems = timelineVisibleItems(lodItems, range.start, range.end, Number.MAX_SAFE_INTEGER);
-        const stageCandidates = visibility.stages ? visibleItems.filter((item) => item.kind === 'stage') : [];
-        const milestoneCandidates = visibility.milestones ? visibleItems.filter((item) => item.kind === 'milestone' || item.shape === 'marker') : [];
-        const rowCandidates = visibleItems.filter((item) => item.kind !== 'stage' && item.kind !== 'milestone' && item.shape !== 'marker');
-        const headerHeight = 48;
-        const axisHeight = 52;
-        const stageRowHeight = 26;
-        const maximumStageRows = Math.max(0, Math.floor((timeline.height - headerHeight - axisHeight - 18 - 80 - 18) / stageRowHeight));
-        const stages = stageCandidates.slice(0, maximumStageRows);
-        const stageHeight = stages.length ? stages.length * stageRowHeight + 8 : 8;
-        const maximumMilestoneStack = Math.max(0, Math.floor((timeline.height - headerHeight - axisHeight - stageHeight - 18 - 80 - 12) / 14));
-        const milestoneDates = new Map<string, number>();
-        const milestones = milestoneCandidates.filter((item) => {
-          const stack = (milestoneDates.get(item.start) ?? 0) + 1;
-          milestoneDates.set(item.start, stack);
-          return stack <= maximumMilestoneStack;
-        });
-        const milestoneStackHeight = milestones.reduce((maximum, item, index) => {
-          const stack = milestones.slice(0, index).filter((candidate) => candidate.start === item.start).length + 1;
-          return Math.max(maximum, stack);
-        }, 0);
-        const milestoneHeight = milestones.length ? 12 + milestoneStackHeight * 14 : 18;
-        const rowAreaHeight = Math.max(32, timeline.height - headerHeight - axisHeight - stageHeight - milestoneHeight - 18);
-        const maximumRows = Math.max(1, Math.floor(rowAreaHeight / 34));
-        const items = rowCandidates.slice(0, maximumRows);
-        const rowStep = items.length ? Math.min(52, Math.max(34, rowAreaHeight / items.length)) : 40;
-        const rowsTop = axisHeight + stageHeight + Math.max(0, (rowAreaHeight - rowStep * items.length) / 2);
-        const milestoneTop = timeline.height - headerHeight - milestoneHeight;
-        const coordinates = createTimelineCoordinates(range.start, range.end, timeline.width);
-        const ticks = buildTimelineTicks({ rangeStart: range.start, rangeEnd: range.end, plotWidth: coordinates.plotWidth, scale: timeline.scale });
-        const today = todayStr();
-        const todayVisible = visibility.today && today >= range.start && today <= range.end;
-        const status = timelineStatus(allItems, today);
-        const todayLabel = `今天 ${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))}${status.active ? ` · 进行中 ${status.active}` : ''}${status.overdue ? ` · 逾期 ${status.overdue}` : ''}`;
+        const focusMode = timelineFocus[timeline.id] ?? 'all';
+        const { range, summaryMode, density, rowCandidates, headerHeight, axisHeight, axisLineY, stageRowHeight, stages, milestoneLayouts, milestoneOverflow, items, lanes, rowStep, rowsTop, milestoneTop, coordinates, ticks, weekends, today, todayVisible, status } = buildMindMapTimelineLayer(timeline, allItems, camera.scale, visibility, focusMode);
+        const todayLabel = `今天 ${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))}`;
+        const densityLabel = density === 'detail' ? '详细' : density === 'compact' ? '紧凑' : '总览';
         const topLeft = worldToView({
           x: timeline.x - timeline.width / 2,
           y: timeline.y - timeline.height / 2,
@@ -3618,6 +3612,22 @@ export default function MindMapCanvas({
                 </div>
                 <div className={styles.timelineHeaderMeta}>
                   <span title={`${range.start} — ${range.end}`}>{rangeSummary}</span>
+                  <span className={styles.timelineDensity}>{densityLabel}</span>
+                  <button type="button" className={styles.timelineHeaderAction} aria-label="时间线定位今天" title="定位今天" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                    event.stopPropagation();
+                    const nextRange = timelineRangeForScale(timeline.scale, today);
+                    execute('时间线定位今天', (current) => ({
+                      ...current,
+                      timelineSections: { ...current.timelineSections, [timeline.id]: { ...current.timelineSections[timeline.id], rangeStart: nextRange.start, rangeEnd: nextRange.end, updatedAt: Date.now() } },
+                    }));
+                  }}>今天</button>
+                  <button type="button" className={styles.timelineHeaderAction} aria-label="时间线适合全部内容" title="适合全部内容" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                    event.stopPropagation();
+                    execute('时间线适合全部内容', (current) => ({
+                      ...current,
+                      timelineSections: { ...current.timelineSections, [timeline.id]: { ...current.timelineSections[timeline.id], rangeStart: null, rangeEnd: null, updatedAt: Date.now() } },
+                    }));
+                  }}>全览</button>
                   <button type="button" aria-label="打开时间线属性" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
                     event.stopPropagation();
                     setSelectedTimelineId(timeline.id);
@@ -3626,17 +3636,35 @@ export default function MindMapCanvas({
               </div>
               {!timeline.collapsed && (
               <div className={styles.timelineBody} style={{ top: headerHeight * scale }}>
+                <div className={styles.timelineInsights} style={{ top: 7 * scale, left: 10 * scale, gap: Math.max(3, 5 * scale) }} aria-label="时间线状态筛选">
+                  {([
+                    ['all', '全部', allItems.length],
+                    ['active', '进行中', status.active],
+                    ['upcoming', '即将开始', status.upcoming],
+                    ['overdue', '已逾期', status.overdue],
+                  ] as const).map(([value, label, count]) => <button
+                    key={value}
+                    type="button"
+                    aria-pressed={focusMode === value}
+                    disabled={value !== 'all' && count === 0}
+                    className={`${styles.timelineInsightChip} ${value === 'all' ? '' : styles[`timelineInsight_${value}`]} ${focusMode === value ? styles.timelineInsightChipActive : ''}`}
+                    style={{ fontSize: Math.max(8, 10 * scale), minHeight: Math.max(19, 24 * scale) }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => { event.stopPropagation(); setTimelineFocusMode(timeline.id, value); }}
+                  >{label}<b>{count}</b></button>)}
+                </div>
                 <span className={styles.timelineLabelDivider} style={{ left: coordinates.plotLeft * scale }} />
-                <span className={styles.timelineAxisLine} style={{ left: coordinates.plotLeft * scale, top: 39 * scale, width: coordinates.plotWidth * scale }} />
+                <span className={styles.timelineAxisLine} style={{ left: coordinates.plotLeft * scale, top: axisLineY * scale, width: coordinates.plotWidth * scale }} />
+                {weekends.map((weekend) => <span key={weekend.start} className={styles.timelineWeekend} style={{ left: weekend.start * scale, top: axisLineY * scale, width: Math.max(2, (weekend.end - weekend.start) * scale), height: Math.max(1, (milestoneTop - axisLineY) * scale) }} />)}
                 {ticks.map((tick) => {
                   const x = dateToX(tick.date, coordinates) * scale;
                   return <span key={`${tick.kind}:${tick.date}`} className={`${styles.timelineTick} ${tick.kind === 'minor' ? styles.timelineTickMinor : ''}`} style={{ left: x }}>
-                    {tick.kind === 'major' && <span className={styles.timelineTickLabel} style={{ fontSize: Math.max(9, 11 * scale) }}>{tick.label}{tick.sublabel && <small>{tick.sublabel}</small>}</span>}
-                    <span className={styles.timelineGridLine} style={{ top: 39 * scale, height: Math.max(1, (milestoneTop - 39) * scale) }} />
+                    {tick.kind === 'major' && <span className={styles.timelineTickLabel} style={{ top: 39 * scale, fontSize: Math.max(9, 11 * scale) }}>{tick.label}{tick.sublabel && <small>{tick.sublabel}</small>}</span>}
+                    <span className={styles.timelineGridLine} style={{ top: axisLineY * scale, height: Math.max(1, (milestoneTop - axisLineY) * scale) }} />
                   </span>;
                 })}
-                {todayVisible && <span className={styles.timelineToday} style={{ left: dateToX(today, coordinates) * scale, top: 3 * scale, height: Math.max(1, (milestoneTop + 8) * scale) }}>
-                  <span style={{ fontSize: Math.max(8, 10 * scale) }}>{todayLabel}</span>
+                {todayVisible && <span className={styles.timelineToday} style={{ left: dateToX(today, coordinates) * scale, top: axisLineY * scale, height: Math.max(1, (milestoneTop - axisLineY + 8) * scale) }}>
+                  <span style={{ top: -22 * scale, fontSize: Math.max(8, 10 * scale) }}>{todayLabel}</span>
                 </span>}
                 {allItems.length === 0 && <div className={styles.timelineEmpty} style={{ top: (axisHeight + 18) * scale }}>
                   <strong>{emptyMessage}</strong>
@@ -3686,6 +3714,12 @@ export default function MindMapCanvas({
                     )}
                   </span>;
                 })}
+                {lanes.map((lane, index) => <span
+                  key={lane.id}
+                  className={`${styles.timelineLane} ${index % 2 ? styles.timelineLaneAlternate : ''}`}
+                  style={{ '--timeline-lane-color': lane.color, top: (rowsTop + lane.startRow * rowStep) * scale, height: lane.rowCount * rowStep * scale } as CSSProperties}
+                  aria-hidden="true"
+                />)}
                 {items.map((item, row) => {
                   const renderedDates = timelineTaskDates(item, timelineTaskInteraction);
                   const left = dateToX(renderedDates.start, coordinates) * scale;
@@ -3695,11 +3729,14 @@ export default function MindMapCanvas({
                   const task = item.kind === 'task';
                   const barHeight = (project ? 17 : task ? 13 : 14) * scale;
                   const progress = item.progress === undefined ? null : Math.max(0, Math.min(100, item.progress));
+                  const temporalState = timelineTemporalState(item, today);
+                  const linkedReference = projectReferenceForTimelineItem(item);
                   return (
-                    <span key={item.id} className={styles.timelineRow} style={{ top: rowTop, height: rowStep * scale }}>
-                      <span className={`${styles.timelineRowLabel} ${project ? styles.timelineProjectLabel : ''} ${task || item.parentId ? styles.timelineTaskLabel : ''}`} style={{ width: (coordinates.plotLeft - 16) * scale, fontSize: Math.max(9, (project ? 12 : 11) * scale) }}>
+                    <span key={item.id} className={`${styles.timelineRow} ${styles[`timelineTemporal_${temporalState}`]} ${selectedTimelineItemId === item.id ? styles.timelineRowSelected : ''}`} style={{ top: rowTop, height: rowStep * scale }}>
+                      <button type="button" className={`${styles.timelineRowLabel} ${project ? styles.timelineProjectLabel : ''} ${task || item.parentId ? styles.timelineTaskLabel : ''}`} style={{ width: (coordinates.plotLeft - 16) * scale, fontSize: Math.max(9, (project ? 12 : 11) * scale) }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); activateTimelineItem(item); }} onPointerEnter={() => linkedReference && setHoveredProjectReferenceId(linkedReference.id)} onPointerLeave={() => linkedReference && setHoveredProjectReferenceId(null)}>
                         {project && <i style={{ backgroundColor: item.color }} />}{item.title}
-                      </span>
+                        {linkedReference && <small title="已关联画布引用">↗</small>}
+                      </button>
                       <span
                         className={`${styles.timelineBar} ${project ? styles.timelineProjectBar : ''} ${task ? styles.timelineTaskBar : ''} ${item.kind === 'system' ? styles.timelineSystemBar : ''} ${item.projectTaskId || item.lifeItemId ? styles.timelineEditable : ''} ${item.progress === undefined ? styles.timelineBarNoProgress : ''}`}
                         title={`${item.title} · ${renderedDates.start}${renderedDates.end !== renderedDates.start ? ` — ${renderedDates.end}` : ''}`}
@@ -3709,6 +3746,9 @@ export default function MindMapCanvas({
                         onPointerUp={item.projectTaskId || item.lifeItemId ? finishTimelineTaskInteraction : undefined}
                         onPointerCancel={item.projectTaskId || item.lifeItemId ? finishTimelineTaskInteraction : undefined}
                         onDoubleClick={item.projectTaskId || item.lifeItemId ? (event) => event.stopPropagation() : undefined}
+                        onClick={(event) => { event.stopPropagation(); activateTimelineItem(item); }}
+                        onPointerEnter={() => linkedReference && setHoveredProjectReferenceId(linkedReference.id)}
+                        onPointerLeave={() => linkedReference && setHoveredProjectReferenceId(null)}
                       >
                       {visibility.progress && progress !== null && <span className={styles.timelineBarProgress} style={{ width: `${progress}%` }} />}
                       {visibility.progress && progress !== null && width >= 38 && <b className={styles.timelineProgressLabel} style={{ fontSize: Math.max(7, 9 * scale) }}>{progress}%</b>}
@@ -3738,11 +3778,12 @@ export default function MindMapCanvas({
                     </span>
                   );
                 })}
-                {milestones.map((item, index) => {
-                  const stack = milestones.slice(0, index).filter((candidate) => candidate.start === item.start).length;
+                {milestoneLayouts.map(({ item, stack }) => {
+                  const temporalState = timelineTemporalState(item, today);
+                  const linkedReference = projectReferenceForTimelineItem(item);
                   return <span
                     key={item.id}
-                    className={`${styles.timelineMilestoneItem} ${item.lifeItemId ? styles.timelineEditable : ''}`}
+                    className={`${styles.timelineMilestoneItem} ${styles[`timelineTemporal_${temporalState}`]} ${item.lifeItemId ? styles.timelineEditable : ''} ${selectedTimelineItemId === item.id ? styles.timelineMilestoneSelected : ''}`}
                     title={`${item.title} · ${item.start}`}
                     style={{ ...itemColor(item), left: dateToX(item.start, coordinates) * scale, top: (milestoneTop + stack * 12) * scale, fontSize: Math.max(8, 10 * scale) }}
                     onPointerDown={item.lifeItemId ? (event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'move') : undefined}
@@ -3750,8 +3791,12 @@ export default function MindMapCanvas({
                     onPointerUp={item.lifeItemId ? finishTimelineTaskInteraction : undefined}
                     onPointerCancel={item.lifeItemId ? finishTimelineTaskInteraction : undefined}
                     onDoubleClick={item.lifeItemId ? (event) => event.stopPropagation() : undefined}
+                    onClick={(event) => { event.stopPropagation(); activateTimelineItem(item); }}
+                    onPointerEnter={() => linkedReference && setHoveredProjectReferenceId(linkedReference.id)}
+                    onPointerLeave={() => linkedReference && setHoveredProjectReferenceId(null)}
                   ><i /> <span>{item.title}</span></span>;
                 })}
+                {milestoneOverflow.map((overflow) => <span key={`overflow:${overflow.date}`} className={styles.timelineMilestoneOverflow} title={`${overflow.date} 还有 ${overflow.count} 个关键节点`} style={{ left: dateToX(overflow.date, coordinates) * scale, top: (milestoneTop + overflow.stack * 12) * scale, fontSize: Math.max(8, 9 * scale) }}>+{overflow.count}</span>)}
                 {rowCandidates.length > items.length && <button type="button" className={styles.timelineOverflow} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
                   event.stopPropagation();
                   execute('展开时间线内容', (current) => {
@@ -4238,7 +4283,10 @@ export default function MindMapCanvas({
         const markdownSlashMatch = /(^|\n)\/[a-zA-Z0-9-]*$/.exec(editing.draft);
         const markdownEditing = editingNodeType === 'markdown' || isMindMapMarkdown(editing.draft) || Boolean(markdownSlashMatch);
         const markdownShortcuts = [
-          ['h1', '# ', '一级标题'], ['h2', '## ', '二级标题'], ['list', '- ', '无序列表'], ['todo', '- [ ] ', '待办事项'], ['quote', '> ', '引用'], ['code', '```\n\n```', '代码块'],
+          ['h1', '# ', '一级标题'], ['h2', '## ', '二级标题'], ['h3', '### ', '三级标题'],
+          ['list', '- ', '无序列表'], ['todo', '- [ ] ', '待办事项'], ['quote', '> ', '引用'],
+          ['link', '[链接文字](https://)', '链接'], ['table', '| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |', '表格'],
+          ['hr', '---', '分隔线'], ['code', '```\n\n```', '代码块'],
         ] as const;
         const slashQuery = markdownSlashMatch?.[0].replace(/^\n?\//, '').toLocaleLowerCase() ?? '';
         const visibleShortcuts = markdownShortcuts.filter(([id, , label]) => id.includes(slashQuery) || label.includes(slashQuery));
@@ -4266,6 +4314,7 @@ export default function MindMapCanvas({
           }}
           onChange={(event) => {
             const draft = event.target.value;
+            setMarkdownSlashCursor(0);
             setEditing({ ...editing, draft, ...(!editing.nodeId && editing.newNodeType === 'text' && (isMindMapMarkdown(draft) || /(^|\n)\/[a-zA-Z0-9-]*$/.test(draft)) ? { newNodeType: 'markdown' as const } : {}) });
           }}
           onCompositionStart={() => { composing.current = true; }}
@@ -4273,9 +4322,15 @@ export default function MindMapCanvas({
           onBlur={() => commitEditing()}
           onKeyDown={(event) => {
             event.stopPropagation();
-            if (markdownSlashMatch && event.key === 'Enter' && visibleShortcuts[0] && !composing.current) {
+            if (markdownSlashMatch && event.key === 'ArrowDown' && visibleShortcuts.length) {
               event.preventDefault();
-              applyMarkdownShortcut(visibleShortcuts[0][1]);
+              setMarkdownSlashCursor((cursor) => (cursor + 1) % visibleShortcuts.length);
+            } else if (markdownSlashMatch && event.key === 'ArrowUp' && visibleShortcuts.length) {
+              event.preventDefault();
+              setMarkdownSlashCursor((cursor) => (cursor - 1 + visibleShortcuts.length) % visibleShortcuts.length);
+            } else if (markdownSlashMatch && event.key === 'Enter' && visibleShortcuts.length && !composing.current) {
+              event.preventDefault();
+              applyMarkdownShortcut(visibleShortcuts[Math.min(markdownSlashCursor, visibleShortcuts.length - 1)][1]);
             } else if (event.key === 'Escape') {
               event.preventDefault();
               cancelEditing(true);
@@ -4300,7 +4355,7 @@ export default function MindMapCanvas({
           }}
         />
         {markdownSlashMatch && <div className={styles.markdownSlashMenu} role="listbox" aria-label="Markdown 快捷菜单" style={{ left: editingTopLeft.x, top: editingTopLeft.y + Math.max(40, editing.height * camera.scale) + 4 }}>
-          {visibleShortcuts.map(([id, prefix, label]) => <button key={id} type="button" role="option" onPointerDown={(event) => event.preventDefault()} onClick={() => applyMarkdownShortcut(prefix)}><kbd>/{id}</kbd>{label}</button>)}
+          {visibleShortcuts.map(([id, prefix, label], index) => <button key={id} type="button" role="option" aria-selected={index === Math.min(markdownSlashCursor, visibleShortcuts.length - 1)} onPointerMove={() => setMarkdownSlashCursor(index)} onPointerDown={(event) => event.preventDefault()} onClick={() => applyMarkdownShortcut(prefix)}><kbd>/{id}</kbd>{label}</button>)}
         </div>}
         </>
         );
@@ -4317,10 +4372,10 @@ export default function MindMapCanvas({
       {inspectorOpen && (
         <aside
           className={`${styles.inspector} ${selectedTimeline ? styles.timelineInspector : ''}`}
-          aria-label={selectedTimeline ? '时间线属性' : selectedProjectReference ? '项目引用属性' : selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : '多选排列'}
+          aria-label={selectedTimeline ? '时间线属性' : selectedProjectReference ? '项目引用属性' : selectedNode ? '节点属性' : selectedEdge ? '连线属性' : selectedSection ? '区域属性' : '多选编辑'}
         >
           <div className={styles.inspectorHeader}>
-            <strong>{selectedTimeline ? '时间线' : selectedProjectReference ? '项目引用' : selectedNode ? '节点' : selectedEdge ? '连线' : selectedSection ? '区域' : `排列 ${selectedNodeIds.length} 个节点`}</strong>
+            <strong>{selectedTimeline ? '时间线' : selectedProjectReference ? '项目引用' : selectedNode ? '节点' : selectedEdge ? '连线' : selectedSection ? '区域' : `批量编辑 ${selectedNodeIds.length} 个节点`}</strong>
             <button
               type="button"
               aria-label="关闭属性面板"
@@ -4544,73 +4599,76 @@ export default function MindMapCanvas({
               }}>删除引用</button>
             </div>
           )}
-          {selectedNodeIds.length > 1 && !selectedNode && (
-            <div className={styles.arrangeActions}>
-              <button type="button" onClick={() => execute('左对齐', (current) => alignMindMapNodes(current, selectedNodeIds, 'left'))}>左对齐</button>
-              <button type="button" onClick={() => execute('水平居中', (current) => alignMindMapNodes(current, selectedNodeIds, 'center-x'))}>水平居中</button>
-              <button type="button" onClick={() => execute('右对齐', (current) => alignMindMapNodes(current, selectedNodeIds, 'right'))}>右对齐</button>
-              <button type="button" onClick={() => execute('顶对齐', (current) => alignMindMapNodes(current, selectedNodeIds, 'top'))}>顶对齐</button>
-              <button type="button" onClick={() => execute('垂直居中', (current) => alignMindMapNodes(current, selectedNodeIds, 'center-y'))}>垂直居中</button>
-              <button type="button" onClick={() => execute('底对齐', (current) => alignMindMapNodes(current, selectedNodeIds, 'bottom'))}>底对齐</button>
-              <button
-                type="button"
-                disabled={selectedNodeIds.length < 3}
-                onClick={() => execute('水平分布', (current) => distributeMindMapNodes(current, selectedNodeIds, 'horizontal'))}
-              >
-                水平分布
-              </button>
-              <button
-                type="button"
-                disabled={selectedNodeIds.length < 3}
-                onClick={() => execute('垂直分布', (current) => distributeMindMapNodes(current, selectedNodeIds, 'vertical'))}
-              >
-                垂直分布
-              </button>
-              <button type="button" onClick={() => {
-                const members = selectedNodeIds.map((id) => document.nodes[id]).filter((node): node is MindMapNode => Boolean(node));
-                const section = createMindMapSection(members);
-                execute('创建区域', (current) => ({
+          {selectedNodeIds.length > 1 && !selectedNode && <MindMapMultiSelectionPanel
+            count={selectedNodeIds.length}
+            canDistribute={selectedNodeIds.length >= 3}
+            canUngroup={selectedNodeIds.some((id) => Boolean(document.nodes[id]?.groupId))}
+            canCreateSummary={new Set(selectedNodeIds.map((id) => treeParentId(id))).size === 1}
+            onPatch={(label, updates) => execute(label, (current) => ({
+              ...current,
+              nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [id, selectedSet.has(id)
+                ? { ...node, ...updates, id, createdAt: node.createdAt, updatedAt: Date.now() }
+                : node])),
+            }))}
+            onAddTags={(tags) => execute('批量追加标签', (current) => ({
+              ...current,
+              nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [id, selectedSet.has(id)
+                ? { ...node, tags: [...new Set([...(node.tags ?? []), ...tags])].slice(0, 12), updatedAt: Date.now() }
+                : node])),
+            }))}
+            onAlign={(alignment) => execute('批量对齐节点', (current) => alignMindMapNodes(current, selectedNodeIds, alignment))}
+            onDistribute={(axis) => execute('批量分布节点', (current) => distributeMindMapNodes(current, selectedNodeIds, axis))}
+            onCreateBoundary={(shape: MindMapBoundaryShape) => {
+              const members = selectedNodeIds.map((id) => document.nodes[id]).filter((node): node is MindMapNode => Boolean(node));
+              const section = createMindMapSection(members, { title: '节点边界', shape });
+              execute('创建节点边界', (current) => ({
+                ...current,
+                sections: { ...current.sections, [section.id]: section },
+                nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [id, selectedSet.has(id)
+                  ? { ...node, parentSectionId: section.id, updatedAt: Date.now() }
+                  : node])),
+              }));
+              setSelectedNodeIds([]);
+              setSelectedSectionId(section.id);
+            }}
+            onCreateSummary={() => {
+              const members = selectedNodeIds.map((id) => document.nodes[id]).filter((node): node is MindMapNode => Boolean(node));
+              if (!members.length || new Set(members.map((node) => treeParentId(node.id))).size !== 1) return;
+              const right = Math.max(...members.map((node) => node.x + node.width / 2));
+              const y = members.reduce((sum, node) => sum + node.y, 0) / members.length;
+              const summary = createMindMapNode({ x: right + 190, y }, 'text', { text: `摘要：${members.slice(0, 3).map((node) => node.text || '未命名').join('、')}` });
+              summary.semantic = 'summary';
+              summary.summarySourceIds = members.map((node) => node.id);
+              const parentId = treeParentId(members[0].id);
+              execute('创建结构化摘要', (current) => {
+                const edge = parentId ? createMindMapEdge(parentId, summary.id, { relationship: 'tree', order: siblingEdges(parentId, current).length }) : null;
+                return {
                   ...current,
-                  sections: { ...current.sections, [section.id]: section },
-                  nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [
-                    id,
-                    selectedSet.has(id) ? { ...node, parentSectionId: section.id, updatedAt: Date.now() } : node,
-                  ])),
+                  nodes: { ...current.nodes, [summary.id]: summary },
+                  edges: edge ? { ...current.edges, [edge.id]: edge } : current.edges,
+                  zOrder: [...current.zOrder, summary.id],
+                };
+              });
+              setSelectedNodeIds([summary.id]);
+            }}
+            onCreateGroup={() => {
+              const group = createMindMapGroup(selectedNodeIds);
+              execute('创建分组', (current) => {
+                const groups = Object.fromEntries(Object.entries(current.groups).flatMap(([id, item]) => {
+                  const memberIds = item.memberIds.filter((memberId) => !selectedSet.has(memberId));
+                  return memberIds.length ? [[id, { ...item, memberIds }]] : [];
                 }));
-                setSelectedNodeIds([]);
-                setSelectedSectionId(section.id);
-              }}>创建区域</button>
-              <button type="button" onClick={() => {
-                const group = createMindMapGroup(selectedNodeIds);
-                execute('创建分组', (current) => {
-                  const groups = Object.fromEntries(Object.entries(current.groups).flatMap(([id, item]) => {
-                    const memberIds = item.memberIds.filter((memberId) => !selectedSet.has(memberId));
-                    return memberIds.length ? [[id, { ...item, memberIds }]] : [];
-                  }));
-                  groups[group.id] = group;
-                  return {
-                    ...current,
-                    groups,
-                    nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [
-                      id,
-                      selectedSet.has(id) ? { ...node, groupId: group.id, updatedAt: Date.now() } : node,
-                    ])),
-                  };
-                });
-              }}>创建分组</button>
-              <button type="button" disabled={!selectedNodeIds.some((id) => document.nodes[id]?.groupId)} onClick={() => {
-                execute('解除分组', (current) => {
-                  const targetGroups = new Set(selectedNodeIds.map((id) => current.nodes[id]?.groupId).filter(Boolean));
-                  const nodes = Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [
-                    id,
-                    selectedSet.has(id) ? { ...node, groupId: null, updatedAt: Date.now() } : node,
-                  ]));
-                  const groups = Object.fromEntries(Object.entries(current.groups).filter(([id]) => !targetGroups.has(id)));
-                  return { ...current, nodes, groups };
-                });
-              }}>解除分组</button>
-            </div>
-          )}
+                groups[group.id] = group;
+                return { ...current, groups, nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [id, selectedSet.has(id) ? { ...node, groupId: group.id, updatedAt: Date.now() } : node])) };
+              });
+            }}
+            onUngroup={() => execute('解除分组', (current) => {
+              const targetGroups = new Set(selectedNodeIds.map((id) => current.nodes[id]?.groupId).filter(Boolean));
+              const nodes = Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [id, selectedSet.has(id) ? { ...node, groupId: null, updatedAt: Date.now() } : node]));
+              const groups = Object.fromEntries(Object.entries(current.groups).filter(([id]) => !targetGroups.has(id)));
+              return { ...current, nodes, groups };
+            })}
+          />}
           {selectedSection && (
             <div className={styles.inspectorFields}>
               <label>
@@ -4629,6 +4687,10 @@ export default function MindMapCanvas({
                   }))}
                 />
               </label>
+              <label><span>边界形态</span><select aria-label="边界形态" value={selectedSection.shape} onChange={(event) => execute('修改边界形态', (current) => ({
+                ...current,
+                sections: { ...current.sections, [selectedSection.id]: { ...selectedSection, shape: event.target.value as MindMapBoundaryShape, updatedAt: Date.now() } },
+              }))}><option value="box">边框</option><option value="bracket">括号</option><option value="cloud">云朵</option><option value="fill">底色</option></select></label>
               <label className={styles.checkboxField}>
                 <input
                   type="checkbox"
@@ -4786,9 +4848,10 @@ export default function MindMapCanvas({
                     const anchor = (event.target as HTMLElement).closest('a');
                     if (!anchor) return;
                     event.preventDefault();
-                    openMindMapLink(anchor.getAttribute('href'));
-                  }} dangerouslySetInnerHTML={{ __html: renderMindMapMarkdown(selectedNode.note) }} />
+                    activateRenderedLink(anchor.getAttribute('href'));
+                  }} dangerouslySetInnerHTML={{ __html: renderMindMapMarkdown(selectedNode.note, internalLinkTargets) }} />
                 </details>}
+                {selectedBacklinks.length > 0 && <div className={styles.backlinks}><strong>反向链接</strong>{selectedBacklinks.map((node) => <button key={node.id} type="button" onClick={() => focusOutlineNode(node.id)}>← {node.text || '空节点'}</button>)}</div>}
               </section>
 
               <section className={styles.inspectorGroup}>
@@ -4837,6 +4900,7 @@ export default function MindMapCanvas({
 
               <section className={styles.inspectorGroup}>
                 <h3>外观</h3>
+                <label><span>颜色模式</span><select aria-label="节点颜色模式" value={selectedNode.colorMode ?? 'auto'} onChange={(event) => updateNode(selectedNode.id, { colorMode: event.target.value as MindMapNode['colorMode'] })}><option value="auto">自动兼容</option><option value="inherit">继承分支色</option><option value="custom">使用节点颜色</option></select></label>
                 <label><span>填充</span><input type="color" aria-label="节点填充颜色" defaultValue={selectedNode.style.fill} onChange={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, fill: event.target.value } })} /></label>
                 <label><span>文字</span><input type="color" aria-label="节点文字颜色" defaultValue={selectedNode.style.textColor} onChange={(event) => updateNode(selectedNode.id, { style: { ...selectedNode.style, textColor: event.target.value } })} /></label>
                 <label><span>字号</span><input type="number" aria-label="节点字号" min="8" max="96" defaultValue={selectedNode.style.fontSize} onBlur={(event) => {

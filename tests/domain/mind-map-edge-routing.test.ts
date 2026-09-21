@@ -36,6 +36,12 @@ test('hierarchy router follows layout direction and arrows follow the target tan
   assert.ok(routeTargetTangent(buildEdgeRoute(source, target, { kind: 'hierarchy', hierarchyDirection: 'top-bottom' })).y > 0);
 });
 
+test('free-canvas hierarchy routing follows actual node positions', () => {
+  assert.equal(buildEdgeRoute(source, { x: -300, y: 0, width: 100, height: 40 }, { kind: 'hierarchy' }).sourceSide, 'left');
+  assert.equal(buildEdgeRoute(source, { x: 300, y: 0, width: 100, height: 40 }, { kind: 'hierarchy' }).sourceSide, 'right');
+  assert.equal(buildEdgeRoute(source, { x: 0, y: -300, width: 100, height: 40 }, { kind: 'hierarchy' }).sourceSide, 'top');
+});
+
 test('hierarchy sibling ports fan out in their layout order', () => {
   const parent = { x: 0, y: 0, width: 120, height: 96 };
   const targets = [-240, 0, 240].map((y) => ({ x: 320, y, width: 100, height: 48 }));

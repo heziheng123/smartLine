@@ -2,7 +2,7 @@ import { normalizeLifeMapData } from '@/lifeMap/data';
 import type { LifeMapData } from '@/lifeMap/types';
 import { repairMindMapTreeForest } from './treeValidation';
 
-export const MIND_MAP_SCHEMA_VERSION = 12;
+export const MIND_MAP_SCHEMA_VERSION = 13;
 export const DEFAULT_DOCUMENT_TITLE = '未命名思维导图';
 
 export type MindMapSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -19,6 +19,8 @@ export type MindMapBranchSide = 'left' | 'right';
 export type MindMapNodeSemantic = 'auto' | 'topic' | 'branch' | 'subtopic' | 'summary' | 'note';
 export type MindMapMarker = 'none' | 'star' | 'flag' | 'question' | 'idea';
 export type MindMapVisualTheme = 'classic' | 'rainbow' | 'professional' | 'warm';
+export type MindMapNodeColorMode = 'auto' | 'inherit' | 'custom';
+export type MindMapBoundaryShape = 'box' | 'bracket' | 'cloud' | 'fill';
 
 export interface CanvasObjectRef {
   type: CanvasObjectType;
@@ -71,6 +73,10 @@ export interface MindMapNode {
   tags?: string[];
   marker?: MindMapMarker;
   progress?: number | null;
+  /** Summary nodes keep stable references to the sibling branches they summarize. */
+  summarySourceIds?: string[];
+  /** Auto preserves legacy styling; inherit follows the branch palette; custom uses node.style. */
+  colorMode?: MindMapNodeColorMode;
   note: string;
   taskStatus: MindMapTaskStatus;
   priority: MindMapPriority;
@@ -108,6 +114,7 @@ export interface MindMapSection {
   height: number;
   sizeMode: NodeSizeMode;
   collapsed: boolean;
+  shape: MindMapBoundaryShape;
   createdAt: number;
   updatedAt: number;
 }
@@ -332,6 +339,8 @@ export function createMindMapNode(
     tags: [],
     marker: 'none',
     progress: null,
+    summarySourceIds: [],
+    colorMode: 'auto',
     note: '',
     taskStatus: 'none',
     priority: 'none',
@@ -381,7 +390,7 @@ export function createMindMapEdge(
 
 export function createMindMapSection(
   nodes: MindMapNode[],
-  options: { id?: string; now?: number; title?: string } = {},
+  options: { id?: string; now?: number; title?: string; shape?: MindMapBoundaryShape } = {},
 ): MindMapSection {
   const now = options.now ?? Date.now();
   const left = nodes.length ? Math.min(...nodes.map((node) => node.x - node.width / 2)) : -120;
@@ -398,6 +407,7 @@ export function createMindMapSection(
     height: bottom - top + padding * 2 + 24,
     sizeMode: 'auto',
     collapsed: false,
+    shape: options.shape ?? 'box',
     createdAt: now,
     updatedAt: now,
   };
@@ -620,6 +630,10 @@ function normalizeNode(value: unknown, now: number): MindMapNode | null {
       : [],
     marker: value.marker === 'star' || value.marker === 'flag' || value.marker === 'question' || value.marker === 'idea' ? value.marker : 'none',
     progress: value.progress === null || value.progress === undefined ? null : clamp(finite(value.progress, 0), 0, 100),
+    summarySourceIds: Array.isArray(value.summarySourceIds)
+      ? [...new Set(value.summarySourceIds.slice(0, 200).flatMap((sourceId) => safeId(sourceId) ?? []))]
+      : [],
+    colorMode: value.colorMode === 'inherit' || value.colorMode === 'custom' ? value.colorMode : 'auto',
     note: safeString(value.note, '', 20_000),
     taskStatus: value.taskStatus === 'todo' || value.taskStatus === 'doing' || value.taskStatus === 'done' ? value.taskStatus : 'none',
     priority: value.priority === 'low' || value.priority === 'medium' || value.priority === 'high' ? value.priority : 'none',
@@ -705,6 +719,7 @@ function normalizeSection(value: unknown, now: number): MindMapSection | null {
     height: clamp(finite(value.height, 220), 120, 10_000),
     sizeMode: value.sizeMode === 'manual' ? 'manual' : 'auto',
     collapsed: value.collapsed === true,
+    shape: value.shape === 'bracket' || value.shape === 'cloud' || value.shape === 'fill' ? value.shape : 'box',
     createdAt: safeTime(value.createdAt, now),
     updatedAt: safeTime(value.updatedAt, now),
   };
@@ -855,6 +870,7 @@ export function normalizeMindMapDocument(value: unknown): MindMapDocument | null
       style: { ...node.style },
       parentSectionId: node.parentSectionId && sectionIds.has(node.parentSectionId) ? node.parentSectionId : null,
       groupId: node.groupId && groupIds.has(node.groupId) ? node.groupId : null,
+      summarySourceIds: node.summarySourceIds?.filter((sourceId) => sourceId !== nodeId && nodeIds.has(sourceId)) ?? [],
     };
   }
   const claimedNodeIds = new Set(Object.values(nodes).filter((node) => node.groupId).map((node) => node.id));
@@ -986,16 +1002,17 @@ export function duplicateMindMapDocument(
   const groupIds = new Map<string, string>();
   for (const group of Object.values(source.groups)) groupIds.set(group.id, createMindMapId());
   const nodeIds = new Map<string, string>();
+  for (const node of Object.values(source.nodes)) nodeIds.set(node.id, createMindMapId());
   const nodes: Record<string, MindMapNode> = {};
   for (const node of Object.values(source.nodes)) {
-    const id = createMindMapId();
-    nodeIds.set(node.id, id);
+    const id = nodeIds.get(node.id)!;
     nodes[id] = {
       ...node,
       id,
       style: { ...node.style },
       parentSectionId: node.parentSectionId ? sectionIds.get(node.parentSectionId) ?? null : null,
       groupId: node.groupId ? groupIds.get(node.groupId) ?? null : null,
+      summarySourceIds: (node.summarySourceIds ?? []).map((sourceId) => nodeIds.get(sourceId)).filter((sourceId): sourceId is string => Boolean(sourceId)),
       createdAt: now,
       updatedAt: now,
     };

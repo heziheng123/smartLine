@@ -28,7 +28,7 @@ test('timeline remains readable across annual, season, month, and week ranges', 
   await expect(page.getByTestId('mind-map-canvas')).toBeVisible();
 
   await page.evaluate(async () => {
-    const [{ useMindMapStore }, { createTimelineSection }, { createEmptyLifeMapData }] = await Promise.all([
+    const [{ useMindMapStore }, { createProjectReferenceCard, createTimelineSection }, { createEmptyLifeMapData }] = await Promise.all([
       import('/src/mindMap/testing.ts'),
       import('/src/mindMap/model.ts'),
       import('/src/lifeMap/data.ts'),
@@ -63,11 +63,17 @@ test('timeline remains readable across annual, season, month, and week ranges', 
         { source: 'life' as const, contextId: 'visual-area', itemId: 'stage:stage-sprint' },
       ],
     };
+    const projectReference = createProjectReferenceCard(
+      { x: -460, y: 120 },
+      { targetType: 'project', targetId: 'visual-project' },
+      { id: 'timeline-project-link' },
+    );
     useMindMapStore.getState().execute('创建视觉验收时间线', (document) => ({
       ...document,
       lifeMap: life,
       timelineSections: { [timeline.id]: timeline },
-      zOrder: [...document.zOrder.filter((id) => !document.timelineSections[id]), timeline.id],
+      projectReferences: { [projectReference.id]: projectReference },
+      zOrder: [...document.zOrder.filter((id) => !document.timelineSections[id]), projectReference.id, timeline.id],
       viewport: { x: 720, y: 480, scale: 0.86 },
     }));
   });
@@ -92,6 +98,14 @@ test('timeline remains readable across annual, season, month, and week ranges', 
     })).toBeCloseTo(target, 2);
   };
   await setZoom(0.86);
+  await expect(timeline.getByText('英语', { exact: true })).toBeVisible();
+  const activeFilter = timeline.getByRole('button', { name: /进行中/ });
+  await expect(activeFilter).toBeEnabled();
+  await activeFilter.click();
+  await expect(activeFilter).toHaveAttribute('aria-pressed', 'true');
+  await expect(timeline.getByText('政治', { exact: true })).toBeVisible();
+  await timeline.getByRole('button', { name: /^全部 \d+$/ }).click();
+  await expect(timeline.getByLabel('时间线定位今天')).toBeVisible();
   const scenarios = [
     { name: 'annual', start: '2026-03-01', end: '2026-12-31', expected: ['Mar', 'Jun', 'Dec'] },
     { name: 'season', start: '2026-03-01', end: '2026-06-30', expected: ['Mar', 'Apr', 'Jun'] },
@@ -135,4 +149,8 @@ test('timeline remains readable across annual, season, month, and week ranges', 
 
   await setZoom(0.4);
   await expect(timeline).toContainText('已选 1 个项目 · 10 项');
+
+  await setZoom(0.86);
+  await timeline.getByRole('button', { name: /2026 考研总规划/ }).click();
+  await expect(page.getByTestId('mind-map-project-reference-timeline-project-link')).toHaveClass(/projectReferenceSelected/);
 });

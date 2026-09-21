@@ -66,7 +66,7 @@ export function projectTimelineItems(projectId: string, data: ProjectPlanningSna
       return item ? [{ ...item, projectTaskId: `project-blk:${project.id}::${block.id}` }] : [];
     }),
     ...data.milestones.filter((item) => item.relatedPlanId === project.id)
-      .map((item) => range(`milestone:${item.id}`, item.name, item.date, item.date, item.color ?? '#af52de', 'milestone')),
+      .map((item) => range(`milestone:${item.id}`, item.name, item.date, item.date, item.color ?? '#af52de', 'milestone', { parentId: `project:${project.id}` })),
   ].filter((item): item is TimelineProjectionItem => Boolean(item));
 }
 

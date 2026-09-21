@@ -9,6 +9,7 @@ import {
 } from './model';
 import { buildEdgeRoute } from './canvas/edgeRouting';
 import { edgeConnectableObjects } from './canvas/connectableObjects';
+import { mindMapCloudSvgPath, mindMapSummaryConnector, traceMindMapBoundary } from './canvas/semanticGeometry';
 import { mindMapRepository } from './repository';
 import {
   MIND_MAP_MARKER_ICON,
@@ -294,8 +295,28 @@ export function serializeMindMapSvg(document: MindMapDocument) {
   for (const section of sections) {
     const member = nodes.find((node) => node.parentSectionId === section.id);
     const accent = member ? presentations.get(member.id)?.accent ?? '#7775df' : '#7775df';
-    parts.push(`<rect x="${section.x - section.width / 2}" y="${section.y - section.height / 2}" width="${section.width}" height="${section.collapsed ? 42 : section.height}" rx="14" fill="${mixMindMapColor(accent, '#ffffff', 0.92)}" stroke="${accent}" stroke-dasharray="8 5"/>`);
+    const x = section.x - section.width / 2;
+    const y = section.y - section.height / 2;
+    const height = section.collapsed ? 42 : section.height;
+    const fill = mixMindMapColor(accent, '#ffffff', section.shape === 'fill' ? 0.82 : 0.92);
+    if (section.shape === 'bracket') {
+      const arm = Math.min(section.width * 0.12, 28);
+      parts.push(`<path d="M ${x + arm} ${y} H ${x} V ${y + height} H ${x + arm} M ${x + section.width - arm} ${y} H ${x + section.width} V ${y + height} H ${x + section.width - arm}" fill="none" stroke="${accent}" stroke-width="1.5"/>`);
+    } else if (section.shape === 'cloud') {
+      parts.push(`<path d="${mindMapCloudSvgPath(x, y, section.width, height)}" fill="${fill}" stroke="${accent}" stroke-dasharray="3 3"/>`);
+    } else {
+      parts.push(`<rect x="${x}" y="${y}" width="${section.width}" height="${height}" rx="14" fill="${fill}" stroke="${accent}"${section.shape === 'fill' ? '' : ' stroke-dasharray="8 5"'}/>`);
+    }
     parts.push(`<text x="${section.x - section.width / 2 + 14}" y="${section.y - section.height / 2 + 24}" font-family="sans-serif" font-size="13" font-weight="600" fill="${mixMindMapColor(accent, '#202124', 0.55)}">${escapeXml(section.title)}</text>`);
+  }
+  const visibleNodes = new Map(nodes.map((node) => [node.id, node]));
+  for (const summary of nodes) {
+    const sources = (summary.summarySourceIds ?? []).map((id) => visibleNodes.get(id)).filter((node): node is typeof summary => Boolean(node));
+    const relation = mindMapSummaryConnector(summary, sources);
+    if (!relation || sources.length < 2) continue;
+    const accent = presentations.get(summary.id)?.accent ?? '#7775df';
+    const direction = Math.sign(relation.targetX - relation.sourceX) || 1;
+    parts.push(`<path d="M ${relation.sourceX + direction * 10} ${relation.top} H ${relation.sourceX} V ${relation.bottom} H ${relation.sourceX + direction * 10} M ${relation.sourceX} ${relation.middleY} H ${relation.targetX}" fill="none" stroke="${accent}" stroke-width="2" opacity="0.58"/>`);
   }
   for (const edge of Object.values(document.edges)) {
     const route = edgeRouteForExport(edge, document);
@@ -472,10 +493,9 @@ export function downloadMindMapPng(
     context.fillStyle = mixMindMapColor(accent, '#ffffff', 0.92);
     context.strokeStyle = accent;
     context.lineWidth = 1;
-    context.setLineDash([8, 5]);
-    context.beginPath();
-    context.roundRect(x, y, section.width, height, 14);
-    context.fill();
+    context.setLineDash(section.shape === 'cloud' ? [3, 3] : section.shape === 'fill' ? [] : [8, 5]);
+    traceMindMapBoundary(context, section.shape, x, y, section.width, height, 14);
+    if (section.shape !== 'bracket') context.fill();
     context.stroke();
     context.setLineDash([]);
     context.fillStyle = mixMindMapColor(accent, '#202124', 0.55);
@@ -483,6 +503,26 @@ export function downloadMindMapPng(
     context.textAlign = 'left';
     context.textBaseline = 'middle';
     context.fillText(section.title, x + 14, y + 21);
+  }
+  const visibleNodesById = new Map(nodes.map((node) => [node.id, node]));
+  for (const summary of nodes) {
+    const sources = (summary.summarySourceIds ?? []).map((id) => visibleNodesById.get(id)).filter((node): node is typeof summary => Boolean(node));
+    const relation = mindMapSummaryConnector(summary, sources);
+    if (!relation || sources.length < 2) continue;
+    const accent = presentations.get(summary.id)?.accent ?? '#7775df';
+    const direction = Math.sign(relation.targetX - relation.sourceX) || 1;
+    context.beginPath();
+    context.moveTo(relation.sourceX + direction * 10, relation.top);
+    context.lineTo(relation.sourceX, relation.top);
+    context.lineTo(relation.sourceX, relation.bottom);
+    context.lineTo(relation.sourceX + direction * 10, relation.bottom);
+    context.moveTo(relation.sourceX, relation.middleY);
+    context.lineTo(relation.targetX, relation.middleY);
+    context.strokeStyle = accent;
+    context.globalAlpha = 0.58;
+    context.lineWidth = 2;
+    context.stroke();
+    context.globalAlpha = 1;
   }
   for (const edge of edges) {
     const routeForExport = edgeRouteForExport(edge, document);

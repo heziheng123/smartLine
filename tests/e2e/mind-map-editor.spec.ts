@@ -210,18 +210,23 @@ test('the Markdown slash menu applies a command without leaving the editor', asy
   const canvas = page.getByTestId('mind-map-canvas');
   await canvas.dblclick({ position: { x: 320, y: 240 } });
   const editor = page.getByLabel('新节点文本');
-  await editor.fill('/h1');
-  await expect(page.getByRole('listbox', { name: 'Markdown 快捷菜单' })).toBeVisible();
+  await editor.fill('/h');
+  const menu = page.getByRole('listbox', { name: 'Markdown 快捷菜单' });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
+  await editor.press('ArrowDown');
+  await editor.press('ArrowDown');
+  await expect(menu.getByRole('option').nth(2)).toHaveAttribute('aria-selected', 'true');
   await editor.press('Enter');
-  await expect(editor).toHaveValue('# ');
+  await expect(editor).toHaveValue('### ');
   await editor.pressSequentially('快捷标题');
   await editor.press('Control+Enter');
 
   await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]).toMatchObject({
     type: 'markdown',
-    text: '# 快捷标题',
+    text: '### 快捷标题',
   });
-  await expect(page.locator('[class*="richPreview"] h1')).toContainText('快捷标题');
+  await expect(page.locator('[class*="richPreview"] h3')).toContainText('快捷标题');
 });
 
 test('Markdown node links open safely and notes provide a rendered preview', async ({ page }) => {

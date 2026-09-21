@@ -6,8 +6,9 @@ import {
   isMindMapMarkdownOutline,
   serializeMindMapDocument,
   serializeMindMapMarkdownOutline,
+  serializeMindMapSvg,
 } from '../../src/mindMap/importExport.ts';
-import { isMindMapMarkdown } from '../../src/mindMap/richText.ts';
+import { extractMindMapWikiLinks, isMindMapMarkdown, mindMapBacklinks } from '../../src/mindMap/richText.ts';
 import { findMindMapTreeRoot, layoutMindMap, layoutMindMapBranch, layoutMindMapTree, treeChildIds } from '../../src/mindMap/layout.ts';
 import { layoutMindMapTreeInWorker } from '../../src/mindMap/layoutWorkerClient.ts';
 import { repairMindMapTreeForest, validateMindMapTreeForest } from '../../src/mindMap/treeValidation.ts';
@@ -15,8 +16,10 @@ import { resolveBranchThemeColors, resolveMindMapNodePresentation, resolveTreeEd
 import {
   createEmptyMindMapDocument,
   createMindMapEdge,
+  createMindMapSection,
   createTextMindMapNode,
 } from '../../src/mindMap/model.ts';
+import { moveMindMapOutlineNode, setMindMapOutlineCollapsed } from '../../src/mindMap/canvas/treeInteractions.ts';
 
 test('tree layout orders connected levels without overlap', () => {
   const document = createEmptyMindMapDocument('布局', { id: 'doc', now: 1 });
@@ -40,6 +43,25 @@ test('tree layout orders connected levels without overlap', () => {
   assert.ok(topToBottom.nodes.left.y > topToBottom.nodes.root.y);
   const bottomToTop = layoutMindMapTree(document, 'bottom-top');
   assert.ok(bottomToTop.nodes.left.y < bottomToTop.nodes.root.y);
+});
+
+test('outline interactions reorder siblings, change hierarchy, and collapse branches', () => {
+  const document = createEmptyMindMapDocument('大纲', { id: 'outline', now: 1 });
+  for (const id of ['root', 'first', 'second', 'leaf']) document.nodes[id] = createTextMindMapNode({ x: 0, y: 0 }, { id, text: id, now: 1 });
+  document.edges = {
+    first: createMindMapEdge('root', 'first', { id: 'first', relationship: 'tree', order: 0, now: 1 }),
+    second: createMindMapEdge('root', 'second', { id: 'second', relationship: 'tree', order: 1, now: 1 }),
+    leaf: createMindMapEdge('first', 'leaf', { id: 'leaf', relationship: 'tree', order: 0, now: 1 }),
+  };
+  document.zOrder = ['root', 'first', 'second', 'leaf'];
+  const reordered = moveMindMapOutlineNode(document, 'second', 'first', 'before');
+  assert.deepEqual(Object.values(reordered.edges).filter((edge) => edge.sourceId === 'root').sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((edge) => edge.targetId), ['second', 'first']);
+  const nested = moveMindMapOutlineNode(reordered, 'second', 'first', 'inside');
+  assert.equal(Object.values(nested.edges).find((edge) => edge.targetId === 'second')?.sourceId, 'first');
+  assert.equal(moveMindMapOutlineNode(nested, 'first', 'leaf', 'inside'), nested, 'cycles are rejected');
+  const collapsed = setMindMapOutlineCollapsed(nested, true);
+  assert.equal(collapsed.nodes.first.collapsed, true);
+  assert.equal(collapsed.nodes.second.collapsed, false);
 });
 
 test('mind-map mode places ordered first-level branches on both sides of its centre topic', () => {
@@ -220,10 +242,34 @@ test('Markdown import preserves task lists, quotes, tables, and code blocks', ()
 });
 
 test('markdown typing shortcuts identify both block and inline syntax', () => {
-  for (const source of ['# 一级标题', '- [ ] 待办', '> 引用', '```ts\nconst ok = true;', '| 列 | 值 |', '文本 **加粗**', '[链接](https://example.com)']) {
+  for (const source of ['# 一级标题', '### 三级标题', '- [ ] 待办', '> 引用', '```ts\nconst ok = true;', '| 列 | 值 |', '---', '文本 **加粗**', '[链接](https://example.com)', '关联 [[目标节点]]']) {
     assert.equal(isMindMapMarkdown(source), true, source);
   }
   assert.equal(isMindMapMarkdown('普通节点文字'), false);
+});
+
+test('wiki links expose stable internal targets and backlinks', () => {
+  const target = createTextMindMapNode({ x: 0, y: 0 }, { id: 'target', text: '目标节点', now: 1 });
+  const source = { ...createTextMindMapNode({ x: 0, y: 0 }, { id: 'source', text: '来源', now: 1 }), note: '参见 [[目标节点]] 与 [[其他节点]]' };
+  assert.deepEqual(extractMindMapWikiLinks(source.note), ['目标节点', '其他节点']);
+  assert.deepEqual(mindMapBacklinks([target, source], target).map((node) => node.id), ['source']);
+});
+
+test('SVG export preserves structural summaries and semantic boundary shapes', () => {
+  const document = createEmptyMindMapDocument('语义导出', { id: 'semantic-export', now: 1 });
+  const first = createTextMindMapNode({ x: 0, y: 0 }, { id: 'first', text: '第一项', now: 1 });
+  const second = createTextMindMapNode({ x: 0, y: 100 }, { id: 'second', text: '第二项', now: 1 });
+  const summary = { ...createTextMindMapNode({ x: 260, y: 50 }, { id: 'summary', text: '摘要', now: 1 }), semantic: 'summary' as const, summarySourceIds: ['first', 'second'] };
+  const boundary = createMindMapSection([first, second], { id: 'boundary', title: '云朵边界', shape: 'cloud', now: 1 });
+  first.parentSectionId = boundary.id;
+  second.parentSectionId = boundary.id;
+  document.nodes = { first, second, summary };
+  document.sections = { [boundary.id]: boundary };
+  document.zOrder = ['first', 'second', 'summary'];
+  const svg = serializeMindMapSvg(document);
+  assert.match(svg, /云朵边界/);
+  assert.match(svg, /stroke-dasharray="3 3"/);
+  assert.match(svg, /opacity="0.58"/);
 });
 
 test('tree validation downgrades extra parents and cycles to references', () => {

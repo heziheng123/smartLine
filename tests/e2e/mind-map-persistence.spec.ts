@@ -24,6 +24,23 @@ test('documents are saved in the dedicated mind map database and restored after 
   await expect(page.getByTestId('mind-map-title')).toHaveValue('产品架构图');
 });
 
+test('legacy localStorage snapshots migrate once into the mind map IndexedDB', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { createEmptyMindMapDocument } = await import('/src/mindMap/model.ts');
+    const { createDedicatedStorage } = await import('/src/utils/persistence.ts');
+    const { readMindMapSnapshots } = await import('/src/mindMap/snapshots.ts');
+    const document = createEmptyMindMapDocument('旧快照迁移', { id: 'legacy-snapshot-doc', now: 1 });
+    const legacyKey = `smart-line:mind-map:snapshots:${document.id}`;
+    localStorage.setItem(legacyKey, JSON.stringify([{ id: 'legacy-1', savedAt: 2, label: '旧快照', document }]));
+    const snapshots = await readMindMapSnapshots(document.id);
+    const storage = createDedicatedStorage('smart-line-mind-map', 'mind_map_snapshots');
+    const stored = await storage.getItem<Array<{ id: string }>>(`mind-map:snapshots:${document.id}`);
+    return { ids: snapshots.map((snapshot) => snapshot.id), storedIds: stored?.map((snapshot) => snapshot.id), legacyRemoved: localStorage.getItem(legacyKey) === null };
+  });
+  expect(result).toEqual({ ids: ['legacy-1'], storedIds: ['legacy-1'], legacyRemoved: true });
+});
+
 test('multiple documents remain independent and can be switched', async ({ page }) => {
   await openMindMap(page);
   await page.getByTestId('mind-map-title').fill('第一张图');

@@ -285,7 +285,7 @@
   border: 1px solid rgb(148 163 184 / 24%);
   color: var(--mm-text);
   background: rgb(255 255 255 / 98%);
-  box-shadow: 0 4px 18px rgb(15 23 42 / 6%);
+  box-shadow: 0 8px 28px rgb(15 23 42 / 8%);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -312,7 +312,7 @@
   justify-content: space-between;
   gap: 10px;
   border-bottom: 1px solid rgb(148 163 184 / 17%);
-  background: rgb(255 255 255 / 92%);
+  background: linear-gradient(180deg, rgb(255 255 255 / 98%), rgb(248 250 252 / 92%));
   cursor: grab;
 }
 
@@ -360,7 +360,7 @@
 }
 
 .timelineHeaderMeta {
-  max-width: 52%;
+  max-width: 62%;
   gap: 5px;
 }
 
@@ -386,6 +386,24 @@
 .timelineHeaderMeta button:hover {
   color: var(--mm-text);
   background: var(--mm-surface-muted);
+}
+
+.timelineHeaderMeta .timelineHeaderAction {
+  width: auto;
+  min-width: 30px;
+  padding: 0 5px;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.timelineDensity {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--mm-accent) 76%, #475569) !important;
+  background: color-mix(in srgb, var(--mm-accent) 8%, white);
+  font-weight: 650;
 }
 
 .timelineSummary {
@@ -434,6 +452,49 @@
   overflow: hidden;
   background: linear-gradient(180deg, rgb(248 250 252 / 42%), transparent 34%);
 }
+
+.timelineInsights {
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  max-width: calc(100% - 20px);
+  align-items: center;
+  overflow: hidden;
+}
+
+.timelineInsightChip {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #64748b;
+  background: rgb(241 245 249 / 82%);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.timelineInsightChip b {
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+
+.timelineInsightChip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.timelineInsightChipActive {
+  border-color: color-mix(in srgb, var(--mm-accent) 24%, transparent);
+  color: color-mix(in srgb, var(--mm-accent) 82%, #334155);
+  background: color-mix(in srgb, var(--mm-accent) 11%, white);
+}
+
+.timelineInsight_overdue:not(:disabled) { color: #b42318; background: #fff3f1; }
+.timelineInsight_active:not(:disabled) { color: #047857; background: #ecfdf5; }
+.timelineInsight_upcoming:not(:disabled) { color: #8a5a08; background: #fffbeb; }
 
 .timelineLabelDivider,
 .timelineAxisLine {
@@ -491,6 +552,14 @@
 
 .timelineTickMinor .timelineGridLine {
   background: rgb(148 163 184 / 7%);
+}
+
+.timelineWeekend {
+  position: absolute;
+  z-index: 0;
+  display: block;
+  background: rgb(148 163 184 / 5%);
+  pointer-events: none;
 }
 
 .timelineToday {
@@ -562,11 +631,37 @@
   white-space: nowrap;
 }
 
+.timelineLane {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 0;
+  display: block;
+  border-left: 3px solid color-mix(in srgb, var(--timeline-lane-color) 38%, transparent);
+  background: color-mix(in srgb, var(--timeline-lane-color) 3%, transparent);
+  pointer-events: none;
+}
+
+.timelineLaneAlternate {
+  background: color-mix(in srgb, var(--timeline-lane-color) 6%, transparent);
+}
+
 .timelineRow {
   position: absolute;
   right: 0;
   left: 0;
+  z-index: 2;
   display: block;
+}
+
+.timelineRowSelected::after {
+  position: absolute;
+  inset: 2px 5px;
+  border: 1px solid color-mix(in srgb, var(--mm-accent) 24%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--mm-accent) 4%, transparent);
+  content: '';
+  pointer-events: none;
 }
 
 .timelineRowLabel {
@@ -580,9 +675,22 @@
   gap: 6px;
   overflow: hidden;
   padding-right: 8px;
+  border: 0;
   color: #475569;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.timelineRowLabel:hover { color: var(--mm-accent); }
+
+.timelineRowLabel small {
+  margin-left: auto;
+  color: var(--mm-accent);
+  font-size: 0.9em;
 }
 
 .timelineProjectLabel {
@@ -644,6 +752,29 @@
   border-radius: inherit;
   background: color-mix(in srgb, var(--timeline-item-color) 76%, #334155 4%);
 }
+
+.timelineTemporal_active .timelineBar {
+  border-color: color-mix(in srgb, var(--timeline-item-color) 62%, #059669);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--timeline-item-color) 10%, transparent), inset 0 1px 0 rgb(255 255 255 / 42%);
+}
+
+.timelineTemporal_upcoming .timelineBar { border-style: dashed; }
+
+.timelineTemporal_overdue .timelineBar {
+  border-color: rgb(220 38 38 / 58%);
+  box-shadow: 0 0 0 1px rgb(220 38 38 / 8%);
+}
+
+.timelineTemporal_overdue .timelineRowLabel::after {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #dc2626;
+  content: '';
+}
+
+.timelineTemporal_done { opacity: 0.56; }
 
 .timelineProgressLabel {
   position: absolute;
@@ -718,6 +849,27 @@
   max-width: 82px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.timelineMilestoneSelected i {
+  outline: 2px solid color-mix(in srgb, var(--mm-accent) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.timelineMilestoneOverflow {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  min-width: 22px;
+  height: 16px;
+  place-items: center;
+  padding: 0 3px;
+  border: 1px solid rgb(148 163 184 / 22%);
+  border-radius: 999px;
+  color: #64748b;
+  background: rgb(255 255 255 / 94%);
+  font-weight: 700;
+  transform: translateX(-50%);
 }
 
 .timelineResizeHandle {
@@ -946,10 +1098,22 @@
 }
 
 .outlinePanel header small { color: var(--mm-text-muted); font-size: 11px; }
-.outlinePanel ul { display: grid; gap: 1px; margin: 0; padding: var(--mm-space-xs); overflow: auto; list-style: none; }
+.outlinePanel > ul { display: grid; min-height: 0; flex: 1; align-content: start; gap: 1px; margin: 0; padding: var(--mm-space-xs); overflow: auto; list-style: none; }
+.outlinePanel ul ul { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.outlineTools { display: grid; gap: 6px; padding: 8px; border-bottom: 1px solid var(--mm-border); }
+.outlineTools > input,
+.outlineTools select,
+.outlineRename { min-width: 0; height: 28px; padding: 0 7px; border: 1px solid var(--mm-border); border-radius: 6px; color: var(--mm-text); background: var(--mm-surface); font: inherit; font-size: 11px; }
+.outlineTools > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.outlineFoldActions { grid-template-columns: 1fr 1fr !important; }
+.outlineFoldActions button { min-height: 26px; border: 1px solid var(--mm-border); border-radius: 6px; color: var(--mm-text-muted); background: var(--mm-surface-muted); font: inherit; font-size: 10px; cursor: pointer; }
+.outlineFoldActions button:hover { color: var(--mm-text); }
 .outlineItem > ul { padding-top: 0; }
 .outlineRow { display: flex; min-width: 0; min-height: 30px; align-items: center; gap: 2px; border-radius: 7px; }
 .outlineRowSelected { background: color-mix(in srgb, var(--mm-accent) 10%, var(--mm-surface)); }
+.outlineRow[data-drop-position='inside'] { outline: 2px solid color-mix(in srgb, var(--mm-accent) 62%, transparent); }
+.outlineRow[data-drop-position='before'] { box-shadow: inset 0 2px 0 var(--mm-accent); }
+.outlineRow[data-drop-position='after'] { box-shadow: inset 0 -2px 0 var(--mm-accent); }
 .outlineCollapse,
 .outlineSpacer { width: 20px; height: 26px; flex: 0 0 auto; }
 .outlineCollapse { border: 0; border-radius: 6px; color: var(--mm-text-muted); background: transparent; cursor: pointer; }
@@ -960,6 +1124,8 @@
 .outlineText { min-width: 0; flex: 1; }
 .outlineLabel i { overflow: hidden; max-width: 52px; padding: 1px 4px; border-radius: 999px; color: var(--mm-accent); background: color-mix(in srgb, var(--mm-accent) 8%, var(--mm-surface)); font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .outlineLabel:hover { background: var(--mm-surface-muted); }
+.outlineRename { height: 25px; flex: 1; }
+.outlineEmpty { margin: 14px; color: var(--mm-text-muted); font-size: 11px; text-align: center; }
 
 .unifiedEntry kbd {
   padding: 2px 5px;
@@ -1237,6 +1403,59 @@
   font-weight: 500;
 }
 
+.multiSelectionPanel {
+  display: grid;
+  gap: 15px;
+  padding: var(--mm-space-md);
+  overflow-y: auto;
+}
+
+.multiSelectionPanel label {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--mm-space-sm);
+  color: var(--mm-text-muted);
+  font-size: 11px;
+}
+
+.multiSelectionPanel :is(input, select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-control);
+  color: var(--mm-text);
+  background: var(--mm-surface);
+  font: inherit;
+}
+
+.multiSelectionPanel .arrangeActions { padding: 0; }
+
+.multiSelectionPanel > button,
+.boundaryActions button,
+.batchTagField button {
+  min-height: 30px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-control);
+  color: var(--mm-text);
+  background: var(--mm-surface-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.boundaryActions,
+.batchTagField > span:last-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.batchTagField button { padding: 0 10px; }
+
 .timelineContentManager {
   border: 1px solid color-mix(in srgb, var(--mm-border) 68%, transparent);
   border-radius: 9px;
@@ -1310,8 +1529,14 @@
 }
 
 .markdownSlashMenu button:hover,
-.markdownSlashMenu button:focus-visible { outline: 0; background: var(--mm-surface-muted); }
+.markdownSlashMenu button:focus-visible,
+.markdownSlashMenu button[aria-selected='true'] { outline: 0; background: var(--mm-surface-muted); }
 .markdownSlashMenu kbd { min-width: 40px; color: var(--mm-accent); font: 600 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+.backlinks { display: grid; gap: 5px; padding: 8px; border: 1px solid var(--mm-border); border-radius: var(--mm-radius-control); background: color-mix(in srgb, var(--mm-surface-muted) 55%, transparent); }
+.backlinks strong { color: var(--mm-text-muted); font-size: 11px; }
+.backlinks button { overflow: hidden; min-height: 26px; padding: 0 7px; border: 0; border-radius: 6px; color: var(--mm-accent); background: transparent; font: inherit; font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.backlinks button:hover { background: var(--mm-surface); }
 
 .timelineInspector { width: min(520px, calc(100% - 28px)); }
 

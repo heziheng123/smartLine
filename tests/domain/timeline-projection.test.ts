@@ -3,6 +3,8 @@ import test from 'node:test';
 import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timelineVisibleItems } from '../../src/mindMap/timelineProjection.ts';
 import { createTimelineSection } from '../../src/mindMap/model.ts';
 import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, timelineRangeForScale, xToDate } from '../../src/mindMap/timelineLayout.ts';
+import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY } from '../../src/mindMap/canvas/timelineLayer.ts';
+import { addDays, todayStr } from '../../src/utils/dateSafe.ts';
 
 test('project timeline is a live projection with temporal row culling', () => {
   const projectData = {
@@ -96,4 +98,36 @@ test('every timeline element shares one reversible coordinate system after resiz
   assert.equal(wide.rangeStart, compact.rangeStart);
   assert.equal(wide.rangeEnd, compact.rangeEnd);
   assert.ok(dateToX('2026-08-15', wide) - wide.plotLeft > firstHalf);
+});
+
+test('timeline semantic zoom groups project swimlanes and aggregates dense milestones', () => {
+  const today = todayStr();
+  const timeline = {
+    ...createTimelineSection({ x: 0, y: 0 }, { id: 'timeline-density', now: 1 }),
+    width: 800,
+    height: 260,
+    scale: 'week' as const,
+    rangeStart: addDays(today, -14),
+    rangeEnd: addDays(today, 21),
+  };
+  const items = [
+    { id: 'project:p', title: '项目', start: addDays(today, -7), end: addDays(today, 14), color: '#5e5ce6', kind: 'project' as const, shape: 'range' as const, progress: 30 },
+    { id: 'task:active', title: '进行中任务', start: addDays(today, -1), end: addDays(today, 2), color: '#5e5ce6', kind: 'task' as const, shape: 'range' as const, parentId: 'project:p', progress: 20 },
+    { id: 'task:overdue', title: '逾期任务', start: addDays(today, -8), end: addDays(today, -1), color: '#5e5ce6', kind: 'task' as const, shape: 'range' as const, parentId: 'project:p', progress: 0 },
+    { id: 'task:upcoming', title: '即将开始任务', start: addDays(today, 3), end: addDays(today, 5), color: '#5e5ce6', kind: 'task' as const, shape: 'range' as const, parentId: 'project:p', progress: 0 },
+    ...Array.from({ length: 6 }, (_, index) => ({ id: `milestone:${index}`, title: `节点 ${index}`, start: addDays(today, 4), end: addDays(today, 4), color: '#af52de', kind: 'milestone' as const, shape: 'marker' as const, parentId: 'project:p' })),
+  ];
+  const compact = buildMindMapTimelineLayer(timeline, items, 0.68, DEFAULT_TIMELINE_VISIBILITY);
+  assert.equal(compact.density, 'compact');
+  assert.deepEqual(compact.rowCandidates.map((item) => item.title), ['项目']);
+
+  const detail = buildMindMapTimelineLayer({ ...timeline, height: 460 }, items, 0.9, DEFAULT_TIMELINE_VISIBILITY);
+  assert.equal(detail.density, 'detail');
+  assert.deepEqual(detail.rowCandidates.map((item) => item.title), ['项目', '进行中任务', '逾期任务', '即将开始任务']);
+  assert.deepEqual(detail.lanes.map((lane) => [lane.title, lane.rowCount]), [['项目', 4]]);
+  const dense = buildMindMapTimelineLayer(timeline, items, 0.9, DEFAULT_TIMELINE_VISIBILITY);
+  assert.ok(dense.milestoneOverflow.reduce((count, item) => count + item.count, 0) > 0);
+
+  const overdue = buildMindMapTimelineLayer({ ...timeline, height: 460 }, items, 0.9, DEFAULT_TIMELINE_VISIBILITY, 'overdue');
+  assert.deepEqual(overdue.rowCandidates.map((item) => item.title), ['项目', '逾期任务']);
 });

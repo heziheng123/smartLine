@@ -68,13 +68,13 @@ export function buildEdgeRoute(
 ): EdgeRoute {
   const sourceCenter = center(source);
   const targetCenter = center(target);
-  const [sourceSide, targetSide] = options.kind === 'hierarchy'
+  const [sourceSide, targetSide] = options.kind === 'hierarchy' && options.hierarchyDirection
     ? ({
         'left-right': ['right', 'left'],
         'right-left': ['left', 'right'],
         'top-bottom': ['bottom', 'top'],
         'bottom-top': ['top', 'bottom'],
-      } as const)[options.hierarchyDirection ?? 'left-right']
+      } as const)[options.hierarchyDirection]
     : resolveEdgeSides(source, target);
   const start = options.kind === 'hierarchy' && options.hierarchyPort && options.hierarchyPort.count > 1
     ? resolveHierarchyAnchor(source, sourceSide, options.hierarchyPort)

@@ -135,12 +135,13 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
           }
           const history = document ? (histories.get(document.id) ?? emptyMindMapHistory()) : emptyMindMapHistory();
           if (document) histories.set(document.id, history);
+          const snapshots = document ? await readMindMapSnapshots(document.id) : [];
           set({
             isHydrated: true,
             document,
             index: index ?? emptyIndex(),
             history,
-            snapshots: document ? readMindMapSnapshots(document.id) : [],
+            snapshots,
             saveStatus: 'saved',
             error: null,
           });
@@ -181,7 +182,8 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       const index = updateSummary(get().index, document);
       const history = emptyMindMapHistory();
       histories.set(document.id, history);
-      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
+      const snapshots = await readMindMapSnapshots(document.id);
+      set({ document, index, history, snapshots, saveStatus: 'saving', error: null });
       try {
         await mindMapRepository.saveNow(document, index);
         set({ saveStatus: 'saved' });
@@ -218,7 +220,8 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       const index = updateSummary(get().index, document);
       const history = emptyMindMapHistory();
       histories.set(document.id, history);
-      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
+      const snapshots = await readMindMapSnapshots(document.id);
+      set({ document, index, history, snapshots, saveStatus: 'saving', error: null });
       try {
         await mindMapRepository.saveNow(document, index);
         set({ saveStatus: 'saved' });
@@ -240,7 +243,8 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         const index = updateSummary(get().index, document);
         const history = histories.get(document.id) ?? emptyMindMapHistory();
         histories.set(document.id, history);
-      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saved', error: null });
+        const snapshots = await readMindMapSnapshots(document.id);
+        set({ document, index, history, snapshots, saveStatus: 'saved', error: null });
         await mindMapRepository.saveNow(document, index);
       } catch (error) {
         set({ error: error instanceof Error ? error.message : '切换导图失败。' });
@@ -269,7 +273,8 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       };
       const history = histories.get(document.id) ?? emptyMindMapHistory();
       histories.set(document.id, history);
-      set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
+      const snapshots = await readMindMapSnapshots(document.id);
+      set({ document, index, history, snapshots, saveStatus: 'saving', error: null });
       try {
         await mindMapRepository.saveNow(document, index);
         await mindMapRepository.deleteDocument(current.id);
@@ -312,7 +317,8 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         const index = updateSummary(get().index, document);
         const history = emptyMindMapHistory();
         histories.set(document.id, history);
-        set({ document, index, history, snapshots: readMindMapSnapshots(document.id), saveStatus: 'saving', error: null });
+        const snapshots = await readMindMapSnapshots(document.id);
+        set({ document, index, history, snapshots, saveStatus: 'saving', error: null });
         await mindMapRepository.saveNow(document, index);
         set({ saveStatus: 'saved' });
         return true;
@@ -334,7 +340,10 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       // remote merge lets Undo overwrite collaborators' newer changes.
       const history = emptyMindMapHistory();
       histories.set(normalized.id, history);
-      set({ history, snapshots: readMindMapSnapshots(normalized.id) });
+      set({ history });
+      void readMindMapSnapshots(normalized.id).then((snapshots) => {
+        if (get().document?.id === normalized.id) set({ snapshots });
+      });
       queueSave(normalized, updateSummary(get().index, normalized));
     },
 
@@ -454,9 +463,11 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       const entry = createHistoryEntry(label, current, document);
       if (!entry) return;
       const history = pushHistory(get().history, entry);
-      const snapshots = saveMindMapSnapshot(current, label);
       histories.set(document.id, history);
-      set({ history, snapshots });
+      set({ history });
+      void saveMindMapSnapshot(current, label, false, get().snapshots).then((snapshots) => {
+        if (get().document?.id === current.id) set({ snapshots });
+      });
       queueSave(document, updateSummary(get().index, document));
     },
 
@@ -493,7 +504,9 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
     createSnapshot: (label = '手动创建快照') => {
       const document = get().document;
       if (!document) return;
-      set({ snapshots: saveMindMapSnapshot(document, label, true) });
+      void saveMindMapSnapshot(document, label, true, get().snapshots).then((snapshots) => {
+        if (get().document?.id === document.id) set({ snapshots });
+      });
     },
 
     restoreSnapshot: (id) => {
@@ -536,6 +549,12 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
         const nodes = { ...document.nodes };
         const edges = { ...document.edges };
         targets.forEach((id) => delete nodes[id]);
+        for (const [id, node] of Object.entries(nodes)) {
+          const summarySourceIds = (node.summarySourceIds ?? []).filter((sourceId) => !targets.has(sourceId));
+          if (summarySourceIds.length !== (node.summarySourceIds ?? []).length) {
+            nodes[id] = { ...node, summarySourceIds, updatedAt: Date.now() };
+          }
+        }
         for (const edge of Object.values(edges)) {
           if ([...targets].some((id) => edgeTouchesCanvasObject(edge, { type: 'node', id }))) delete edges[edge.id];
         }
