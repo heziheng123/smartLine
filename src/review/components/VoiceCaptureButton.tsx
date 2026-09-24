@@ -17,54 +17,73 @@ export default function VoiceCaptureButton({ disabled, retention, onStarted, onP
   const captured = useRef<CapturedVoiceAudio[]>([]);
   const channel = useRef<BroadcastChannel | null>(null);
   const tabId = useRef(crypto.randomUUID());
+  const stopping = useRef(false);
+  const mounted = useRef(true);
   const [state, setState] = useState<'idle' | 'recording' | 'paused' | 'saving'>('idle');
   const [otherTabRecording, setOtherTabRecording] = useState(false);
 
   useEffect(() => {
-    if (!('BroadcastChannel' in window)) return;
     const currentTabId = tabId.current;
-    const next = new BroadcastChannel('smart-line-review-voice'); channel.current = next;
-    next.onmessage = (event: MessageEvent<{ tabId?: string; recording?: boolean }>) => {
+    const next = 'BroadcastChannel' in window ? new BroadcastChannel('smart-line-review-voice') : null;
+    channel.current = next;
+    if (next) next.onmessage = (event: MessageEvent<{ tabId?: string; recording?: boolean }>) => {
       if (event.data?.tabId !== currentTabId) setOtherTabRecording(Boolean(event.data?.recording));
     };
-    return () => { next.postMessage({ tabId: currentTabId, recording: false }); next.close(); };
+    return () => {
+      mounted.current = false;
+      capture.current?.interrupt(); capture.current = null;
+      next?.postMessage({ tabId: currentTabId, recording: false }); next?.close();
+    };
   }, []);
 
-  const start = async () => {
-    const segmentId = `voice-segment-${crypto.randomUUID()}`;
-    try {
-      const next = new LocalOnlyAudioCapture(segmentId, retention);
-      // Request microphone access in the click handler before any async app work.
-      await next.start();
-      onStarted(segmentId);
-      capture.current = next;
-      setState('recording');
-      channel.current?.postMessage({ tabId: tabId.current, recording: true });
-    } catch (error) {
-      setState(captured.current.length ? 'paused' : 'idle');
-      onError(error instanceof Error ? error.message : '无法开始录音，请改用文字输入。');
-    }
-  };
-
   const stop = async (finish: boolean) => {
-    if (!capture.current) return;
+    const active = capture.current;
+    if (!active || stopping.current) return;
+    stopping.current = true;
     setState('saving');
     try {
-      const audio = await capture.current.stop();
+      const audio = await active.stop();
       captured.current = [...captured.current, audio];
       await onPaused(audio); // Pausing is local-only: no ASR request here.
-      capture.current = null;
-      channel.current?.postMessage({ tabId: tabId.current, recording: false });
       if (finish) {
         await onFinished(captured.current);
         captured.current = [];
-        setState('idle');
-      } else setState('paused');
+        if (mounted.current) setState('idle');
+      } else if (mounted.current) setState('paused');
     } catch (error) {
-      capture.current = null;
+      if (mounted.current) {
+        setState(captured.current.length ? 'paused' : 'idle');
+        onError(error instanceof Error ? error.message : '录音保存失败，请改用文字输入。');
+      }
+    } finally {
+      if (capture.current === active) capture.current = null;
+      stopping.current = false;
       channel.current?.postMessage({ tabId: tabId.current, recording: false });
-      setState(captured.current.length ? 'paused' : 'idle');
-      onError(error instanceof Error ? error.message : '录音保存失败，请改用文字输入。');
+    }
+  };
+
+  const start = async () => {
+    const segmentId = `voice-segment-${crypto.randomUUID()}`;
+    let next: LocalOnlyAudioCapture | null = null;
+    try {
+      next = new LocalOnlyAudioCapture(segmentId, retention, undefined, () => {
+        if (mounted.current) onError('已达到单段音频大小上限，录音已自动结束；如需继续，请再录一段。');
+        void stop(true);
+      });
+      capture.current = next;
+      // Request microphone access in the click handler before any async app work.
+      await next.start();
+      if (!mounted.current) return;
+      onStarted(segmentId);
+      setState('recording');
+      channel.current?.postMessage({ tabId: tabId.current, recording: true });
+    } catch (error) {
+      next?.interrupt();
+      if (capture.current === next) capture.current = null;
+      if (mounted.current) {
+        setState(captured.current.length ? 'paused' : 'idle');
+        onError(error instanceof Error ? error.message : '无法开始录音，请改用文字输入。');
+      }
     }
   };
 

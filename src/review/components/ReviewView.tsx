@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Cloud, FileText, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import {
   addReviewItem,
-  applyAiItems,
+  activeReviewAnnotations,
+  activeTextVersion,
+  applyAiAnalysis,
   appendTextSegment,
   appendVoiceSegment,
   completeDailyReview,
@@ -21,6 +23,7 @@ import {
   type VoiceAudioRetention,
 } from '@/review/model';
 import { cleanExpiredVoiceAudio, eraseVoiceAudio, localReviewDeviceId, prepareVoiceWav, recoverStoredVoiceAudio, settleVoiceAudioRetention, type CapturedVoiceAudio } from '@/review/audio';
+import AnnotatedReviewText from '@/review/components/AnnotatedReviewText';
 import VoiceCaptureButton from '@/review/components/VoiceCaptureButton';
 import { loadDailyReviews, loadReviewSyncStates, loadReviewTextDrafts, saveDailyReviews, saveReviewTextDrafts, type ReviewSyncState } from '@/review/repository';
 import { enqueueReviewSync, fetchRemoteReview, flushReviewOutbox, resolveReviewConflict, structureReview, transcribeVoiceSegment, type PersonalTerm } from '@/review/sync';
@@ -53,10 +56,12 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   const [audioRetention, setAudioRetention] = useState<VoiceAudioRetention>(() => (localStorage.getItem('smart-line-review-audio-retention') as VoiceAudioRetention) || 'delete_after_transcription');
   const [voiceConsent, setVoiceConsent] = useState(() => localStorage.getItem('smart-line-review-voice-consent-v1') === 'accepted');
   const [personalTerms, setPersonalTerms] = useState<PersonalTerm[]>(() => { try { const value = JSON.parse(localStorage.getItem('smart-line-review-personal-terms-v1') ?? '[]'); return Array.isArray(value) ? value.filter((item): item is PersonalTerm => item && typeof item.from === 'string' && typeof item.to === 'string').slice(0, 30) : []; } catch { return []; } });
+  const [viewMode, setViewMode] = useState<'source' | 'organized'>('source');
   const reviewsRef = useRef<DailyReview[] | null>(null);
   const syncEnabled = auth.enabled && auth.status === 'authenticated';
 
   useEffect(() => setReviewDate(targetDate), [targetDate]);
+  useEffect(() => setViewMode('source'), [reviewDate]);
 
   useEffect(() => { void Promise.all([loadDailyReviews(), loadReviewTextDrafts(), loadReviewSyncStates(), cleanExpiredVoiceAudio()]).then(async ([storedReviews, drafts, states]) => {
     const repaired = await Promise.all(storedReviews.map(async (stored) => {
@@ -142,20 +147,27 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
     const processing = setVoiceTranscriptionState(reviewToTranscribe, segmentId, 'transcribing');
     update(processing, false);
     try {
-      setSyncStates(await enqueueReviewSync(processing));
-      const states = await flushReviewOutbox();
-      setSyncStates(states);
-      if (states[processing.id]?.status !== 'synced') throw new Error('请先联网同步这段语音的记录，再重试识别。');
-      const wav = await prepareVoiceWav({ segmentId, ...voice.audio });
-      const receipt = await transcribeVoiceSegment(processing.reviewDate, segmentId, wav, force, personalTerms);
-      const nextReviews = [...(reviewsRef.current ?? []).filter((item) => item.id !== receipt.review.id), receipt.review].sort((left, right) => right.reviewDate.localeCompare(left.reviewDate));
-      await saveDailyReviews(nextReviews); // The server receipt and this local copy exist before retention can delete audio.
-      reviewsRef.current = nextReviews; setReviews(nextReviews);
-      setSyncStates((states) => ({ ...(states ?? {}), [receipt.review.id]: { serverRevision: receipt.serverRevision, status: 'synced' } }));
-      await settleVoiceAudioRetention({ segmentId, ...voice.audio }, voice.audioRetention);
-    } catch (error) {
-      update(setVoiceTranscriptionState(processing, segmentId, 'retryable_failed'));
-      setStorageError(error instanceof Error ? error.message : '语音识别失败，请稍后重试。');
+      try {
+        setSyncStates(await enqueueReviewSync(processing));
+        const states = await flushReviewOutbox();
+        setSyncStates(states);
+        if (states[processing.id]?.status !== 'synced') throw new Error('请先联网同步这段语音的记录，再重试识别。');
+        const wav = await prepareVoiceWav({ segmentId, ...voice.audio });
+        const receipt = await transcribeVoiceSegment(processing.reviewDate, segmentId, wav, force, personalTerms);
+        const nextReviews = [...(reviewsRef.current ?? []).filter((item) => item.id !== receipt.review.id), receipt.review].sort((left, right) => right.reviewDate.localeCompare(left.reviewDate));
+        await saveDailyReviews(nextReviews); // The server receipt and this local copy exist before retention can delete audio.
+        reviewsRef.current = nextReviews; setReviews(nextReviews);
+        setSyncStates((states) => ({ ...(states ?? {}), [receipt.review.id]: { serverRevision: receipt.serverRevision, status: 'synced' } }));
+      } catch (error) {
+        update(setVoiceTranscriptionState(processing, segmentId, 'retryable_failed'));
+        setStorageError(error instanceof Error ? error.message : '语音识别失败，请稍后重试。');
+        return;
+      }
+      try {
+        await settleVoiceAudioRetention({ segmentId, ...voice.audio }, voice.audioRetention);
+      } catch {
+        setStorageError('转写已保存，但本机音频清理失败；转写结果不会受影响，可稍后手动撤回该片段清理音频。');
+      }
     } finally { setTranscribingSegmentId(null); }
   };
   const beginVoice = (segmentId: string) => {
@@ -211,7 +223,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
     if (!syncEnabled) { setAiError('登录并启用云端配置后，才能使用 AI 整理。'); return; }
     if (!current.inputSegments.some((segment) => segment.type === 'text' || segment.asrText || segment.correctedText)) { setAiError('先保存文字记录，或先完成一段语音识别。'); return; }
     setAiError(null); setIsStructuring(true);
-    try { update(applyAiItems(current, await structureReview(current))); }
+    try { const analysis = await structureReview(current); update(applyAiAnalysis(current, analysis.candidates, analysis.annotations)); }
     catch (error) { setAiError(error instanceof Error ? error.message : 'AI 整理暂时不可用。'); }
     finally { setIsStructuring(false); }
   };
@@ -238,10 +250,25 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
         <div className="review-source-actions"><button type="button" className="review-button review-button--primary" onClick={saveSource} disabled={!sourceText.trim()}><Save size={16} />保存为记录</button><VoiceCaptureButton disabled={!voiceConsent} retention={audioRetention} onStarted={beginVoice} onPaused={pauseVoice} onFinished={finishVoice} onError={setStorageError} /></div>
       </section>
 
-      <section className="review-card">
+      <nav className="review-view-tabs" aria-label="复盘查看模式">
+        <button type="button" className={viewMode === 'source' ? 'is-active' : ''} onClick={() => setViewMode('source')}>原文标注</button>
+        <button type="button" className={viewMode === 'organized' ? 'is-active' : ''} onClick={() => setViewMode('organized')}>AI 整理</button>
+      </nav>
+
+      <div className="review-shared-actions">
+        <span className={`review-sync review-sync--${syncState.status}`}><Cloud size={14} />{syncState.status === 'synced' ? '已同步' : syncState.status === 'sync_pending' ? '待同步' : syncState.status === 'sync_error' ? '等待重试' : syncState.status === 'conflict' ? '发现冲突' : '仅本机'}</span>
+        {syncEnabled && <button type="button" className="review-button" onClick={() => syncReview(current)}>立即同步</button>}
+      </div>
+      {syncState.status === 'conflict' && <div className="review-conflict review-conflict--shared" role="alert"><span>{syncState.error}</span><button type="button" className="review-button" onClick={resolveConflict}>合并两台设备记录</button>{syncState.remoteReview && <details><summary>查看云端版本</summary><ul>{syncState.remoteReview.workingDraft.items.map((item) => <li key={item.itemId}>{sections.find((section) => section.id === item.section)?.title}：{item.text}</li>)}</ul></details>}</div>}
+
+      {viewMode === 'source' && <>
+        <AnnotatedReviewText key={current.id} review={current} onChange={update} onAnalyze={() => void runAi()} analyzing={isStructuring} />
+        {current.workingDraft.items.some((item) => item.section === 'summary') && <section className="review-card review-ai-summary"><div><span className="review-card__eyebrow">AI 生成内容</span><h2>今日总结</h2><p>以下内容是 AI 对原文的概括，不是你的原话。</p></div><ul>{current.workingDraft.items.filter((item) => item.section === 'summary').map((item) => <li key={item.itemId}>{item.text}</li>)}</ul></section>}
+      </>}
+
+      {viewMode === 'organized' && <section className="review-card">
         <div className="review-card__title"><div><span className="review-card__eyebrow">整理结果</span><h2>复盘内容</h2></div><span className={`review-status review-status--${current.reviewStatus}`}>{current.reviewStatus === 'completed' ? '已完成' : '草稿'}</span></div>
-        <div className="review-actions"><button type="button" className="review-button" onClick={runAi} disabled={isStructuring || !current.inputSegments.some((segment) => segment.type === 'text' || segment.asrText || segment.correctedText)}><Sparkles size={16} />{isStructuring ? '正在整理…' : 'AI 整理'}</button><span className={`review-sync review-sync--${syncState.status}`}><Cloud size={14} />{syncState.status === 'synced' ? '已同步' : syncState.status === 'sync_pending' ? '待同步' : syncState.status === 'sync_error' ? '等待重试' : syncState.status === 'conflict' ? '发现冲突' : '仅本机'}</span>{syncEnabled && <button type="button" className="review-button" onClick={() => syncReview(current)}>立即同步</button>}</div>
-        {syncState.status === 'conflict' && <div className="review-conflict" role="alert"><span>{syncState.error}</span><button type="button" className="review-button" onClick={resolveConflict}>合并两台设备记录</button>{syncState.remoteReview && <details><summary>查看云端版本</summary><ul>{syncState.remoteReview.workingDraft.items.map((item) => <li key={item.itemId}>{sections.find((section) => section.id === item.section)?.title}：{item.text}</li>)}</ul></details>}</div>}
+        <div className="review-actions"><button type="button" className="review-button" onClick={runAi} disabled={isStructuring || !current.inputSegments.some((segment) => segment.type === 'text' || segment.asrText || segment.correctedText)}><Sparkles size={16} />{isStructuring ? '正在整理…' : 'AI 整理'}</button></div>
         <div className="review-add-item">
           <select value={itemSection} onChange={(event) => setItemSection(event.target.value as ReviewSection)} aria-label="复盘区域">
             {sections.map((section) => <option key={section.id} value={section.id}>{section.title}</option>)}
@@ -255,15 +282,21 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
             return <section key={section.id} className="review-section"><h3>{section.title}</h3><p>{section.hint}</p>{items.length ? <ul>{items.map((item) => <li key={item.itemId} className={item.locked ? 'is-locked' : ''}><textarea defaultValue={item.text} onBlur={(event) => updateItem(item.itemId, event.target.value)} aria-label={`编辑${section.title}`} /><button type="button" onClick={() => removeItem(item.itemId)} aria-label={`删除${item.text}`}><Trash2 size={13} /></button></li>)}</ul> : <span className="review-empty">还没有内容</span>}</section>;
           })}
         </div>
-        <footer className="review-card__footer"><span>{current.inputSegments.length} 段原始记录 · {syncState.status === 'synced' ? '已同步到云端' : syncEnabled ? '已保存到本机，等待同步' : '已保存到本机'}</span><span className="review-source-actions"><button type="button" className="review-button" onClick={withdrawLast} disabled={!current.inputSegments.length}>撤回上一段</button><button type="button" className="review-button review-button--primary" onClick={finish} disabled={current.reviewStatus === 'completed'}><Check size={16} />完成复盘</button></span></footer>
-      </section>
+      </section>}
+
+      <div className="review-shared-footer"><span>{current.inputSegments.length} 段原始记录 · {syncState.status === 'synced' ? '已同步到云端' : syncEnabled ? '已保存到本机，等待同步' : '已保存到本机'}</span><span className="review-source-actions"><button type="button" className="review-button" onClick={withdrawLast} disabled={!current.inputSegments.length}>撤回上一段</button><button type="button" className="review-button review-button--primary" onClick={finish} disabled={current.reviewStatus === 'completed'}><Check size={16} />完成复盘</button></span></div>
 
       {current.completedVersions.length > 0 && <section className="review-card review-card--completed-versions"><div><span className="review-card__eyebrow">完成版本</span><h2>完成时的快照</h2><p>恢复会创建新的工作草稿，不会修改历史快照。</p></div>{current.completedVersions.map((version) => <article key={version.id}><div className="review-version-heading"><h3>第 {version.versionNo} 版 · {new Date(version.completedAt ?? version.createdAt).toLocaleString()}</h3><button type="button" className="review-button" onClick={() => restoreVersion(version.id)}>恢复为草稿</button></div>{version.items.length ? <ul>{version.items.map((item) => <li key={item.itemId}><strong>{sections.find((section) => section.id === item.section)?.title}：</strong>{item.text}</li>)}</ul> : <span className="review-empty">完成时没有整理条目</span>}</article>)}</section>}
-      {current.inputSegments.length > 0 && <section className="review-card review-card--history"><div className="review-card__title"><div><span className="review-card__eyebrow">原始记录</span><h2>可追溯，不被整理覆盖</h2></div><FileText size={19} /></div><ol>{current.inputSegments.map((segment) => segment.type === 'text'
+      {viewMode === 'source' && current.inputSegments.length > 0 && <section className="review-card review-card--history"><div className="review-card__title"><div><span className="review-card__eyebrow">转写与原始记录</span><h2>校正权威原文</h2><p>编辑后会生成新的文本版本；不能安全迁移的人工标注会保留并提示确认。</p></div><FileText size={19} /></div><ol>{current.inputSegments.map((segment) => segment.type === 'text'
         ? <li key={segment.id}><textarea defaultValue={segment.text} onBlur={(event) => updateSource(segment.id, event.target.value)} aria-label="编辑原始记录" /></li>
         : <li key={segment.id} className="review-voice-segment"><strong>语音片段 · {Math.ceil(segment.audio.durationMs / 1_000)} 秒</strong>{segment.asrText || segment.correctedText ? <><textarea defaultValue={segment.correctedText ?? segment.asrText} onBlur={(event) => { const next = updateVoiceTranscript(current, segment.id, event.target.value); if (next !== current) update(next); }} aria-label="校对语音转写" /><span className="review-source-actions"><button type="button" className="review-button" onClick={() => learnPersonalTerm(segment)}>校对后加入常用词</button><button type="button" className="review-button" disabled={!syncEnabled || transcribingSegmentId === segment.id} onClick={() => void transcribeVoice(current, segment.id, true)}>重新识别（需保留本机音频）</button></span></> : segment.originDeviceId !== localReviewDeviceId() ? <span>该语音仍在录制设备；请回到原设备继续识别。</span> : <><span>{segment.transcriptionState === 'recording' ? '录音意外中断时会在下次打开时恢复已保存部分。' : segment.transcriptionState === 'interrupted' ? '录音已中断；已保存部分仍在本机。可继续说（将建立新片段）或点击完成并识别。' : segment.transcriptionState === 'audio_unavailable' ? '本机音频未完整保存或已被清理，无法识别。' : segment.transcriptionState === 'transcribing' ? '正在识别语音…' : segment.transcriptionState === 'retryable_failed' ? '识别失败，录音仍在本机。' : '仅保存在本机，等待点击“说完了”后识别。'}</span>{segment.transcriptionState !== 'audio_unavailable' && <button type="button" className="review-button" disabled={!syncEnabled || transcribingSegmentId === segment.id || segment.transcriptionState === 'transcribing'} onClick={() => void transcribeVoice(current, segment.id)}>{transcribingSegmentId === segment.id ? '正在识别…' : segment.transcriptionState === 'retryable_failed' ? '重试识别' : '完成并识别'}</button>}</>}</li>)}</ol></section>}
       {current.conflictSnapshots.length > 0 && <section className="review-card"><div><span className="review-card__eyebrow">冲突快照</span><h2>人工编辑的可追溯副本</h2></div>{current.conflictSnapshots.map((snapshot) => <details key={snapshot.id}><summary>{new Date(snapshot.createdAt).toLocaleString()}：{snapshot.message}</summary><p>本机：{snapshot.localItems.map((item) => item.text).join('；') || '无'}</p><p>云端：{snapshot.remoteItems.map((item) => item.text).join('；') || '无'}</p></details>)}</section>}
-      {reviews.length > 0 && <section className="review-card review-card--review-history"><div><span className="review-card__eyebrow">历史复盘</span><h2>按日期打开已保存版本</h2></div><div>{reviews.map((item) => <button type="button" key={item.id} className={item.reviewDate === reviewDate ? 'is-current' : ''} onClick={() => setReviewDate(item.reviewDate)}>{item.reviewDate}<span>{item.reviewStatus === 'completed' ? `完成 · v${item.completedVersions.length}` : '草稿'}</span></button>)}</div></section>}
+      {reviews.length > 0 && <section className="review-card review-card--review-history"><div><span className="review-card__eyebrow">历史复盘</span><h2>按日期打开已保存版本</h2></div><div>{reviews.map((item) => {
+        const version = activeTextVersion(item); const annotations = activeReviewAnnotations(item);
+        const problems = annotations.filter((annotation) => annotation.type === 'problem').slice(0, 2).map((annotation) => version.text.slice(annotation.start, annotation.end));
+        const solutions = annotations.filter((annotation) => annotation.type === 'solution').slice(0, 2).map((annotation) => version.text.slice(annotation.start, annotation.end));
+        return <button type="button" key={item.id} className={item.reviewDate === reviewDate ? 'is-current' : ''} onClick={() => setReviewDate(item.reviewDate)}>{item.reviewDate}<span>{item.reviewStatus === 'completed' ? `完成 · v${item.completedVersions.length}` : '草稿'}</span>{problems.length > 0 && <small>问题：{problems.join('、')}</small>}{solutions.length > 0 && <small>调整：{solutions.join('、')}</small>}</button>;
+      })}</div></section>}
     </main>
   );
 }

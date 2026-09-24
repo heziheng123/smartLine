@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { MOTION_EASE_EXIT, MOTION_SPRING_GENTLE, MOTION_TRANSITION_EXIT } from '@/motion/system';
 import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, FolderOpen, Tag, LayoutGrid } from 'lucide-react';
-import type { Task, TaskGroup, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
+import type { Milestone, Task, TaskGroup, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { openProjectTaskModal } from './projectTaskModal';
@@ -34,6 +34,7 @@ import {
 interface WeekMatrixViewProps {
   tasks: Task[];
   groups: TaskGroup[];
+  milestones: Milestone[];
   restoreContext?: WeekMatrixContext | null;
 }
 
@@ -97,7 +98,7 @@ function getSanitizedTaskBody(body: string): string {
   return sanitized;
 }
 
-const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreContext }) => {
+const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, milestones, restoreContext }) => {
   const [restoredContext] = useState(() => restoreContext ?? takeWeekRestoreContext());
   const [cursor, setCursor] = useState(() => restoredContext?.cursor ?? todayStr());
   const [mode, setMode] = useState<'week' | 'month'>(() => restoredContext?.mode ?? 'week');
@@ -159,6 +160,19 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
   }, [cursor, mode]);
 
   const todayString = todayStr();
+
+  const milestonesByDate = useMemo(() => {
+    const visibleDates = new Set(dateRange);
+    const result = new Map<string, Milestone[]>();
+    for (const milestone of milestones) {
+      if (!visibleDates.has(milestone.date)) continue;
+      const dayMilestones = result.get(milestone.date) ?? [];
+      dayMilestones.push(milestone);
+      result.set(milestone.date, dayMilestones);
+    }
+    return result;
+  }, [dateRange, milestones]);
+  const hasVisibleMilestones = milestonesByDate.size > 0;
 
   const projectDescriptors = useMemo(
     () => buildProjectDescriptorMap(tasks, groups),
@@ -722,16 +736,17 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
             const isToday = dateStr === todayString;
             const dow = getDayOfWeek(dateStr);
             const isWeekend = dow === 0 || dow === 6;
+            const dayMilestones = milestonesByDate.get(dateStr) ?? [];
             return (
               <div
                 key={dateStr}
                 className={`wmv-cell wmv-cell--date ${isToday ? 'wmv-cell--today' : ''} ${
                   isWeekend ? 'wmv-cell--weekend' : ''
-                } ${hoverCell?.rowKey === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
+                } ${dayMilestones.length > 0 ? 'wmv-cell--date-has-milestone' : ''} ${hoverCell?.rowKey === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
                 data-date={dateStr}
                 role="button"
                 tabIndex={0}
-                aria-label={`打开 ${formatDate(dateStr, 'M月D日')} 的每日安排`}
+                aria-label={`打开 ${formatDate(dateStr, 'M月D日')} 的每日安排${dayMilestones.length > 0 ? `，里程碑：${dayMilestones.map((milestone) => milestone.name).join('、')}` : ''}`}
                 onClick={() => openDailyFromWeek(dateStr, { cursor, mode, groupMode })}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
@@ -745,6 +760,17 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
               >
                 <span className="wmv-date-weekday">{WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}</span>
                 <span className="wmv-date-num">{splitDate(dateStr).day}</span>
+                {dayMilestones.length > 0 && (
+                  <span
+                    className="wmv-date-milestone"
+                    title={dayMilestones.map((milestone) => milestone.name).join('、')}
+                    style={{ '--milestone-color': dayMilestones[0].color || '#F59E0B' } as React.CSSProperties}
+                  >
+                    <i aria-hidden="true" />
+                    <span>{dayMilestones[0].name}</span>
+                    {dayMilestones.length > 1 && <b>+{dayMilestones.length - 1}</b>}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -909,8 +935,8 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, restoreC
         {displayedRows.length === 0 && (
           <div className="wmv-empty">
             <CalendarDays size={48} />
-            <p>{groupMode === 'project' ? `当前${mode === 'week' ? '周' : '月'}暂无已排期项目任务` : '暂无智能任务块'}</p>
-            <p className="wmv-empty-hint">{groupMode === 'project' ? '可从待排期箱拖到上方日期表头进行安排' : '在项目文档中添加智能任务块后，它们会自动出现在这里'}</p>
+            <p>{hasVisibleMilestones || groupMode === 'project' ? `当前${mode === 'week' ? '周' : '月'}暂无已排期项目任务` : '暂无智能任务块'}</p>
+            <p className="wmv-empty-hint">{hasVisibleMilestones ? '里程碑已显示在对应日期中' : groupMode === 'project' ? '可从待排期箱拖到上方日期表头进行安排' : '在项目文档中添加智能任务块后，它们会自动出现在这里'}</p>
           </div>
         )}
       </div>

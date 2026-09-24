@@ -1,12 +1,12 @@
 import { isSameOriginRequest, jsonResponse, readSession } from '../../../_lib/session.ts';
 import { asrRequest, canStartAsr, readAsrResult, VOLCENGINE_FLASH_ASR_ENDPOINT, wavDurationMs, type AsrEnv } from '../../../_lib/asr.ts';
-import { normalizeReview, type PersistedInputSegment, type PersistedReview } from '../../../_lib/reviews.ts';
+import { normalizeReview, refreshPersistedReviewText, type PersistedInputSegment } from '../../../_lib/reviews.ts';
+import { VOICE_MAX_DURATION_MS, VOICE_MAX_WAV_BYTES } from '../../../../src/review/voiceLimits.ts';
 
 interface FunctionContext { env: AsrEnv; request: Request; params: { date?: string } }
 interface ReviewRow { payload: string; revision: number }
 interface OperationRow { status: string; receipt_json: string | null }
 interface CountRow { total: number }
-const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 const ASR_WINDOW_MS = 15 * 60_000;
 const isDate = (value: string | undefined): value is string => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -31,7 +31,7 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
   let form: FormData;
   try { form = await request.formData(); } catch { return jsonResponse({ error: 'Expected multipart form data.' }, 400); }
   const segmentId = form.get('segmentId'); const operationId = form.get('operationId'); const audio = form.get('audio'); const terms = personalTerms(form.get('terms'));
-  if (!isId(segmentId) || !isId(operationId) || !(audio instanceof File) || audio.size === 0 || audio.size > MAX_AUDIO_BYTES) return jsonResponse({ error: 'Invalid transcription request.' }, 400);
+  if (!isId(segmentId) || !isId(operationId) || !(audio instanceof File) || audio.size === 0 || audio.size > VOICE_MAX_WAV_BYTES) return jsonResponse({ error: 'Invalid transcription request.' }, 400);
   const database = env.REVIEW_DB;
   const reviewRow = await database.prepare('SELECT payload, revision FROM review_records WHERE user_id = ? AND review_date = ?').bind(session.githubUserId, params.date).first<ReviewRow>();
   if (!reviewRow) return jsonResponse({ error: 'Review must sync before transcription.' }, 409);
@@ -55,7 +55,7 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
   try {
     const bytes = new Uint8Array(await audio.arrayBuffer());
     const durationMs = wavDurationMs(bytes);
-    if (durationMs === null || durationMs > 10 * 60_000 || Math.abs(durationMs - segment.audio.durationMs) > 2_000) { await release(); return jsonResponse({ error: 'Unsupported or invalid audio format.' }, 415); }
+    if (durationMs === null || durationMs > VOICE_MAX_DURATION_MS || Math.abs(durationMs - segment.audio.durationMs) > 2_000) { await release(); return jsonResponse({ error: 'Unsupported or invalid audio format.' }, 415); }
     const providerRequest = asrRequest(env, bytes, operationId, operationId);
     if (!providerRequest) { await release(); return jsonResponse({ error: 'Speech recognition is not configured.' }, 503); }
     const response = await fetch(VOLCENGINE_FLASH_ASR_ENDPOINT, providerRequest);
@@ -65,7 +65,7 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
     const transcript = terms.reduce((text, term) => text.split(term.from).join(term.to), result.text);
     const completedAt = new Date().toISOString();
     const serverRevision = reviewRow.revision + 1;
-    const accepted: PersistedReview = {
+    const accepted = refreshPersistedReviewText({
       ...review,
       revision: serverRevision,
       reviewStatus: 'draft',
@@ -74,7 +74,7 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
       inputSegments: review.inputSegments.map((item) => item.id === segmentId && item.type === 'voice'
         ? { ...item, transcriptionState: 'transcribed' as const, asrText: transcript, providerReceipt: { operationId, ...(result.providerLogId ? { providerLogId: result.providerLogId } : {}) } }
         : item),
-    };
+    }, completedAt);
     const receipt = { transcript, operationId, ...(result.providerLogId ? { providerLogId: result.providerLogId } : {}), review: accepted, serverRevision };
     const recordWrite = database.prepare('UPDATE review_records SET revision = ?, review_status = ?, payload = ?, updated_at = ? WHERE user_id = ? AND review_date = ? AND revision = ?').bind(serverRevision, accepted.reviewStatus, JSON.stringify(accepted), completedAt, session.githubUserId, params.date, reviewRow.revision);
     const receiptWrite = database.prepare("UPDATE review_transcription_operations SET status = 'completed', receipt_json = ?, lease_expires_at = NULL, updated_at = ? WHERE user_id = ? AND review_date = ? AND segment_id = ? AND operation_id = ? AND status = 'processing' AND changes() = 1").bind(JSON.stringify(receipt), completedAt, session.githubUserId, params.date, segmentId, operationId);

@@ -1,5 +1,5 @@
 import { createDedicatedStorage } from '@/utils/persistence';
-import { createDailyReview, type DailyReview, type ReviewVersion } from './model';
+import { createDailyReview, createInputTextVersion, type DailyReview, type InputTextVersion, type ReviewAnnotation, type ReviewVersion } from './model';
 
 const storage = createDedicatedStorage('smart-line-review', 'reviews');
 const REVIEWS_KEY = 'daily-reviews-v1';
@@ -38,11 +38,26 @@ export function normalizeDailyReview(value: unknown): DailyReview | null {
   const completedVersions = Array.isArray(value.completedVersions)
     ? value.completedVersions.map((version) => normalizeVersion(version, fallback.workingDraft))
     : [];
+  const inputSegments = Array.isArray(value.inputSegments) ? value.inputSegments as DailyReview['inputSegments'] : [];
+  const legacyTextVersion = createInputTextVersion(inputSegments, typeof value.updatedAt === 'string' ? value.updatedAt : fallback.updatedAt);
+  const textVersions = Array.isArray(value.textVersions)
+    ? value.textVersions.filter((version): version is InputTextVersion => isRecord(version) && typeof version.id === 'string' && typeof version.text === 'string' && typeof version.createdAt === 'string' && Array.isArray(version.sourceRanges))
+    : [];
+  const usableTextVersions = textVersions.length ? textVersions : [legacyTextVersion];
+  const activeTextVersionId = typeof value.activeTextVersionId === 'string' && usableTextVersions.some((version) => version.id === value.activeTextVersionId)
+    ? value.activeTextVersionId
+    : usableTextVersions.at(-1)!.id;
+  const annotations = Array.isArray(value.annotations)
+    ? value.annotations.filter((annotation): annotation is ReviewAnnotation => isRecord(annotation) && typeof annotation.id === 'string' && typeof annotation.textVersionId === 'string' && typeof annotation.start === 'number' && typeof annotation.end === 'number' && typeof annotation.quotedText === 'string')
+    : [];
   return {
     ...fallback,
     ...value,
     reviewStatus: value.reviewStatus === 'completed' ? 'completed' : 'draft',
-    inputSegments: Array.isArray(value.inputSegments) ? value.inputSegments : [],
+    inputSegments,
+    activeTextVersionId,
+    textVersions: usableTextVersions,
+    annotations,
     workingDraft,
     completedVersions,
     conflictSnapshots: Array.isArray(value.conflictSnapshots) ? value.conflictSnapshots : [],

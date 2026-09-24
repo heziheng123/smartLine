@@ -1,4 +1,5 @@
 import type { AuthEnv } from './session.ts';
+import { VOICE_MAX_DURATION_MS, VOICE_MAX_PCM_BYTES } from '../../src/review/voiceLimits.ts';
 
 export interface D1PreparedStatement {
   bind(...values: unknown[]): D1PreparedStatement;
@@ -25,11 +26,39 @@ export interface PersistedReview {
   activeCompletedVersionId?: string;
   workingDraftVersionId: string;
   inputSegments: PersistedInputSegment[];
+  activeTextVersionId: string;
+  textVersions: PersistedInputTextVersion[];
+  annotations: PersistedReviewAnnotation[];
   workingDraft: PersistedReviewVersion;
   completedVersions: PersistedReviewVersion[];
   conflictSnapshots: Array<{ id: string; createdAt: string; localItems: PersistedReviewVersion['items']; remoteItems: PersistedReviewVersion['items']; message: string }>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PersistedInputTextVersion {
+  id: string;
+  text: string;
+  sourceRanges: Array<{ segmentId: string; start: number; end: number }>;
+  createdAt: string;
+}
+
+export interface PersistedReviewAnnotation {
+  id: string;
+  reviewId: string;
+  textVersionId: string;
+  type: 'progress' | 'problem' | 'reflection' | 'solution' | 'emphasis';
+  start: number;
+  end: number;
+  sourceSegmentIds: string[];
+  quotedText: string;
+  summary?: string;
+  createdBy: 'ai' | 'user';
+  userEdited: boolean;
+  stale: boolean;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
 }
 
 export type PersistedInputSegment =
@@ -78,8 +107,51 @@ const isDate = (value: unknown): value is string => {
 const isTimestamp = (value: unknown): value is string => isText(value, 40) && !Number.isNaN(Date.parse(value));
 const isInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const sections = new Set(['progress', 'problems', 'adjustments', 'summary']);
+const annotationTypes = new Set(['progress', 'problem', 'reflection', 'solution', 'emphasis']);
 const voiceStates = new Set(['recording', 'interrupted', 'waiting_transcription', 'transcribing', 'transcribed', 'retryable_failed', 'audio_unavailable']);
 const audioRetentions = new Set(['delete_after_transcription', 'keep_7_days', 'keep_30_days']);
+
+const effectiveText = (segment: PersistedInputSegment): string | null => segment.type === 'text' ? segment.text : segment.correctedText ?? segment.asrText ?? null;
+
+function buildTextVersion(inputSegments: PersistedInputSegment[], createdAt: string, id = `review-text-${crypto.randomUUID()}`): PersistedInputTextVersion {
+  let text = '';
+  const sourceRanges: PersistedInputTextVersion['sourceRanges'] = [];
+  [...inputSegments].sort((left, right) => left.clientSeq - right.clientSeq).forEach((segment) => {
+    const source = effectiveText(segment);
+    if (!source) return;
+    if (text) text += '\n\n';
+    const start = text.length;
+    text += source;
+    sourceRanges.push({ segmentId: segment.id, start, end: text.length });
+  });
+  return { id, text, sourceRanges, createdAt };
+}
+
+function sourceIdsForRange(version: PersistedInputTextVersion, start: number, end: number): string[] {
+  return version.sourceRanges.filter((range) => start < range.end && end > range.start).map((range) => range.segmentId);
+}
+
+export function refreshPersistedReviewText(review: PersistedReview, now: string): PersistedReview {
+  const previous = review.textVersions.find((version) => version.id === review.activeTextVersionId) ?? buildTextVersion(review.inputSegments, review.updatedAt);
+  const next = buildTextVersion(review.inputSegments, now);
+  if (previous.text === next.text && JSON.stringify(previous.sourceRanges) === JSON.stringify(next.sourceRanges)) return review;
+  const textVersions = [...review.textVersions, next].slice(-20);
+  const retainedVersionIds = new Set(textVersions.map((version) => version.id));
+  const annotations = review.annotations.map((annotation) => {
+    if (annotation.deletedAt || annotation.textVersionId !== previous.id || (annotation.createdBy === 'ai' && !annotation.userEdited)) return annotation.textVersionId === previous.id ? { ...annotation, stale: true } : annotation;
+    const matches: number[] = [];
+    let offset = next.text.indexOf(annotation.quotedText);
+    while (offset >= 0) {
+      const ids = sourceIdsForRange(next, offset, offset + annotation.quotedText.length);
+      if (ids.length && ids.length === annotation.sourceSegmentIds.length && ids.every((id) => annotation.sourceSegmentIds.includes(id))) matches.push(offset);
+      offset = next.text.indexOf(annotation.quotedText, offset + 1);
+    }
+    if (matches.length !== 1) return { ...annotation, stale: true };
+    const start = matches[0]!;
+    return { ...annotation, textVersionId: next.id, start, end: start + annotation.quotedText.length, stale: false, updatedAt: now };
+  }).filter((annotation) => retainedVersionIds.has(annotation.textVersionId) || annotation.deletedAt || annotation.createdBy === 'user' || annotation.userEdited);
+  return { ...review, activeTextVersionId: next.id, textVersions, annotations };
+}
 
 function normalizeVersion(value: unknown, kind: PersistedReviewVersion['kind']): PersistedReviewVersion | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -118,7 +190,7 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
     const audioRetention = segment.audioRetention ?? 'delete_after_transcription';
     if (segment.type !== 'voice' || !isId(segment.originDeviceId) || segment.audioStorageScope !== 'local_only' || !audioRetentions.has(audioRetention as string) || !voiceStates.has(segment.transcriptionState as string) || !segment.audio || typeof segment.audio !== 'object' || Array.isArray(segment.audio)) return null;
     const audio = segment.audio as Record<string, unknown>;
-    if (audio.mimeType !== 'audio/wav' || !isInteger(audio.durationMs) || !isInteger(audio.chunkCount) || !isInteger(audio.byteLength) || !isInteger(audio.sampleRate) || audio.durationMs > 3_600_000 || audio.byteLength > 8 * 1024 * 1024 || audio.sampleRate < 8_000 || audio.sampleRate > 96_000) return null;
+    if (audio.mimeType !== 'audio/wav' || !isInteger(audio.durationMs) || !isInteger(audio.chunkCount) || !isInteger(audio.byteLength) || !isInteger(audio.sampleRate) || audio.durationMs > VOICE_MAX_DURATION_MS || audio.byteLength > VOICE_MAX_PCM_BYTES || audio.sampleRate < 8_000 || audio.sampleRate > 96_000) return null;
     if (!(segment.asrText === undefined || isText(segment.asrText)) || !(segment.correctedText === undefined || isText(segment.correctedText))) return null;
     let providerReceipt: { operationId: string; providerLogId?: string } | undefined;
     if (segment.providerReceipt !== undefined) {
@@ -145,6 +217,40 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
   });
   if (inputSegments.some((segment) => !segment)) return null;
   if (new Set((inputSegments as PersistedInputSegment[]).map((segment) => segment.clientSeq)).size !== inputSegments.length) return null;
+  const normalizedSegments = inputSegments as PersistedInputSegment[];
+  const canonicalTextVersion = buildTextVersion(normalizedSegments, updatedAt as string, 'review-text-legacy');
+  const sourceTextVersions = source.textVersions;
+  const textVersions = Array.isArray(sourceTextVersions) ? sourceTextVersions.map((candidate): PersistedInputTextVersion | null => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    const version = candidate as Record<string, unknown>;
+    if (!isId(version.id) || !isText(version.text, 100_000) || !isTimestamp(version.createdAt) || !Array.isArray(version.sourceRanges) || version.sourceRanges.length > 200) return null;
+    const ranges = version.sourceRanges.map((candidateRange) => {
+      if (!candidateRange || typeof candidateRange !== 'object' || Array.isArray(candidateRange)) return null;
+      const range = candidateRange as Record<string, unknown>;
+      if (!isId(range.segmentId) || !isInteger(range.start) || !isInteger(range.end) || range.end <= range.start || range.end > (version.text as string).length) return null;
+      return { segmentId: range.segmentId, start: range.start, end: range.end };
+    });
+    if (ranges.some((range) => !range)) return null;
+    return { id: version.id, text: version.text, sourceRanges: ranges as PersistedInputTextVersion['sourceRanges'], createdAt: version.createdAt };
+  }) : [];
+  if (textVersions.some((version) => !version) || textVersions.length > 20) return null;
+  const normalizedTextVersions = (textVersions.length ? textVersions : [canonicalTextVersion]) as PersistedInputTextVersion[];
+  const activeTextVersionId = isId(source.activeTextVersionId) && normalizedTextVersions.some((version) => version.id === source.activeTextVersionId) ? source.activeTextVersionId : normalizedTextVersions.at(-1)!.id;
+  const activeVersion = normalizedTextVersions.find((version) => version.id === activeTextVersionId)!;
+  if (activeVersion.text !== canonicalTextVersion.text || JSON.stringify(activeVersion.sourceRanges) !== JSON.stringify(canonicalTextVersion.sourceRanges)) return null;
+  const sourceAnnotations = source.annotations;
+  const annotations = Array.isArray(sourceAnnotations) ? sourceAnnotations.map((candidate): PersistedReviewAnnotation | null => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    const annotation = candidate as Record<string, unknown>;
+    const version = normalizedTextVersions.find((item) => item.id === annotation.textVersionId);
+    const orphanAllowed = !version && (annotation.deletedAt !== undefined || annotation.stale === true && (annotation.createdBy === 'user' || annotation.userEdited === true));
+    if ((!version && !orphanAllowed) || !isId(annotation.id) || annotation.reviewId !== id || !isId(annotation.textVersionId) || !annotationTypes.has(annotation.type as string) || !isInteger(annotation.start) || !isInteger(annotation.end) || annotation.end <= annotation.start || version && (annotation.end > version.text.length || version.text.slice(annotation.start, annotation.end) !== annotation.quotedText) || !Array.isArray(annotation.sourceSegmentIds) || !isText(annotation.quotedText) || !(annotation.summary === undefined || isText(annotation.summary, 500)) || !['ai', 'user'].includes(annotation.createdBy as string) || typeof annotation.userEdited !== 'boolean' || typeof annotation.stale !== 'boolean' || !isTimestamp(annotation.createdAt) || !isTimestamp(annotation.updatedAt) || !(annotation.deletedAt === undefined || isTimestamp(annotation.deletedAt))) return null;
+    const sourceSegmentIds = annotation.sourceSegmentIds.filter(isId);
+    const expectedSourceIds = version ? sourceIdsForRange(version, annotation.start, annotation.end) : sourceSegmentIds;
+    if (!sourceSegmentIds.length || sourceSegmentIds.length !== annotation.sourceSegmentIds.length || sourceSegmentIds.length !== expectedSourceIds.length || !expectedSourceIds.every((sourceId) => sourceSegmentIds.includes(sourceId))) return null;
+    return { id: annotation.id, reviewId: id as string, textVersionId: annotation.textVersionId as string, type: annotation.type as PersistedReviewAnnotation['type'], start: annotation.start, end: annotation.end, sourceSegmentIds, quotedText: annotation.quotedText, ...(annotation.summary ? { summary: annotation.summary } : {}), createdBy: annotation.createdBy as 'ai' | 'user', userEdited: annotation.userEdited, stale: annotation.stale, createdAt: annotation.createdAt, updatedAt: annotation.updatedAt, ...(annotation.deletedAt ? { deletedAt: annotation.deletedAt } : {}) };
+  }) : [];
+  if (annotations.some((annotation) => !annotation) || annotations.length > 400) return null;
   const workingDraft = normalizeVersion(source.workingDraft, 'working_draft');
   const completedVersions = sourceVersions.map((version) => normalizeVersion(version, 'completed_snapshot'));
   const conflictSnapshots = sourceSnapshots.map((candidate) => {
@@ -174,7 +280,10 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
     reviewStatus: reviewStatus as PersistedReview['reviewStatus'],
     ...(activeCompletedVersionId ? { activeCompletedVersionId } : {}),
     workingDraftVersionId,
-    inputSegments: inputSegments as PersistedInputSegment[],
+    inputSegments: normalizedSegments,
+    activeTextVersionId,
+    textVersions: normalizedTextVersions,
+    annotations: annotations as PersistedReviewAnnotation[],
     workingDraft,
     completedVersions: completedVersions as PersistedReviewVersion[],
     conflictSnapshots: conflictSnapshots as PersistedReview['conflictSnapshots'],

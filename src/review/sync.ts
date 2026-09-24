@@ -94,14 +94,14 @@ export function flushReviewOutbox(): Promise<Record<string, ReviewSyncState>> {
   return activeFlush;
 }
 
-export async function structureReview(review: DailyReview): Promise<import('./model').AiReviewItem[]> {
+export async function structureReview(review: DailyReview): Promise<{ candidates: import('./model').AiReviewItem[]; annotations: import('./model').AiReviewAnnotation[] }> {
   const response = await fetch(`/api/reviews/${encodeURIComponent(review.reviewDate)}/structure`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ review, operationId: `ai-${review.id}-${review.revision}` }),
   });
   if (!response.ok) throw new Error('AI 整理暂时不可用。');
-  const data = await response.json() as { candidates?: import('./model').AiReviewItem[] };
-  if (!data.candidates) throw new Error('AI 未返回可用整理结果。');
-  return data.candidates;
+  const data = await response.json() as { candidates?: import('./model').AiReviewItem[]; annotations?: import('./model').AiReviewAnnotation[] };
+  if (!data.candidates || !data.annotations) throw new Error('AI 未返回可用整理结果。');
+  return { candidates: data.candidates, annotations: data.annotations };
 }
 
 export interface VoiceTranscriptReceipt { transcript: string; operationId: string; providerLogId?: string; review: DailyReview; serverRevision: number }

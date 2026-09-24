@@ -1,9 +1,9 @@
 import { isSameOriginRequest, jsonResponse, readSession } from '../../../_lib/session.ts';
 import { normalizeReview, type PersistedReview } from '../../../_lib/reviews.ts';
-import { responseText, reviewStructureRequest, validateAiCandidates, type ReviewAiEnv } from '../../../_lib/reviewAi.ts';
+import { responseText, reviewStructureRequest, validateAiAnalysis, type ReviewAiEnv } from '../../../_lib/reviewAi.ts';
 
 interface FunctionContext { env: ReviewAiEnv; request: Request; params: { date?: string } }
-const MAX_REQUEST_BYTES = 128 * 1024;
+const MAX_REQUEST_BYTES = 512 * 1024;
 const isOperationId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{16,160}$/.test(value);
 interface AiOperationRow { status: string; response_json: string | null }
 
@@ -55,11 +55,11 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
     if (!response.ok) { await release(); return jsonResponse({ error: 'Review AI is temporarily unavailable.' }, response.status === 429 ? 429 : 502); }
     const text = responseText(await response.json());
     if (!text) { await release(); return jsonResponse({ error: 'Review AI returned no structured result.' }, 502); }
-    const candidates = validateAiCandidates(JSON.parse(text), review);
-    if (!candidates) { await release(); return jsonResponse({ error: 'Review AI returned an invalid structured result.' }, 502); }
-    const receipt = JSON.stringify({ candidates });
+    const analysis = validateAiAnalysis(JSON.parse(text), review);
+    if (!analysis) { await release(); return jsonResponse({ error: 'Review AI returned an invalid structured result.' }, 502); }
+    const receipt = JSON.stringify(analysis);
     await database.prepare("UPDATE review_ai_operations SET status = 'completed', response_json = ?, lease_expires_at = NULL, updated_at = ? WHERE user_id = ? AND review_date = ? AND operation_id = ? AND status = 'processing'").bind(receipt, new Date().toISOString(), session.githubUserId, params.date, operationId).run();
-    return jsonResponse({ candidates });
+    return jsonResponse(analysis);
   } catch {
     await release().catch(() => undefined);
     return jsonResponse({ error: 'Review AI is temporarily unavailable.' }, 502);

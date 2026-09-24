@@ -5,7 +5,7 @@ interface FunctionContext { env: ReviewEnv; request: Request; params: { date?: s
 interface ReviewRow { payload: string; revision: number }
 interface OperationRow { response_json: string }
 
-const MAX_REQUEST_BYTES = 128 * 1024;
+const MAX_REQUEST_BYTES = 512 * 1024;
 const isDate = (value: string | undefined): value is string => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -28,7 +28,9 @@ export async function onRequestGet(context: FunctionContext): Promise<Response> 
   const row = await target.env.REVIEW_DB!.prepare('SELECT payload, revision FROM review_records WHERE user_id = ? AND review_date = ?').bind(target.userId, target.date).first<ReviewRow>();
   if (!row) return jsonResponse({ error: 'Review not found.' }, 404);
   try {
-    return jsonResponse({ review: JSON.parse(row.payload), serverRevision: row.revision });
+    const review = normalizeReview(JSON.parse(row.payload), target.date);
+    if (!review) return jsonResponse({ error: 'Stored review payload is invalid.' }, 502);
+    return jsonResponse({ review, serverRevision: row.revision });
   } catch {
     return jsonResponse({ error: 'Stored review payload is invalid.' }, 502);
   }

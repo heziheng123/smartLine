@@ -1,5 +1,6 @@
 export type ReviewSection = 'progress' | 'problems' | 'adjustments' | 'summary';
 export type ReviewStatus = 'draft' | 'completed';
+export type ReviewAnnotationType = 'progress' | 'problem' | 'reflection' | 'solution' | 'emphasis';
 
 export interface TextInputSegment {
   id: string;
@@ -28,6 +29,31 @@ export interface VoiceInputSegment {
 }
 
 export type InputSegment = TextInputSegment | VoiceInputSegment;
+
+export interface InputTextVersion {
+  id: string;
+  text: string;
+  sourceRanges: Array<{ segmentId: string; start: number; end: number }>;
+  createdAt: string;
+}
+
+export interface ReviewAnnotation {
+  id: string;
+  reviewId: string;
+  textVersionId: string;
+  type: ReviewAnnotationType;
+  start: number;
+  end: number;
+  sourceSegmentIds: string[];
+  quotedText: string;
+  summary?: string;
+  createdBy: 'ai' | 'user';
+  userEdited: boolean;
+  stale: boolean;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+}
 
 export interface ReviewItem {
   itemId: string;
@@ -68,6 +94,9 @@ export interface DailyReview {
   activeCompletedVersionId?: string;
   workingDraftVersionId: string;
   inputSegments: InputSegment[];
+  activeTextVersionId: string;
+  textVersions: InputTextVersion[];
+  annotations: ReviewAnnotation[];
   workingDraft: ReviewVersion;
   completedVersions: ReviewVersion[];
   conflictSnapshots: ReviewConflictSnapshot[];
@@ -81,7 +110,79 @@ export interface AiReviewItem {
   sourceSegmentIds: string[];
 }
 
+export interface AiReviewAnnotation {
+  type: ReviewAnnotationType;
+  start: number;
+  end: number;
+  sourceSegmentIds: string[];
+  summary?: string;
+}
+
 const newId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
+const annotationTypes = new Set<ReviewAnnotationType>(['progress', 'problem', 'reflection', 'solution', 'emphasis']);
+
+const segmentText = (segment: InputSegment): string | null => segment.type === 'text' ? segment.text : segment.correctedText ?? segment.asrText ?? null;
+
+export function createInputTextVersion(inputSegments: InputSegment[], now = new Date().toISOString()): InputTextVersion {
+  let text = '';
+  const sourceRanges: InputTextVersion['sourceRanges'] = [];
+  [...inputSegments].sort((left, right) => left.clientSeq - right.clientSeq).forEach((segment) => {
+    const source = segmentText(segment);
+    if (!source) return;
+    if (text) text += '\n\n';
+    const start = text.length;
+    text += source;
+    sourceRanges.push({ segmentId: segment.id, start, end: text.length });
+  });
+  return { id: newId('review-text'), text, sourceRanges, createdAt: now };
+}
+
+export function activeTextVersion(review: DailyReview): InputTextVersion {
+  return review.textVersions.find((version) => version.id === review.activeTextVersionId) ?? createInputTextVersion(review.inputSegments, review.updatedAt);
+}
+
+function sourceIdsForRange(version: InputTextVersion, start: number, end: number): string[] {
+  return version.sourceRanges.filter((range) => start < range.end && end > range.start).map((range) => range.segmentId);
+}
+
+function migrateProtectedAnnotation(annotation: ReviewAnnotation, version: InputTextVersion): ReviewAnnotation {
+  const matches: number[] = [];
+  let offset = version.text.indexOf(annotation.quotedText);
+  while (offset >= 0) {
+    const ids = sourceIdsForRange(version, offset, offset + annotation.quotedText.length);
+    if (ids.length && ids.every((id) => annotation.sourceSegmentIds.includes(id)) && annotation.sourceSegmentIds.every((id) => ids.includes(id))) matches.push(offset);
+    offset = version.text.indexOf(annotation.quotedText, offset + 1);
+  }
+  if (matches.length !== 1) return { ...annotation, stale: true };
+  const start = matches[0]!;
+  return { ...annotation, textVersionId: version.id, start, end: start + annotation.quotedText.length, stale: false, updatedAt: version.createdAt };
+}
+
+export function refreshReviewTextVersion(review: DailyReview, now = new Date().toISOString()): DailyReview {
+  const previous = activeTextVersion(review);
+  const next = createInputTextVersion(review.inputSegments, now);
+  if (previous.text === next.text && previous.sourceRanges.length === next.sourceRanges.length && previous.sourceRanges.every((range, index) => range.segmentId === next.sourceRanges[index]?.segmentId && range.start === next.sourceRanges[index]?.start && range.end === next.sourceRanges[index]?.end)) return review;
+  const textVersions = [...review.textVersions, next].slice(-20);
+  const retainedVersionIds = new Set(textVersions.map((version) => version.id));
+  const annotations = review.annotations.map((annotation) => {
+    if (annotation.deletedAt || annotation.textVersionId !== previous.id) return annotation;
+    return annotation.createdBy === 'user' || annotation.userEdited
+      ? migrateProtectedAnnotation(annotation, next)
+      : { ...annotation, stale: true };
+  }).filter((annotation) => retainedVersionIds.has(annotation.textVersionId) || annotation.deletedAt || annotation.createdBy === 'user' || annotation.userEdited);
+  return { ...review, activeTextVersionId: next.id, textVersions, annotations };
+}
+
+const overlaps = (left: ReviewAnnotation, right: ReviewAnnotation): boolean => left.start < right.end && left.end > right.start;
+
+export function resolveAnnotationConflicts(annotations: ReviewAnnotation[]): ReviewAnnotation[] {
+  const emphasis = annotations.filter((annotation) => annotation.type === 'emphasis');
+  const backgrounds = annotations.filter((annotation) => annotation.type !== 'emphasis')
+    .sort((left, right) => Number(right.createdBy === 'user' || right.userEdited) - Number(left.createdBy === 'user' || left.userEdited) || (left.end - left.start) - (right.end - right.start) || left.id.localeCompare(right.id));
+  const accepted: ReviewAnnotation[] = [];
+  for (const annotation of backgrounds) if (!accepted.some((current) => overlaps(current, annotation))) accepted.push(annotation);
+  return [...accepted, ...emphasis].sort((left, right) => left.start - right.start || left.end - right.end || left.id.localeCompare(right.id));
+}
 
 function cloneVersion(version: ReviewVersion, kind: ReviewVersion['kind'], completedAt?: string): ReviewVersion {
   return {
@@ -95,6 +196,7 @@ function cloneVersion(version: ReviewVersion, kind: ReviewVersion['kind'], compl
 
 export function createDailyReview(reviewDate: string, now = new Date().toISOString()): DailyReview {
   const workingDraftId = newId('review-version');
+  const textVersion = createInputTextVersion([], now);
   return {
     id: newId('review'),
     reviewDate,
@@ -104,6 +206,9 @@ export function createDailyReview(reviewDate: string, now = new Date().toISOStri
     reviewStatus: 'draft',
     workingDraftVersionId: workingDraftId,
     inputSegments: [],
+    activeTextVersionId: textVersion.id,
+    textVersions: [textVersion],
+    annotations: [],
     workingDraft: {
       id: workingDraftId,
       versionNo: 1,
@@ -139,10 +244,10 @@ export function appendTextSegment(review: DailyReview, text: string, now = new D
     capturedAt: now,
     text: trimmed,
   };
-  return {
+  return refreshReviewTextVersion({
     ...change(review, now, (draft) => ({ ...draft })),
     inputSegments: [...review.inputSegments, segment],
-  };
+  }, now);
 }
 
 export function appendVoiceSegment(
@@ -195,27 +300,26 @@ export function applyVoiceTranscript(
   const text = asrText.trim();
   const voice = review.inputSegments.find((segment): segment is VoiceInputSegment => segment.id === segmentId && segment.type === 'voice');
   if (!voice || !text) return review;
-  return {
+  return refreshReviewTextVersion({
     ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked) })),
     inputSegments: review.inputSegments.map((segment) => segment.id === segmentId && segment.type === 'voice'
       ? { ...segment, transcriptionState: 'transcribed' as const, asrText: text, providerReceipt }
       : segment),
-  };
+  }, now);
 }
 
 export function updateVoiceTranscript(review: DailyReview, segmentId: string, text: string, now = new Date().toISOString()): DailyReview {
   const correctedText = text.trim();
   const voice = review.inputSegments.find((segment): segment is VoiceInputSegment => segment.id === segmentId && segment.type === 'voice');
   if (!voice || !correctedText || voice.correctedText === correctedText) return review;
-  return {
+  return refreshReviewTextVersion({
     ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked) })),
     inputSegments: review.inputSegments.map((segment) => segment.id === segmentId && segment.type === 'voice' ? { ...segment, correctedText } : segment),
-  };
+  }, now);
 }
 
 export function effectiveSegmentText(segment: InputSegment): string | null {
-  if (segment.type === 'text') return segment.text;
-  return segment.correctedText ?? segment.asrText ?? null;
+  return segmentText(segment);
 }
 
 export function addReviewItem(review: DailyReview, section: ReviewSection, text: string, now = new Date().toISOString()): DailyReview {
@@ -240,19 +344,50 @@ export function updateTextSegment(review: DailyReview, segmentId: string, text: 
   const trimmed = text.trim();
   const segment = review.inputSegments.find((item): item is TextInputSegment => item.id === segmentId && item.type === 'text');
   if (!segment || !trimmed || segment.text === trimmed) return review;
-  return {
+  return refreshReviewTextVersion({
     ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked) })),
     inputSegments: review.inputSegments.map((item) => item.id === segmentId ? { ...item, text: trimmed } : item),
-  };
+  }, now);
 }
 
 export function withdrawLastInputSegment(review: DailyReview, now = new Date().toISOString()): DailyReview {
   const removed = review.inputSegments.at(-1);
   if (!removed) return review;
-  return {
+  return refreshReviewTextVersion({
     ...change(review, now, (draft) => ({ ...draft, items: draft.items.filter((item) => item.locked || !item.sourceSegmentIds.includes(removed.id)) })),
     inputSegments: review.inputSegments.slice(0, -1),
-  };
+  }, now);
+}
+
+export function activeReviewAnnotations(review: DailyReview): ReviewAnnotation[] {
+  return resolveAnnotationConflicts(review.annotations.filter((annotation) => !annotation.deletedAt && !annotation.stale && annotation.textVersionId === review.activeTextVersionId));
+}
+
+function validAnnotationCandidate(version: InputTextVersion, candidate: AiReviewAnnotation): boolean {
+  if (!annotationTypes.has(candidate.type) || !Number.isSafeInteger(candidate.start) || !Number.isSafeInteger(candidate.end) || candidate.start < 0 || candidate.end <= candidate.start || candidate.end > version.text.length) return false;
+  const sourceIds = sourceIdsForRange(version, candidate.start, candidate.end);
+  return sourceIds.length > 0 && sourceIds.length === candidate.sourceSegmentIds.length && sourceIds.every((id) => candidate.sourceSegmentIds.includes(id));
+}
+
+export function addReviewAnnotation(review: DailyReview, type: ReviewAnnotationType, start: number, end: number, now = new Date().toISOString()): DailyReview {
+  const version = activeTextVersion(review);
+  const sourceSegmentIds = sourceIdsForRange(version, start, end);
+  const candidate = { type, start, end, sourceSegmentIds };
+  if (!validAnnotationCandidate(version, candidate) || !version.text.slice(start, end).trim()) return review;
+  const annotation: ReviewAnnotation = { id: newId('review-annotation'), reviewId: review.id, textVersionId: version.id, ...candidate, quotedText: version.text.slice(start, end), createdBy: 'user', userEdited: true, stale: false, createdAt: now, updatedAt: now };
+  const history = review.annotations.filter((item) => item.deletedAt || item.stale || item.textVersionId !== version.id);
+  const current = review.annotations.filter((item) => !item.deletedAt && !item.stale && item.textVersionId === version.id);
+  return { ...change(review, now, (draft) => ({ ...draft })), annotations: [...history, ...resolveAnnotationConflicts([...current, annotation])] };
+}
+
+export function updateReviewAnnotation(review: DailyReview, annotationId: string, type: ReviewAnnotationType, now = new Date().toISOString()): DailyReview {
+  if (!annotationTypes.has(type) || !review.annotations.some((annotation) => annotation.id === annotationId && !annotation.deletedAt)) return review;
+  return { ...change(review, now, (draft) => ({ ...draft })), annotations: review.annotations.map((annotation) => annotation.id === annotationId ? { ...annotation, type, userEdited: true, updatedAt: now } : annotation) };
+}
+
+export function removeReviewAnnotation(review: DailyReview, annotationId: string, now = new Date().toISOString()): DailyReview {
+  if (!review.annotations.some((annotation) => annotation.id === annotationId && !annotation.deletedAt)) return review;
+  return { ...change(review, now, (draft) => ({ ...draft })), annotations: review.annotations.map((annotation) => annotation.id === annotationId ? { ...annotation, userEdited: true, stale: false, updatedAt: now, deletedAt: now } : annotation) };
 }
 
 export function updateReviewItem(review: DailyReview, itemId: string, text: string, now = new Date().toISOString()): DailyReview {
@@ -291,6 +426,22 @@ export function applyAiItems(review: DailyReview, candidates: AiReviewItem[], no
   return change(review, now, (draft) => ({ ...draft, items: [...draft.items.filter((item) => item.locked), ...nextItems] }));
 }
 
+export function applyAiAnalysis(review: DailyReview, candidates: AiReviewItem[], annotations: AiReviewAnnotation[], now = new Date().toISOString()): DailyReview {
+  const withItems = applyAiItems(review, candidates, now);
+  const version = activeTextVersion(withItems);
+  const protectedAnnotations = withItems.annotations.filter((annotation) => annotation.deletedAt || annotation.createdBy === 'user' || annotation.userEdited);
+  const generated = annotations.flatMap((candidate) => {
+    if (!validAnnotationCandidate(version, candidate)) return [];
+    const quotedText = version.text.slice(candidate.start, candidate.end);
+    if (!quotedText.trim()) return [];
+    return [{ id: newId('review-annotation'), reviewId: review.id, textVersionId: version.id, ...candidate, quotedText, createdBy: 'ai' as const, userEdited: false, stale: false, createdAt: now, updatedAt: now }];
+  });
+  const currentProtected = protectedAnnotations.filter((annotation) => !annotation.deletedAt && !annotation.stale && annotation.textVersionId === version.id);
+  const resolvedCurrent = resolveAnnotationConflicts([...currentProtected, ...generated]);
+  const preservedHistory = protectedAnnotations.filter((annotation) => annotation.deletedAt || annotation.stale || annotation.textVersionId !== version.id);
+  return { ...withItems, annotations: [...preservedHistory, ...resolvedCurrent] };
+}
+
 export function restoreCompletedVersion(review: DailyReview, versionId: string, now = new Date().toISOString()): DailyReview {
   const snapshot = review.completedVersions.find((version) => version.id === versionId);
   if (!snapshot) return review;
@@ -323,11 +474,26 @@ function uniqueById<T extends { id: string }>(items: T[]): T[] {
 export function mergeDailyReviews(local: DailyReview, remote: DailyReview, now = new Date().toISOString()): DailyReview {
   const localItems = new Map(local.workingDraft.items.map((item) => [item.itemId, item]));
   const remoteItems = new Map(remote.workingDraft.items.map((item) => [item.itemId, item]));
+  const winner = local.updatedAt >= remote.updatedAt ? local : remote;
   const overlappingEdits = [...localItems].filter(([id, item]) => {
     const peer = remoteItems.get(id);
     return peer && peer.text !== item.text && item.userEdited && peer.userEdited;
   }).map(([id]) => id);
-  const mergedSegments = uniqueById([...remote.inputSegments, ...local.inputSegments])
+  const segmentIds = new Set([...remote.inputSegments, ...local.inputSegments].map((segment) => segment.id));
+  const mergedSegments = [...segmentIds].map((id) => {
+    const own = local.inputSegments.find((segment) => segment.id === id);
+    const peer = remote.inputSegments.find((segment) => segment.id === id);
+    if (!own) return peer!;
+    if (!peer) return own;
+    if (own.type === 'voice' && peer.type === 'voice' && own.transcriptionState !== peer.transcriptionState) {
+      const transcribed = own.transcriptionState === 'transcribed' ? own : peer.transcriptionState === 'transcribed' ? peer : null;
+      if (transcribed) {
+        const other = transcribed === own ? peer : own;
+        return { ...transcribed, ...(other.correctedText && !transcribed.correctedText ? { correctedText: other.correctedText } : {}) };
+      }
+    }
+    return winner === local ? own : peer;
+  })
     .sort((left, right) => left.capturedAt.localeCompare(right.capturedAt) || left.id.localeCompare(right.id))
     .map((segment, index) => ({ ...segment, clientSeq: index + 1 }));
   const mergedItems = [...new Map([...remote.workingDraft.items, ...local.workingDraft.items].map((item) => [item.itemId, item])).values()].map((item) => {
@@ -338,15 +504,22 @@ export function mergeDailyReviews(local: DailyReview, remote: DailyReview, now =
   const snapshots = [...local.conflictSnapshots, ...remote.conflictSnapshots];
   if (overlappingEdits.length) snapshots.push({ id: newId('review-conflict'), createdAt: now, localItems: overlappingEdits.map((id) => ({ ...localItems.get(id)! })), remoteItems: overlappingEdits.map((id) => ({ ...remoteItems.get(id)! })), message: '两台设备修改了同一条人工编辑；已保留较新的工作稿，另一版本可从冲突快照追溯。' });
   const completedVersions = uniqueById([...remote.completedVersions, ...local.completedVersions]);
-  const winner = local.updatedAt >= remote.updatedAt ? local : remote;
-  return {
+  const textVersions = uniqueById([...remote.textVersions, ...local.textVersions]);
+  const annotations = [...new Map([...remote.annotations, ...local.annotations].map((annotation) => [annotation.id, annotation])).values()].map((annotation) => {
+    const own = local.annotations.find((item) => item.id === annotation.id);
+    const peer = remote.annotations.find((item) => item.id === annotation.id);
+    return own && peer ? (own.updatedAt >= peer.updatedAt ? own : peer) : annotation;
+  });
+  return refreshReviewTextVersion({
     ...winner,
     id: local.id,
     revision: Math.max(local.revision, remote.revision) + 1,
     inputSegments: mergedSegments,
+    textVersions,
+    annotations,
     workingDraft: { ...winner.workingDraft, items: mergedItems, baseRevision: Math.max(local.revision, remote.revision) },
     completedVersions,
     conflictSnapshots: uniqueById(snapshots).slice(-20),
     updatedAt: now,
-  };
+  }, now);
 }

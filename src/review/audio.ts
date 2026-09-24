@@ -1,5 +1,6 @@
 import { createDedicatedStorage } from '@/utils/persistence';
 import type { VoiceAudioRetention } from './model';
+import { voicePcmByteLimit } from './voiceLimits';
 
 const storage = createDedicatedStorage('smart-line-review-audio', 'chunks');
 const keyFor = (segmentId: string, chunkSeq: number) => `voice-chunk:${segmentId}:${chunkSeq}`;
@@ -128,33 +129,58 @@ export class LocalOnlyAudioCapture {
   private pendingBytes = 0;
   private chunkCount = 0;
   private byteLength = 0;
+  private sampleRate = 16_000;
   private writeChain = Promise.resolve();
   private readonly retention: VoiceAudioRetention;
   private readonly onProgress?: (audio: CapturedVoiceAudio) => void;
-  private readonly startedAt = Date.now();
-  private readonly maxDurationMs = 10 * 60_000;
+  private readonly onLimitReached?: () => void;
+  private limitReached = false;
+  private released = false;
 
-  constructor(segmentId: string, retention: VoiceAudioRetention, onProgress?: (audio: CapturedVoiceAudio) => void) { this.segmentId = segmentId; this.retention = retention; this.onProgress = onProgress; }
+  constructor(segmentId: string, retention: VoiceAudioRetention, onProgress?: (audio: CapturedVoiceAudio) => void, onLimitReached?: () => void) {
+    this.segmentId = segmentId; this.retention = retention; this.onProgress = onProgress; this.onLimitReached = onLimitReached;
+  }
 
   static supported(): boolean { return typeof window !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia) && Boolean(window.AudioContext); }
 
   async start(): Promise<void> {
     if (!LocalOnlyAudioCapture.supported()) throw new Error('当前浏览器不支持安全录音，请直接输入文字。');
     await ensureVoiceStorageCapacity();
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-    this.context = new AudioContext({ sampleRate: 16_000 });
-    await saveStoredVoiceAudio({ segmentId: this.segmentId, mimeType: 'audio/wav', durationMs: 0, chunkCount: 0, byteLength: 0, sampleRate: this.context.sampleRate }, this.retention, 'recording');
-    await this.context.resume();
-    this.source = this.context.createMediaStreamSource(this.stream);
-    this.processor = this.context.createScriptProcessor(4_096, 1, 1);
-    this.gain = this.context.createGain(); this.gain.gain.value = 0;
-    this.processor.onaudioprocess = (event) => {
-      if (Date.now() - this.startedAt >= this.maxDurationMs) return;
-      const blob = new Blob([pcm16(event.inputBuffer.getChannelData(0))], { type: 'application/octet-stream' });
-      this.pending.push(blob); this.pendingBytes += blob.size;
-      if (this.pendingBytes >= this.context!.sampleRate * 2) this.flush();
-    };
-    this.source.connect(this.processor); this.processor.connect(this.gain); this.gain.connect(this.context.destination);
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+      this.assertActive();
+      this.context = new AudioContext({ sampleRate: 16_000 });
+      this.sampleRate = this.context.sampleRate;
+      await saveStoredVoiceAudio({ segmentId: this.segmentId, mimeType: 'audio/wav', durationMs: 0, chunkCount: 0, byteLength: 0, sampleRate: this.context.sampleRate }, this.retention, 'recording');
+      this.assertActive();
+      await this.context.resume();
+      this.assertActive();
+      this.source = this.context.createMediaStreamSource(this.stream);
+      this.processor = this.context.createScriptProcessor(4_096, 1, 1);
+      this.gain = this.context.createGain(); this.gain.gain.value = 0;
+      this.processor.onaudioprocess = (event) => {
+        if (this.limitReached) return;
+        const byteLimit = voicePcmByteLimit(this.context!.sampleRate);
+        const remainingBytes = byteLimit - this.byteLength - this.pendingBytes;
+        if (remainingBytes <= 0) { this.reachLimit(); return; }
+        const captured = new Blob([pcm16(event.inputBuffer.getChannelData(0))], { type: 'application/octet-stream' });
+        const blob = captured.size > remainingBytes ? captured.slice(0, remainingBytes, 'application/octet-stream') : captured;
+        this.pending.push(blob); this.pendingBytes += blob.size;
+        if (this.pendingBytes >= this.context!.sampleRate * 2 || blob.size < captured.size) this.flush();
+        if (blob.size < captured.size || this.byteLength + this.pendingBytes >= byteLimit) this.reachLimit();
+      };
+      this.source.connect(this.processor); this.processor.connect(this.gain); this.gain.connect(this.context.destination);
+    } catch (error) {
+      this.interrupt();
+      throw error;
+    }
+  }
+
+  private reachLimit(): void {
+    if (this.limitReached) return;
+    this.limitReached = true;
+    this.flush();
+    this.onLimitReached?.();
   }
 
   private flush(): void {
@@ -170,21 +196,36 @@ export class LocalOnlyAudioCapture {
   }
 
   private snapshot(): CapturedVoiceAudio {
-    const sampleRate = this.context?.sampleRate ?? 16_000;
-    return { segmentId: this.segmentId, mimeType: 'audio/wav', durationMs: Math.round((this.byteLength / 2 / sampleRate) * 1_000), chunkCount: this.chunkCount, byteLength: this.byteLength, sampleRate };
+    return { segmentId: this.segmentId, mimeType: 'audio/wav', durationMs: Math.round((this.byteLength / 2 / this.sampleRate) * 1_000), chunkCount: this.chunkCount, byteLength: this.byteLength, sampleRate: this.sampleRate };
+  }
+
+  private releaseHardware(): void {
+    this.released = true;
+    if (this.processor) { this.processor.onaudioprocess = null; this.processor.disconnect(); this.processor = null; }
+    this.source?.disconnect(); this.source = null;
+    this.gain?.disconnect(); this.gain = null;
+    this.stream?.getTracks().forEach((track) => track.stop()); this.stream = null;
+    if (this.context) { void this.context.close().catch(() => undefined); this.context = null; }
+  }
+
+  private assertActive(): void {
+    if (!this.released) return;
+    this.releaseHardware();
+    throw new Error('录音已取消。');
+  }
+
+  interrupt(): void {
+    this.flush();
+    this.releaseHardware();
   }
 
   async stop(): Promise<CapturedVoiceAudio> {
     this.flush();
-    this.processor?.disconnect(); this.source?.disconnect(); this.gain?.disconnect();
-    this.stream?.getTracks().forEach((track) => track.stop());
-    const sampleRate = this.context?.sampleRate ?? 16_000;
-    if (this.context) await this.context.close();
+    this.releaseHardware();
     await this.writeChain;
-    const durationMs = Math.round((this.byteLength / 2 / sampleRate) * 1_000);
+    const durationMs = Math.round((this.byteLength / 2 / this.sampleRate) * 1_000);
     if (!this.chunkCount || !this.byteLength || durationMs < 300) throw new Error('录音时间太短，请再说一会儿或改用文字输入。');
-    if (durationMs > this.maxDurationMs) throw new Error('单段录音最长 10 分钟；已安全保存前面的内容，请分段继续。');
-    const audio = { segmentId: this.segmentId, mimeType: 'audio/wav' as const, durationMs, chunkCount: this.chunkCount, byteLength: this.byteLength, sampleRate };
+    const audio = { segmentId: this.segmentId, mimeType: 'audio/wav' as const, durationMs, chunkCount: this.chunkCount, byteLength: this.byteLength, sampleRate: this.sampleRate };
     await saveStoredVoiceAudio(audio, this.retention, 'ready');
     return audio;
   }

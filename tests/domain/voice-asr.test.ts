@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ASR_MAX_PER_15_MINUTES, canStartAsr, isWav, readAsrResult, wavDurationMs } from '../../functions/_lib/asr.ts';
+import { VOICE_MAX_PCM_BYTES, VOICE_MAX_WAV_BYTES, VOICE_WAV_HEADER_BYTES, voicePcmByteLimit } from '../../src/review/voiceLimits.ts';
 
 function wavForOneSecond(): Uint8Array {
   const bytes = new Uint8Array(44 + 32_000);
@@ -22,4 +23,10 @@ test('ASR accepts a valid mono WAV and only returns provider text', () => {
 test('ASR rate limit blocks the next request at the configured boundary', () => {
   assert.equal(canStartAsr(ASR_MAX_PER_15_MINUTES - 1), true);
   assert.equal(canStartAsr(ASR_MAX_PER_15_MINUTES), false);
+});
+
+test('client PCM limit always leaves room for the WAV header', () => {
+  assert.equal(VOICE_MAX_PCM_BYTES + VOICE_WAV_HEADER_BYTES, VOICE_MAX_WAV_BYTES);
+  assert.equal(voicePcmByteLimit(16_000), VOICE_MAX_PCM_BYTES);
+  assert.equal(voicePcmByteLimit(48_000), VOICE_MAX_PCM_BYTES);
 });

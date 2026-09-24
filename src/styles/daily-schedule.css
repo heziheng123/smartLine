@@ -118,6 +118,72 @@
 
 .ds-review-dialog .review-view { min-height: 100%; height: auto; padding: 24px; border-radius: inherit; }
 
+.ds-header-milestones {
+  display: flex;
+  min-width: 0;
+  max-width: min(320px, 28vw);
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid #E5E7EB;
+}
+
+.ds-header-milestone-heading {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: #92400E;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ds-header-milestone-heading > i,
+.ds-header-milestone-chip > i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+.ds-header-milestone-list {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.ds-header-milestone-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 128px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--milestone-color) 45%, white);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--milestone-color) 6%, white);
+  color: #4B5563;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ds-header-milestone-chip > i { color: var(--milestone-color); }
+.ds-header-milestone-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ds-header-milestone-more {
+  flex: none;
+  color: #92400E;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 /* ── 时间段设置面板 ──────────────────────────────────────── */
 .ds-slot-settings {
   display: grid;
@@ -2556,6 +2622,14 @@
 
 
 @media (max-width: 1280px) {
+  .ds-header-milestone-heading {
+    display: none;
+  }
+
+  .ds-header-milestones {
+    max-width: 190px;
+  }
+
   .ds-day-overview > span:nth-of-type(3),
   .ds-day-overview > i:nth-of-type(2),
   .ds-day-completion {
@@ -2574,6 +2648,16 @@
 @media (max-width: 900px) {
   .ds-day-overview {
     display: none;
+  }
+
+  .ds-header-milestones {
+    max-width: 160px;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .ds-header-milestone-chip {
+    max-width: 120px;
   }
 }
 

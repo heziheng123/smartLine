@@ -2322,6 +2322,55 @@
   color: #374151;
 }
 
+.wmv-cell--date-has-milestone {
+  padding-bottom: 5px;
+}
+
+.wmv-date-milestone {
+  display: flex;
+  width: calc(100% - 6px);
+  min-width: 0;
+  max-width: 112px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 2px 5px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--milestone-color) 42%, white);
+  border-radius: 999px;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--milestone-color) 7%, white);
+  color: #4B5563;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.wmv-date-milestone > i {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 1px;
+  background: currentColor;
+  color: var(--milestone-color);
+  transform: rotate(45deg);
+}
+
+.wmv-date-milestone > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wmv-date-milestone > b {
+  flex: none;
+  color: #92400E;
+  font-size: 8px;
+}
+
 .week-matrix-workspace {
   position: relative;
   display: block;

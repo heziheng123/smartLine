@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendVoiceSegment, createDailyReview, mergeDailyReviews, updateVoiceAudio } from '../../src/review/model.ts';
+import { applyVoiceTranscript, appendVoiceSegment, createDailyReview, mergeDailyReviews, setVoiceTranscriptionState, updateVoiceAudio } from '../../src/review/model.ts';
 
 const voice = (id: string, state: 'recording' | 'waiting_transcription' = 'recording') => ({
   id, type: 'voice' as const, originDeviceId: 'review-device-test', audioStorageScope: 'local_only' as const, audioRetention: 'delete_after_transcription' as const, transcriptionState: state,
@@ -19,4 +19,15 @@ test('merge keeps raw segments from both devices instead of replacing cloud data
   const remote = appendVoiceSegment(createDailyReview('2026-09-15'), voice('voice-segment-remote', 'waiting_transcription'));
   const merged = mergeDailyReviews(local, remote);
   assert.deepEqual(merged.inputSegments.map((segment) => segment.id).sort(), ['voice-segment-local', 'voice-segment-remote']);
+});
+
+test('merge keeps an authoritative transcript when a newer local retry state conflicts', () => {
+  const waiting = appendVoiceSegment(createDailyReview('2026-09-15'), voice('voice-segment-shared', 'waiting_transcription'), '2026-09-15T08:00:00.000Z');
+  const remote = applyVoiceTranscript(waiting, 'voice-segment-shared', '完成了可靠性修复。', { operationId: 'transcribe-voice-segment-shared' }, '2026-09-15T08:01:00.000Z');
+  const local = setVoiceTranscriptionState(waiting, 'voice-segment-shared', 'retryable_failed', '2026-09-15T08:02:00.000Z');
+  const merged = mergeDailyReviews(local, remote, '2026-09-15T08:03:00.000Z');
+  const segment = merged.inputSegments[0];
+
+  assert.equal(segment?.type === 'voice' && segment.transcriptionState, 'transcribed');
+  assert.equal(segment?.type === 'voice' && segment.asrText, '完成了可靠性修复。');
 });

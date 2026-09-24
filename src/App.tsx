@@ -1069,6 +1069,7 @@ const App: React.FC = () => {
                 <DailyScheduleView
                   targetDate={dailyTargetDate}
                   weekReturnContext={dailyWeekReturnContext}
+                  milestones={store.milestones}
                 />
               </Suspense>
             </div>
@@ -1092,6 +1093,7 @@ const App: React.FC = () => {
                   <WeekMatrixView
                     tasks={weekMatrixTasks}
                     groups={store.groups}
+                    milestones={store.milestones}
                     restoreContext={weekRestoreContext}
                   />
                 </Suspense>

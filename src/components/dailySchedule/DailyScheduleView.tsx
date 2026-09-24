@@ -51,7 +51,7 @@ import {
   type ScheduledItem,
   type TimeSlotConfig,
 } from './types';
-import type { SmartTaskBlock } from '@/types';
+import type { Milestone, SmartTaskBlock } from '@/types';
 import { useSmartTaskTodos } from '@/hooks/useSmartTaskTodos';
 import { parseSourceId } from './conversion';
 import { useTaskCompletionStatus } from './useTaskCompletionStatus';
@@ -110,9 +110,10 @@ const REVIEW_ADJUSTMENT_INTENT_KEY = 'smart-line-review-adjustment-intent';
 interface DailyScheduleViewProps {
   targetDate?: string | null;
   weekReturnContext?: WeekMatrixContext | null;
+  milestones: Milestone[];
 }
 
-const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekReturnContext: bridgeWeekReturnContext }) => {
+const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekReturnContext: bridgeWeekReturnContext, milestones }) => {
   const today = todayStr();
   const [selectedDate, setSelectedDate] = useState(() => {
     try {
@@ -360,6 +361,10 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
 
   const scheduleForDate = useDailyScheduleStore((s) => s.schedules[selectedDate]);
   const daySchedule = scheduleForDate ?? EMPTY_DAY_SCHEDULE;
+  const dailyMilestones = useMemo(
+    () => milestones.filter((milestone) => milestone.date === selectedDate),
+    [milestones, selectedDate],
+  );
 
   // 时间段配置作为全局工作区设置保存在 ebbSettings 中，因此会随统一工作区跨设备同步。
   const slotConfigs = useMemo(
@@ -1086,6 +1091,32 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
               <span>{formatPlanningMinutes(dailyOverview.plannedMinutes)} / {formatPlanningMinutes(dailyOverview.availableMinutes)}</span>
               {dailyOverview.scheduled > 0 && <span className="ds-day-completion">{dailyOverview.completed}/{dailyOverview.scheduled} 完成</span>}
             </div>
+            {dailyMilestones.length > 0 && (
+              <div
+                className="ds-header-milestones"
+                aria-label={`${formatDate(selectedDate, 'M月D日')}里程碑：${dailyMilestones.map((milestone) => milestone.name).join('、')}`}
+              >
+                <span className="ds-header-milestone-heading"><i aria-hidden="true" />里程碑</span>
+                <div className="ds-header-milestone-list">
+                  {dailyMilestones.slice(0, 2).map((milestone) => (
+                    <span
+                      key={milestone.id}
+                      className="ds-header-milestone-chip"
+                      title={`${milestone.name} · ${milestone.date}`}
+                      style={{ '--milestone-color': milestone.color || '#F59E0B' } as React.CSSProperties}
+                    >
+                      <i aria-hidden="true" />
+                      <span>{milestone.name}</span>
+                    </span>
+                  ))}
+                  {dailyMilestones.length > 2 && (
+                    <span className="ds-header-milestone-more" title={dailyMilestones.slice(2).map((milestone) => milestone.name).join('、')}>
+                      +{dailyMilestones.length - 2}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <div className="ds-header-right ui-workspace-header__actions">
             <button type="button" className="ds-header-btn" onClick={() => setReviewOpen(true)}>
