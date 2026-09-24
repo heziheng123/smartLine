@@ -29,6 +29,7 @@ import { mindMapRepository } from './repository';
 import { selectLatestActiveMindMapCatalogEntry, type MindMapCatalogEntry } from './syncCore';
 import { repairMindMapTreeForest } from './treeValidation';
 import { readMindMapSnapshots, restoreMindMapSnapshot, saveMindMapSnapshot, type MindMapSnapshot } from './snapshots';
+import { layoutMindMap } from './layout';
 
 interface MindMapStore {
   isHydrated: boolean;
@@ -57,6 +58,7 @@ interface MindMapStore {
   restoreSnapshot: (id: string) => void;
   createNode: (position: { x: number; y: number }, text?: string) => string | null;
   updateNode: (id: string, updates: Partial<Omit<MindMapNode, 'id' | 'createdAt'>>) => void;
+  syncAutoNodeSizes: (sizes: Array<{ id: string; width: number; height: number }>) => void;
   deleteNodes: (ids: string[]) => void;
   createEdge: (source: CanvasObjectRef, target: CanvasObjectRef) => string | null;
   updateEdge: (id: string, updates: Partial<Omit<MindMapEdge, 'id' | 'createdAt'>>) => void;
@@ -531,14 +533,40 @@ export const useMindMapStore = create<MindMapStore>((set, get) => {
       get().execute('修改节点', (document) => {
         const node = document.nodes[id];
         if (!node) return document;
-        return {
+        const nextNode = { ...node, ...updates, id, createdAt: node.createdAt, updatedAt: Date.now() };
+        const nextDocument = {
           ...document,
           nodes: {
             ...document.nodes,
-            [id]: { ...node, ...updates, id, createdAt: node.createdAt, updatedAt: Date.now() },
+            [id]: nextNode,
           },
         };
+        const autoSizeChanged = nextNode.sizeMode === 'auto'
+          && (Math.abs(node.width - nextNode.width) > 1 || Math.abs(node.height - nextNode.height) > 1);
+        return autoSizeChanged && document.settings.mode === 'mind-map'
+          ? layoutMindMap(nextDocument)
+          : nextDocument;
       });
+    },
+
+    syncAutoNodeSizes: (sizes) => {
+      const current = get().document;
+      if (!current) return;
+      let changed = false;
+      const nodes = { ...current.nodes };
+      for (const size of sizes) {
+        const node = nodes[size.id];
+        if (!node || node.sizeMode !== 'auto'
+          || (Math.abs(node.width - size.width) <= 1 && Math.abs(node.height - size.height) <= 1)) continue;
+        nodes[size.id] = { ...node, width: size.width, height: size.height, updatedAt: Date.now() };
+        changed = true;
+      }
+      if (!changed) return;
+      const resized = { ...current, nodes, updatedAt: Date.now() };
+      const document = maintainMindMapContainers(current.settings.mode === 'mind-map'
+        ? layoutMindMap(resized)
+        : resized);
+      queueSave(document, updateSummary(get().index, document));
     },
 
     deleteNodes: (ids) => {

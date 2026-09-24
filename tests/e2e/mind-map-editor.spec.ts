@@ -205,6 +205,100 @@ test('markdown shortcuts create a rich multiline Markdown node', async ({ page }
   await expect(page.locator('[class*="richPreview"] h1')).toContainText('一级标题');
 });
 
+test('a single-line Markdown node does not reserve an oversized blank area', async ({ page }) => {
+  await openMindMap(page);
+  const undoBefore = (await graphState(page)).undo;
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 320, y: 240 } });
+  const editor = page.getByLabel('新节点文本');
+  await editor.fill('- 一项');
+  await editor.press('Control+Enter');
+
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]).toMatchObject({
+    type: 'markdown',
+    height: 48,
+  });
+  await expect.poll(async () => (await graphState(page)).undo).toBe(undoBefore + 1);
+});
+
+test('auto-sized Markdown growth reflows siblings without moving the centre topic or adding measurement history', async ({ page }) => {
+  await openMindMap(page);
+  const seeded = await page.evaluate(async () => {
+    const [{ useMindMapStore }, { createMindMapEdge, createTextMindMapNode }, { layoutMindMap }] = await Promise.all([
+      import('/src/mindMap/testing.ts'),
+      import('/src/mindMap/model.ts'),
+      import('/src/mindMap/layout.ts'),
+    ]);
+    const state = useMindMapStore.getState();
+    state.execute('准备自动避让测试', (current) => {
+      const root = createTextMindMapNode({ x: 500, y: 420 }, { id: 'reflow-root', text: '中心主题', now: 1 });
+      const first = {
+        ...createTextMindMapNode({ x: 0, y: 0 }, { id: 'reflow-first', text: '# 第一项', now: 1 }),
+        type: 'markdown' as const,
+        branchSide: 'right' as const,
+      };
+      const second = {
+        ...createTextMindMapNode({ x: 0, y: 0 }, { id: 'reflow-second', text: '第二项', now: 1 }),
+        branchSide: 'right' as const,
+      };
+      const document = {
+        ...current,
+        nodes: { [root.id]: root, [first.id]: first, [second.id]: second },
+        edges: {
+          first: createMindMapEdge(root.id, first.id, { id: 'reflow-edge-first', relationship: 'tree', order: 0, now: 1 }),
+          second: createMindMapEdge(root.id, second.id, { id: 'reflow-edge-second', relationship: 'tree', order: 1, now: 1 }),
+        },
+        zOrder: [root.id, first.id, second.id],
+        settings: { ...current.settings, mode: 'mind-map' as const },
+        mindMapRootId: root.id,
+      };
+      return layoutMindMap(document);
+    });
+    const document = useMindMapStore.getState().document!;
+    return {
+      root: { x: document.nodes['reflow-root'].x, y: document.nodes['reflow-root'].y },
+      secondY: document.nodes['reflow-second'].y,
+      undo: useMindMapStore.getState().history.undo.length,
+    };
+  });
+
+  const afterMeasurement = await page.evaluate(async () => {
+    const { useMindMapStore } = await import('/src/mindMap/testing.ts');
+    useMindMapStore.getState().syncAutoNodeSizes([{ id: 'reflow-first', width: 180, height: 420 }]);
+    const state = useMindMapStore.getState();
+    const first = state.document!.nodes['reflow-first'];
+    const second = state.document!.nodes['reflow-second'];
+    const root = state.document!.nodes['reflow-root'];
+    return {
+      root: { x: root.x, y: root.y },
+      secondY: second.y,
+      gap: second.y - second.height / 2 - (first.y + first.height / 2),
+      undo: state.history.undo.length,
+    };
+  });
+
+  expect(afterMeasurement.root).toEqual(seeded.root);
+  expect(afterMeasurement.secondY).toBeGreaterThan(seeded.secondY);
+  expect(afterMeasurement.gap).toBeGreaterThanOrEqual(48);
+  expect(afterMeasurement.undo).toBe(seeded.undo);
+
+  const afterEdit = await page.evaluate(async () => {
+    const { useMindMapStore } = await import('/src/mindMap/testing.ts');
+    const before = useMindMapStore.getState();
+    const undo = before.history.undo.length;
+    before.updateNode('reflow-first', { text: '# 第一项\n\n新增内容', height: 520 });
+    const state = useMindMapStore.getState();
+    const first = state.document!.nodes['reflow-first'];
+    const second = state.document!.nodes['reflow-second'];
+    return {
+      gap: second.y - second.height / 2 - (first.y + first.height / 2),
+      undoDelta: state.history.undo.length - undo,
+    };
+  });
+  expect(afterEdit.gap).toBeGreaterThanOrEqual(48);
+  expect(afterEdit.undoDelta).toBe(1);
+});
+
 test('the Markdown slash menu applies a command without leaving the editor', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
@@ -227,6 +321,114 @@ test('the Markdown slash menu applies a command without leaving the editor', asy
     text: '### 快捷标题',
   });
   await expect(page.locator('[class*="richPreview"] h3')).toContainText('快捷标题');
+});
+
+test('Markdown editing continues and indents lists and wraps selected text', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 360, y: 280 } });
+  const editor = page.getByLabel('新节点文本');
+  await editor.fill('1. 第一项');
+  await editor.press('End');
+  await editor.press('Enter');
+  await expect(editor).toHaveValue('1. 第一项\n2. ');
+  await editor.pressSequentially('第二项');
+  await editor.press('Tab');
+  await expect(editor).toHaveValue('1. 第一项\n    2. 第二项');
+  await editor.press('Shift+Tab');
+  await expect(editor).toHaveValue('1. 第一项\n2. 第二项');
+  await editor.evaluate((input) => {
+    const textarea = input as HTMLTextAreaElement;
+    const start = textarea.value.indexOf('第二项');
+    textarea.setSelectionRange(start, start + 3);
+  });
+  await editor.press('Control+b');
+  await expect(editor).toHaveValue('1. 第一项\n2. **第二项**');
+  await editor.press('Control+b');
+  await expect(editor).toHaveValue('1. 第一项\n2. 第二项');
+  await editor.press('Control+i');
+  await expect(editor).toHaveValue('1. 第一项\n2. *第二项*');
+  await editor.press('Control+i');
+  await expect(editor).toHaveValue('1. 第一项\n2. 第二项');
+  await editor.press('Control+b');
+  await editor.press('Control+Enter');
+
+  const preview = page.locator('[data-testid^="mind-map-markdown-"]');
+  await expect(preview.locator('ol li')).toHaveCount(2);
+  await expect(preview.locator('strong')).toHaveText('第二项');
+  expect(await preview.locator('ol').evaluate((list) => getComputedStyle(list).marginBottom)).toBe('0px');
+});
+
+test('large Markdown nodes provide live preview, interactive tasks, highlighting and expansion', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 360, y: 400 } });
+  const editor = page.getByLabel('新节点文本');
+  const markdown = [
+    '# 完整计划',
+    '- [ ] 完成复习',
+    '```ts',
+    'const total = 42;',
+    '```',
+    ...Array.from({ length: 36 }, (_, index) => `${index + 1}. 第 ${index + 1} 项详细安排`),
+  ].join('\n');
+  await editor.fill(markdown);
+  await expect(page.getByLabel('Markdown 实时预览')).toBeVisible();
+  await editor.press('Control+Enter');
+
+  const preview = page.locator('[data-testid^="mind-map-markdown-"]');
+  await expect(preview.locator('.mm-token-keyword')).toHaveText('const');
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]?.height).toBe(600);
+
+  await preview.locator('input[type="checkbox"]').click();
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]?.text).toContain('- [x] 完成复习');
+
+  await page.getByRole('button', { name: '展开 Markdown 节点' }).click();
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]?.height).toBeGreaterThan(600);
+  await page.getByRole('button', { name: '收起 Markdown 节点' }).click();
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]?.height).toBe(600);
+});
+
+test('a remote Markdown image refits its automatic node after loading', async ({ page }) => {
+  await page.route('https://assets.example.test/tall.svg', (route) => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="480"><rect width="240" height="480" fill="#6366f1"/></svg>',
+  }));
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 360, y: 280 } });
+  const editor = page.getByLabel('新节点文本');
+  await editor.fill('![远程图片](https://assets.example.test/tall.svg)');
+  await editor.press('Control+Enter');
+
+  await expect(page.locator('[data-testid^="mind-map-markdown-"] img')).toBeVisible();
+  await expect.poll(async () => Object.values((await graphState(page)).nodes)[0]?.height).toBeGreaterThan(300);
+});
+
+test('the Markdown slash menu includes ordered lists and common inline formatting', async ({ page }) => {
+  await openMindMap(page);
+  const canvas = page.getByTestId('mind-map-canvas');
+  await canvas.dblclick({ position: { x: 360, y: 280 } });
+  const editor = page.getByLabel('新节点文本');
+  await editor.fill('/ol');
+  await page.getByRole('option', { name: /有序列表/ }).click();
+  await expect(editor).toHaveValue('1. ');
+
+  await editor.fill('/bold');
+  await page.getByRole('option', { name: /粗体/ }).click();
+  await expect(editor).toHaveValue('**粗体**');
+  expect(await editor.evaluate((input) => [(input as HTMLTextAreaElement).selectionStart, (input as HTMLTextAreaElement).selectionEnd])).toEqual([2, 4]);
+
+  await editor.fill('/code');
+  await page.getByRole('option', { name: /代码块/ }).click();
+  await expect(editor).toHaveValue('```\n\n```');
+  expect(await editor.evaluate((input) => [(input as HTMLTextAreaElement).selectionStart, (input as HTMLTextAreaElement).selectionEnd])).toEqual([4, 4]);
+
+  await editor.fill('资料');
+  await editor.selectText();
+  await editor.press('Control+k');
+  await expect(editor).toHaveValue('[资料](https://)');
+  expect(await editor.evaluate((input) => [(input as HTMLTextAreaElement).selectionStart, (input as HTMLTextAreaElement).selectionEnd])).toEqual([5, 13]);
 });
 
 test('Markdown node links open safely and notes provide a rendered preview', async ({ page }) => {

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -60,7 +61,7 @@ import {
   type TreeDirection,
 } from '../layout';
 import { layoutMindMapTreeInWorker } from '../layoutWorkerClient';
-import { isMindMapMarkdown, mindMapBacklinks, renderMindMapLatex, renderMindMapMarkdown } from '../richText';
+import { isMindMapMarkdown, mindMapBacklinks, renderMindMapLatex, renderMindMapMarkdown, setMindMapTaskChecked } from '../richText';
 import { MIND_MAP_VISUAL_TOKENS } from '../styles/visualTokens';
 import {
   edgeIsHiddenInsideCollapsedSection,
@@ -89,7 +90,7 @@ import { MindMapMultiSelectionPanel } from './MindMapMultiSelectionPanel';
 import { mindMapSummaryConnector, traceMindMapBoundary } from './semanticGeometry';
 import { moveMindMapOutlineNode, setMindMapOutlineCollapsed, type OutlineDropPosition } from './treeInteractions';
 import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY, timelineTemporalState, type TimelineFocus, type TimelineVisibility } from './timelineLayer';
-import { projectTimelineItems, timelineProjectionItems, timelineSelectedProjectIds, timelineUnscheduledItemCount, type TimelineProjectionItem } from '../timelineProjection';
+import { timelineProjectionItems, timelineSelectedProjectIds, timelineUnscheduledItemCount, type TimelineProjectionItem } from '../timelineProjection';
 import { useLifeTimelineSnapshot } from '../timelineProjectionHooks';
 import { updateLifePlanningDates } from '../lifePlanning';
 import { createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, resizeTimelineRect, timelineRangeForScale, timelineScaleLabel } from '../timelineLayout';
@@ -296,10 +297,120 @@ const MINIMAP_HEIGHT = 90;
 // 2D edge routing becomes the dominant cost while zooming before 2,500 nodes.
 const WEBGL_NODE_THRESHOLD = 1_000;
 const CLIPBOARD_PREFIX = 'smart-line-mind-map-clipboard:';
+const MARKDOWN_COLLAPSED_HEIGHT = 600;
+const MARKDOWN_EXPANDED_HEIGHT = 2_400;
 
 const openMindMapLink = (value: string | null | undefined) => {
   const link = sanitizeMindMapResourceUrl(value);
   if (link) window.open(link, '_blank', 'noopener,noreferrer');
+};
+
+interface MarkdownTextEdit {
+  draft: string;
+  selectionStart: number;
+  selectionEnd: number;
+}
+
+const wrapMarkdownSelection = (
+  draft: string,
+  start: number,
+  end: number,
+  open: string,
+  close: string,
+  placeholder: string,
+): MarkdownTextEdit => {
+  const content = draft.slice(start, end) || placeholder;
+  return {
+    draft: `${draft.slice(0, start)}${open}${content}${close}${draft.slice(end)}`,
+    selectionStart: start + open.length,
+    selectionEnd: start + open.length + content.length,
+  };
+};
+
+const toggleMarkdownSelection = (
+  draft: string,
+  start: number,
+  end: number,
+  open: string,
+  close: string,
+  placeholder: string,
+): MarkdownTextEdit => {
+  const selected = draft.slice(start, end);
+  if (selected.startsWith(open) && selected.endsWith(close) && selected.length >= open.length + close.length) {
+    const content = selected.slice(open.length, -close.length);
+    return {
+      draft: `${draft.slice(0, start)}${content}${draft.slice(end)}`,
+      selectionStart: start,
+      selectionEnd: start + content.length,
+    };
+  }
+  if (start >= open.length && draft.slice(start - open.length, start) === open && draft.slice(end, end + close.length) === close) {
+    return {
+      draft: `${draft.slice(0, start - open.length)}${selected}${draft.slice(end + close.length)}`,
+      selectionStart: start - open.length,
+      selectionEnd: end - open.length,
+    };
+  }
+  return wrapMarkdownSelection(draft, start, end, open, close, placeholder);
+};
+
+const insertMarkdownLink = (draft: string, start: number, end: number): MarkdownTextEdit => {
+  const label = draft.slice(start, end) || '链接文字';
+  const url = 'https://';
+  const replacement = `[${label}](${url})`;
+  const urlStart = start + label.length + 3;
+  return {
+    draft: `${draft.slice(0, start)}${replacement}${draft.slice(end)}`,
+    selectionStart: urlStart,
+    selectionEnd: urlStart + url.length,
+  };
+};
+
+const continueMarkdownList = (draft: string, start: number, end: number): MarkdownTextEdit | null => {
+  if (start !== end) return null;
+  const lineStart = draft.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+  const line = draft.slice(lineStart, start);
+  const match = /^(\s*)(?:([-+*])\s+|(\d+)([.)])\s+)(\[[ xX]\]\s+)?(.*)$/.exec(line);
+  if (!match) return null;
+  if (!match[6].trim()) {
+    return {
+      draft: `${draft.slice(0, lineStart)}${draft.slice(start)}`,
+      selectionStart: lineStart,
+      selectionEnd: lineStart,
+    };
+  }
+  const marker = match[2] ? `${match[2]} ` : `${Number(match[3]) + 1}${match[4]} `;
+  const prefix = `${match[1]}${marker}${match[5] ? '[ ] ' : ''}`;
+  return {
+    draft: `${draft.slice(0, start)}\n${prefix}${draft.slice(end)}`,
+    selectionStart: start + prefix.length + 1,
+    selectionEnd: start + prefix.length + 1,
+  };
+};
+
+const indentMarkdownLines = (draft: string, start: number, end: number, outdent: boolean): MarkdownTextEdit => {
+  const lineStart = draft.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+  if (start === end) {
+    const line = draft.slice(lineStart);
+    const removable = outdent ? (/^(?: {1,4}|\t)/.exec(line)?.[0] ?? '') : '';
+    const prefix = outdent ? '' : '    ';
+    return {
+      draft: `${draft.slice(0, lineStart)}${prefix}${line.slice(removable.length)}`,
+      selectionStart: Math.max(lineStart, start + prefix.length - removable.length),
+      selectionEnd: Math.max(lineStart, start + prefix.length - removable.length),
+    };
+  }
+  const nextBreak = draft.indexOf('\n', end);
+  const lineEnd = nextBreak < 0 ? draft.length : nextBreak;
+  const block = draft.slice(lineStart, lineEnd);
+  const replacement = outdent
+    ? block.replace(/^(?: {1,4}|\t)/gm, '')
+    : block.replace(/^/gm, '    ');
+  return {
+    draft: `${draft.slice(0, lineStart)}${replacement}${draft.slice(lineEnd)}`,
+    selectionStart: lineStart,
+    selectionEnd: lineStart + replacement.length,
+  };
 };
 
 const relationHandlePoint = (object: ConnectableObject): Point => ({
@@ -547,11 +658,11 @@ function wrapText(context: CanvasRenderingContext2D, text: string, maximumWidth:
   return lines;
 }
 
-function measuredNodeSize(text: string, node: MindMapNode) {
+function measuredNodeSize(text: string, node: MindMapNode, displayFontSize = node.style.fontSize, maximumHeight = MARKDOWN_COLLAPSED_HEIGHT) {
   const canvas = window.document.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) return { width: node.width, height: node.height };
-  context.font = node.style.fontWeight + ' ' + node.style.fontSize + 'px sans-serif';
+  context.font = node.style.fontWeight + ' ' + displayFontSize + 'px sans-serif';
   const paragraphs = text.split('\n');
   const longest = Math.max(0, ...paragraphs.map((line) => context.measureText(line).width));
   const width = Math.max(
@@ -559,8 +670,28 @@ function measuredNodeSize(text: string, node: MindMapNode) {
     Math.min(MIND_MAP_VISUAL_TOKENS.node.maxWidth, longest + MIND_MAP_VISUAL_TOKENS.node.paddingX * 2),
   );
   const lines = wrapText(context, text || ' ', width - MIND_MAP_VISUAL_TOKENS.node.paddingX * 2, 20);
-  const markdown = node.type === 'markdown' || isMindMapMarkdown(text);
-  const height = Math.max(markdown ? 72 : 48, Math.min(600, lines.length * node.style.fontSize * node.style.lineHeight + (markdown ? 36 : 24)));
+  const markdown = node.type === 'markdown';
+  if (markdown && window.document.body) {
+    const preview = window.document.createElement('div');
+    preview.className = `${styles.richPreview} ${styles.markdownPreview}`;
+    Object.assign(preview.style, {
+      position: 'fixed',
+      visibility: 'hidden',
+      left: '-10000px',
+      top: '0',
+      width: `${Math.max(1, width - 24)}px`,
+      height: 'auto',
+      fontSize: `${displayFontSize}px`,
+      fontWeight: String(node.style.fontWeight),
+      fontFamily: 'var(--mm-font-ui)',
+    });
+    preview.innerHTML = renderMindMapMarkdown(text);
+    window.document.body.appendChild(preview);
+    const height = Math.max(48, Math.min(maximumHeight, preview.scrollHeight + 16));
+    preview.remove();
+    return { width, height };
+  }
+  const height = Math.max(48, Math.min(MARKDOWN_COLLAPSED_HEIGHT, lines.length * displayFontSize * node.style.lineHeight + 24));
   return { width, height };
 }
 
@@ -705,6 +836,7 @@ export default function MindMapCanvas({
   const presenceCursorRef = useRef<Point | null>(null);
   const clipboardRef = useRef<ClipboardGraph | null>(null);
   const richHtmlCacheRef = useRef(new Map<string, { revision: string; html: string }>());
+  const markdownSizeRevisionRef = useRef(new Map<string, string>());
   const handledFitRequest = useRef(0);
   const handledTreeLayoutRequest = useRef(0);
   const layoutGeneration = useRef(0);
@@ -737,6 +869,7 @@ export default function MindMapCanvas({
   const [commandSearch, setCommandSearch] = useState('');
   const [searchCursor, setSearchCursor] = useState(0);
   const [markdownSlashCursor, setMarkdownSlashCursor] = useState(0);
+  const [expandedMarkdownNodeIds, setExpandedMarkdownNodeIds] = useState<Set<string>>(() => new Set());
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
   const [imageAssetUrls, setImageAssetUrls] = useState<Record<string, string>>({});
@@ -753,6 +886,7 @@ export default function MindMapCanvas({
     execute,
     createNode,
     updateNode,
+    syncAutoNodeSizes,
     deleteNodes,
     createEdge,
     updateEdge,
@@ -765,6 +899,7 @@ export default function MindMapCanvas({
     execute: state.execute,
     createNode: state.createNode,
     updateNode: state.updateNode,
+    syncAutoNodeSizes: state.syncAutoNodeSizes,
     deleteNodes: state.deleteNodes,
     createEdge: state.createEdge,
     updateEdge: state.updateEdge,
@@ -979,6 +1114,25 @@ export default function MindMapCanvas({
       if (!node || (node.type !== 'markdown' && node.type !== 'latex')) cache.delete(id);
     }
   }, [document.nodes]);
+
+  useEffect(() => {
+    if (editing) return;
+    const sizes = Object.values(document.nodes).flatMap((node) => {
+      if (node.type !== 'markdown' || node.sizeMode !== 'auto') return [];
+      const displayFontSize = nodePresentationById.get(node.id)?.fontSize ?? node.style.fontSize;
+      const sizingKey = `${document.id}:${node.id}`;
+      const expanded = expandedMarkdownNodeIds.has(node.id);
+      const revision = `${node.text}\n${displayFontSize}:${node.style.fontWeight}:${node.style.lineHeight}:${expanded ? 'expanded' : 'collapsed'}`;
+      if (markdownSizeRevisionRef.current.get(sizingKey) === revision) return [];
+      markdownSizeRevisionRef.current.set(sizingKey, revision);
+      const measured = measuredNodeSize(node.text, node, displayFontSize, expanded ? MARKDOWN_EXPANDED_HEIGHT : MARKDOWN_COLLAPSED_HEIGHT);
+      return Math.abs(measured.width - node.width) > 1 || Math.abs(measured.height - node.height) > 1
+        ? [[node.id, measured] as const]
+        : [];
+    });
+    if (!sizes.length) return;
+    syncAutoNodeSizes(sizes.map(([id, measured]) => ({ id, ...measured })));
+  }, [document.id, document.nodes, editing, expandedMarkdownNodeIds, nodePresentationById, syncAutoNodeSizes]);
   const connectables = useMemo(() => connectableObjects(renderDocument), [renderDocument]);
   const hitConnectable = useCallback((point: Point) => hitConnectableObject(connectables, point), [connectables]);
 
@@ -1952,7 +2106,8 @@ export default function MindMapCanvas({
         ? 'markdown'
         : session.newNodeType ?? 'text';
       if (session.connectFromId && document.nodes[session.connectFromId]) {
-        const node = createMindMapNode({ x: session.x, y: session.y }, nodeType, { text: session.draft });
+        const baseNode = createMindMapNode({ x: session.x, y: session.y }, nodeType, { text: session.draft });
+        const node = nodeType === 'markdown' ? { ...baseNode, ...measuredNodeSize(session.draft, baseNode) } : baseNode;
         const order = siblingEdges(session.connectFromId, document).length;
         const edge = createMindMapEdge(session.connectFromId, node.id, { relationship: 'tree', order });
         execute('创建子节点', (current) => {
@@ -2002,8 +2157,9 @@ export default function MindMapCanvas({
     const node = document.nodes[session.nodeId];
     if (!node) return;
     if (node.text !== session.draft) {
-      const measured = node.sizeMode === 'auto' ? measuredNodeSize(session.draft, node) : {};
-      updateNode(node.id, { text: session.draft, ...(node.type === 'text' && isMindMapMarkdown(session.draft) ? { type: 'markdown' as const } : {}), ...measured });
+      const type = node.type === 'text' && isMindMapMarkdown(session.draft) ? 'markdown' as const : node.type;
+      const measured = node.sizeMode === 'auto' ? measuredNodeSize(session.draft, { ...node, type }) : {};
+      updateNode(node.id, { text: session.draft, type, ...measured });
     }
     continueFrom(node.id);
   };
@@ -3485,7 +3641,12 @@ export default function MindMapCanvas({
         childrenById={treeChildrenById}
         selectedNodeIds={selectedNodeIds}
         onFocus={focusOutlineNode}
-        onRename={(nodeId, text) => updateNode(nodeId, { text })}
+        onRename={(nodeId, text) => {
+          const node = document.nodes[nodeId];
+          if (!node) return;
+          const type = node.type === 'text' && isMindMapMarkdown(text) ? 'markdown' as const : node.type;
+          updateNode(nodeId, { text, type, ...(node.sizeMode === 'auto' ? measuredNodeSize(text, { ...node, type }) : {}) });
+        }}
         onToggleCollapse={(nodeId) => updateNode(nodeId, { collapsed: !document.nodes[nodeId]?.collapsed })}
         onCollapseAll={collapseAllOutlineNodes}
         onMove={moveOutlineNode}
@@ -3507,9 +3668,12 @@ export default function MindMapCanvas({
         const preview = previewNode(node, interaction);
         const presentation = nodePresentationById.get(node.id);
         const topLeft = worldToView({ x: preview.x - preview.width / 2, y: preview.y - preview.height / 2 }, camera);
+        const markdownExpanded = expandedMarkdownNodeIds.has(node.id);
+        const markdownTruncated = node.type === 'markdown' && node.sizeMode === 'auto'
+          && (markdownExpanded || node.height >= MARKDOWN_COLLAPSED_HEIGHT - 1);
         return (
+          <Fragment key={node.id}>
           <div
-            key={node.id}
             className={`${styles.richPreview} ${node.type === 'markdown' ? styles.markdownPreview : styles.latexPreview}`}
             data-testid={`mind-map-${node.type}-${node.id}`}
             style={{
@@ -3518,17 +3682,57 @@ export default function MindMapCanvas({
               width: Math.max(1, (preview.width - 24) * camera.scale),
               height: Math.max(1, (preview.height - 16) * camera.scale),
               fontSize: Math.max(8, (presentation?.fontSize ?? node.style.fontSize) * camera.scale),
+              fontWeight: presentation?.fontWeight ?? node.style.fontWeight,
               color: presentation?.text ?? node.style.textColor,
               transform: `rotate(${preview.rotation}deg)`,
             }}
             onClick={(event) => {
+              const checkbox = (event.target as HTMLElement).closest<HTMLInputElement>('input[type="checkbox"]');
+              if (checkbox && node.type === 'markdown') {
+                event.preventDefault();
+                event.stopPropagation();
+                const taskIndex = [...event.currentTarget.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].indexOf(checkbox);
+                const text = setMindMapTaskChecked(node.text, taskIndex, checkbox.checked);
+                const maximumHeight = markdownExpanded ? MARKDOWN_EXPANDED_HEIGHT : MARKDOWN_COLLAPSED_HEIGHT;
+                updateNode(node.id, {
+                  text,
+                  ...(node.sizeMode === 'auto' ? measuredNodeSize(text, node, presentation?.fontSize ?? node.style.fontSize, maximumHeight) : {}),
+                });
+                return;
+              }
               const anchor = (event.target as HTMLElement).closest('a');
               if (!anchor) return;
               event.preventDefault();
               activateRenderedLink(anchor.getAttribute('href'));
             }}
+            onLoadCapture={(event) => {
+              if (node.type !== 'markdown' || node.sizeMode !== 'auto' || (event.target as HTMLElement).tagName !== 'IMG') return;
+              const maximumHeight = markdownExpanded ? MARKDOWN_EXPANDED_HEIGHT : MARKDOWN_COLLAPSED_HEIGHT;
+              const height = Math.max(48, Math.min(maximumHeight, event.currentTarget.scrollHeight / Math.max(camera.scale, 0.01) + 16));
+              if (Math.abs(height - node.height) > 1) syncAutoNodeSizes([{ id: node.id, width: node.width, height }]);
+            }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
+          {markdownTruncated && <button
+            type="button"
+            className={styles.markdownExpandButton}
+            aria-label={`${markdownExpanded ? '收起' : '展开'} Markdown 节点`}
+            style={{
+              left: topLeft.x + preview.width * camera.scale / 2,
+              top: topLeft.y + preview.height * camera.scale - 7,
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpandedMarkdownNodeIds((current) => {
+                const next = new Set(current);
+                if (markdownExpanded) next.delete(node.id);
+                else next.add(node.id);
+                return next;
+              });
+            }}
+          >{markdownExpanded ? '收起' : '展开'}</button>}
+          </Fragment>
         );
       })}
       {visibleTimelines.map((sourceTimeline) => {
@@ -4284,31 +4488,52 @@ export default function MindMapCanvas({
         const markdownEditing = editingNodeType === 'markdown' || isMindMapMarkdown(editing.draft) || Boolean(markdownSlashMatch);
         const markdownShortcuts = [
           ['h1', '# ', '一级标题'], ['h2', '## ', '二级标题'], ['h3', '### ', '三级标题'],
-          ['list', '- ', '无序列表'], ['todo', '- [ ] ', '待办事项'], ['quote', '> ', '引用'],
-          ['link', '[链接文字](https://)', '链接'], ['table', '| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |', '表格'],
-          ['hr', '---', '分隔线'], ['code', '```\n\n```', '代码块'],
+          ['list', '- ', '无序列表'], ['ol', '1. ', '有序列表'], ['todo', '- [ ] ', '待办事项'], ['quote', '> ', '引用'],
+          ['bold', '**粗体**', '粗体', [2, 4]], ['italic', '*斜体*', '斜体', [1, 3]], ['strike', '~~删除线~~', '删除线', [2, 5]],
+          ['link', '[链接文字](https://)', '链接', [7, 15]], ['table', '| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |', '表格'],
+          ['hr', '---', '分隔线'], ['code', '```\n\n```', '代码块', [4, 4]],
         ] as const;
         const slashQuery = markdownSlashMatch?.[0].replace(/^\n?\//, '').toLocaleLowerCase() ?? '';
         const visibleShortcuts = markdownShortcuts.filter(([id, , label]) => id.includes(slashQuery) || label.includes(slashQuery));
-        const applyMarkdownShortcut = (prefix: string) => {
+        const applyMarkdownEdit = ({ draft, selectionStart, selectionEnd }: MarkdownTextEdit) => {
+          setEditing({ ...editing, draft, ...(!editing.nodeId ? { newNodeType: 'markdown' as const } : {}) });
+          window.requestAnimationFrame(() => editorRef.current?.setSelectionRange(selectionStart, selectionEnd));
+        };
+        const applyMarkdownShortcut = (prefix: string, selection?: readonly [number, number]) => {
           if (!markdownSlashMatch) return;
           const start = markdownSlashMatch.index + (markdownSlashMatch[1] ? 1 : 0);
           const draft = `${editing.draft.slice(0, start)}${prefix}${editing.draft.slice(start + markdownSlashMatch[0].length - (markdownSlashMatch[1] ? 1 : 0))}`;
-          setEditing({ ...editing, draft, ...(!editing.nodeId ? { newNodeType: 'markdown' as const } : {}) });
-          window.requestAnimationFrame(() => editorRef.current?.setSelectionRange(start + prefix.length, start + prefix.length));
+          applyMarkdownEdit({
+            draft,
+            selectionStart: start + (selection?.[0] ?? prefix.length),
+            selectionEnd: start + (selection?.[1] ?? prefix.length),
+          });
         };
+        const baseEditorHeight = Math.max(40, editing.height * camera.scale);
+        const editorHeight = markdownEditing
+          ? Math.min(Math.max(120, size.height - 32), Math.max(baseEditorHeight, editing.draft.split('\n').length * Math.max(18, 21 * camera.scale) + 16))
+          : baseEditorHeight;
+        const largeMarkdownEditing = markdownEditing && (editing.draft.length > 500 || editing.draft.split('\n').length > 12);
+        const splitColumnWidth = Math.max(160, Math.min(Math.max(240, editing.width * camera.scale), (size.width - 32) / 2 - 4));
+        const editorLeft = largeMarkdownEditing
+          ? Math.max(8, Math.min(editingTopLeft.x, size.width - splitColumnWidth * 2 - 16))
+          : editingTopLeft.x;
+        const editorTop = largeMarkdownEditing
+          ? Math.max(8, Math.min(editingTopLeft.y, size.height - editorHeight - 8))
+          : editingTopLeft.y;
+        const editorWidth = largeMarkdownEditing ? splitColumnWidth : Math.max(80, editing.width * camera.scale);
         return (
         <>
         <textarea
           ref={editorRef}
-          className={styles.editor}
+          className={`${styles.editor} ${markdownEditing ? styles.markdownEditor : ''}`}
           aria-label={editing.nodeId ? '编辑节点文本' : '新节点文本'}
           value={editing.draft}
           style={{
-            left: editingTopLeft.x,
-            top: editingTopLeft.y,
-            width: Math.max(80, editing.width * camera.scale),
-            height: Math.max(40, editing.height * camera.scale),
+            left: editorLeft,
+            top: editorTop,
+            width: editorWidth,
+            height: editorHeight,
             fontSize: Math.max(12, 15 * camera.scale),
             textAlign: markdownEditing ? 'left' : 'center',
           }}
@@ -4322,6 +4547,7 @@ export default function MindMapCanvas({
           onBlur={() => commitEditing()}
           onKeyDown={(event) => {
             event.stopPropagation();
+            const input = event.currentTarget;
             if (markdownSlashMatch && event.key === 'ArrowDown' && visibleShortcuts.length) {
               event.preventDefault();
               setMarkdownSlashCursor((cursor) => (cursor + 1) % visibleShortcuts.length);
@@ -4330,21 +4556,31 @@ export default function MindMapCanvas({
               setMarkdownSlashCursor((cursor) => (cursor - 1 + visibleShortcuts.length) % visibleShortcuts.length);
             } else if (markdownSlashMatch && event.key === 'Enter' && visibleShortcuts.length && !composing.current) {
               event.preventDefault();
-              applyMarkdownShortcut(visibleShortcuts[Math.min(markdownSlashCursor, visibleShortcuts.length - 1)][1]);
+              const shortcut = visibleShortcuts[Math.min(markdownSlashCursor, visibleShortcuts.length - 1)];
+              applyMarkdownShortcut(shortcut[1], shortcut[3]);
             } else if (event.key === 'Escape') {
               event.preventDefault();
               cancelEditing(true);
             } else if (event.key === 'Enter' && markdownEditing && (event.ctrlKey || event.metaKey) && !composing.current) {
               event.preventDefault();
               commitEditing(true);
+            } else if ((event.ctrlKey || event.metaKey) && !event.shiftKey && ['b', 'i', 'k'].includes(event.key.toLocaleLowerCase()) && !composing.current) {
+              event.preventDefault();
+              const key = event.key.toLocaleLowerCase();
+              applyMarkdownEdit(key === 'b'
+                ? toggleMarkdownSelection(editing.draft, input.selectionStart, input.selectionEnd, '**', '**', '粗体')
+                : key === 'i'
+                  ? toggleMarkdownSelection(editing.draft, input.selectionStart, input.selectionEnd, '*', '*', '斜体')
+                  : insertMarkdownLink(editing.draft, input.selectionStart, input.selectionEnd));
+            } else if (event.key === 'Enter' && markdownEditing && !composing.current) {
+              const next = continueMarkdownList(editing.draft, input.selectionStart, input.selectionEnd);
+              if (next) {
+                event.preventDefault();
+                applyMarkdownEdit(next);
+              }
             } else if (event.key === 'Tab' && markdownEditing && !composing.current) {
               event.preventDefault();
-              const input = event.currentTarget;
-              const start = input.selectionStart;
-              const end = input.selectionEnd;
-              const draft = `${editing.draft.slice(0, start)}  ${editing.draft.slice(end)}`;
-              setEditing({ ...editing, draft });
-              window.requestAnimationFrame(() => input.setSelectionRange(start + 2, start + 2));
+              applyMarkdownEdit(indentMarkdownLines(editing.draft, input.selectionStart, input.selectionEnd, event.shiftKey));
             } else if (event.key === 'Tab' && !composing.current) {
               event.preventDefault();
               commitEditing(false, 'child');
@@ -4354,8 +4590,16 @@ export default function MindMapCanvas({
             }
           }}
         />
-        {markdownSlashMatch && <div className={styles.markdownSlashMenu} role="listbox" aria-label="Markdown 快捷菜单" style={{ left: editingTopLeft.x, top: editingTopLeft.y + Math.max(40, editing.height * camera.scale) + 4 }}>
-          {visibleShortcuts.map(([id, prefix, label], index) => <button key={id} type="button" role="option" aria-selected={index === Math.min(markdownSlashCursor, visibleShortcuts.length - 1)} onPointerMove={() => setMarkdownSlashCursor(index)} onPointerDown={(event) => event.preventDefault()} onClick={() => applyMarkdownShortcut(prefix)}><kbd>/{id}</kbd>{label}</button>)}
+        {largeMarkdownEditing && <div
+          className={styles.markdownEditingPreview}
+          aria-label="Markdown 实时预览"
+          style={{ left: editorLeft + editorWidth + 8, top: editorTop, width: editorWidth, height: editorHeight }}
+        >
+          <span>实时预览</span>
+          <div className={styles.markdownPreview} dangerouslySetInnerHTML={{ __html: renderMindMapMarkdown(editing.draft, internalLinkTargets) }} />
+        </div>}
+        {markdownSlashMatch && <div className={styles.markdownSlashMenu} role="listbox" aria-label="Markdown 快捷菜单" style={{ left: editorLeft, top: editorTop + editorHeight + 4 }}>
+          {visibleShortcuts.map(([id, prefix, label, selection], index) => <button key={id} type="button" role="option" aria-selected={index === Math.min(markdownSlashCursor, visibleShortcuts.length - 1)} onPointerMove={() => setMarkdownSlashCursor(index)} onPointerDown={(event) => event.preventDefault()} onClick={() => applyMarkdownShortcut(prefix, selection)}><kbd>/{id}</kbd>{label}</button>)}
         </div>}
         </>
         );
@@ -4526,7 +4770,7 @@ export default function MindMapCanvas({
               if (!timeline) return current;
               const ids = new Set(projectIds);
               const references = timeline.manualItems.filter((item) => !(item.source === 'project' && ids.has(item.contextId)));
-              const additions = checked ? projectIds.flatMap((id) => projectTimelineItems(id, projectPlanning).map((item) => ({ source: 'project' as const, contextId: id, itemId: item.id }))) : [];
+              const additions = checked ? projectIds.map((id) => ({ source: 'project' as const, contextId: id, itemId: `project:${id}` })) : [];
               const next = { ...timeline, source: 'manual' as const, targetId: null, manualItems: [...references, ...additions] };
               return { ...current, timelineSections: { ...current.timelineSections, [timeline.id]: { ...next, height: recommendedTimelineHeight(timelineProjectionItems(next, projectPlanning, lifeTimeline)), updatedAt: Date.now() } } };
             });
@@ -4790,17 +5034,24 @@ export default function MindMapCanvas({
                   <span>类型</span>
                   <select aria-label="节点类型" value={selectedNode.type} onChange={(event) => {
                     const type = event.target.value as MindMapNodeType;
-                    updateNode(selectedNode.id, { type, ...(type === 'image' ? { width: Math.max(240, selectedNode.width), height: Math.max(160, selectedNode.height), sizeMode: 'manual' as const } : {}) });
+                    const nextNode = { ...selectedNode, type };
+                    updateNode(selectedNode.id, {
+                      type,
+                      ...(type === 'image'
+                        ? { width: Math.max(240, selectedNode.width), height: Math.max(160, selectedNode.height), sizeMode: 'manual' as const }
+                        : selectedNode.sizeMode === 'auto' ? measuredNodeSize(selectedNode.text, nextNode) : {}),
+                    });
                   }}>
                     <option value="text">文本</option><option value="markdown">Markdown</option><option value="latex">LaTeX</option><option value="url">URL</option><option value="image">图片</option>
                   </select>
                 </label>
-                <label>
+                <label className={styles.nodeTextEditor}>
                   <span>文本</span>
-                  <input type="text" aria-label="节点文本" defaultValue={selectedNode.text} maxLength={10_000} onBlur={(event) => {
+                  <textarea key={`${selectedNode.id}-text`} aria-label="节点文本" defaultValue={selectedNode.text} maxLength={10_000} rows={selectedNode.type === 'markdown' ? 5 : 2} onBlur={(event) => {
                     const text = event.target.value;
                     if (text === selectedNode.text) return;
-                    updateNode(selectedNode.id, { text, ...(selectedNode.sizeMode === 'auto' ? measuredNodeSize(text, selectedNode) : {}) });
+                    const nextNode = { ...selectedNode, text, ...(selectedNode.type === 'text' && isMindMapMarkdown(text) ? { type: 'markdown' as const } : {}) };
+                    updateNode(selectedNode.id, { text, type: nextNode.type, ...(selectedNode.sizeMode === 'auto' ? measuredNodeSize(text, nextNode) : {}) });
                   }} />
                 </label>
                 <label><span>语义样式</span><select aria-label="节点语义样式" value={selectedNode.semantic ?? 'auto'} onChange={(event) => updateNode(selectedNode.id, { semantic: event.target.value as NonNullable<MindMapNode['semantic']> })}>

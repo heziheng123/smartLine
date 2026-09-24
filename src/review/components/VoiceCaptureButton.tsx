@@ -22,11 +22,12 @@ export default function VoiceCaptureButton({ disabled, retention, onStarted, onP
 
   useEffect(() => {
     if (!('BroadcastChannel' in window)) return;
+    const currentTabId = tabId.current;
     const next = new BroadcastChannel('smart-line-review-voice'); channel.current = next;
     next.onmessage = (event: MessageEvent<{ tabId?: string; recording?: boolean }>) => {
-      if (event.data?.tabId !== tabId.current) setOtherTabRecording(Boolean(event.data?.recording));
+      if (event.data?.tabId !== currentTabId) setOtherTabRecording(Boolean(event.data?.recording));
     };
-    return () => { next.postMessage({ tabId: tabId.current, recording: false }); next.close(); };
+    return () => { next.postMessage({ tabId: currentTabId, recording: false }); next.close(); };
   }, []);
 
   const start = async () => {

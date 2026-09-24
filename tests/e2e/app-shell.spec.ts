@@ -91,13 +91,66 @@ test('project details use a landscape split and a portrait right-side drawer', a
 
 test('six main workspaces remain reachable through the real interface', async ({ page }) => {
   await expect(page.getByRole('button', { name: '打开专注面板' })).toHaveCount(0);
-  for (const title of ['地图工作区', '每日安排', '周矩阵', '艾宾浩斯复习', '知识大盘', '项目规划']) {
+  const workspaces = [
+    ['地图工作区', 'view-mind-map'],
+    ['每日安排', 'view-daily-schedule'],
+    ['周矩阵', 'view-week-matrix'],
+    ['艾宾浩斯复习', 'view-ebb'],
+    ['知识大盘', 'view-knowledge-graph'],
+    ['项目规划', 'view-timeline'],
+  ] as const;
+  for (const [title, viewId] of workspaces) {
     await page.getByTitle(title).click();
     await expect(page.getByTitle(title)).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator(`#${viewId}`)).toBeVisible();
+    await expect(page.locator('[role="tabpanel"][id^="view-"]:visible')).toHaveCount(1);
   }
   await expect(page.getByRole('button', { name: '快速开始专注' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '打开专注复盘' })).toHaveCount(0);
   await expect(page.getByTitle('任务总览')).toHaveCount(0);
+});
+
+test('switching workspaces immediately removes the previous interactive view', async ({ page }) => {
+  const state = await page.getByTitle('每日安排').evaluate(async (button) => {
+    button.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    return {
+      timelineStillMounted: Boolean(document.querySelector('#view-timeline')),
+      hitView: hit?.closest('[role="tabpanel"]')?.id,
+    };
+  });
+
+  expect(state).toEqual({
+    timelineStillMounted: false,
+    hitView: 'view-daily-schedule',
+  });
+});
+
+test('view navigation also clears project interactions rendered outside the view tree', async ({ page }) => {
+  await page.evaluate(async () => {
+    const { useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    useTimelineStore.getState().addTask({
+      id: 'switch-context-task',
+      name: '切换视图右键菜单测试',
+      start: '2026-09-01',
+      end: '2026-09-30',
+      blocks: [],
+    });
+  });
+
+  const taskBar = page.locator('.tl-seg').filter({ hasText: '切换视图右键菜单测试' }).first();
+  await taskBar.focus();
+  await taskBar.press('Shift+F10');
+  await expect(page.getByRole('menu', { name: '上下文菜单' })).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent('tl-navigate', { detail: { view: 'daily-schedule' } }));
+  });
+
+  await expect(page.getByRole('menu', { name: '上下文菜单' })).toHaveCount(0);
+  await expect(page.locator('#view-timeline')).toHaveCount(0);
+  await expect(page.locator('#view-daily-schedule')).toBeVisible();
 });
 
 test('sync dialog moves focus inside, traps Tab, closes with Escape, and restores focus', async ({ page }) => {

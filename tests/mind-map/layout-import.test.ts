@@ -8,7 +8,7 @@ import {
   serializeMindMapMarkdownOutline,
   serializeMindMapSvg,
 } from '../../src/mindMap/importExport.ts';
-import { extractMindMapWikiLinks, isMindMapMarkdown, mindMapBacklinks } from '../../src/mindMap/richText.ts';
+import { extractMindMapWikiLinks, isMindMapMarkdown, mindMapBacklinks, setMindMapTaskChecked } from '../../src/mindMap/richText.ts';
 import { findMindMapTreeRoot, layoutMindMap, layoutMindMapBranch, layoutMindMapTree, treeChildIds } from '../../src/mindMap/layout.ts';
 import { layoutMindMapTreeInWorker } from '../../src/mindMap/layoutWorkerClient.ts';
 import { repairMindMapTreeForest, validateMindMapTreeForest } from '../../src/mindMap/treeValidation.ts';
@@ -241,8 +241,14 @@ test('Markdown import preserves task lists, quotes, tables, and code blocks', ()
   assert.match(serialized, /```ts\n\s*const done = true;\n\s*```/);
 });
 
+test('Markdown task checkboxes update exactly one source item', () => {
+  const source = '- [ ] first\n- plain\n  - [x] nested\n- [ ] last';
+  assert.equal(setMindMapTaskChecked(source, 1, false), '- [ ] first\n- plain\n  - [ ] nested\n- [ ] last');
+  assert.equal(setMindMapTaskChecked(source, 2, true), '- [ ] first\n- plain\n  - [x] nested\n- [x] last');
+});
+
 test('markdown typing shortcuts identify both block and inline syntax', () => {
-  for (const source of ['# 一级标题', '### 三级标题', '- [ ] 待办', '> 引用', '```ts\nconst ok = true;', '| 列 | 值 |', '---', '文本 **加粗**', '[链接](https://example.com)', '关联 [[目标节点]]']) {
+  for (const source of ['# 一级标题', '### 三级标题', '- [ ] 待办', '  1. 嵌套有序项', '> 引用', '```ts\nconst ok = true;', '| 列 | 值 |', '---', '文本 **加粗**', '文本 *斜体*', '[链接](https://example.com)', '![图片](https://example.com/a.png)', '关联 [[目标节点]]']) {
     assert.equal(isMindMapMarkdown(source), true, source);
   }
   assert.equal(isMindMapMarkdown('普通节点文字'), false);

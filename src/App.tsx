@@ -195,13 +195,6 @@ const VIEW_MOTION_VARIANTS: Variants = {
       ? { duration: MOTION_DURATION.instant }
       : { duration: MOTION_DURATION.standard, ease: MOTION_EASE_ENTER },
   }),
-  exit: ({ direction, reducedMotion }: ViewMotionContext) => ({
-    opacity: 0,
-    x: reducedMotion ? 0 : direction * -4,
-    transition: reducedMotion
-      ? { duration: MOTION_DURATION.instant }
-      : { duration: MOTION_DURATION.exit, ease: MOTION_EASE_EXIT },
-  }),
 };
 
 const PANEL_MOTION_VARIANTS: Variants = {
@@ -438,6 +431,7 @@ const App: React.FC = () => {
       setViewDirection(nextIndex >= currentIndex ? 1 : -1);
       setDrawerTaskId(null);
       setDrawerBlockId(null);
+      setContextMenu(null);
       setPhoneFullView(false);
     }
     if (target !== 'daily-schedule') {
@@ -1038,7 +1032,8 @@ const App: React.FC = () => {
           onOpenFullView={() => setPhoneFullView(true)}
         />
       ) : (
-      <AnimatePresence mode="popLayout" initial={false} custom={viewMotionContext}>
+      /* 主视图必须立即卸载；保留退出视图会让它在卡顿时继续接收点击。 */
+      <>
         {currentView === 'ebb' && (
           <motion.div 
             key="ebb"
@@ -1049,7 +1044,6 @@ const App: React.FC = () => {
             variants={VIEW_MOTION_VARIANTS}
             initial="initial"
             animate="animate"
-            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -1069,7 +1063,6 @@ const App: React.FC = () => {
             variants={VIEW_MOTION_VARIANTS}
             initial="initial"
             animate="animate"
-            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -1092,7 +1085,6 @@ const App: React.FC = () => {
             variants={VIEW_MOTION_VARIANTS}
             initial="initial"
             animate="animate"
-            exit="exit"
           >
             <div className="tl-app-main week-matrix-workspace">
               <div className="week-matrix-content">
@@ -1121,7 +1113,6 @@ const App: React.FC = () => {
             variants={VIEW_MOTION_VARIANTS}
             initial="initial"
             animate="animate"
-            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -1145,7 +1136,6 @@ const App: React.FC = () => {
             variants={VIEW_MOTION_VARIANTS}
             initial="initial"
             animate="animate"
-            exit="exit"
           >
             <div className="tl-app-main">
               <Suspense fallback={<ViewFallback />}>
@@ -1156,7 +1146,7 @@ const App: React.FC = () => {
         )}
 
         {currentView === 'life-map' && !MIND_MAP_ENABLED && (
-          <motion.div key="life-map" id="view-life-map" role="tabpanel" className="tl-app-split tl-app-split--ebb" custom={viewMotionContext} variants={VIEW_MOTION_VARIANTS} initial="initial" animate="animate" exit="exit">
+          <motion.div key="life-map" id="view-life-map" role="tabpanel" className="tl-app-split tl-app-split--ebb" custom={viewMotionContext} variants={VIEW_MOTION_VARIANTS} initial="initial" animate="animate">
             <div className="tl-app-main"><Suspense fallback={<ViewFallback />}><LifeMapWorkspace /></Suspense></div>
           </motion.div>
         )}
@@ -1171,7 +1161,6 @@ const App: React.FC = () => {
             variants={VIEW_MOTION_VARIANTS}
             initial="initial"
             animate="animate"
-            exit="exit"
           >
             <div className="project-workspace-content">
               <>
@@ -1243,7 +1232,7 @@ const App: React.FC = () => {
             </div>
           </motion.div>
         )}
-      </AnimatePresence>
+      </>
       )}
 
       {isPhoneLayout && phoneFullView && (

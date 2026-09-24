@@ -39,8 +39,8 @@ test('sections and groups create, collapse and move as isolated history transact
 
   await page.locator('[aria-label="思维导图画布"][tabindex="0"]').focus();
   await page.keyboard.press('Control+A');
-  await expect(page.getByLabel('多选排列')).toBeVisible();
-  await page.getByRole('button', { name: '创建区域' }).click();
+  await expect(page.getByLabel('多选编辑')).toBeVisible();
+  await page.getByRole('button', { name: '创建边界' }).click();
   await expect(page.getByLabel('区域属性')).toBeVisible();
   await expect.poll(async () => Object.keys((await graphState(page))?.sections ?? {}).length).toBe(1);
   expect(Object.values((await graphState(page))!.nodes).every((node) => Boolean(node.parentSectionId))).toBe(true);

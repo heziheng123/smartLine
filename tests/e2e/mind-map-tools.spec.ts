@@ -122,6 +122,8 @@ test('mind-map mode lays first-level branches to both sides and supports keyboar
   expect(laidOut.nodes[rightId].x).toBeGreaterThan(laidOut.nodes[rootId].x);
 
   const viewport = laidOut.viewport;
+  const closeInspector = page.getByLabel('关闭属性面板');
+  if (await closeInspector.isVisible()) await closeInspector.click();
   await canvas.click({ position: {
     x: laidOut.nodes[rightId].x * viewport.scale + viewport.x,
     y: laidOut.nodes[rightId].y * viewport.scale + viewport.y,
@@ -349,7 +351,7 @@ test('a branch can be selected as a whole and focused without changing the docum
   const canvas = page.getByTestId('mind-map-canvas');
   await canvas.click({ button: 'right', position: { x: 240, y: 220 } });
   await page.getByRole('menuitem', { name: '选择整个分支' }).click();
-  await expect(page.getByLabel('多选排列')).toContainText('排列 3 个节点');
+  await expect(page.getByLabel('多选编辑')).toContainText('批量编辑 3 个节点');
 
   await page.getByLabel('关闭属性面板').click();
   await canvas.click({ button: 'right', position: { x: 240, y: 220 } });
