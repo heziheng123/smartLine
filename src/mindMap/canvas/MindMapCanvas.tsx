@@ -294,6 +294,7 @@ const NODE_ACTION_SPACING = 24;
 const NODE_COLLAPSE_OFFSET = 14;
 const MINIMAP_WIDTH = 144;
 const MINIMAP_HEIGHT = 90;
+const SHORTCUT_HINT_STORAGE_KEY = 'smartline:mind-map-shortcut-hint-seen';
 // 2D edge routing becomes the dominant cost while zooming before 2,500 nodes.
 const WEBGL_NODE_THRESHOLD = 1_000;
 const CLIPBOARD_PREFIX = 'smart-line-mind-map-clipboard:';
@@ -858,6 +859,7 @@ export default function MindMapCanvas({
   const [timelineExpandedGroups, setTimelineExpandedGroups] = useState<Set<string>>(() => new Set());
   const [timelineExpandedProjects, setTimelineExpandedProjects] = useState<Set<string>>(() => new Set());
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [shortcutHintVisible, setShortcutHintVisible] = useState(false);
   const [focusedBranchRootId, setFocusedBranchRootId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
@@ -1139,6 +1141,22 @@ export default function MindMapCanvas({
   useEffect(() => {
     onSelectionChange?.(selectedNodeIds.length);
   }, [onSelectionChange, selectedNodeIds.length]);
+
+  useEffect(() => {
+    if (selectedNodeIds.length !== 1) {
+      setShortcutHintVisible(false);
+      return;
+    }
+    try {
+      if (window.localStorage.getItem(SHORTCUT_HINT_STORAGE_KEY)) return;
+      window.localStorage.setItem(SHORTCUT_HINT_STORAGE_KEY, '1');
+    } catch {
+      // Storage can be unavailable in private contexts; the hint may reappear next time.
+    }
+    setShortcutHintVisible(true);
+    const timer = window.setTimeout(() => setShortcutHintVisible(false), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [selectedNodeIds.length]);
 
   useEffect(() => {
     if (!connectionMode) {
@@ -3658,6 +3676,11 @@ export default function MindMapCanvas({
             : '连线模式：先点击起点对象，再点击终点对象'}
         </div>
       )}
+      {shortcutHintVisible && !connectionMode && (
+        <div className={`${styles.connectionHint} ${styles.shortcutHint}`} role="status">
+          Tab 子节点 · Enter 同级节点 · Shift+Tab 提升层级 · 按 ? 查看全部
+        </div>
+      )}
       {focusedBranchRootId && focusedBranchNodeIds && document.nodes[focusedBranchRootId] && (
         <div className={styles.branchFocusHint} role="status" data-testid="mind-map-branch-focus" style={{ top: connectionMode ? 104 : 60 }}>
           <span>正在聚焦：{document.nodes[focusedBranchRootId].text || '空节点'} · {focusedBranchNodeIds.size} 个节点</span>
@@ -5028,6 +5051,15 @@ export default function MindMapCanvas({
           )}
           {selectedNode && (
             <div className={styles.inspectorFields}>
+              <div className={styles.nodeQuickActions} role="toolbar" aria-label="节点快捷操作">
+                <button type="button" onClick={() => createChildNode(selectedNode.id)}>子节点</button>
+                <button type="button" onClick={() => createSiblingNode(selectedNode.id)}>同级</button>
+                <button type="button" onClick={() => startEditingNode(selectedNode)}>编辑</button>
+                <button type="button" onClick={() => {
+                  setConnectionSource({ type: 'node', id: selectedNode.id });
+                  onConnectionModeChange?.(true);
+                }}>连线</button>
+              </div>
               <section className={styles.inspectorGroup}>
                 <h3>节点</h3>
                 <label>

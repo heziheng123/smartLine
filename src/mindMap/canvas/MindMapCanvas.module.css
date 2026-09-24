@@ -59,6 +59,10 @@
   transform: translateX(-50%);
 }
 
+.shortcutHint {
+  color: var(--mm-text);
+}
+
 .imagePreview {
   position: absolute;
   z-index: 1;
@@ -118,7 +122,8 @@
 }
 
 @media (max-width: 820px) {
-  .branchFocusHint {
+  .branchFocusHint,
+  .shortcutHint {
     top: 112px !important;
     z-index: 9;
   }
@@ -1526,6 +1531,32 @@
   overflow-y: auto;
 }
 
+.nodeQuickActions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.nodeQuickActions button {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 5px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-control);
+  color: var(--mm-text);
+  background: var(--mm-surface-muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nodeQuickActions button:hover,
+.nodeQuickActions button:focus-visible {
+  border-color: color-mix(in srgb, var(--mm-accent) 35%, var(--mm-border));
+  color: var(--mm-accent);
+  outline: 0;
+}
+
 .inspectorGroup {
   display: grid;
   gap: 8px;
@@ -2134,6 +2165,12 @@
 @media (max-width: 600px) {
   .connectionHint {
     top: 54px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .shortcutHint {
+    max-width: calc(100% - 16px);
     overflow: hidden;
     text-overflow: ellipsis;
   }

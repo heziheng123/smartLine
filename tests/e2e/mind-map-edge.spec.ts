@@ -20,6 +20,11 @@ const graphState = async (page: Page) => page.evaluate(async () => {
   return { nodes: document?.nodes ?? {}, edges: document?.edges ?? {} };
 });
 
+const startToolbarConnection = async (page: Page) => {
+  await page.getByTestId('mind-map-insert-menu').click();
+  await page.getByRole('menuitem', { name: '连线' }).click();
+};
+
 const addProjectReference = async (page: Page, id: string, x: number, y: number) => page.evaluate(async ({ id, x, y }) => {
   const { useMindMapStore } = await import('/src/mindMap/testing.ts');
   useMindMapStore.getState().execute('测试项目引用', (document) => ({
@@ -96,13 +101,15 @@ test('the unified relation handle and toolbar connection mode create edges', asy
   await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(2);
 
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: '连线' }).click();
+  await startToolbarConnection(page);
   await expect(page.getByRole('status')).toContainText('先点击起点对象');
   await canvas.click({ position: { x: 460, y: 360 } });
   await expect(page.getByRole('status')).toContainText('已选择起点');
   await canvas.click({ position: { x: 220, y: 220 } });
   await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(3);
-  await expect(page.getByRole('button', { name: '连线' })).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('mind-map-insert-menu').click();
+  await expect(page.getByRole('menuitem', { name: '连线' })).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('mind-map-insert-menu').click();
 });
 
 test('project references use the same L and toolbar relation system as nodes', async ({ page }) => {
@@ -119,7 +126,7 @@ test('project references use the same L and toolbar relation system as nodes', a
   await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(1);
   expect(Object.values((await graphState(page)).edges)[0]?.target).toEqual({ type: 'project-reference', id: 'project-reference-a' });
 
-  await page.getByRole('button', { name: '连线' }).click();
+  await startToolbarConnection(page);
   await reference.click({ position: { x: 80, y: 46 } });
   await canvas.click({ position: { x: 220, y: 220 } });
   await expect.poll(async () => Object.keys((await graphState(page)).edges).length).toBe(2);

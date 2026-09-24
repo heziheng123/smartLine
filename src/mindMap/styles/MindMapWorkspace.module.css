@@ -484,59 +484,24 @@
   background: var(--mm-accent-soft);
 }
 
-.floatingToolbar .iconTool {
-  min-width: 30px;
-  width: 30px;
-  padding: 0;
-}
-
-.creationTool {
-  display: flex;
-  height: 32px;
-  align-items: center;
-  gap: 4px;
-  padding-left: var(--mm-space-sm);
-  color: var(--mm-text-muted);
-  font-size: var(--mm-font-small);
-  white-space: nowrap;
-}
-
-.creationTool select,
-.directionSelect {
-  height: 28px;
-  border: 0;
-  border-radius: var(--mm-radius-control);
-  color: var(--mm-text);
-  background: transparent;
-  font: inherit;
-  font-size: var(--mm-font-small);
-  cursor: pointer;
-}
-
-.creationTool select {
-  max-width: 92px;
-}
-
-.referenceTool select {
-  max-width: 164px;
-}
-
-.referenceGroup {
+.modeSwitch {
   display: inline-flex;
   height: 32px;
   align-items: center;
+  padding: 2px;
   border-radius: var(--mm-radius-control);
-}
-
-.referenceGroup:hover {
   background: var(--mm-surface-muted);
 }
 
-.referenceGroup .referenceCreateButton {
-  width: 28px;
-  min-width: 28px;
+.modeSwitch button {
   height: 28px;
-  padding: 0;
+  padding: 0 9px;
+}
+
+.modeSwitch button[aria-pressed='true'] {
+  color: var(--mm-accent);
+  background: var(--mm-surface);
+  box-shadow: 0 1px 4px rgb(27 31 39 / 10%);
 }
 
 .layoutMenu {
@@ -583,6 +548,37 @@
   box-shadow: var(--mm-shadow-floating);
 }
 
+.insertMenuPanel {
+  right: auto;
+  left: 0;
+  width: 244px;
+}
+
+.menuField {
+  display: grid;
+  gap: 5px;
+  padding: 6px 8px;
+  color: var(--mm-text-muted);
+  font-size: var(--mm-font-small);
+}
+
+.menuField select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-control);
+  color: var(--mm-text);
+  background: var(--mm-surface);
+  font: inherit;
+}
+
+.menuHint {
+  padding: 0 8px 5px;
+  color: var(--mm-text-muted);
+  font-size: 10px;
+}
+
 .layoutMenuPanel button {
   width: 100%;
   min-height: 32px;
@@ -608,17 +604,6 @@
   color: var(--mm-text);
   background: var(--mm-surface);
   font: inherit;
-}
-
-.directionSelect {
-  width: 34px;
-}
-
-.toolDivider {
-  width: 1px;
-  height: 20px;
-  margin: 0 2px;
-  background: var(--mm-border);
 }
 
 .errorBanner {
@@ -649,7 +634,8 @@
   cursor: pointer;
 }
 
-.snapshotPanel {
+.snapshotPanel,
+.shortcutPanel {
   position: absolute;
   top: 44px;
   right: var(--mm-space-md);
@@ -664,6 +650,27 @@
   background: var(--mm-surface);
   box-shadow: var(--mm-shadow-floating);
   font-size: var(--mm-font-small);
+}
+
+.shortcutGrid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.shortcutGrid kbd {
+  justify-self: start;
+  padding: 3px 6px;
+  border: 1px solid var(--mm-border);
+  border-radius: 5px;
+  color: var(--mm-text);
+  background: var(--mm-surface-muted);
+  font: 600 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.shortcutGrid span {
+  color: var(--mm-text-muted);
 }
 
 .snapshotHeader,
@@ -917,13 +924,6 @@
     width: min(42vw, 170px);
   }
 
-  .floatingToolbar .directionSelect,
-  .creationTool > span,
-  .referenceTool,
-  .referenceCreateButton {
-    display: none;
-  }
-
   .floatingToolbar {
     width: max-content;
     max-width: calc(100% - 16px);
@@ -931,6 +931,10 @@
 
   .floatingToolbar button {
     font-size: 0;
+  }
+
+  .floatingToolbar .modeSwitch button {
+    font-size: var(--mm-font-small);
   }
 
   .floatingToolbar button svg {

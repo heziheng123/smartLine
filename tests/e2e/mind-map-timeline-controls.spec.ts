@@ -7,7 +7,8 @@ test('timeline visibility controls respond and the header remains draggable', as
   });
   await page.goto('/');
   await page.getByTitle('地图工作区').click();
-  await page.getByRole('button', { name: '时间规划', exact: true }).click();
+  await page.getByTestId('mind-map-insert-menu').click();
+  await page.getByRole('menuitem', { name: '时间规划', exact: true }).click();
 
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();

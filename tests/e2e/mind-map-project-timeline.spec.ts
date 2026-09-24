@@ -32,6 +32,11 @@ const fitCanvas = async (page: Page) => {
   await page.getByRole('menuitem', { name: '适合画布' }).click();
 };
 
+const insertFromToolbar = async (page: Page, name: '时间规划' | '人生规划') => {
+  await page.getByTestId('mind-map-insert-menu').click();
+  await page.getByRole('menuitem', { name, exact: true }).click();
+};
+
 const selectTimelineProjects = async (page: Page, projectNames: string[]) => {
   await page.getByRole('button', { name: /更改/ }).click();
   const selector = page.getByRole('dialog', { name: '选择显示内容' });
@@ -73,7 +78,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('project timelines stay readable by keeping individual tasks in task views', async ({ page }) => {
-  await page.getByRole('button', { name: '时间规划', exact: true }).click();
+  await insertFromToolbar(page, '时间规划');
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();
   for (const name of ['时间线开始日期', '时间线结束日期']) {
@@ -87,7 +92,7 @@ test('project timelines stay readable by keeping individual tasks in task views'
 });
 
 test('moving or deleting a timeline never mutates its projected project data', async ({ page }) => {
-  await page.getByRole('button', { name: '时间规划', exact: true }).click();
+  await insertFromToolbar(page, '时间规划');
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   await timeline.click();
   await selectTimelineProjects(page, ['Map Project']);
@@ -121,7 +126,7 @@ test('life map migration downloads a backup and creates stable timeline projecti
 });
 
 test('map life planning supports CRUD, timeline editing, undo, manual selection, and reload persistence', async ({ page }) => {
-  await page.getByRole('button', { name: '人生规划' }).click();
+  await insertFromToolbar(page, '人生规划');
   const panel = page.getByRole('dialog', { name: '人生规划管理' });
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: '新建人生阶段' }).click();
@@ -139,7 +144,7 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
   await expect(panel.getByText('地图人生阶段（已编辑）', { exact: true })).toBeVisible();
   await panel.getByRole('button', { name: '关闭人生规划' }).click();
 
-  await page.getByRole('button', { name: '时间规划', exact: true }).click();
+  await insertFromToolbar(page, '时间规划');
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
   const timelineTestId = await timeline.getAttribute('data-testid');
   if (!timelineTestId) throw new Error('Timeline test id was not available.');

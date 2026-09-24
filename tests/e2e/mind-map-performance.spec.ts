@@ -34,8 +34,8 @@ for (const count of [500, 2_000, 5_000]) {
       const layoutWorker = page.waitForEvent('worker');
       await page.getByTestId('mind-map-layout-tree').click();
       expect((await layoutWorker).url()).toContain('layout.worker');
-      await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('布局中…');
-      await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('布局', { timeout: 20_000 });
+      await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('整理中…');
+      await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('整理', { timeout: 20_000 });
       await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
     }
 

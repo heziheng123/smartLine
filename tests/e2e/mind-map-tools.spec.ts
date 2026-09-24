@@ -55,6 +55,27 @@ const addTreeChild = async (page: Page, parentText: string, text: string) => {
   ))).toBe(true);
 };
 
+test('the toolbar is grouped and shortcut help is discoverable from the first selection', async ({ page }) => {
+  await openMindMap(page);
+  await expect(page.getByRole('group', { name: '画布模式' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '画布', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('mind-map-insert-menu').click();
+  await expect(page.getByRole('menu', { name: '插入菜单' })).toBeVisible();
+  await expect(page.getByLabel('新节点类型')).toBeVisible();
+  await page.getByTestId('mind-map-insert-menu').click();
+
+  await addNode(page, 300, 240, '快捷键节点');
+  await page.getByTestId('mind-map-canvas').click({ position: { x: 300, y: 240 } });
+  await expect(page.getByRole('status')).toContainText('Tab 子节点');
+  await expect(page.getByRole('toolbar', { name: '节点快捷操作' })).toBeVisible();
+
+  await page.locator('[aria-label="思维导图画布"][tabindex="0"]').focus();
+  await page.keyboard.press('Shift+/');
+  await expect(page.getByRole('dialog', { name: '思维导图快捷键' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: '思维导图快捷键' })).toHaveCount(0);
+});
+
 test('the node editor continuously creates children and siblings as atomic graph commands', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
@@ -103,7 +124,7 @@ test('mind-map mode lays first-level branches to both sides and supports keyboar
   await addTreeChild(page, '中心主题', '右分支');
   await page.getByLabel('新节点文本').press('Escape');
 
-  await page.getByRole('button', { name: '自由画布' }).click();
+  await page.getByRole('button', { name: '脑图', exact: true }).click();
   await expect.poll(async () => (await graphState(page)).document?.settings.mode).toBe('mind-map');
   await expect.poll(async () => {
     const current = (await graphState(page)).document;
@@ -231,7 +252,7 @@ test('tree edge previews follow every layout direction and remain visible after 
   ] as const) {
     await page.getByTestId('mind-map-layout-menu').click();
     await page.getByRole('menuitem', { name: direction.label, exact: true }).click();
-    await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('布局');
+    await expect(page.getByTestId('mind-map-layout-menu')).toHaveText('整理');
     await canvas.evaluate((element) => (element.parentElement as HTMLElement).focus());
     const before = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL());
     await page.keyboard.press('Tab');

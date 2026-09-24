@@ -11,6 +11,7 @@ import {
   GitFork,
   History,
   Image as ImageIcon,
+  Keyboard,
   Link2,
   Maximize2,
   MoreHorizontal,
@@ -40,7 +41,7 @@ import {
 import { prepareMindMapMode, type TreeDirection } from './layout';
 import { migrateLifeMapIntoDocument } from './lifeMapMigration';
 import LifePlanningPanel from './LifePlanningPanel';
-import { createEmptyMindMapDocument, createProjectReferenceCard, createTimelineSection, DEFAULT_DOCUMENT_TITLE, type MindMapNodeType, type MindMapVisualTheme, type ProjectReferenceCard } from './model';
+import { createEmptyMindMapDocument, createProjectReferenceCard, createTimelineSection, DEFAULT_DOCUMENT_TITLE, type MindMapMode, type MindMapNodeType, type MindMapVisualTheme, type ProjectReferenceCard } from './model';
 import { mindMapRepository } from './repository';
 import { useMindMapStore } from './store';
 import { MindMapCatalogSession, MindMapSyncSession, type MindMapSyncViewState } from './sync';
@@ -111,6 +112,7 @@ const MindMapWorkspace = () => {
   const [referenceTarget, setReferenceTarget] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [catalogSyncError, setCatalogSyncError] = useState<string | null>(null);
   const [backgroundSyncError, setBackgroundSyncError] = useState<string | null>(null);
@@ -126,6 +128,7 @@ const MindMapWorkspace = () => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const canvasSectionRef = useRef<HTMLElement>(null);
   const moreMenuRef = useRef<HTMLDetailsElement>(null);
+  const insertMenuRef = useRef<HTMLDetailsElement>(null);
   const layoutMenuRef = useRef<HTMLDetailsElement>(null);
   const syncSessionRef = useRef<MindMapSyncSession | null>(null);
   const catalogSessionRef = useRef<MindMapCatalogSession | null>(null);
@@ -147,6 +150,23 @@ const MindMapWorkspace = () => {
   ], [projectPlanning]);
 
   useEffect(() => setConnectionMode(false), [documentId]);
+
+  useEffect(() => {
+    const handleShortcutHelp = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!canvasSectionRef.current || canvasSectionRef.current.offsetParent === null) return;
+      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.key === '?' || (event.code === 'Slash' && event.shiftKey)) {
+        event.preventDefault();
+        setSnapshotOpen(false);
+        setShortcutsOpen((open) => !open);
+      } else if (event.key === 'Escape') {
+        setShortcutsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleShortcutHelp);
+    return () => window.removeEventListener('keydown', handleShortcutHelp);
+  }, []);
 
   useEffect(() => {
     const retry = () => setSyncRetry((value) => value + 1);
@@ -371,15 +391,14 @@ const MindMapWorkspace = () => {
     if (layoutMenuRef.current) layoutMenuRef.current.open = false;
   };
 
-  const toggleMindMapMode = () => {
-    if (!document) return;
-    const enabling = document.settings.mode !== 'mind-map';
-    execute(enabling ? '启用脑图模式' : '切换自由画布', (current) => (
-      enabling
+  const setMindMapMode = (mode: MindMapMode) => {
+    if (!document || document.settings.mode === mode) return;
+    execute(mode === 'mind-map' ? '启用脑图模式' : '切换自由画布', (current) => (
+      mode === 'mind-map'
         ? prepareMindMapMode(current)
         : { ...current, settings: { ...current.settings, mode: 'canvas' } }
     ));
-    if (enabling) setTreeLayoutRequest((request) => request + 1);
+    if (mode === 'mind-map') setTreeLayoutRequest((request) => request + 1);
   };
 
   const closeMoreMenu = () => {
@@ -542,9 +561,25 @@ const MindMapWorkspace = () => {
             title="版本快照"
             aria-label="版本快照"
             aria-expanded={snapshotOpen}
-            onClick={() => setSnapshotOpen((open) => !open)}
+            onClick={() => {
+              setShortcutsOpen(false);
+              setSnapshotOpen((open) => !open);
+            }}
           >
             <History size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.iconAction}
+            title="快捷键（?）"
+            aria-label="快捷键"
+            aria-expanded={shortcutsOpen}
+            onClick={() => {
+              setSnapshotOpen(false);
+              setShortcutsOpen((open) => !open);
+            }}
+          >
+            <Keyboard size={16} aria-hidden="true" />
           </button>
           <details ref={moreMenuRef} className={styles.moreMenu}>
             <summary aria-label="更多操作" title="更多操作">
@@ -631,6 +666,19 @@ const MindMapWorkspace = () => {
           if (window.confirm(`恢复到“${snapshot.label}”的版本？当前内容会先自动保存为快照。`)) restoreSnapshot(snapshot.id);
         }}>恢复</button></div>)}</div> : <p>尚无快照。首次修改前会自动创建。</p>}
       </aside>}
+      {shortcutsOpen && <aside className={styles.shortcutPanel} role="dialog" aria-label="思维导图快捷键">
+        <div className={styles.snapshotHeader}><strong>快捷键</strong><button type="button" aria-label="关闭快捷键" onClick={() => setShortcutsOpen(false)}>×</button></div>
+        <div className={styles.shortcutGrid}>
+          <kbd>Tab</kbd><span>创建子节点</span>
+          <kbd>Enter</kbd><span>创建同级节点</span>
+          <kbd>Shift + Tab</kbd><span>提升节点层级</span>
+          <kbd>方向键</kbd><span>在节点间移动</span>
+          <kbd>Ctrl/⌘ + F</kbd><span>搜索或执行命令</span>
+          <kbd>Ctrl/⌘ + Z</kbd><span>撤销</span>
+          <kbd>F / Shift + F</kbd><span>适合全部 / 当前选择</span>
+          <kbd>?</kbd><span>打开或关闭快捷键</span>
+        </div>
+      </aside>}
       <input
         ref={importInputRef}
         className={styles.hiddenInput}
@@ -673,73 +721,80 @@ const MindMapWorkspace = () => {
 
       <section ref={canvasSectionRef} className={styles.canvas} aria-label="思维导图画布">
         <nav className={styles.floatingToolbar} aria-label="思维导图工具">
-          <label className={styles.creationTool}>
-            <span>节点</span>
-            <select
-              aria-label="新节点类型"
-              value={creationType}
-              onChange={(event) => setCreationType(event.target.value as MindMapNodeType)}
-            >
-              <option value="text">文本</option>
-              <option value="markdown">Markdown</option>
-              <option value="latex">LaTeX</option>
-              <option value="url">URL</option>
-              <option value="image">图片</option>
-            </select>
-          </label>
-          <span className={styles.referenceGroup}>
-            <label className={`${styles.creationTool} ${styles.referenceTool}`}>
-              <span>引用</span>
-              <select
-                aria-label="选择项目规划引用"
-                value={referenceTarget}
-                disabled={referenceOptions.length === 0}
-                onChange={(event) => setReferenceTarget(event.target.value)}
+          <details ref={insertMenuRef} className={styles.layoutMenu}>
+            <summary data-testid="mind-map-insert-menu">
+              <Plus size={15} aria-hidden="true" />插入<ChevronDown size={13} aria-hidden="true" />
+            </summary>
+            <div className={`${styles.layoutMenuPanel} ${styles.insertMenuPanel}`} role="menu" aria-label="插入菜单">
+              <label className={styles.menuField}>
+                <span>节点类型</span>
+                <select
+                  aria-label="新节点类型"
+                  value={creationType}
+                  onChange={(event) => setCreationType(event.target.value as MindMapNodeType)}
+                >
+                  <option value="text">文本</option>
+                  <option value="markdown">Markdown</option>
+                  <option value="latex">LaTeX</option>
+                  <option value="url">URL</option>
+                  <option value="image">图片</option>
+                </select>
+              </label>
+              <small className={styles.menuHint}>选择类型后，双击画布即可创建。</small>
+              <span className={styles.menuDivider} aria-hidden="true" />
+              <label className={styles.menuField}>
+                <span>项目引用</span>
+                <select
+                  aria-label="选择项目规划引用"
+                  value={referenceTarget}
+                  disabled={referenceOptions.length === 0}
+                  onChange={(event) => setReferenceTarget(event.target.value)}
+                >
+                  <option value="">选择项目或任务</option>
+                  {referenceOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <button type="button" role="menuitem" disabled={!referenceTarget} onClick={() => {
+                createProjectReference();
+                if (insertMenuRef.current) insertMenuRef.current.open = false;
+              }}><Plus size={14} aria-hidden="true" />添加项目引用</button>
+              <button type="button" role="menuitem" disabled={!document} onClick={() => {
+                createTimeline();
+                if (insertMenuRef.current) insertMenuRef.current.open = false;
+              }}><CalendarRange size={14} aria-hidden="true" />时间规划</button>
+              <button type="button" role="menuitem" disabled={!document} onClick={() => {
+                if (!document) return;
+                if (!document.lifeMap) execute('启用人生规划', (current) => ({ ...current, lifeMap: createEmptyLifeMapData(), lifeMapMigration: null }));
+                setLifePlanningOpen(true);
+                if (insertMenuRef.current) insertMenuRef.current.open = false;
+              }}><CalendarRange size={14} aria-hidden="true" />人生规划</button>
+              <span className={styles.menuDivider} aria-hidden="true" />
+              <button
+                type="button"
+                role="menuitem"
+                className={connectionMode ? styles.toolActive : undefined}
+                aria-pressed={connectionMode}
+                disabled={!document || Object.keys(document.nodes).length + Object.keys(document.projectReferences).length < 2}
+                onClick={() => {
+                  setConnectionMode((active) => !active);
+                  if (insertMenuRef.current) insertMenuRef.current.open = false;
+                }}
               >
-                <option value="">选择项目或任务</option>
-                {referenceOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <button className={styles.referenceCreateButton} type="button" aria-label="将引用放入画布" title="将引用放入画布" disabled={!referenceTarget} onClick={createProjectReference}>
-              <Plus size={15} aria-hidden="true" />
-            </button>
-          </span>
-          <button type="button" onClick={createTimeline} disabled={!document}>
-            <CalendarRange size={15} aria-hidden="true" />时间规划
-          </button>
-          <button type="button" onClick={() => {
-            if (!document) return;
-            if (!document.lifeMap) execute('启用人生规划', (current) => ({ ...current, lifeMap: createEmptyLifeMapData(), lifeMapMigration: null }));
-            setLifePlanningOpen(true);
-          }} disabled={!document}>
-            <CalendarRange size={15} aria-hidden="true" />人生规划
-          </button>
-          <button
-            type="button"
-            className={connectionMode ? styles.toolActive : undefined}
-            aria-pressed={connectionMode}
-            disabled={!document || Object.keys(document.nodes).length + Object.keys(document.projectReferences).length < 2}
-            title="依次点击起点和终点对象；也可以拖动对象的关联入口"
-            onClick={() => setConnectionMode((active) => !active)}
-          >
-            <Link2 size={15} aria-hidden="true" />连线
-          </button>
-          <button
-            type="button"
-            aria-pressed={document?.settings.mode === 'mind-map'}
-            disabled={!document}
-            title="中心主题双侧布局；可在节点属性中指定中心主题"
-            onClick={toggleMindMapMode}
-          >
-            <GitFork size={15} aria-hidden="true" />{document?.settings.mode === 'mind-map' ? '脑图模式' : '自由画布'}
-          </button>
+                <Link2 size={14} aria-hidden="true" />连线
+              </button>
+            </div>
+          </details>
+          <div className={styles.modeSwitch} role="group" aria-label="画布模式">
+            <button type="button" aria-pressed={document?.settings.mode !== 'mind-map'} disabled={!document} onClick={() => setMindMapMode('canvas')}>画布</button>
+            <button type="button" aria-pressed={document?.settings.mode === 'mind-map'} disabled={!document} onClick={() => setMindMapMode('mind-map')}>脑图</button>
+          </div>
           <details ref={layoutMenuRef} className={styles.layoutMenu}>
             <summary data-testid="mind-map-layout-menu">
               <GitFork size={15} aria-hidden="true" />
-              {layoutRunning ? '布局中…' : '布局'}
+              {layoutRunning ? '整理中…' : '整理'}
               <ChevronDown size={13} aria-hidden="true" />
             </summary>
-            <div className={styles.layoutMenuPanel} role="menu" aria-label="布局菜单">
+            <div className={styles.layoutMenuPanel} role="menu" aria-label="整理菜单">
               <button
                 type="button"
                 role="menuitem"

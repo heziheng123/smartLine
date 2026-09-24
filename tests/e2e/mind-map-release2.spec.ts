@@ -12,6 +12,12 @@ const openMoreMenu = async (page: Page) => {
   await expect(page.getByRole('menu', { name: '更多操作菜单' })).toBeVisible();
 };
 
+const selectCreationType = async (page: Page, type: 'text' | 'markdown' | 'latex' | 'image') => {
+  await page.getByTestId('mind-map-insert-menu').click();
+  await page.getByLabel('新节点类型').selectOption(type);
+  await page.getByTestId('mind-map-insert-menu').click();
+};
+
 const addNode = async (page: Page, x: number, y: number, text: string) => {
   const canvas = page.getByTestId('mind-map-canvas');
   const closeInspector = page.getByLabel('关闭属性面板');
@@ -87,16 +93,16 @@ test('sections and groups create, collapse and move as isolated history transact
 test('advanced nodes, orthogonal edges, SVG export, minimap and command palette work', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
-  await page.getByLabel('新节点类型').selectOption('markdown');
+  await selectCreationType(page, 'markdown');
   await addNode(page, 220, 240, '# Markdown 节点\n\n**正式渲染**\n\n<script>window.__mindMapInjected = true</script>');
   await expect(page.locator('[data-testid^="mind-map-markdown-"] h1')).toHaveText('Markdown 节点');
   await expect(page.locator('[data-testid^="mind-map-markdown-"] strong')).toHaveText('正式渲染');
   await expect(page.locator('[data-testid^="mind-map-markdown-"] script')).toHaveCount(0);
   expect(await page.evaluate(() => (window as typeof window & { __mindMapInjected?: boolean }).__mindMapInjected)).toBeUndefined();
-  await page.getByLabel('新节点类型').selectOption('latex');
+  await selectCreationType(page, 'latex');
   await addNode(page, 760, 240, 'E = mc^2');
   await expect(page.locator('[data-testid^="mind-map-latex-"] .katex')).toBeVisible();
-  await page.getByLabel('新节点类型').selectOption('text');
+  await selectCreationType(page, 'text');
   await addNode(page, 500, 240, '普通节点');
   expect(Object.values((await graphState(page))!.nodes).some((node) => node.type === 'markdown')).toBe(true);
 
@@ -120,7 +126,7 @@ test('advanced nodes, orthogonal edges, SVG export, minimap and command palette 
   await page.getByRole('menuitem', { name: '导出 SVG' }).click();
   expect((await svgDownloadPromise).suggestedFilename()).toMatch(/\.svg$/);
 
-  await page.getByLabel('新节点类型').selectOption('image');
+  await selectCreationType(page, 'image');
   await addNode(page, 700, 400, '本地图片');
   await page.getByLabel('上传节点图片').setInputFiles({
     name: 'pixel.png',
