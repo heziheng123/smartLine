@@ -59,11 +59,15 @@ export function archiveReviewPlans(
   archivedAt: string,
 ): { reviewTasks: ReviewTask[]; archivedTaskIds: string[] } {
   const keys = new Set(topicKeys);
-  const archivedTaskIds = tasks
-    .filter((task) => !task.isArchived && keys.has(getReviewTopicKey(task)))
-    .map((task) => task.id);
+  const archivedTasks = tasks.filter((task) => !task.isArchived && keys.has(getReviewTopicKey(task)));
+  const archivedTaskIds = archivedTasks.map((task) => task.id);
   if (archivedTaskIds.length === 0) return { reviewTasks: tasks, archivedTaskIds };
   const ids = new Set(archivedTaskIds);
+  const totalRoundsByTopic = new Map<string, number>();
+  archivedTasks.forEach((task) => {
+    const topicKey = getReviewTopicKey(task);
+    totalRoundsByTopic.set(topicKey, (totalRoundsByTopic.get(topicKey) ?? 0) + 1);
+  });
   return {
     reviewTasks: tasks.map((task) => ids.has(task.id)
       ? {
@@ -71,7 +75,7 @@ export function archiveReviewPlans(
           isArchived: true,
           archivedReason: 'manual',
           archivedAt,
-          cycleTotalRounds: archivedTaskIds.length,
+          cycleTotalRounds: totalRoundsByTopic.get(getReviewTopicKey(task)),
         }
       : task),
     archivedTaskIds,

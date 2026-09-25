@@ -14,6 +14,7 @@ import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import EbbDatePicker from './EbbDatePicker';
 import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
+import { useGraphStore } from '@/graph/store';
 import {
   getDefaultReviewBaseDuration,
   getReviewBaseDuration,
@@ -67,6 +68,10 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const [actionNotice, setActionNotice] = useState('');
   const [replanOpen, setReplanOpen] = useState(false);
   const [replanStartDate, setReplanStartDate] = useState(addDays(todayStr(), 1));
+  const { hydrateGraphStore, resetActivationCascade } = useGraphStore(useShallow((state) => ({
+    hydrateGraphStore: state.hydrateStore,
+    resetActivationCascade: state.resetActivationCascade,
+  })));
 
   // 该主题所有任务，按 dueDate 升序
   const topicTasks = useMemo(
@@ -221,7 +226,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     });
   }, [ebbSettings, topicTasks]);
 
-  const applyPendingChange = useCallback(() => {
+  const applyPendingChange = useCallback(async () => {
     if (!pendingChange) return;
     if (pendingChange.kind === 'reschedule') {
       rescheduleReviewRounds(pendingChange.updates);
@@ -233,12 +238,14 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     if (pendingChange.kind === 'add' && pendingChange.task) addReviewTasks([pendingChange.task]);
     if (pendingChange.kind === 'restart') restartReviewCycle(topicKey, pendingChange.startDate);
     if (pendingChange.kind === 'archive') {
+      await hydrateGraphStore();
       archiveReviewPlan(topicKey);
+      resetActivationCascade(topicTasks.flatMap((task) => task.graphNodeId ? [task.graphNodeId] : []));
       onClose();
     }
     setPendingChange(null);
     setActionError('');
-  }, [addReviewTasks, archiveReviewPlan, deleteReviewTask, onClose, pendingChange, rescheduleReviewRounds, restartReviewCycle, topicKey, topicTasks.length]);
+  }, [addReviewTasks, archiveReviewPlan, deleteReviewTask, hydrateGraphStore, onClose, pendingChange, resetActivationCascade, rescheduleReviewRounds, restartReviewCycle, topicKey, topicTasks]);
 
   // 勾选
   const handleToggle = useCallback(
@@ -464,7 +471,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
             onClick={() => setPendingChange({
               kind: 'archive',
               title: '归档当前复习计划',
-              description: `“${topicName}”的 ${topicTasks.length} 个复习轮次会从 EBB 和每日安排中隐藏；知识节点与基础课任务记录会保留。以后可在“复习归档库”恢复。`,
+              description: `“${topicName}”的 ${topicTasks.length} 个复习轮次会从 EBB 和每日安排中隐藏；关联知识节点会恢复为未激活，基础课任务记录仍会保留。以后可在“复习归档库”恢复。`,
             })}
             disabled={topicTasks.length === 0}
           >

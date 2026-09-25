@@ -62,7 +62,7 @@ const GRAPH_STATUS_OPTIONS: Array<{
   { value: 'inactive', label: '未激活', dotClass: 'bg-slate-500' },
   { value: 'overdue', label: '严重逾期', dotClass: 'bg-rose-500' },
   { value: 'completed-no-review', label: '已激活 · 无复习计划', dotClass: 'bg-blue-500' },
-  { value: 'archived-no-review', label: '旧复习已归档', dotClass: 'bg-slate-400' },
+  { value: 'archived-no-review', label: '旧复习已归档', dotClass: 'bg-slate-500' },
   { value: 'reviewing', label: '复习中', dotClass: 'bg-emerald-500' },
   { value: 'mastered', label: '复习已完成', dotClass: 'bg-amber-500' },
 ];
@@ -70,7 +70,7 @@ const GRAPH_STATUS_OPTIONS: Array<{
 const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
   inactive: '#64748b',
   'completed-no-review': '#3b82f6',
-  'archived-no-review': '#94a3b8',
+  'archived-no-review': '#64748b',
   reviewing: '#10b981',
   mastered: '#eab308',
 };

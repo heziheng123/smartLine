@@ -49,6 +49,8 @@ test('批量归档只影响选中节点子树的活动复习，不影响其他�
   assert.deepEqual(result.archivedTaskIds, ['root-r1', 'child-r1']);
   assert.equal(byId.get('root-r1')?.isArchived, true);
   assert.equal(byId.get('child-r1')?.isArchived, true);
+  assert.equal(byId.get('root-r1')?.cycleTotalRounds, 1);
+  assert.equal(byId.get('child-r1')?.cycleTotalRounds, 1);
   assert.notEqual(byId.get('other-r1')?.isArchived, true);
   assert.equal(byId.get('old-r1')?.archivedReason, 'relearned');
 });

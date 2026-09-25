@@ -16,14 +16,18 @@ const ArchivedReviewPlansPanel: React.FC<ArchivedReviewPlansPanelProps> = ({ onC
     reviewTasks: state.reviewTasks,
     restoreArchivedReviewPlan: state.restoreArchivedReviewPlan,
   })));
-  const activateGraphLeaves = useGraphStore((state) => state.activateLeafCascade);
+  const { activateGraphLeaves, hydrateGraphStore } = useGraphStore(useShallow((state) => ({
+    activateGraphLeaves: state.activateLeafCascade,
+    hydrateGraphStore: state.hydrateStore,
+  })));
   const plans = useMemo(() => listArchivedReviewPlans(reviewTasks), [reviewTasks]);
   const [pendingPlan, setPendingPlan] = useState<ArchivedReviewPlan | null>(null);
 
-  const restore = () => {
+  const restore = async () => {
     if (!pendingPlan) return;
-    restoreArchivedReviewPlan(pendingPlan.tasks.map((task) => task.id));
-    if (pendingPlan.graphNodeId) activateGraphLeaves(pendingPlan.graphNodeId);
+    await hydrateGraphStore();
+    const result = restoreArchivedReviewPlan(pendingPlan.tasks.map((task) => task.id));
+    if (result.restoredTaskIds.length > 0 && pendingPlan.graphNodeId) activateGraphLeaves(pendingPlan.graphNodeId);
     setPendingPlan(null);
   };
 
