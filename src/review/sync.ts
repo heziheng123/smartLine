@@ -2,6 +2,8 @@ import { mergeDailyReviews, type DailyReview } from './model';
 import {
   loadReviewOutbox,
   loadReviewSyncStates,
+  loadDailyReviews,
+  saveDailyReviews,
   saveReviewOutbox,
   saveReviewSyncStates,
   type ReviewOutboxJob,
@@ -26,6 +28,9 @@ export async function enqueueReviewSync(review: DailyReview): Promise<Record<str
   return serialize(async () => {
   const [jobs, states] = await Promise.all([loadReviewOutbox(), loadReviewSyncStates()]);
   const current = states[review.id];
+  // A newer server copy must be merged explicitly before another full-document
+  // write is queued. Otherwise the edit after a 409 can overwrite remote-only data.
+  if (current?.status === 'conflict' && current.remoteReview) return states;
   const job: ReviewOutboxJob = {
     operationId: newOperationId(), review, baseRevision: current?.serverRevision ?? null, attempts: 0, createdAt: new Date().toISOString(),
   };
@@ -75,7 +80,12 @@ async function flush(): Promise<Record<string, ReviewSyncState>> {
         jobs = jobs.map((item) => item.operationId === job.operationId ? { ...item, attempts: item.attempts + 1 } : item);
         break;
       } else {
-        const accepted = await response.json() as { serverRevision: number };
+        const accepted = await response.json() as { review?: DailyReview; serverRevision: number };
+        if (accepted.review) {
+          const local = await loadDailyReviews();
+          await saveDailyReviews([...local.filter((item) => item.id !== accepted.review!.id), accepted.review]
+            .sort((left, right) => right.reviewDate.localeCompare(left.reviewDate)));
+        }
         states = { ...states, [job.review.id]: { serverRevision: accepted.serverRevision, status: 'synced' } };
         jobs = jobs.filter((item) => item.operationId !== job.operationId).map((item) => item.review.id === job.review.id ? { ...item, baseRevision: accepted.serverRevision } : item);
       }
@@ -108,13 +118,47 @@ export interface VoiceTranscriptReceipt { transcript: string; operationId: strin
 
 export interface PersonalTerm { from: string; to: string }
 
-export async function transcribeVoiceSegment(reviewDate: string, segmentId: string, audio: Blob, force = false, terms: PersonalTerm[] = []): Promise<VoiceTranscriptReceipt> {
-  const operationId = force ? `transcribe-${segmentId}-${crypto.randomUUID()}` : `transcribe-${segmentId}`;
+const FILLER_WORDS = new Set(['嗯', '啊', '呃', '那个', '这个', '然后', '就是', '就是说', '怎么说', '我想一下', '我想想', '这样子', '一下', '对不对', '对吧']);
+
+/** Local-only word processor: folds voice fillers into （） and substitutes personal terms; highlights substituted spans. */
+export function sterilizeAsrDraft(text: string, terms: PersonalTerm[] = []): { draft: string; highlights: string[] } {
+  const glossary = new Map<string, string>(terms.map((term) => [term.from, term.to]));
+  const highlights: string[] = [];
+  const chars = Array.from(text);
+  const out: string[] = []; let filler: string[] = [];
+  const fillerLenAt = (index: number): number => {
+    let longest = -1;
+    for (const word of FILLER_WORDS) {
+      const rest = chars.slice(index, index + word.length).join('');
+      if (rest === word) longest = Math.max(longest, word.length);
+    }
+    return longest;
+  };
+  let i = 0;
+  while (i < chars.length) {
+    const len = fillerLenAt(i);
+    if (len !== -1) { filler.push(chars.slice(i, i + len).join('')); i += len; continue; }
+    let token = '';
+    while (i < chars.length && fillerLenAt(i) === -1) { token += chars[i]!; i += 1; }
+    const replaced = glossary.get(token) ?? token;
+    if (glossary.has(token) && token !== replaced) highlights.push(replaced);
+    if (filler.length) { out.push(`（${filler.join('')}）${replaced}`); filler = []; }
+    else out.push(replaced);
+  }
+  if (filler.length) out.push(`（${filler.join('')}）`);
+  return { draft: out.join(''), highlights };
+}
+
+export async function transcribeVoiceSegment(reviewDate: string, segmentId: string, audio: Blob, force = false, terms: PersonalTerm[] = [], draft = false): Promise<VoiceTranscriptReceipt> {
+  const operationId = force ? `transcribe-${segmentId}-${crypto.randomUUID()}` : draft ? `transcribe-${segmentId}-draft` : `transcribe-${segmentId}`;
   const form = new FormData();
   form.set('segmentId', segmentId); form.set('operationId', operationId); form.set('audio', audio, `${segmentId}.wav`);
   form.set('terms', JSON.stringify(terms.slice(0, 30)));
+  if (draft) form.set('mode', 'draft');
   const response = await fetch(`/api/reviews/${encodeURIComponent(reviewDate)}/transcribe`, { method: 'POST', body: form });
   const data = await response.json().catch(() => null) as VoiceTranscriptReceipt | { error?: string } | null;
-  if (!response.ok || !data || !('transcript' in data) || typeof data.transcript !== 'string' || typeof data.operationId !== 'string' || !('review' in data) || !('serverRevision' in data) || typeof data.serverRevision !== 'number') throw new Error(data && 'error' in data && data.error ? data.error : '语音识别暂时不可用。');
+  if (!response.ok || !data || !('transcript' in data) || typeof data.transcript !== 'string' || typeof data.operationId !== 'string') throw new Error(data && 'error' in data && data.error ? data.error : '语音识别暂时不可用。');
+  if (draft) return data;
+  if (!('review' in data) || !('serverRevision' in data) || typeof data.serverRevision !== 'number') throw new Error('语音识别暂时不可用。');
   return data;
 }

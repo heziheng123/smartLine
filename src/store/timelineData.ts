@@ -8,10 +8,22 @@ import {
 import { addDays, isValidCalendarDate, todayStr } from '@/utils/dateSafe';
 import { shouldClearStaleFrozenMarker } from '@/domain/icebox';
 
-export const headerValueEquals = (left: unknown, right: unknown): boolean =>
-  typeof left === 'object' || typeof right === 'object'
-    ? JSON.stringify(left) === JSON.stringify(right)
-    : left === right;
+function valueEquals(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => valueEquals(value, right[index]));
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined);
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key) && valueEquals(leftRecord[key], rightRecord[key]));
+}
+
+export const headerValueEquals = valueEquals;
 
 export function normalizeTimelineTask(task: Task): Task {
   const fallbackDate = todayStr();
@@ -77,8 +89,7 @@ export function normalizeTimelineTask(task: Task): Task {
 }
 
 function taskCopiesEqual(left: Task, right: Task): boolean {
-  if (left === right) return true;
-  return JSON.stringify(left) === JSON.stringify(right);
+  return valueEquals(left, right);
 }
 
 /**

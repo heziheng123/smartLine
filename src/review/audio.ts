@@ -134,11 +134,13 @@ export class LocalOnlyAudioCapture {
   private readonly retention: VoiceAudioRetention;
   private readonly onProgress?: (audio: CapturedVoiceAudio) => void;
   private readonly onLimitReached?: () => void;
+  private readonly onLevel?: (level: number) => void;
+  private lastLevelAt = 0;
   private limitReached = false;
   private released = false;
 
-  constructor(segmentId: string, retention: VoiceAudioRetention, onProgress?: (audio: CapturedVoiceAudio) => void, onLimitReached?: () => void) {
-    this.segmentId = segmentId; this.retention = retention; this.onProgress = onProgress; this.onLimitReached = onLimitReached;
+  constructor(segmentId: string, retention: VoiceAudioRetention, onProgress?: (audio: CapturedVoiceAudio) => void, onLimitReached?: () => void, onLevel?: (level: number) => void) {
+    this.segmentId = segmentId; this.retention = retention; this.onProgress = onProgress; this.onLimitReached = onLimitReached; this.onLevel = onLevel;
   }
 
   static supported(): boolean { return typeof window !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia) && Boolean(window.AudioContext); }
@@ -160,10 +162,18 @@ export class LocalOnlyAudioCapture {
       this.gain = this.context.createGain(); this.gain.gain.value = 0;
       this.processor.onaudioprocess = (event) => {
         if (this.limitReached) return;
+        const channel = event.inputBuffer.getChannelData(0);
+        const now = performance.now();
+        if (this.onLevel && now - this.lastLevelAt > 100) {
+          this.lastLevelAt = now;
+          let sum = 0;
+          for (let i = 0; i < channel.length; i += 4) sum += channel[i]! * channel[i]!;
+          this.onLevel(Math.min(1, Math.sqrt(sum / (channel.length / 4)) * 3));
+        }
         const byteLimit = voicePcmByteLimit(this.context!.sampleRate);
         const remainingBytes = byteLimit - this.byteLength - this.pendingBytes;
         if (remainingBytes <= 0) { this.reachLimit(); return; }
-        const captured = new Blob([pcm16(event.inputBuffer.getChannelData(0))], { type: 'application/octet-stream' });
+        const captured = new Blob([pcm16(channel)], { type: 'application/octet-stream' });
         const blob = captured.size > remainingBytes ? captured.slice(0, remainingBytes, 'application/octet-stream') : captured;
         this.pending.push(blob); this.pendingBytes += blob.size;
         if (this.pendingBytes >= this.context!.sampleRate * 2 || blob.size < captured.size) this.flush();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Cloud, FileText, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import {
   addReviewItem,
+  activeReviewItems,
   activeReviewAnnotations,
   activeTextVersion,
   applyAiAnalysis,
@@ -11,6 +12,7 @@ import {
   createDailyReview,
   removeReviewItem,
   restoreCompletedVersion,
+  setVoiceInterimTranscript,
   setVoiceTranscriptionState,
   updateVoiceAudio,
   updateReviewItem,
@@ -26,7 +28,7 @@ import { cleanExpiredVoiceAudio, eraseVoiceAudio, localReviewDeviceId, prepareVo
 import AnnotatedReviewText from '@/review/components/AnnotatedReviewText';
 import VoiceCaptureButton from '@/review/components/VoiceCaptureButton';
 import { loadDailyReviews, loadReviewSyncStates, loadReviewTextDrafts, saveDailyReviews, saveReviewTextDrafts, type ReviewSyncState } from '@/review/repository';
-import { enqueueReviewSync, fetchRemoteReview, flushReviewOutbox, resolveReviewConflict, structureReview, transcribeVoiceSegment, type PersonalTerm } from '@/review/sync';
+import { enqueueReviewSync, fetchRemoteReview, flushReviewOutbox, resolveReviewConflict, sterilizeAsrDraft, structureReview, transcribeVoiceSegment, type PersonalTerm } from '@/review/sync';
 import { useAuth } from '@/auth/AuthContext';
 
 const sections: { id: ReviewSection; title: string; hint: string }[] = [
@@ -107,22 +109,26 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   }, [reviewDate, syncEnabled]);
 
   const review = useMemo(() => reviews?.find((item) => item.reviewDate === reviewDate) ?? null, [reviewDate, reviews]);
-  const syncReview = useCallback((next: DailyReview) => {
-    if (!syncEnabled) return;
-    void enqueueReviewSync(next)
-      .then(setSyncStates)
-      .then(() => flushReviewOutbox())
-      .then(setSyncStates)
-      .catch(() => setStorageError('同步队列保存失败，本机内容仍已保存。'));
-  }, [syncEnabled]);
   const update = useCallback((next: DailyReview, shouldSync = true) => {
     const existing = reviewsRef.current ?? [];
     const nextReviews = [...existing.filter((item) => item.id !== next.id), next].sort((left, right) => right.reviewDate.localeCompare(left.reviewDate));
     reviewsRef.current = nextReviews; setReviews(nextReviews);
-    void saveDailyReviews(nextReviews).catch((error) => { console.error('[review] 本机保存失败', error); setStorageError('本机保存失败，请暂时不要关闭页面。'); });
-    if (shouldSync) syncReview(next);
-  }, [syncReview]);
+    const persist = async (): Promise<Record<string, ReviewSyncState> | null> => {
+      let queued: Record<string, ReviewSyncState> | null = null;
+      if (shouldSync && syncEnabled) {
+        try { queued = await enqueueReviewSync(next); setSyncStates(queued); }
+        catch { setStorageError('同步队列保存失败，本机内容仍会保存。'); }
+      }
+      try { await saveDailyReviews(nextReviews); }
+      catch (error) { console.error('[review] 本机保存失败', error); setStorageError('本机保存失败，请暂时不要关闭页面。'); return queued; }
+      if (!queued || queued[next.id]?.status === 'conflict') return queued;
+      try { const states = await flushReviewOutbox(); setSyncStates(states); return states; }
+      catch { setStorageError('同步失败，本机内容和待传队列仍已保存。'); return queued; }
+    };
+    return persist();
+  }, [syncEnabled]);
   const current = review ?? createDailyReview(reviewDate);
+  const currentItems = activeReviewItems(current);
   const sourceText = textDrafts?.[reviewDate] ?? '';
   const updateSourceText = (text: string) => {
     setTextDrafts((currentDrafts) => {
@@ -145,7 +151,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
     if (voice.originDeviceId !== localReviewDeviceId()) { setStorageError('请回到录制这段语音的设备继续识别；音频不会上传到其他设备。'); return; }
     setStorageError(null); setTranscribingSegmentId(segmentId);
     const processing = setVoiceTranscriptionState(reviewToTranscribe, segmentId, 'transcribing');
-    update(processing, false);
+    await update(processing, false);
     try {
       try {
         setSyncStates(await enqueueReviewSync(processing));
@@ -187,7 +193,17 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
     const base = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
     if (!base) throw new Error('录音片段未建立，请重新开始。');
     const next = updateVoiceAudio(base, audio.segmentId, { mimeType: audio.mimeType, durationMs: audio.durationMs, chunkCount: audio.chunkCount, byteLength: audio.byteLength, sampleRate: audio.sampleRate }, 'waiting_transcription');
-    update(next, true);
+    const states = await update(next, true);
+    if (syncEnabled) {
+      if (states?.[next.id]?.status !== 'synced') return;
+      const wav = await prepareVoiceWav(audio).catch(() => null);
+      if (!wav) return;
+      try {
+        const receipt = await transcribeVoiceSegment(next.reviewDate, audio.segmentId, wav, false, personalTerms, true);
+        const latest = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
+        if (latest) update(setVoiceInterimTranscript(latest, audio.segmentId, receipt.transcript), false);
+      } catch { /* interim draft is best-effort; the audio stays local for the final request */ }
+    }
   };
   const finishVoice = async (audios: CapturedVoiceAudio[]) => {
     for (const audio of audios) {
@@ -195,6 +211,35 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
       if (base) await transcribeVoice(base, audio.segmentId);
     }
   };
+  const transcribeRef = useRef(transcribeVoice);
+  transcribeRef.current = transcribeVoice;
+  const autoRetrying = useRef(false);
+  // 离线兜底：恢复联网后自动补识别本机待转写录音（音频仍只存本机，识别仍走一次性上传）。
+  useEffect(() => {
+    if (!syncEnabled || !voiceConsent) return;
+    const retryPending = () => {
+      if (autoRetrying.current || !navigator.onLine) return;
+      const latest = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
+      const pending = latest?.inputSegments.filter((segment) => segment.type === 'voice'
+        && segment.originDeviceId === localReviewDeviceId()
+        && (segment.transcriptionState === 'waiting_transcription' || segment.transcriptionState === 'retryable_failed')
+        && segment.audio.byteLength > 0) ?? [];
+      if (!pending.length) return;
+      autoRetrying.current = true;
+      void (async () => {
+        for (const segment of pending) {
+          const base = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
+          if (!base) break;
+          try { await transcribeRef.current(base, segment.id); }
+          catch { break; }
+        }
+        autoRetrying.current = false;
+      })();
+    };
+    retryPending();
+    window.addEventListener('online', retryPending);
+    return () => window.removeEventListener('online', retryPending);
+  }, [reviewDate, syncEnabled, voiceConsent]);
   const saveItem = () => {
     const next = addReviewItem(current, itemSection, itemText);
     if (next === current) return;
@@ -246,7 +291,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
       <section className="review-card review-card--source">
         <div><span className="review-card__eyebrow">直接输入</span><h2>先把今天发生的事记下来</h2><p>输入会立即保存到本机；保存为记录后，整理不会改写原文。</p></div>
         <textarea value={sourceText} onChange={(event) => updateSourceText(event.target.value)} placeholder="随便写写今天做了什么、哪里没做好、接下来怎么调整。" />
-        <div className="review-voice-settings"><label><input type="checkbox" checked={voiceConsent} onChange={(event) => { setVoiceConsent(event.target.checked); localStorage.setItem('smart-line-review-voice-consent-v1', event.target.checked ? 'accepted' : ''); }} />我知晓：仅在点击“说完了”后，录音才会一次性发送给语音服务转写；原始音频不会同步到云端。</label><label>本机音频<select value={audioRetention} onChange={(event) => { const value = event.target.value as VoiceAudioRetention; setAudioRetention(value); localStorage.setItem('smart-line-review-audio-retention', value); }}><option value="delete_after_transcription">转写确认后删除</option><option value="keep_7_days">保留 7 天</option><option value="keep_30_days">保留 30 天</option></select></label></div>
+        <div className="review-voice-settings"><label><input type="checkbox" checked={voiceConsent} onChange={(event) => { setVoiceConsent(event.target.checked); localStorage.setItem('smart-line-review-voice-consent-v1', event.target.checked ? 'accepted' : ''); }} />我知晓：点击“暂停思考”或“说完了”会把该段录音一次性发送给语音服务转写；失败的待识别片段会在重新联网后自动重试，原始音频不会同步到工作区云端。</label><label>本机音频<select value={audioRetention} onChange={(event) => { const value = event.target.value as VoiceAudioRetention; setAudioRetention(value); localStorage.setItem('smart-line-review-audio-retention', value); }}><option value="delete_after_transcription">转写确认后删除</option><option value="keep_7_days">保留 7 天</option><option value="keep_30_days">保留 30 天</option></select></label></div>
         <div className="review-source-actions"><button type="button" className="review-button review-button--primary" onClick={saveSource} disabled={!sourceText.trim()}><Save size={16} />保存为记录</button><VoiceCaptureButton disabled={!voiceConsent} retention={audioRetention} onStarted={beginVoice} onPaused={pauseVoice} onFinished={finishVoice} onError={setStorageError} /></div>
       </section>
 
@@ -257,13 +302,13 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
 
       <div className="review-shared-actions">
         <span className={`review-sync review-sync--${syncState.status}`}><Cloud size={14} />{syncState.status === 'synced' ? '已同步' : syncState.status === 'sync_pending' ? '待同步' : syncState.status === 'sync_error' ? '等待重试' : syncState.status === 'conflict' ? '发现冲突' : '仅本机'}</span>
-        {syncEnabled && <button type="button" className="review-button" onClick={() => syncReview(current)}>立即同步</button>}
+        {syncEnabled && <button type="button" className="review-button" onClick={() => void update(current)}>立即同步</button>}
       </div>
-      {syncState.status === 'conflict' && <div className="review-conflict review-conflict--shared" role="alert"><span>{syncState.error}</span><button type="button" className="review-button" onClick={resolveConflict}>合并两台设备记录</button>{syncState.remoteReview && <details><summary>查看云端版本</summary><ul>{syncState.remoteReview.workingDraft.items.map((item) => <li key={item.itemId}>{sections.find((section) => section.id === item.section)?.title}：{item.text}</li>)}</ul></details>}</div>}
+      {syncState.status === 'conflict' && <div className="review-conflict review-conflict--shared" role="alert"><span>{syncState.error}</span><button type="button" className="review-button" onClick={resolveConflict}>合并两台设备记录</button>{syncState.remoteReview && <details><summary>查看云端版本</summary><ul>{activeReviewItems(syncState.remoteReview).map((item) => <li key={item.itemId}>{sections.find((section) => section.id === item.section)?.title}：{item.text}</li>)}</ul></details>}</div>}
 
       {viewMode === 'source' && <>
         <AnnotatedReviewText key={current.id} review={current} onChange={update} onAnalyze={() => void runAi()} analyzing={isStructuring} />
-        {current.workingDraft.items.some((item) => item.section === 'summary') && <section className="review-card review-ai-summary"><div><span className="review-card__eyebrow">AI 生成内容</span><h2>今日总结</h2><p>以下内容是 AI 对原文的概括，不是你的原话。</p></div><ul>{current.workingDraft.items.filter((item) => item.section === 'summary').map((item) => <li key={item.itemId}>{item.text}</li>)}</ul></section>}
+        {currentItems.some((item) => item.section === 'summary') && <section className="review-card review-ai-summary"><div><span className="review-card__eyebrow">AI 生成内容</span><h2>今日总结</h2><p>以下内容是 AI 对原文的概括，不是你的原话。</p></div><ul>{currentItems.filter((item) => item.section === 'summary').map((item) => <li key={item.itemId}>{item.text}</li>)}</ul></section>}
       </>}
 
       {viewMode === 'organized' && <section className="review-card">
@@ -278,7 +323,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
         </div>
         <div className="review-sections">
           {sections.map((section) => {
-            const items = current.workingDraft.items.filter((item) => item.section === section.id);
+            const items = currentItems.filter((item) => item.section === section.id);
             return <section key={section.id} className="review-section"><h3>{section.title}</h3><p>{section.hint}</p>{items.length ? <ul>{items.map((item) => <li key={item.itemId} className={item.locked ? 'is-locked' : ''}><textarea defaultValue={item.text} onBlur={(event) => updateItem(item.itemId, event.target.value)} aria-label={`编辑${section.title}`} /><button type="button" onClick={() => removeItem(item.itemId)} aria-label={`删除${item.text}`}><Trash2 size={13} /></button></li>)}</ul> : <span className="review-empty">还没有内容</span>}</section>;
           })}
         </div>
@@ -289,7 +334,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
       {current.completedVersions.length > 0 && <section className="review-card review-card--completed-versions"><div><span className="review-card__eyebrow">完成版本</span><h2>完成时的快照</h2><p>恢复会创建新的工作草稿，不会修改历史快照。</p></div>{current.completedVersions.map((version) => <article key={version.id}><div className="review-version-heading"><h3>第 {version.versionNo} 版 · {new Date(version.completedAt ?? version.createdAt).toLocaleString()}</h3><button type="button" className="review-button" onClick={() => restoreVersion(version.id)}>恢复为草稿</button></div>{version.items.length ? <ul>{version.items.map((item) => <li key={item.itemId}><strong>{sections.find((section) => section.id === item.section)?.title}：</strong>{item.text}</li>)}</ul> : <span className="review-empty">完成时没有整理条目</span>}</article>)}</section>}
       {viewMode === 'source' && current.inputSegments.length > 0 && <section className="review-card review-card--history"><div className="review-card__title"><div><span className="review-card__eyebrow">转写与原始记录</span><h2>校正权威原文</h2><p>编辑后会生成新的文本版本；不能安全迁移的人工标注会保留并提示确认。</p></div><FileText size={19} /></div><ol>{current.inputSegments.map((segment) => segment.type === 'text'
         ? <li key={segment.id}><textarea defaultValue={segment.text} onBlur={(event) => updateSource(segment.id, event.target.value)} aria-label="编辑原始记录" /></li>
-        : <li key={segment.id} className="review-voice-segment"><strong>语音片段 · {Math.ceil(segment.audio.durationMs / 1_000)} 秒</strong>{segment.asrText || segment.correctedText ? <><textarea defaultValue={segment.correctedText ?? segment.asrText} onBlur={(event) => { const next = updateVoiceTranscript(current, segment.id, event.target.value); if (next !== current) update(next); }} aria-label="校对语音转写" /><span className="review-source-actions"><button type="button" className="review-button" onClick={() => learnPersonalTerm(segment)}>校对后加入常用词</button><button type="button" className="review-button" disabled={!syncEnabled || transcribingSegmentId === segment.id} onClick={() => void transcribeVoice(current, segment.id, true)}>重新识别（需保留本机音频）</button></span></> : segment.originDeviceId !== localReviewDeviceId() ? <span>该语音仍在录制设备；请回到原设备继续识别。</span> : <><span>{segment.transcriptionState === 'recording' ? '录音意外中断时会在下次打开时恢复已保存部分。' : segment.transcriptionState === 'interrupted' ? '录音已中断；已保存部分仍在本机。可继续说（将建立新片段）或点击完成并识别。' : segment.transcriptionState === 'audio_unavailable' ? '本机音频未完整保存或已被清理，无法识别。' : segment.transcriptionState === 'transcribing' ? '正在识别语音…' : segment.transcriptionState === 'retryable_failed' ? '识别失败，录音仍在本机。' : '仅保存在本机，等待点击“说完了”后识别。'}</span>{segment.transcriptionState !== 'audio_unavailable' && <button type="button" className="review-button" disabled={!syncEnabled || transcribingSegmentId === segment.id || segment.transcriptionState === 'transcribing'} onClick={() => void transcribeVoice(current, segment.id)}>{transcribingSegmentId === segment.id ? '正在识别…' : segment.transcriptionState === 'retryable_failed' ? '重试识别' : '完成并识别'}</button>}</>}</li>)}</ol></section>}
+        : <li key={segment.id} className="review-voice-segment"><strong>语音片段 · {Math.ceil(segment.audio.durationMs / 1_000)} 秒</strong>{segment.asrText || segment.correctedText ? <><textarea defaultValue={segment.correctedText ?? segment.asrText} onBlur={(event) => { const next = updateVoiceTranscript(current, segment.id, event.target.value); if (next !== current) update(next); }} aria-label="校对语音转写" />{(() => { const raw = segment.correctedText ?? segment.asrText ?? ''; const qa = sterilizeAsrDraft(raw, personalTerms); return qa.draft !== raw ? <span className="review-voice-qa">质检预览（不改原文）：{qa.draft}{qa.highlights.length ? ` · 命中常用词 ${qa.highlights.length} 处` : ''}</span> : null; })()}<span className="review-source-actions"><button type="button" className="review-button" onClick={() => learnPersonalTerm(segment)}>校对后加入常用词</button><button type="button" className="review-button" disabled={!syncEnabled || transcribingSegmentId === segment.id} onClick={() => void transcribeVoice(current, segment.id, true)}>重新识别（需保留本机音频）</button></span></> : segment.originDeviceId !== localReviewDeviceId() ? <span>该语音仍在录制设备；请回到原设备继续识别。</span> : segment.interimTranscript ? <><p className="review-voice-draft" aria-live="polite"><span className="review-voice-draft__badge">草稿 · 未确认</span>{segment.interimTranscript}</p><span>暂停时自动生成，仅供预览；说完了会替换为终稿，失败也不会丢录音。</span></> : <><span>{segment.transcriptionState === 'recording' ? '录音意外中断时会在下次打开时恢复已保存部分。' : segment.transcriptionState === 'interrupted' ? '录音已中断；已保存部分仍在本机。可继续说（将建立新片段）或点击完成并识别。' : segment.transcriptionState === 'audio_unavailable' ? '本机音频未完整保存或已被清理，无法识别。' : segment.transcriptionState === 'transcribing' ? '正在识别语音…' : segment.transcriptionState === 'retryable_failed' ? '识别失败，录音仍在本机。' : '仅保存在本机；联网后会自动补识别，也可手动点击“说完了”。'}</span>{segment.transcriptionState !== 'audio_unavailable' && <button type="button" className="review-button" disabled={!syncEnabled || transcribingSegmentId === segment.id || segment.transcriptionState === 'transcribing'} onClick={() => void transcribeVoice(current, segment.id)}>{transcribingSegmentId === segment.id ? '正在识别…' : segment.transcriptionState === 'retryable_failed' ? '重试识别' : '完成并识别'}</button>}</>}</li>)}</ol></section>}
       {current.conflictSnapshots.length > 0 && <section className="review-card"><div><span className="review-card__eyebrow">冲突快照</span><h2>人工编辑的可追溯副本</h2></div>{current.conflictSnapshots.map((snapshot) => <details key={snapshot.id}><summary>{new Date(snapshot.createdAt).toLocaleString()}：{snapshot.message}</summary><p>本机：{snapshot.localItems.map((item) => item.text).join('；') || '无'}</p><p>云端：{snapshot.remoteItems.map((item) => item.text).join('；') || '无'}</p></details>)}</section>}
       {reviews.length > 0 && <section className="review-card review-card--review-history"><div><span className="review-card__eyebrow">历史复盘</span><h2>按日期打开已保存版本</h2></div><div>{reviews.map((item) => {
         const version = activeTextVersion(item); const annotations = activeReviewAnnotations(item);

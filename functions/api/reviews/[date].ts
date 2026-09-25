@@ -1,5 +1,6 @@
 import { isSameOriginRequest, jsonResponse, readSession } from '../../_lib/session.ts';
 import { normalizeReview, type PersistedReview, type ReviewEnv } from '../../_lib/reviews.ts';
+import { readLimitedBody } from '../../_lib/r2.ts';
 
 interface FunctionContext { env: ReviewEnv; request: Request; params: { date?: string } }
 interface ReviewRow { payload: string; revision: number }
@@ -44,8 +45,10 @@ export async function onRequestPost(context: FunctionContext): Promise<Response>
 
   let body: { review?: unknown; baseRevision?: unknown; operationId?: unknown };
   try {
-    const raw = await context.request.text();
-    if (new TextEncoder().encode(raw).byteLength > MAX_REQUEST_BYTES) return jsonResponse({ error: 'Review payload is too large.' }, 413);
+    if (!context.request.body) return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+    const bytes = await readLimitedBody(context.request.body, MAX_REQUEST_BYTES);
+    if (!bytes) return jsonResponse({ error: 'Review payload is too large.' }, 413);
+    const raw = new TextDecoder().decode(bytes);
     body = JSON.parse(raw) as typeof body;
   } catch { return jsonResponse({ error: 'Invalid JSON body.' }, 400); }
   if (!isOperationId(body.operationId) || !(body.baseRevision === null || (typeof body.baseRevision === 'number' && Number.isSafeInteger(body.baseRevision) && body.baseRevision >= 0))) return jsonResponse({ error: 'Invalid synchronization metadata.' }, 400);

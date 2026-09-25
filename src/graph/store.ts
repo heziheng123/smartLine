@@ -173,6 +173,8 @@ interface GraphStore extends GraphData {
   deleteNode: (id: string) => void;
   restoreNode: (node: GraphNode, childrenIds: string[]) => void;
   archiveNodeCascade: (id: string, isArchived: boolean) => void;
+  resetActivationCascade: (rootIds: string[]) => void;
+  activateLeafCascade: (rootId: string) => void;
   getNodeById: (id: string) => GraphNode | undefined;
   importGraphData: (data: GraphData) => void;
   replaceGraphData: (data: GraphData) => void;
@@ -387,6 +389,46 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
               )
             };
             return newData;
+          });
+        },
+
+        resetActivationCascade: (rootIds) => {
+          const roots = new Set(rootIds.filter(Boolean));
+          if (roots.size === 0) return;
+          set((state) => {
+            const resetIds = new Set<string>();
+            roots.forEach((rootId) => {
+              collectNodeCascadeIds(state.nodes, rootId).forEach((nodeId) => resetIds.add(nodeId));
+            });
+            const visibleResetIds = [...resetIds].filter((nodeId) =>
+              state.nodes.some((node) => node.id === nodeId && !node.isArchived));
+            if (visibleResetIds.length === 0) return state;
+            const visibleReset = new Set(visibleResetIds);
+            return {
+              nodes: state.nodes.map((node) => visibleReset.has(node.id)
+                ? { ...node, status: state.nodes.some((child) => !child.isArchived && child.parentId === node.id)
+                  ? undefined
+                  : 'unactivated' as const }
+                : node),
+            };
+          });
+        },
+
+        activateLeafCascade: (rootId) => {
+          if (!rootId) return;
+          set((state) => {
+            if (!state.nodes.some((node) => node.id === rootId && !node.isArchived)) return state;
+            const cascade = new Set(collectNodeCascadeIds(state.nodes, rootId));
+            const leaves = state.nodes.filter((node) =>
+              !node.isArchived && cascade.has(node.id)
+              && !state.nodes.some((child) => !child.isArchived && child.parentId === node.id));
+            if (leaves.length === 0) return state;
+            const leafIds = new Set(leaves.map((node) => node.id));
+            return {
+              nodes: state.nodes.map((node) => leafIds.has(node.id)
+                ? { ...node, status: 'activated' as const }
+                : node),
+            };
           });
         },
 

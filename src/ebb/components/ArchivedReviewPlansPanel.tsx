@@ -5,6 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { formatDate } from '@/utils/dateSafe';
 import { listArchivedReviewPlans, type ArchivedReviewPlan } from '../reviewPlanArchive';
 import { useEbbStore } from '../store';
+import { useGraphStore } from '@/graph/store';
 
 interface ArchivedReviewPlansPanelProps {
   onClose: () => void;
@@ -15,12 +16,14 @@ const ArchivedReviewPlansPanel: React.FC<ArchivedReviewPlansPanelProps> = ({ onC
     reviewTasks: state.reviewTasks,
     restoreArchivedReviewPlan: state.restoreArchivedReviewPlan,
   })));
+  const activateGraphLeaves = useGraphStore((state) => state.activateLeafCascade);
   const plans = useMemo(() => listArchivedReviewPlans(reviewTasks), [reviewTasks]);
   const [pendingPlan, setPendingPlan] = useState<ArchivedReviewPlan | null>(null);
 
   const restore = () => {
     if (!pendingPlan) return;
     restoreArchivedReviewPlan(pendingPlan.tasks.map((task) => task.id));
+    if (pendingPlan.graphNodeId) activateGraphLeaves(pendingPlan.graphNodeId);
     setPendingPlan(null);
   };
 
@@ -42,7 +45,7 @@ const ArchivedReviewPlansPanel: React.FC<ArchivedReviewPlansPanelProps> = ({ onC
         <div className="eb-archive-body">
           <div className="eb-archive-note">
             <Archive size={15} />
-            <span><strong>仅收起复习任务</strong>基础课任务记录与知识节点仍会保留。</span>
+            <span><strong>归档复习任务并重置节点激活状态。</strong>基础课任务记录与复习历史仍会保留，恢复计划时会自动重新点亮对应节点。</span>
           </div>
           {plans.length === 0 ? (
             <div className="eb-archive-empty">

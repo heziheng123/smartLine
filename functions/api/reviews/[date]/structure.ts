@@ -1,6 +1,7 @@
 import { isSameOriginRequest, jsonResponse, readSession } from '../../../_lib/session.ts';
 import { normalizeReview, type PersistedReview } from '../../../_lib/reviews.ts';
 import { responseText, reviewStructureRequest, validateAiAnalysis, type ReviewAiEnv } from '../../../_lib/reviewAi.ts';
+import { readLimitedBody } from '../../../_lib/r2.ts';
 
 interface FunctionContext { env: ReviewAiEnv; request: Request; params: { date?: string } }
 const MAX_REQUEST_BYTES = 512 * 1024;
@@ -25,8 +26,10 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
   let review: PersistedReview | null;
   let operationId: string | undefined;
   try {
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).byteLength > MAX_REQUEST_BYTES) return jsonResponse({ error: 'Review payload is too large.' }, 413);
+    if (!request.body) return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+    const bytes = await readLimitedBody(request.body, MAX_REQUEST_BYTES);
+    if (!bytes) return jsonResponse({ error: 'Review payload is too large.' }, 413);
+    const raw = new TextDecoder().decode(bytes);
     const body = JSON.parse(raw) as { review?: unknown; operationId?: unknown };
     review = normalizeReview(body.review, params.date);
     if (isOperationId(body.operationId)) operationId = body.operationId;

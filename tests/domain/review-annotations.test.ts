@@ -25,12 +25,12 @@ test('one sentence can produce separate problem and reflection annotation ranges
   const review = createTextReview('英语没完成，因为刷手机太久。');
   const persisted = normalizeReview(review, review.reviewDate);
   assert.ok(persisted);
-  const segmentId = review.inputSegments[0]!.id;
+  const blockId = activeTextVersion(review).blocks[0]!.blockId;
   const analysis = validateAiAnalysis({
     items: [],
     annotations: [
-      { type: 'problem', sourceSegmentId: segmentId, quote: '英语没完成', summary: '计划没有完成。' },
-      { type: 'reflection', sourceSegmentId: segmentId, quote: '刷手机太久', summary: '识别到用户明确表达的原因。' },
+      { type: 'problem', blockId, quote: '英语没完成', summary: '计划没有完成。' },
+      { type: 'reflection', blockId, quote: '刷手机太久', summary: '识别到用户明确表达的原因。' },
     ],
   }, persisted);
 
@@ -55,7 +55,7 @@ test('deleting or reclassifying an annotation never changes authoritative text',
 test('AI reanalysis preserves manual annotations and resolves overlapping AI color', () => {
   const review = createTextReview('今天完成了数学练习。');
   const manual = addReviewAnnotation(review, 'reflection', 2, 9, '2026-09-24T08:02:00.000Z');
-  const analyzed = applyAiAnalysis(manual, [], [{ type: 'progress', start: 2, end: 9, sourceSegmentIds: [review.inputSegments[0]!.id] }], '2026-09-24T08:03:00.000Z');
+  const analyzed = applyAiAnalysis(manual, [], [{ blockId: activeTextVersion(review).blocks[0]!.blockId, type: 'progress', start: 2, end: 9, sourceSegmentIds: [review.inputSegments[0]!.id] }], '2026-09-24T08:03:00.000Z');
   const annotations = activeReviewAnnotations(analyzed);
 
   assert.equal(annotations.length, 1);
@@ -92,14 +92,16 @@ test('adding another source segment keeps existing manual annotations', () => {
 test('AI prioritizes only appended or edited segments without losing prior analysis context', () => {
   let review = createTextReview('第一段已经分析');
   const firstId = review.inputSegments[0]!.id;
-  review = applyAiAnalysis(review, [], [{ type: 'progress', start: 0, end: 7, sourceSegmentIds: [firstId] }], '2026-09-24T08:01:00.000Z');
+  review = applyAiAnalysis(review, [], [{ blockId: activeTextVersion(review).blocks[0]!.blockId, type: 'progress', start: 0, end: 7, sourceSegmentIds: [firstId] }], '2026-09-24T08:01:00.000Z');
   const appended = appendTextSegment(review, '第二段刚补充', '2026-09-24T08:02:00.000Z');
   const appendBody = JSON.parse(reviewStructureRequest(appended as Parameters<typeof reviewStructureRequest>[0], 'deepseek-chat').body as string);
-  assert.deepEqual(appendBody.input[0].content && JSON.parse(appendBody.input[0].content).newSegmentIds, [appended.inputSegments[1]!.id]);
+  const appendContent = JSON.parse(appendBody.input[0].content);
+  assert.ok(appendContent.targetBlocks.some((b: { text: string }) => b.text === '第二段刚补充'));
 
   const edited = updateTextSegment(appended, firstId, '第一段已经修改', '2026-09-24T08:03:00.000Z');
   const editBody = JSON.parse(reviewStructureRequest(edited as Parameters<typeof reviewStructureRequest>[0], 'deepseek-chat').body as string);
-  assert.deepEqual(new Set(JSON.parse(editBody.input[0].content).newSegmentIds), new Set(edited.inputSegments.map((segment) => segment.id)));
+  const editContent = JSON.parse(editBody.input[0].content);
+  assert.ok(editContent.targetBlocks.some((b: { text: string }) => b.text === '第一段已经修改'));
 });
 
 test('annotations survive JSON persistence normalization', () => {

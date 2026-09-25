@@ -63,6 +63,10 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
     const result = readAsrResult(await response.json(), response.headers.get('X-Tt-Logid'));
     if (!result) { await release(); return jsonResponse({ error: 'Speech recognition returned no text.' }, 502); }
     const transcript = terms.reduce((text, term) => text.split(term.from).join(term.to), result.text);
+    if (form.get('mode') === 'draft') {
+      await release();
+      return jsonResponse({ transcript, operationId, ...(result.providerLogId ? { providerLogId: result.providerLogId } : {}), interim: true });
+    }
     const completedAt = new Date().toISOString();
     const serverRevision = reviewRow.revision + 1;
     const accepted = refreshPersistedReviewText({
@@ -70,7 +74,7 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
       revision: serverRevision,
       reviewStatus: 'draft',
       updatedAt: completedAt,
-      workingDraft: { ...review.workingDraft, baseRevision: serverRevision, items: review.workingDraft.items.filter((item) => item.locked) },
+      workingDraft: { ...review.workingDraft, baseRevision: serverRevision, items: review.workingDraft.items.filter((item) => item.locked || item.deletedAt) },
       inputSegments: review.inputSegments.map((item) => item.id === segmentId && item.type === 'voice'
         ? { ...item, transcriptionState: 'transcribed' as const, asrText: transcript, providerReceipt: { operationId, ...(result.providerLogId ? { providerLogId: result.providerLogId } : {}) } }
         : item),

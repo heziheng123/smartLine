@@ -1,5 +1,6 @@
 import type { AuthEnv } from './session.ts';
 import { VOICE_MAX_DURATION_MS, VOICE_MAX_PCM_BYTES } from '../../src/review/voiceLimits.ts';
+import { buildReviewTextBlocks, reviewContentHash, type ReviewTextBlock } from '../../src/review/textBlocks.ts';
 
 export interface D1PreparedStatement {
   bind(...values: unknown[]): D1PreparedStatement;
@@ -39,7 +40,8 @@ export interface PersistedReview {
 export interface PersistedInputTextVersion {
   id: string;
   text: string;
-  sourceRanges: Array<{ segmentId: string; start: number; end: number }>;
+  sourceRanges: Array<{ segmentId: string; start: number; end: number; contentHash: string }>;
+  blocks: ReviewTextBlock[];
   createdAt: string;
 }
 
@@ -51,6 +53,7 @@ export interface PersistedReviewAnnotation {
   start: number;
   end: number;
   sourceSegmentIds: string[];
+  sourceBlockId?: string;
   quotedText: string;
   summary?: string;
   createdBy: 'ai' | 'user';
@@ -92,6 +95,7 @@ interface PersistedReviewVersion {
     locked: boolean;
     sourceSegmentIds: string[];
     updatedAt: string;
+    deletedAt?: string;
   }>;
   createdAt: string;
   completedAt?: string;
@@ -113,7 +117,7 @@ const audioRetentions = new Set(['delete_after_transcription', 'keep_7_days', 'k
 
 const effectiveText = (segment: PersistedInputSegment): string | null => segment.type === 'text' ? segment.text : segment.correctedText ?? segment.asrText ?? null;
 
-function buildTextVersion(inputSegments: PersistedInputSegment[], createdAt: string, id = `review-text-${crypto.randomUUID()}`): PersistedInputTextVersion {
+function buildTextVersion(inputSegments: PersistedInputSegment[], createdAt: string, id = `review-text-${crypto.randomUUID()}`, previous?: PersistedInputTextVersion): PersistedInputTextVersion {
   let text = '';
   const sourceRanges: PersistedInputTextVersion['sourceRanges'] = [];
   [...inputSegments].sort((left, right) => left.clientSeq - right.clientSeq).forEach((segment) => {
@@ -122,9 +126,10 @@ function buildTextVersion(inputSegments: PersistedInputSegment[], createdAt: str
     if (text) text += '\n\n';
     const start = text.length;
     text += source;
-    sourceRanges.push({ segmentId: segment.id, start, end: text.length });
+    sourceRanges.push({ segmentId: segment.id, start, end: text.length, contentHash: reviewContentHash(source) });
   });
-  return { id, text, sourceRanges, createdAt };
+  const blocks = buildReviewTextBlocks(sourceRanges.map((range) => ({ id: range.segmentId, text: text.slice(range.start, range.end), startInDocument: range.start })), id, previous?.blocks);
+  return { id, text, sourceRanges, blocks, createdAt };
 }
 
 function sourceIdsForRange(version: PersistedInputTextVersion, start: number, end: number): string[] {
@@ -133,12 +138,22 @@ function sourceIdsForRange(version: PersistedInputTextVersion, start: number, en
 
 export function refreshPersistedReviewText(review: PersistedReview, now: string): PersistedReview {
   const previous = review.textVersions.find((version) => version.id === review.activeTextVersionId) ?? buildTextVersion(review.inputSegments, review.updatedAt);
-  const next = buildTextVersion(review.inputSegments, now);
+  const next = buildTextVersion(review.inputSegments, now, undefined, previous);
   if (previous.text === next.text && JSON.stringify(previous.sourceRanges) === JSON.stringify(next.sourceRanges)) return review;
   const textVersions = [...review.textVersions, next].slice(-20);
   const retainedVersionIds = new Set(textVersions.map((version) => version.id));
   const annotations = review.annotations.map((annotation) => {
-    if (annotation.deletedAt || annotation.textVersionId !== previous.id || (annotation.createdBy === 'ai' && !annotation.userEdited)) return annotation.textVersionId === previous.id ? { ...annotation, stale: true } : annotation;
+    if (annotation.deletedAt || annotation.textVersionId !== previous.id) return annotation;
+    if (annotation.createdBy === 'ai' && !annotation.userEdited) {
+      const previousBlock = annotation.sourceBlockId
+        ? previous.blocks.find((block) => block.blockId === annotation.sourceBlockId)
+        : previous.blocks.find((block) => annotation.start >= block.startInDocument && annotation.end <= block.endInDocument);
+      const nextBlock = previousBlock && next.blocks.find((block) => block.blockId === previousBlock.blockId && block.contentHash === previousBlock.contentHash);
+      if (!previousBlock || !nextBlock) return { ...annotation, stale: true };
+      const start = nextBlock.startInDocument + annotation.start - previousBlock.startInDocument;
+      const end = start + annotation.quotedText.length;
+      return next.text.slice(start, end) === annotation.quotedText ? { ...annotation, textVersionId: next.id, sourceBlockId: nextBlock.blockId, start, end, sourceSegmentIds: [nextBlock.sourceSegmentId], stale: false, updatedAt: now } : { ...annotation, stale: true };
+    }
     const matches: number[] = [];
     let offset = next.text.indexOf(annotation.quotedText);
     while (offset >= 0) {
@@ -162,10 +177,10 @@ function normalizeVersion(value: unknown, kind: PersistedReviewVersion['kind']):
   const items = sourceItems.map((candidate) => {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
     const item = candidate as Record<string, unknown>;
-    if (!isId(item.itemId) || !sections.has(item.section as string) || !isText(item.text) || !['ai', 'user'].includes(item.createdBy as string) || typeof item.userEdited !== 'boolean' || typeof item.locked !== 'boolean' || !isTimestamp(item.updatedAt) || !Array.isArray(item.sourceSegmentIds)) return null;
+    if (!isId(item.itemId) || !sections.has(item.section as string) || !isText(item.text) || !['ai', 'user'].includes(item.createdBy as string) || typeof item.userEdited !== 'boolean' || typeof item.locked !== 'boolean' || !isTimestamp(item.updatedAt) || !(item.deletedAt === undefined || isTimestamp(item.deletedAt)) || !Array.isArray(item.sourceSegmentIds)) return null;
     const sourceSegmentIds = item.sourceSegmentIds.filter(isId);
     if (sourceSegmentIds.length !== item.sourceSegmentIds.length) return null;
-    return { itemId: item.itemId, section: item.section as 'progress' | 'problems' | 'adjustments' | 'summary', text: item.text, createdBy: item.createdBy as 'ai' | 'user', userEdited: item.userEdited, locked: item.locked, sourceSegmentIds, updatedAt: item.updatedAt };
+    return { itemId: item.itemId, section: item.section as 'progress' | 'problems' | 'adjustments' | 'summary', text: item.text, createdBy: item.createdBy as 'ai' | 'user', userEdited: item.userEdited, locked: item.locked, sourceSegmentIds, updatedAt: item.updatedAt, ...(item.deletedAt ? { deletedAt: item.deletedAt } : {}) };
   });
   if (items.some((item) => !item)) return null;
   if (kind === 'completed_snapshot' && !isTimestamp(completedAt)) return null;
@@ -228,10 +243,22 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
       if (!candidateRange || typeof candidateRange !== 'object' || Array.isArray(candidateRange)) return null;
       const range = candidateRange as Record<string, unknown>;
       if (!isId(range.segmentId) || !isInteger(range.start) || !isInteger(range.end) || range.end <= range.start || range.end > (version.text as string).length) return null;
-      return { segmentId: range.segmentId, start: range.start, end: range.end };
+      const content = (version.text as string).slice(range.start as number, range.end as number);
+      if (!(range.contentHash === undefined || range.contentHash === reviewContentHash(content))) return null;
+      return { segmentId: range.segmentId, start: range.start, end: range.end, contentHash: reviewContentHash(content) };
     });
     if (ranges.some((range) => !range)) return null;
-    return { id: version.id, text: version.text, sourceRanges: ranges as PersistedInputTextVersion['sourceRanges'], createdAt: version.createdAt };
+    const expectedBlocks = buildReviewTextBlocks((ranges as PersistedInputTextVersion['sourceRanges']).map((range) => ({ id: range.segmentId, text: (version.text as string).slice(range.start, range.end), startInDocument: range.start })), version.id as string);
+    const blocks = Array.isArray(version.blocks) ? version.blocks.map((candidateBlock): ReviewTextBlock | null => {
+      if (!candidateBlock || typeof candidateBlock !== 'object' || Array.isArray(candidateBlock)) return null;
+      const block = candidateBlock as Record<string, unknown>;
+      const expected = expectedBlocks.find((item) => item.sourceSegmentId === block.sourceSegmentId && item.ordinal === block.ordinal);
+      if (!expected || !isId(block.blockId) || block.textVersionId !== version.id || block.text !== expected.text || block.startInDocument !== expected.startInDocument || block.endInDocument !== expected.endInDocument || block.contentHash !== expected.contentHash || !['never', 'analyzed', 'changed', 'stale'].includes(block.analysisState as string)) return null;
+      if (!(block.lastAnalyzedHash === undefined || isText(block.lastAnalyzedHash, 100)) || !(block.lastAnalyzedPromptVersion === undefined || isText(block.lastAnalyzedPromptVersion, 100)) || !(block.lastAnalyzedSchemaVersion === undefined || isText(block.lastAnalyzedSchemaVersion, 100)) || !(block.lastAnalyzedModelVersion === undefined || isText(block.lastAnalyzedModelVersion, 160)) || !(block.analyzedAt === undefined || isTimestamp(block.analyzedAt))) return null;
+      return { ...expected, blockId: block.blockId, analysisState: block.analysisState as ReviewTextBlock['analysisState'], ...(block.lastAnalyzedHash ? { lastAnalyzedHash: block.lastAnalyzedHash as string } : {}), ...(block.lastAnalyzedPromptVersion ? { lastAnalyzedPromptVersion: block.lastAnalyzedPromptVersion as string } : {}), ...(block.lastAnalyzedSchemaVersion ? { lastAnalyzedSchemaVersion: block.lastAnalyzedSchemaVersion as string } : {}), ...(block.lastAnalyzedModelVersion ? { lastAnalyzedModelVersion: block.lastAnalyzedModelVersion as string } : {}), ...(block.analyzedAt ? { analyzedAt: block.analyzedAt as string } : {}) };
+    }) : expectedBlocks;
+    if (blocks.some((block) => !block) || blocks.length !== expectedBlocks.length || new Set((blocks as ReviewTextBlock[]).map((block) => block.blockId)).size !== blocks.length) return null;
+    return { id: version.id, text: version.text, sourceRanges: ranges as PersistedInputTextVersion['sourceRanges'], blocks: blocks as ReviewTextBlock[], createdAt: version.createdAt };
   }) : [];
   if (textVersions.some((version) => !version) || textVersions.length > 20) return null;
   const normalizedTextVersions = (textVersions.length ? textVersions : [canonicalTextVersion]) as PersistedInputTextVersion[];
@@ -244,11 +271,12 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
     const annotation = candidate as Record<string, unknown>;
     const version = normalizedTextVersions.find((item) => item.id === annotation.textVersionId);
     const orphanAllowed = !version && (annotation.deletedAt !== undefined || annotation.stale === true && (annotation.createdBy === 'user' || annotation.userEdited === true));
-    if ((!version && !orphanAllowed) || !isId(annotation.id) || annotation.reviewId !== id || !isId(annotation.textVersionId) || !annotationTypes.has(annotation.type as string) || !isInteger(annotation.start) || !isInteger(annotation.end) || annotation.end <= annotation.start || version && (annotation.end > version.text.length || version.text.slice(annotation.start, annotation.end) !== annotation.quotedText) || !Array.isArray(annotation.sourceSegmentIds) || !isText(annotation.quotedText) || !(annotation.summary === undefined || isText(annotation.summary, 500)) || !['ai', 'user'].includes(annotation.createdBy as string) || typeof annotation.userEdited !== 'boolean' || typeof annotation.stale !== 'boolean' || !isTimestamp(annotation.createdAt) || !isTimestamp(annotation.updatedAt) || !(annotation.deletedAt === undefined || isTimestamp(annotation.deletedAt))) return null;
+    if ((!version && !orphanAllowed) || !isId(annotation.id) || annotation.reviewId !== id || !isId(annotation.textVersionId) || !annotationTypes.has(annotation.type as string) || !isInteger(annotation.start) || !isInteger(annotation.end) || annotation.end <= annotation.start || version && (annotation.end > version.text.length || version.text.slice(annotation.start, annotation.end) !== annotation.quotedText) || !Array.isArray(annotation.sourceSegmentIds) || !isText(annotation.quotedText) || !(annotation.sourceBlockId === undefined || isId(annotation.sourceBlockId)) || !(annotation.summary === undefined || isText(annotation.summary, 500)) || !['ai', 'user'].includes(annotation.createdBy as string) || typeof annotation.userEdited !== 'boolean' || typeof annotation.stale !== 'boolean' || !isTimestamp(annotation.createdAt) || !isTimestamp(annotation.updatedAt) || !(annotation.deletedAt === undefined || isTimestamp(annotation.deletedAt))) return null;
     const sourceSegmentIds = annotation.sourceSegmentIds.filter(isId);
     const expectedSourceIds = version ? sourceIdsForRange(version, annotation.start, annotation.end) : sourceSegmentIds;
-    if (!sourceSegmentIds.length || sourceSegmentIds.length !== annotation.sourceSegmentIds.length || sourceSegmentIds.length !== expectedSourceIds.length || !expectedSourceIds.every((sourceId) => sourceSegmentIds.includes(sourceId))) return null;
-    return { id: annotation.id, reviewId: id as string, textVersionId: annotation.textVersionId as string, type: annotation.type as PersistedReviewAnnotation['type'], start: annotation.start, end: annotation.end, sourceSegmentIds, quotedText: annotation.quotedText, ...(annotation.summary ? { summary: annotation.summary } : {}), createdBy: annotation.createdBy as 'ai' | 'user', userEdited: annotation.userEdited, stale: annotation.stale, createdAt: annotation.createdAt, updatedAt: annotation.updatedAt, ...(annotation.deletedAt ? { deletedAt: annotation.deletedAt } : {}) };
+    const sourceBlock = version && annotation.sourceBlockId ? version.blocks.find((block) => block.blockId === annotation.sourceBlockId) : undefined;
+    if (!sourceSegmentIds.length || sourceSegmentIds.length !== annotation.sourceSegmentIds.length || sourceSegmentIds.length !== expectedSourceIds.length || !expectedSourceIds.every((sourceId) => sourceSegmentIds.includes(sourceId)) || annotation.sourceBlockId && version && (!sourceBlock || annotation.start < sourceBlock.startInDocument || annotation.end > sourceBlock.endInDocument)) return null;
+    return { id: annotation.id, reviewId: id as string, textVersionId: annotation.textVersionId as string, type: annotation.type as PersistedReviewAnnotation['type'], start: annotation.start, end: annotation.end, sourceSegmentIds, ...(annotation.sourceBlockId ? { sourceBlockId: annotation.sourceBlockId as string } : {}), quotedText: annotation.quotedText, ...(annotation.summary ? { summary: annotation.summary } : {}), createdBy: annotation.createdBy as 'ai' | 'user', userEdited: annotation.userEdited, stale: annotation.stale, createdAt: annotation.createdAt, updatedAt: annotation.updatedAt, ...(annotation.deletedAt ? { deletedAt: annotation.deletedAt } : {}) };
   }) : [];
   if (annotations.some((annotation) => !annotation) || annotations.length > 400) return null;
   const workingDraft = normalizeVersion(source.workingDraft, 'working_draft');
@@ -261,9 +289,9 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
       return value.map((item) => {
         if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
         const entry = item as Record<string, unknown>;
-        if (!isId(entry.itemId) || !sections.has(entry.section as string) || !isText(entry.text) || !['ai', 'user'].includes(entry.createdBy as string) || typeof entry.userEdited !== 'boolean' || typeof entry.locked !== 'boolean' || !isTimestamp(entry.updatedAt) || !Array.isArray(entry.sourceSegmentIds)) return null;
+        if (!isId(entry.itemId) || !sections.has(entry.section as string) || !isText(entry.text) || !['ai', 'user'].includes(entry.createdBy as string) || typeof entry.userEdited !== 'boolean' || typeof entry.locked !== 'boolean' || !isTimestamp(entry.updatedAt) || !(entry.deletedAt === undefined || isTimestamp(entry.deletedAt)) || !Array.isArray(entry.sourceSegmentIds)) return null;
         const sourceSegmentIds = entry.sourceSegmentIds.filter(isId); if (sourceSegmentIds.length !== entry.sourceSegmentIds.length) return null;
-        return { itemId: entry.itemId, section: entry.section as 'progress' | 'problems' | 'adjustments' | 'summary', text: entry.text, createdBy: entry.createdBy as 'ai' | 'user', userEdited: entry.userEdited, locked: entry.locked, sourceSegmentIds, updatedAt: entry.updatedAt };
+        return { itemId: entry.itemId, section: entry.section as 'progress' | 'problems' | 'adjustments' | 'summary', text: entry.text, createdBy: entry.createdBy as 'ai' | 'user', userEdited: entry.userEdited, locked: entry.locked, sourceSegmentIds, updatedAt: entry.updatedAt, ...(entry.deletedAt ? { deletedAt: entry.deletedAt } : {}) };
       }).every(Boolean) ? value as PersistedReviewVersion['items'] : null;
     };
     const localItems = normalizeItems(snapshot.localItems); const remoteItems = normalizeItems(snapshot.remoteItems);

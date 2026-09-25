@@ -11,9 +11,9 @@ import { getReviewRoundDuration } from './duration.ts';
 
 // ── 工具函数 ────────────────────────────────────────────────
 
-/** 生成简单 ID（不依赖 uuid，足够前端使用） */
+/** 生成跨标签页、跨设备不碰撞的任务 ID。 */
 export function genId(prefix = 'eb'): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `${prefix}-${crypto.randomUUID()}`;
 }
 
 /** 判断日期是否逾期（未完成且早于今天） */
@@ -259,6 +259,14 @@ export function generateTasks(
   for (const t of existingTasks) {
     if (getReviewTopicKey(t) === topicKey) topicDates.add(t.dueDate);
   }
+  const schedulingTasks = [...existingTasks];
+  const schedulingRounds = new Map(computeRounds(existingTasks).roundMap);
+  const firstRoundOrder = Math.max(
+    0,
+    ...existingTasks
+      .filter((task) => getReviewTopicKey(task) === topicKey && !task.isArchived)
+      .map((task) => task.roundOrder ?? 0),
+  ) + 1;
 
   for (let i = 0; i < input.intervals.length; i++) {
     const interval = input.intervals[i];
@@ -272,32 +280,30 @@ export function generateTasks(
 
     // smartSpread：若启用设置，检查日负载
     if (settings) {
-      const spread = smartSpreadDate(dueDate, [...existingTasks, ...tasks], topicKey, settings, topicDates);
+      const spread = smartSpreadDate(dueDate, schedulingTasks, topicKey, settings, topicDates, schedulingRounds);
       if (spread !== dueDate) conflicts++;
       dueDate = spread;
     }
 
     topicDates.add(dueDate);
 
-    tasks.push({
+    const task: ReviewTask = {
       id: genId('rt'),
       topicName: input.topicName,
       createdAt,
       dueDate,
       originalDueDate: dueDate,
-      roundOrder: Math.max(
-        0,
-        ...existingTasks
-          .filter((task) => getReviewTopicKey(task) === topicKey && !task.isArchived)
-          .map((task) => task.roundOrder ?? 0),
-      ) + tasks.length + 1,
+      roundOrder: firstRoundOrder + tasks.length,
       isCompleted: false,
       tag: input.tag,
       outlineNodeId: input.outlineNodeId,
       complexity: input.complexity,
       baseDurationMinutes: input.baseDurationMinutes,
       smStatus: 'scheduled',
-    });
+    };
+    tasks.push(task);
+    schedulingTasks.push(task);
+    schedulingRounds.set(task.id, task.roundOrder!);
   }
 
   return { tasks, conflicts };
@@ -349,8 +355,19 @@ export function smartSpreadDate(
   topicKey: string,
   settings: EbbSettings,
   topicDates: Set<string>,
+  knownRounds?: ReadonlyMap<string, number>,
 ): string {
   const { dailyTaskLimit, dailyPointLimit, maxSpreadDays, minTopicGapDays } = settings;
+  const sameTopicTasks = minTopicGapDays > 0
+    ? existingTasks.filter((task) => getReviewTopicKey(task) === topicKey)
+    : [];
+  const tasksByDate = new Map<string, ReviewTask[]>();
+  for (const task of existingTasks) {
+    const day = tasksByDate.get(task.dueDate) ?? [];
+    day.push(task);
+    tasksByDate.set(task.dueDate, day);
+  }
+  const roundMap = knownRounds ?? computeRounds(existingTasks).roundMap;
   for (let offset = 0; offset <= maxSpreadDays; offset++) {
     // Each candidate is measured from the original planned date. Advancing from
     // the previous candidate would accumulate offsets (+0, +1, +3, +6, ...).
@@ -362,7 +379,6 @@ export function smartSpreadDate(
     // 同主题最小间隔校验：use topicKey (getReviewTopicKey format: "graph:${id}" or "topic:${name}")
     // so renamed graph nodes still group with their chain, and standalone topics use "topic:${name}".
     if (minTopicGapDays > 0) {
-      const sameTopicTasks = existingTasks.filter((t) => getReviewTopicKey(t) === topicKey);
       const tooClose = sameTopicTasks.some((t) => {
         const d = Math.abs(diffDays(candidate, t.dueDate));
         return d < minTopicGapDays && d > 0;
@@ -371,12 +387,12 @@ export function smartSpreadDate(
     }
 
     // 日任务数负载
-    const dayTasks = existingTasks.filter((t) => t.dueDate === candidate);
+    const dayTasks = tasksByDate.get(candidate) ?? [];
     if (dayTasks.length >= dailyTaskLimit) continue;
 
     // 日积分负载
     const dayPoints = dayTasks.reduce((sum, t) => {
-      const round = getTaskRound(t.id, existingTasks);
+      const round = roundMap.get(t.id) ?? 0;
       return sum + (t.complexity ? getPointWeight(round, t.complexity, settings.complexityConfigs) : 0);
     }, 0);
     if (dayPoints >= dailyPointLimit) continue;

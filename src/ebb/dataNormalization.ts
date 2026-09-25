@@ -70,8 +70,8 @@ function normalizeIsoTimestamp(value: unknown): string | undefined {
 
 /**
  * Restores review creation time without using the current clock, so old data
- * receives the same value on every device. IDs produced by genId contain the
- * original millisecond timestamp; older/custom IDs fall back to plan dates.
+ * receives the same value on every device. Legacy generated IDs contain the
+ * original millisecond timestamp; newer UUID/custom IDs fall back to plan dates.
  */
 export function normalizeReviewTaskCreatedAt(
   task: Pick<ReviewTask, 'id' | 'dueDate' | 'originalDueDate' | 'scheduleCreatedDate' | 'createdAt'>,

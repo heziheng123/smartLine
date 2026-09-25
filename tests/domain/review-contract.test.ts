@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeReview } from '../../functions/_lib/reviews.ts';
-import { appendTextSegment, appendVoiceSegment, completeDailyReview, createDailyReview } from '../../src/review/model.ts';
+import { activeReviewItems, addReviewItem, appendTextSegment, appendVoiceSegment, completeDailyReview, createDailyReview, removeReviewItem } from '../../src/review/model.ts';
 import { normalizeDailyReview } from '../../src/review/repository.ts';
 import { validateAiCandidates } from '../../functions/_lib/reviewAi.ts';
 
@@ -54,4 +54,14 @@ test('older review records missing new arrays still open safely', () => {
   assert.deepEqual(normalized.completedVersions, []);
   assert.deepEqual(normalized.conflictSnapshots, []);
   assert.deepEqual(normalized.workingDraft.items, []);
+});
+
+test('server persistence retains review item deletion tombstones', () => {
+  const withItem = addReviewItem(createDailyReview('2026-09-14', '2026-09-14T08:00:00.000Z'), 'progress', '准备删除。', '2026-09-14T08:01:00.000Z');
+  const deleted = removeReviewItem(withItem, withItem.workingDraft.items[0]!.itemId, '2026-09-14T08:02:00.000Z');
+  const normalized = normalizeReview(deleted, '2026-09-14');
+
+  assert.ok(normalized);
+  assert.ok(normalized.workingDraft.items[0]?.deletedAt);
+  assert.equal(activeReviewItems(normalized).length, 0);
 });

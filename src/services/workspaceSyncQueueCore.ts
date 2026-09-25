@@ -56,7 +56,13 @@ function normalizedConflict(record: WorkspaceConflictRecord): WorkspaceConflictR
 }
 
 function retainWorkspaceConflictRecords(records: WorkspaceConflictRecord[]): WorkspaceConflictRecord[] {
-  return records.map(normalizedConflict);
+  const normalized = records.map(normalizedConflict);
+  const active = normalized.filter((record) => record.status === 'active');
+  const history = normalized
+    .filter((record) => record.status !== 'active')
+    .sort((left, right) => (right.resolvedAt ?? right.detectedAt).localeCompare(left.resolvedAt ?? left.detectedAt))
+    .slice(0, 200);
+  return [...active, ...history];
 }
 
 export interface QueueWorkspaceFieldOptions {

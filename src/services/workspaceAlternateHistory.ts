@@ -24,6 +24,7 @@ export interface WorkspaceAlternateRecord {
 }
 
 const alternateStorage = createScopedStorage('workspace_alternates_v8');
+const MAX_WORKSPACE_ALTERNATES = 500;
 
 function fieldFromPath(path: string): WorkspaceStorageField {
   return path.split(/[.[]/, 1)[0] as WorkspaceStorageField;
@@ -62,6 +63,9 @@ export async function persistWorkspaceAlternates(records: WorkspaceAlternateReco
   if (!await verifyWorkspaceAlternatesPersisted(records.map((record) => record.recoveryId))) {
     throw new Error('冲突 alternate history 未能完整落盘并回读。');
   }
+  const retained = await listWorkspaceAlternates();
+  await Promise.all(retained.slice(MAX_WORKSPACE_ALTERNATES)
+    .map((record) => alternateStorage.removeItem('alternate:' + record.recoveryId)));
 }
 
 export async function readWorkspaceAlternate(

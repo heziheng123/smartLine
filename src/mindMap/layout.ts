@@ -57,13 +57,13 @@ export function prepareMindMapMode(document: MindMapDocument, requestedRootId?: 
 
 /** Returns the stable root of the tree containing a node without following reference edges. */
 export function findMindMapTreeRoot(document: MindMapDocument, nodeId: string): string {
+  const parentByChild = new Map<string, string>();
+  for (const edge of orderedTreeEdges(document)) parentByChild.set(edge.targetId, edge.sourceId);
   let rootId = nodeId;
   const seen = new Set<string>();
   while (!seen.has(rootId)) {
     seen.add(rootId);
-    const parentId = Object.values(document.edges).find((edge) => (
-      edge.relationship === 'tree' && edge.targetId === rootId && Boolean(document.nodes[edge.sourceId])
-    ))?.sourceId;
+    const parentId = parentByChild.get(rootId);
     if (!parentId) return rootId;
     rootId = parentId;
   }
@@ -248,8 +248,16 @@ export function layoutMindMap(document: MindMapDocument, requestedRootId?: strin
   if (!rootId) return prepared;
   const root = prepared.nodes[rootId];
   if (!root) return prepared;
-  const leftChildren = treeChildIds(prepared, rootId).filter((id) => prepared.nodes[id]?.branchSide === 'left');
-  const rightChildren = treeChildIds(prepared, rootId).filter((id) => prepared.nodes[id]?.branchSide !== 'left');
+  const treeEdges = orderedTreeEdges(prepared);
+  const children = new Map<string, string[]>();
+  for (const edge of treeEdges) {
+    const list = children.get(edge.sourceId) ?? [];
+    list.push(edge.targetId);
+    children.set(edge.sourceId, list);
+  }
+  const rootChildren = children.get(rootId) ?? [];
+  const leftChildren = rootChildren.filter((id) => prepared.nodes[id]?.branchSide === 'left');
+  const rightChildren = rootChildren.filter((id) => prepared.nodes[id]?.branchSide !== 'left');
   const nodes = { ...prepared.nodes };
   for (const [childIds, direction] of [[leftChildren, 'right-left'], [rightChildren, 'left-right']] as const) {
     if (!childIds.length) continue;
@@ -259,14 +267,14 @@ export function layoutMindMap(document: MindMapDocument, requestedRootId?: strin
       const id = pending.pop()!;
       if (included.has(id) || !prepared.nodes[id]) continue;
       included.add(id);
-      pending.push(...treeChildIds(prepared, id));
+      pending.push(...(children.get(id) ?? []));
     }
     const branch: MindMapDocument = {
       ...prepared,
       nodes: Object.fromEntries([...included].map((id) => [id, id === rootId
         ? { ...prepared.nodes[id], locked: false, participatesInLayout: true }
         : prepared.nodes[id]])),
-      edges: Object.fromEntries(orderedTreeEdges(prepared).filter((edge) => included.has(edge.sourceId)
+      edges: Object.fromEntries(treeEdges.filter((edge) => included.has(edge.sourceId)
         && included.has(edge.targetId)
         && (edge.sourceId !== rootId || childIds.includes(edge.targetId))).map((edge) => [edge.id, edge])),
       zOrder: prepared.zOrder.filter((id) => included.has(id)),

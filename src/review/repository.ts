@@ -1,5 +1,6 @@
 import { createDedicatedStorage } from '@/utils/persistence';
 import { createDailyReview, createInputTextVersion, type DailyReview, type InputTextVersion, type ReviewAnnotation, type ReviewVersion } from './model';
+import { buildReviewTextBlocks, reviewContentHash, type ReviewTextBlock } from './textBlocks';
 
 const storage = createDedicatedStorage('smart-line-review', 'reviews');
 const REVIEWS_KEY = 'daily-reviews-v1';
@@ -41,7 +42,16 @@ export function normalizeDailyReview(value: unknown): DailyReview | null {
   const inputSegments = Array.isArray(value.inputSegments) ? value.inputSegments as DailyReview['inputSegments'] : [];
   const legacyTextVersion = createInputTextVersion(inputSegments, typeof value.updatedAt === 'string' ? value.updatedAt : fallback.updatedAt);
   const textVersions = Array.isArray(value.textVersions)
-    ? value.textVersions.filter((version): version is InputTextVersion => isRecord(version) && typeof version.id === 'string' && typeof version.text === 'string' && typeof version.createdAt === 'string' && Array.isArray(version.sourceRanges))
+    ? value.textVersions.filter((version): version is InputTextVersion => isRecord(version) && typeof version.id === 'string' && typeof version.text === 'string' && typeof version.createdAt === 'string' && Array.isArray(version.sourceRanges)).map((version) => {
+      const sourceRanges = version.sourceRanges.map((range) => ({ ...range, contentHash: range.contentHash ?? reviewContentHash(version.text.slice(range.start, range.end)) }));
+      const derived = buildReviewTextBlocks(sourceRanges.map((range) => ({ id: range.segmentId, text: version.text.slice(range.start, range.end), startInDocument: range.start })), version.id);
+      const existing = Array.isArray(version.blocks) ? version.blocks as ReviewTextBlock[] : [];
+      const blocks = derived.map((block) => {
+        const saved = existing.find((item) => item.blockId === block.blockId || item.sourceSegmentId === block.sourceSegmentId && item.ordinal === block.ordinal && item.text === block.text);
+        return saved ? { ...block, ...saved, textVersionId: version.id, text: block.text, startInDocument: block.startInDocument, endInDocument: block.endInDocument, contentHash: block.contentHash } : block;
+      });
+      return { ...version, sourceRanges, blocks };
+    })
     : [];
   const usableTextVersions = textVersions.length ? textVersions : [legacyTextVersion];
   const activeTextVersionId = typeof value.activeTextVersionId === 'string' && usableTextVersions.some((version) => version.id === value.activeTextVersionId)

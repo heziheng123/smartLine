@@ -183,14 +183,13 @@ const getGraphWheelDelta = (event: WheelEvent) => {
   return -deltaY * unit * multiplier;
 };
 
-const getElementOpacity = (element: SVGElement, root: SVGSVGElement) => {
-  let opacity = 1;
-  let current: SVGElement | null = element;
-  while (current && current !== root) {
-    const value = Number.parseFloat(getComputedStyle(current).opacity);
-    if (Number.isFinite(value)) opacity *= value;
-    current = current.parentElement as SVGElement | null;
-  }
+const getElementOpacity = (element: SVGElement, root: SVGSVGElement, cache: WeakMap<SVGElement, number>, ownOpacity?: string): number => {
+  const cached = cache.get(element);
+  if (cached !== undefined) return cached;
+  const own = Number.parseFloat(ownOpacity ?? getComputedStyle(element).opacity);
+  const parent = element.parentElement as SVGElement | null;
+  const opacity: number = (Number.isFinite(own) ? own : 1) * (parent && parent !== root ? getElementOpacity(parent, root, cache) : 1);
+  cache.set(element, opacity);
   return opacity;
 };
 
@@ -199,11 +198,12 @@ const toCanvasMatrix = (matrix: DOMMatrix): CanvasMatrix =>
 
 const buildGraphCanvasCommands = (source: SVGSVGElement): GraphCanvasCommand[] => {
   const commands: GraphCanvasCommand[] = [];
+  const opacityCache = new WeakMap<SVGElement, number>();
   source.querySelectorAll<SVGPathElement | SVGTextElement>('path, text').forEach((element) => {
     const matrix = element.getCTM();
     if (!matrix) return;
     const style = getComputedStyle(element);
-    const opacity = getElementOpacity(element, source);
+    const opacity = getElementOpacity(element, source, opacityCache, style.opacity);
     if (element instanceof SVGPathElement) {
       const d = element.getAttribute('d');
       if (!d) return;
@@ -286,7 +286,7 @@ const getAccessibleTextColor = (hexcolor: string) => {
 
 export const KnowledgeGraphView: React.FC = () => {
   const [bridgeNodeId] = useState(peekKnowledgeNodeFocus);
-  const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade } = useGraphStore(
+  const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade, resetActivationCascade } = useGraphStore(
     useShallow((state) => ({
       isHydrated: state.isHydrated,
       hydrateStore: state.hydrateStore,
@@ -295,6 +295,7 @@ export const KnowledgeGraphView: React.FC = () => {
       deleteNode: state.deleteNode,
       updateNode: state.updateNode,
       archiveNodeCascade: state.archiveNodeCascade,
+      resetActivationCascade: state.resetActivationCascade,
     })),
   );
   const nodes = useMemo(() => allNodes.filter(n => !n.isArchived), [allNodes]);
@@ -600,7 +601,9 @@ export const KnowledgeGraphView: React.FC = () => {
           ? 'mastered'
           : childStates.some((childState) => childState === 'reviewing')
             ? 'reviewing'
-            : 'completed-no-review';
+            : childStates.every((childState) => childState === 'archived-no-review')
+              ? 'archived-no-review'
+              : 'completed-no-review';
       }
       visiting.delete(nodeId);
       states.set(nodeId, state);
@@ -1181,7 +1184,7 @@ export const KnowledgeGraphView: React.FC = () => {
     if (!selectedNode || selectedSubtreeReviewTasks.length === 0) return;
     const confirmed = await requestConfirmation({
       title: `归档“${selectedNode.name}”的阶段复习？`,
-      message: '复习任务会从 EBB 和每日安排中隐藏；知识节点和基础课任务记录会保留。',
+      message: '复习任务会从 EBB 和每日安排中隐藏；选中节点及其子节点会恢复为未激活状态，基础课任务记录仍会保留。',
       confirmLabel: '归档复习',
       tone: 'warning',
       impact: [
@@ -1189,8 +1192,10 @@ export const KnowledgeGraphView: React.FC = () => {
         `${selectedSubtreeReviewTasks.length} 条活动复习任务`,
       ],
     });
-    if (confirmed) archiveReviewPlansForGraphNodes(selectedSubtreeNodeIds);
-  }, [archiveReviewPlansForGraphNodes, selectedNode, selectedSubtreeNodeIds, selectedSubtreeReviewTasks.length]);
+    if (!confirmed) return;
+    archiveReviewPlansForGraphNodes(selectedSubtreeNodeIds);
+    resetActivationCascade(selectedSubtreeNodeIds);
+  }, [archiveReviewPlansForGraphNodes, resetActivationCascade, selectedNode, selectedSubtreeNodeIds, selectedSubtreeReviewTasks.length]);
 
   const selectedNodeReviewPreview = useMemo(
     () => selectedReviewTasks.slice(0, 5),

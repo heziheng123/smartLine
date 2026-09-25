@@ -361,11 +361,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
             return newData;
           });
 
-          if (sourceIds.length > 0) {
-            setTimeout(() => {
-              useDailyScheduleStore.getState().removeBySourceIds(sourceIds);
-            }, 0);
-          }
+          if (sourceIds.length > 0) useDailyScheduleStore.getState().removeBySourceIds(sourceIds);
         },
 
         toggleTaskComplete: (taskId) => {
@@ -1033,9 +1029,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
               completedDate: undefined,
             });
           }
-          setTimeout(() => {
-            useDailyScheduleStore.getState().removeBySourceIds([getProjectBlockSourceId(taskId, blockId)]);
-          }, 0);
+          useDailyScheduleStore.getState().removeBySourceIds([getProjectBlockSourceId(taskId, blockId)]);
 
           const now = new Date().toISOString();
           set((state) => {
