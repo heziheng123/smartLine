@@ -29,6 +29,7 @@ import type { SmartTaskBlock, Task } from '@/types';
 import { getUniqueTasks } from '@/store/timelineData';
 import { clearKnowledgeNodeFocus, peekKnowledgeNodeFocus } from '@/services/actionBridge';
 import { recordGraphDiagnostic, setGraphDiagnostic, setGraphDiagnosticDetail } from '../diagnostics';
+import { recordOperation, runWithoutOperationRecording } from '@/services/operationHistory';
 import { parseGraphOutline } from '../outlineImport';
 
 import { stratify, partition, type HierarchyNode, type HierarchyRectangularNode } from 'd3-hierarchy';
@@ -295,13 +296,14 @@ export const KnowledgeGraphView: React.FC = () => {
     recordGraphDiagnostic('reactCommit');
   });
   const [bridgeNodeId] = useState(peekKnowledgeNodeFocus);
-  const { isHydrated, hydrateStore, nodes: allNodes, addNodes, deleteNode, updateNode, archiveNodeCascade, resetActivationCascade } = useGraphStore(
+  const { isHydrated, hydrateStore, nodes: allNodes, addNodes, deleteNode, deleteNodesBatch, updateNode, archiveNodeCascade, resetActivationCascade } = useGraphStore(
     useShallow((state) => ({
       isHydrated: state.isHydrated,
       hydrateStore: state.hydrateStore,
       nodes: state.nodes,
       addNodes: state.addNodes,
       deleteNode: state.deleteNode,
+      deleteNodesBatch: state.deleteNodesBatch,
       updateNode: state.updateNode,
       archiveNodeCascade: state.archiveNodeCascade,
       resetActivationCascade: state.resetActivationCascade,
@@ -368,6 +370,8 @@ export const KnowledgeGraphView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeDockPanel, setActiveDockPanel] = useState<DockPanel>(null);
   const [moveError, setMoveError] = useState('');
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dockControlsRef = useRef<HTMLDivElement>(null);
   const dockPanelRef = useRef<HTMLDivElement>(null);
@@ -1412,13 +1416,27 @@ export const KnowledgeGraphView: React.FC = () => {
         // 父节点一定在前面已创建；若不在（理论上不可能），退化为 baseParentId 避免整批失败。
         return parentId ? { name: d.name, parentId } : { name: d.name, parentId: baseParentId };
       });
-      const created = addNodes(remapped, `导入${drafts[0]?.name ?? '知识'}目录(${offset + 1}-${offset + slice.length})`);
+      const created = runWithoutOperationRecording(() => addNodes(remapped, `导入${drafts[0]?.name ?? '知识'}目录(${offset + 1}-${offset + slice.length})`));
       created.forEach((node, i) => globalIdByIndex.set(offset + i, node.id));
       createdAll.push(...created);
       offset += slice.length;
       if (offset < drafts.length) {
         await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
       }
+    }
+    // 整批导入只记一条撤销历史：一次撤销即可删掉本批全部节点，避免每片一条导致无法整体回滚。
+    if (createdAll.length > 0) {
+      const ids = createdAll.map((node) => node.id);
+      const label = `导入${drafts[0]?.name ?? '知识'}目录`;
+      recordOperation({
+        label,
+        detail: `新增 ${createdAll.length} 个知识节点`,
+        modules: ['知识大盘'],
+      }, () => {
+        const state = useGraphStore.getState();
+        if (!ids.every((id) => state.nodes.some((node) => node.id === id))) return false;
+        state.removeNodes(ids);
+      });
     }
     const duplicateIds = createdAll
       .map((node) => node.id)
@@ -1531,6 +1549,63 @@ export const KnowledgeGraphView: React.FC = () => {
           className="kg-workspace-actions ui-workspace-header__actions"
           data-testid="knowledge-graph-page-actions"
         >
+          {!multiSelectMode ? (
+            <button
+              type="button"
+              className="tl-dock-btn"
+              onClick={() => { setMultiSelectMode(true); setMultiSelectedIds(new Set()); }}
+              title="批量选择"
+              aria-label="批量选择知识节点"
+            >
+              <Check size={17} />
+            </button>
+          ) : (
+            <>
+              <span className="px-2 text-xs font-semibold text-slate-600">已选 {multiSelectedIds.size} 个</span>
+              <button
+                type="button"
+                className="tl-dock-btn"
+                onClick={() => {
+                  setMultiSelectedIds(new Set(nodes.map((node) => node.id)));
+                }}
+                title="全选"
+                aria-label="全选知识节点"
+              >
+                <Plus size={17} />
+              </button>
+              <button
+                type="button"
+                className="tl-dock-btn"
+                disabled={multiSelectedIds.size === 0}
+                onClick={async () => {
+                  const confirmed = await requestConfirmation({
+                    title: '批量删除知识节点？',
+                    message: `将删除选中的 ${multiSelectedIds.size} 个节点及其全部后代，可撤销。`,
+                    confirmLabel: '批量删除',
+                    tone: 'danger',
+                  });
+                  if (!confirmed) return;
+                  deleteNodesBatch([...multiSelectedIds], '批量删除知识节点');
+                  setMultiSelectedIds(new Set());
+                  setMultiSelectMode(false);
+                  setSelectedNodeId(null);
+                }}
+                title="删除选中"
+                aria-label="删除选中的知识节点"
+              >
+                <Trash2 size={17} />
+              </button>
+              <button
+                type="button"
+                className="tl-dock-btn"
+                onClick={() => { setMultiSelectMode(false); setMultiSelectedIds(new Set()); }}
+                title="退出批量选择"
+                aria-label="退出批量选择"
+              >
+                <X size={17} />
+              </button>
+            </>
+          )}
           <div className="tl-dock-popover-wrap">
             <button
               type="button"
@@ -1777,7 +1852,7 @@ export const KnowledgeGraphView: React.FC = () => {
                 >
                 {island.nodes.map((node) => {
                   const nodeId = node.data.id;
-                  const isSelected = selectedNodeId === nodeId;
+                  const isSelected = selectedNodeId === nodeId || multiSelectedIds.has(nodeId);
                   const isBindingSelected = bindingSession.active && bindingSession.selectedNodeIds.includes(nodeId);
 
                   const isXRayActive = matchingNodeIds !== null;
@@ -1846,6 +1921,15 @@ export const KnowledgeGraphView: React.FC = () => {
                       aria-label={`知识节点：${node.data.name}`}
                       onClick={(e) => { 
                         e.stopPropagation(); 
+                        if (multiSelectMode) {
+                          setMultiSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(nodeId)) next.delete(nodeId);
+                            else next.add(nodeId);
+                            return next;
+                          });
+                          return;
+                        }
                         if (bindingSession.active) {
                           if (node.data.isLeaf) bindingSession.toggleNode(nodeId);
                           else focusRoot(nodeId);

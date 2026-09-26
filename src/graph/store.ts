@@ -253,6 +253,7 @@ interface GraphStore extends GraphData {
   resetActivationCascade: (rootIds: string[]) => void;
   activateLeafCascade: (rootId: string) => void;
   getNodeById: (id: string) => GraphNode | undefined;
+  deleteNodesBatch: (ids: string[], label?: string) => boolean;
   importGraphData: (data: GraphData) => void;
   replaceGraphData: (data: GraphData) => void;
 }
@@ -646,6 +647,39 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
 
         getNodeById: (id: string) => {
           return get().nodes.find((node) => node.id === id);
+        },
+
+        deleteNodesBatch: (ids, label = '批量删除知识节点') => {
+          const requested = new Set(ids.filter(Boolean));
+          if (requested.size === 0) return false;
+          const currentNodes = get().nodes;
+          const toDelete = new Set<string>();
+          requested.forEach((id) => {
+            collectNodeCascadeIds(currentNodes, id).forEach((nodeId) => toDelete.add(nodeId));
+          });
+          if (toDelete.size === 0) return false;
+          const before = currentNodes;
+          const order = new Map(currentNodes.map((node, index) => [node.id, index] as const));
+          recordGraphDiagnostic('stateCommit');
+          set((state) => ({
+            nodes: state.nodes.filter((node) => !toDelete.has(node.id)),
+          }));
+          removeDeletedNodeReferences([...toDelete]);
+          const operationId = recordOperation({
+            label,
+            detail: `删除 ${toDelete.size} 个知识节点（含子孙）`,
+            modules: ['知识大盘'],
+          }, () => {
+            const state = useGraphStore.getState();
+            if (state.nodes.some((node) => toDelete.has(node.id))) return false;
+            set({
+              nodes: [...state.nodes, ...before.filter((node) => toDelete.has(node.id))]
+                .sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER)),
+            });
+            return true;
+          });
+          if (operationId) recordGraphDiagnostic('historyPush');
+          return true;
         },
 
         importGraphData: (data: GraphData) => {
