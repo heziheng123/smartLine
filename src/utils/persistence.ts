@@ -334,19 +334,26 @@ export function createCoalescedPersistence<T>({
   delay = 350,
 }: CoalescedPersistenceOptions<T>) {
   let latest: T | undefined;
+  let pending: T | undefined;
+  let queuedVersion = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let writeChain = Promise.resolve();
 
   const writeValue = (value: T) => {
+    pending = value;
+    const version = ++queuedVersion;
     const operation = writeChain
       .then(async () => {
         await writeAsync(value);
-        localStorage.removeItem(mirrorKey);
+        if (version === queuedVersion) {
+          pending = undefined;
+          if (latest === undefined) localStorage.removeItem(mirrorKey);
+        }
       })
       .catch((error) => {
         // IndexedDB can be unavailable in private/restricted browser modes.
         // Keep one recoverable emergency copy instead of losing the edit.
-        const preserved = writeJsonStorage(mirrorKey, value, label);
+        const preserved = writeJsonStorage(mirrorKey, latest ?? pending ?? value, label);
         console.warn(`[${label}] IndexedDB 合并写入失败，已保留应急日志：`, error);
         if (!preserved) {
           const failure = new Error(`${label} 数据无法写入 IndexedDB 或应急日志，请勿关闭页面并立即导出备份。`);
@@ -390,7 +397,8 @@ export function createCoalescedPersistence<T>({
     window.addEventListener('beforeunload', (event) => {
       // Synchronous emergency journal only. Normal operation keeps complete
       // datasets out of localStorage and stores them in IndexedDB.
-      if (latest !== undefined && !writeJsonStorage(mirrorKey, latest, label)) {
+      const unsaved = latest ?? pending;
+      if (unsaved !== undefined && !writeJsonStorage(mirrorKey, unsaved, label)) {
         event.preventDefault();
       }
     });

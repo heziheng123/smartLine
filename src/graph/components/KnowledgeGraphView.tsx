@@ -28,6 +28,8 @@ import NodeLearningSummary, { type NodeDetailScope, type NodeLearningSummaryData
 import type { SmartTaskBlock, Task } from '@/types';
 import { getUniqueTasks } from '@/store/timelineData';
 import { clearKnowledgeNodeFocus, peekKnowledgeNodeFocus } from '@/services/actionBridge';
+import { recordGraphDiagnostic, setGraphDiagnostic, setGraphDiagnosticDetail } from '../diagnostics';
+import { parseGraphOutline } from '../outlineImport';
 
 import { stratify, partition, type HierarchyNode, type HierarchyRectangularNode } from 'd3-hierarchy';
 import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
@@ -140,6 +142,7 @@ type GraphCanvasCommand = {
 };
 
 type ZoomCanvasController = {
+  generation: number;
   commands: GraphCanvasCommand[];
   ready: boolean;
   active: boolean;
@@ -166,11 +169,7 @@ const isScaleGesture = (event: Event | undefined) =>
   || event instanceof TouchEvent
   || (event instanceof PointerEvent && event.pointerType === 'touch');
 
-const prefersCompositedScaleGesture = (event: Event | undefined) =>
-  event instanceof TouchEvent
-  || (event instanceof PointerEvent && event.pointerType === 'touch')
-  || (event instanceof WheelEvent
-    && (event.ctrlKey || (event.deltaMode === 0 && Math.abs(event.deltaY) < 40)));
+const prefersCompositedScaleGesture = (event: Event | undefined) => isScaleGesture(event);
 
 // d3-zoom treats browser pinch gestures (ctrlKey) as ten times more sensitive
 // than an ordinary wheel. Preserve that native pinch mapping without making
@@ -285,13 +284,17 @@ const getAccessibleTextColor = (hexcolor: string) => {
 };
 
 export const KnowledgeGraphView: React.FC = () => {
+  recordGraphDiagnostic('reactRender');
+  useEffect(() => {
+    recordGraphDiagnostic('reactCommit');
+  });
   const [bridgeNodeId] = useState(peekKnowledgeNodeFocus);
-  const { isHydrated, hydrateStore, nodes: allNodes, addNode, deleteNode, updateNode, archiveNodeCascade, resetActivationCascade } = useGraphStore(
+  const { isHydrated, hydrateStore, nodes: allNodes, addNodes, deleteNode, updateNode, archiveNodeCascade, resetActivationCascade } = useGraphStore(
     useShallow((state) => ({
       isHydrated: state.isHydrated,
       hydrateStore: state.hydrateStore,
       nodes: state.nodes,
-      addNode: state.addNode,
+      addNodes: state.addNodes,
       deleteNode: state.deleteNode,
       updateNode: state.updateNode,
       archiveNodeCascade: state.archiveNodeCascade,
@@ -381,6 +384,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const pendingZoomTransformRef = useRef<ZoomTransform | null>(null);
   const latestZoomTransformRef = useRef<ZoomTransform>(zoomIdentity);
   const zoomCanvasControllerRef = useRef<ZoomCanvasController>({
+    generation: 0,
     commands: [],
     ready: false,
     active: false,
@@ -396,6 +400,7 @@ export const KnowledgeGraphView: React.FC = () => {
   const lastViewportModeRef = useRef<string | null>(null);
   const lastSelectedNodeIdRef = useRef<string | null>(null);
   const isEditingNameRef = useRef(false);
+  const lastCanvasRotationKeyRef = useRef('');
 
   // Hover states
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
@@ -625,6 +630,8 @@ export const KnowledgeGraphView: React.FC = () => {
   );
 
   const islandsData = useMemo(() => {
+    recordGraphDiagnostic('layout');
+    setGraphDiagnostic('layoutInputNodes', nodes.length);
     const today = todayStr();
     const directStatsByNode = new Map<string, NodeRollupStats>();
     for (const [nodeId, tasksForNode] of reviewsByNode) {
@@ -679,6 +686,7 @@ export const KnowledgeGraphView: React.FC = () => {
     }
 
     if (dimensions.width === 0 || dimensions.height === 0 || rootsToProcess.length === 0) {
+      setGraphDiagnostic('layoutOutputNodes', 0);
       return { islands: [], allFlatNodes: [] };
     }
 
@@ -762,6 +770,7 @@ export const KnowledgeGraphView: React.FC = () => {
       }
     });
 
+    setGraphDiagnostic('layoutOutputNodes', islands.reduce((total, island) => total + island.nodes.length, 0));
     return { islands, allFlatNodes };
   }, [activationStates, childrenByParent, dimensions.height, dimensions.width, getNodeColorHex, getNodeVisualState, getSubtreeNodeIds, nodeById, nodes, radiusMode, reviewsByNode, selectedRootFilter]);
 
@@ -951,6 +960,7 @@ export const KnowledgeGraphView: React.FC = () => {
         // A full canvas redraw can be expensive for larger graphs. Coalesce
         // every pan and scale event so a frame is painted at most once.
         if (zoomFrameRef.current !== null) return;
+        recordGraphDiagnostic('zoomRafScheduled');
         zoomFrameRef.current = requestAnimationFrame(() => {
           zoomFrameRef.current = null;
           commitPendingZoomTransform();
@@ -999,6 +1009,11 @@ export const KnowledgeGraphView: React.FC = () => {
     const canvasLayer = zoomCanvasLayerRef.current;
     const scene = sceneRef.current;
     if (!isHydrated || !source || !viewport || !canvas || !scene) return;
+    const generation = ++controller.generation;
+    setGraphDiagnostic('cacheGeneration', generation);
+    const rotationKey = JSON.stringify(islandRotations);
+    const needsSettledRotationRefresh = lastCanvasRotationKeyRef.current !== rotationKey;
+    lastCanvasRotationKeyRef.current = rotationKey;
 
     if (controller.buildTimer !== null) window.clearTimeout(controller.buildTimer);
     if (controller.buildIdleCallback !== null && 'cancelIdleCallback' in window) {
@@ -1017,11 +1032,13 @@ export const KnowledgeGraphView: React.FC = () => {
     if (canvasLayer) canvasLayer.dataset.zoomCacheState = 'building';
 
     const build = (scheduleSettledRefresh: boolean) => {
+      if (generation !== controller.generation) return;
       controller.buildTimer = null;
       controller.buildIdleCallback = null;
       const { width, height } = viewport.getBoundingClientRect();
       if (width <= 0 || height <= 0) return;
       const startedAt = performance.now();
+      recordGraphDiagnostic('cacheRebuild');
       const dpr = getZoomCanvasDpr(width, height);
       const pixelWidth = Math.ceil(width * dpr);
       const pixelHeight = Math.ceil(height * dpr);
@@ -1030,7 +1047,11 @@ export const KnowledgeGraphView: React.FC = () => {
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
       canvas.dataset.dpr = String(dpr);
-      controller.commands = buildGraphCanvasCommands(source);
+      const commands = buildGraphCanvasCommands(source);
+      if (generation !== controller.generation) return;
+      controller.commands = commands;
+      setGraphDiagnostic('cacheCommandCount', commands.length);
+      setGraphDiagnostic('cacheGeneration', generation);
       controller.ready = controller.commands.length > 0;
       if (controller.active && controller.ready) {
         drawGraphCanvas(canvas, controller.commands, latestZoomTransformRef.current);
@@ -1040,25 +1061,52 @@ export const KnowledgeGraphView: React.FC = () => {
       // Node selection rotates islands with an 800ms CSS transition. Refresh
       // once it settles so later zoom gestures start from the exact SVG pose.
       if (scheduleSettledRefresh) {
+        recordGraphDiagnostic('cacheTimeoutScheduled');
         controller.buildTimer = window.setTimeout(() => build(false), 850);
       }
     };
 
-    if ('requestIdleCallback' in window) {
-      controller.buildIdleCallback = window.requestIdleCallback(() => build(true), { timeout: 250 });
+    if (islandsData.islands.length === 0) {
+      canvas.width = 0;
+      canvas.height = 0;
+      setGraphDiagnostic('cacheCommandCount', 0);
+      if (canvasLayer) canvasLayer.dataset.zoomCacheState = 'ready';
+    } else if ('requestIdleCallback' in window) {
+      recordGraphDiagnostic('cacheIdleScheduled');
+      controller.buildIdleCallback = window.requestIdleCallback(() => build(needsSettledRotationRefresh), { timeout: 250 });
     } else {
-      controller.buildTimer = Number(globalThis.setTimeout(() => build(true), 0));
+      recordGraphDiagnostic('cacheTimeoutScheduled');
+      controller.buildTimer = Number(globalThis.setTimeout(() => build(needsSettledRotationRefresh), 0));
     }
 
     return () => {
+      if (controller.generation === generation) controller.generation += 1;
       if (controller.buildTimer !== null) window.clearTimeout(controller.buildTimer);
       if (controller.buildIdleCallback !== null && 'cancelIdleCallback' in window) {
         window.cancelIdleCallback(controller.buildIdleCallback);
       }
       controller.buildTimer = null;
       controller.buildIdleCallback = null;
+      controller.commands = [];
     };
   }, [bindingSession.active, bindingSession.selectedNodeIds, dimensions.height, dimensions.width, islandsData, islandRotations, isHydrated, matchingNodeIds, selectedNodeId]);
+
+  useEffect(() => () => {
+    const controller = zoomCanvasControllerRef.current;
+    controller.generation += 1;
+    controller.commands = [];
+    controller.releaseFrames.forEach((frame) => cancelAnimationFrame(frame));
+    controller.releaseFrames = [];
+    if (controller.buildTimer !== null) window.clearTimeout(controller.buildTimer);
+    if (controller.buildIdleCallback !== null && 'cancelIdleCallback' in window) {
+      window.cancelIdleCallback(controller.buildIdleCallback);
+    }
+    const canvas = zoomCanvasRef.current;
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  }, []);
 
   const zoomToFit = useCallback((animate = true) => {
     if (!zoomViewportRef.current || !zoomBehaviorRef.current) return;
@@ -1338,30 +1386,16 @@ export const KnowledgeGraphView: React.FC = () => {
 
   const handleImport = useCallback((text: string, baseParentId: string | null = null) => {
     if (!text.trim()) return;
-    const lines = text.split('\n').map(n => n.trim()).filter(Boolean);
-    
-    const stack: { level: number, id: string }[] = [];
-    if (baseParentId) stack.push({ level: 0, id: baseParentId });
+    const drafts = parseGraphOutline(text, baseParentId);
+    setGraphDiagnostic('sourceItems', drafts.length);
+    const created = addNodes(drafts, `导入${drafts[0]?.name ?? '知识'}目录`);
+    const duplicateIds = created
+      .map((node) => node.id)
+      .filter((id, index, ids) => ids.indexOf(id) !== index);
+    setGraphDiagnosticDetail('duplicateIdValues', duplicateIds);
+  }, [addNodes]);
 
-    lines.forEach(line => {
-      const match = line.match(/^(#+)\s+(.*)/);
-      let level = 1;
-      let name = line;
-
-      if (match) {
-        level = match[1].length;
-        name = match[2].trim();
-      }
-
-      while (stack.length > 0 && stack[stack.length - 1].level >= level) {
-        stack.pop();
-      }
-
-      const parentId = stack.length > 0 ? stack[stack.length - 1].id : null;
-      const newNode = addNode(name, parentId);
-      stack.push({ level, id: newNode.id });
-    });
-  }, [addNode]);
+  setGraphDiagnostic('renderedNodes', islandsData.islands.reduce((total, island) => total + island.nodes.length, 0));
 
   if (!isHydrated) {
     return (
@@ -1925,7 +1959,7 @@ export const KnowledgeGraphView: React.FC = () => {
                       <Archive size={13} />
                     </button>
                     <div className={styles.actionDivider}></div>
-                    <button onClick={async () => { if(await requestConfirmation({ title: '删除知识节点？', message: `节点「${selectedNode.name}」将被永久删除。`, confirmLabel: '删除节点', tone: 'danger' })) { deleteNode(selectedNode.id); setSelectedNodeId(null); } }} className={`${styles.actionBtn} ${styles.danger}`}>
+                    <button aria-label="删除节点" onClick={async () => { if(await requestConfirmation({ title: '删除知识节点？', message: `节点「${selectedNode.name}」及其全部后代将被永久删除。`, confirmLabel: '删除节点', tone: 'danger' })) { deleteNode(selectedNode.id); setSelectedNodeId(null); } }} className={`${styles.actionBtn} ${styles.danger}`}>
                       <Trash2 size={13} />
                     </button>
                   </div>

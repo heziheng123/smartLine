@@ -9,6 +9,7 @@ import {
   type WorkspaceStorageField,
 } from './workspaceSyncQueueCore';
 import type { StoreApi } from 'zustand';
+import { recordGraphDiagnostic } from '@/graph/diagnostics';
 import {
   canWorkspaceMutationEnqueue,
   currentWorkspaceMutationOrigin,
@@ -128,6 +129,10 @@ export function createWorkspaceTrackedSet<TState extends WorkspaceState>(
       fieldNames,
     );
     if (Object.keys(fields).length === 0) return;
+
+    if (fieldNames.includes('nodes') && Object.prototype.hasOwnProperty.call(fields, 'nodes')) {
+      recordGraphDiagnostic('syncEnqueue');
+    }
 
     // Keep a write-through journal even after Liveblocks reports storage ready.
     // A flush that started during hydration must never be allowed to replay an

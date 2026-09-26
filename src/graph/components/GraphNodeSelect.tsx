@@ -92,14 +92,13 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
   const getNodePath = (node: GraphNode): string => {
     const path: string[] = [];
     let current: GraphNode | undefined = node;
-    // 为防止死循环，最多向上找 5 层
-    let depth = 0;
-    while (current?.parentId && depth < 5) {
+    const visited = new Set([node.id]);
+    while (current?.parentId && !visited.has(current.parentId)) {
+      visited.add(current.parentId);
       current = getNodeById(current.parentId);
       if (current) {
         path.unshift(current.name);
       }
-      depth++;
     }
     return path.length > 0 ? path.join(' / ') : '';
   };

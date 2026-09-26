@@ -205,6 +205,7 @@ interface DailyScheduleStore {
 
   /** 根据源任务 ID 批量清理失效的排期项和时间块 */
   removeBySourceIds: (sourceIds: string[]) => void;
+  cancelPendingSourceRemoval: (sourceIds: string[]) => void;
   /** 恢复批量调整前被清理的排期项和时间块。 */
   restoreSourceSnapshots: (snapshots: DailySourceSnapshot[]) => void;
   /** 同步来源任务的展示信息，不改变其已安排的时间段。 */
@@ -495,6 +496,9 @@ export const useDailyScheduleStore = create<WithLiveblocks<DailyScheduleStore>>(
             }
             return state;
           });
+        },
+        cancelPendingSourceRemoval: (sourceIds) => {
+          sourceIds.forEach((sourceId) => pendingSourceIdsToRemove.delete(sourceId));
         },
 
         restoreScheduledItem: (date, item, targetIndex) => {

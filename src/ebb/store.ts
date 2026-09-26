@@ -1029,9 +1029,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             .filter((task) => task.graphNodeId && deletedIds.has(task.graphNodeId))
             .map((task) => getReviewSourceId(task.id));
           if (scheduledSourceIds.length > 0) {
-            setTimeout(() => {
-              useDailyScheduleStore.getState().removeBySourceIds(scheduledSourceIds);
-            }, 0);
+            useDailyScheduleStore.getState().removeBySourceIds(scheduledSourceIds);
           }
 
           set((state) => {

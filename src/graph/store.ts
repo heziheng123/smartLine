@@ -6,9 +6,17 @@ import { genId } from '@/ebb/scheduler';
 import { liveblocksClient } from '@/store/client';
 import { createCoalescedPersistence, createScopedStorage, readJsonStorage } from '@/utils/persistence';
 import { createWorkspaceTrackedSet } from '@/services/workspaceLocalWriteJournal';
+import { recordOperation } from '@/services/operationHistory';
+import { recordGraphDiagnostic, setGraphDiagnostic, setGraphDiagnosticDetail } from './diagnostics';
+import type { GraphNodeDraft } from './outlineImport';
+import { inspectGraphNodes } from './integrity';
 
 import { useEbbStore } from '@/ebb/store';
 import { useTimelineStore } from '@/store';
+import { getAllGraphNodeIds, getUniqueTasks } from '@/store/timelineData';
+import { captureDailySourceSnapshots, useDailyScheduleStore } from '@/components/dailySchedule/store';
+import { getReviewSourceId } from '@/components/dailySchedule/sourceIds';
+import type { Task } from '@/types';
 
 const GRAPH_STORAGE_KEY = 'line-graph-storage';
 const GRAPH_SYNC_SETTINGS_KEY = 'line-graph-liveblocks';
@@ -87,13 +95,78 @@ function removeDeletedNodeReferences(nodeIds: string[]): void {
   useEbbStore.getState().removeGraphNodeReferences(nodeIds);
 }
 
+function captureDeletedNodeReferences(deletedIds: Set<string>): () => void {
+  const timeline = useTimelineStore.getState();
+  const headers = new Map<string, { graphNodeId: string | undefined; graphNodeIds: string[] | undefined }>();
+  for (const task of getUniqueTasks(timeline.tasks, timeline.groups)) {
+    for (const block of task.blocks ?? []) {
+      if (block.type !== 'smart-task' || !getAllGraphNodeIds(block.header).some((id) => deletedIds.has(id))) continue;
+      headers.set(`${task.id}\0${block.id}`, {
+        graphNodeId: block.header.graphNodeId,
+        graphNodeIds: block.header.graphNodeIds ? [...block.header.graphNodeIds] : undefined,
+      });
+    }
+  }
+  const reviews = useEbbStore.getState().reviewTasks;
+  const reviewOrder = new Map(reviews.map((task, index) => [task.id, index] as const));
+  const removedReviews = reviews.filter((task) => task.graphNodeId && deletedIds.has(task.graphNodeId));
+  const dailySnapshots = captureDailySourceSnapshots(
+    useDailyScheduleStore.getState().schedules,
+    removedReviews.map((task) => getReviewSourceId(task.id)),
+  );
+  const reviewSourceIds = removedReviews.map((task) => getReviewSourceId(task.id));
+
+  return () => {
+    if (headers.size > 0) {
+      const restoreTask = (task: Task): Task => {
+        let changed = false;
+        const blocks = (task.blocks ?? []).map((block) => {
+          const header = headers.get(`${task.id}\0${block.id}`);
+          if (block.type !== 'smart-task' || !header) return block;
+          changed = true;
+          return { ...block, header: { ...block.header, ...header } };
+        });
+        return changed ? { ...task, blocks } : task;
+      };
+      useTimelineStore.setState((state) => ({
+        tasks: state.tasks.map(restoreTask),
+        groups: state.groups.map((group) => ({ ...group, children: group.children.map(restoreTask) })),
+      }));
+    }
+    if (removedReviews.length > 0) {
+      useEbbStore.setState((state) => {
+        const existingIds = new Set(state.reviewTasks.map((task) => task.id));
+        return { reviewTasks: [...state.reviewTasks, ...removedReviews.filter((task) => !existingIds.has(task.id))]
+          .sort((left, right) => (reviewOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (reviewOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)) };
+      });
+    }
+    useDailyScheduleStore.getState().cancelPendingSourceRemoval(reviewSourceIds);
+    if (dailySnapshots.length > 0) useDailyScheduleStore.getState().restoreSourceSnapshots(dailySnapshots);
+  };
+}
+
 export function normalizeGraphNodes(value: unknown): GraphNode[] {
   const nodes = Array.isArray(value) ? value.filter(isValidGraphNode) : [];
-  const deduplicated = new Map<string, GraphNode>();
-  nodes.forEach((node) => deduplicated.set(node.id, node));
+  const usedIds = new Set<string>();
+  const duplicateIds: Array<{ id: string; name: string; firstName: string }> = [];
+  const firstById = new Map<string, GraphNode>();
+  const deduplicated = nodes.map((node) => {
+    if (!usedIds.has(node.id)) {
+      usedIds.add(node.id);
+      firstById.set(node.id, node);
+      return node;
+    }
+    duplicateIds.push({ id: node.id, name: node.name, firstName: firstById.get(node.id)!.name });
+    let id = genId('gn');
+    while (usedIds.has(id)) id = genId('gn');
+    usedIds.add(id);
+    return { ...node, id };
+  });
+  setGraphDiagnostic('normalizationDuplicateIds', duplicateIds.length);
+  setGraphDiagnosticDetail('normalizationDuplicateIdValues', duplicateIds);
 
-  const validIds = new Set(deduplicated.keys());
-  const normalized = [...deduplicated.values()].map((node) => ({
+  const validIds = new Set(deduplicated.map((node) => node.id));
+  const normalized = deduplicated.map((node) => ({
     ...node,
     parentId:
       node.parentId
@@ -131,8 +204,10 @@ export function normalizeGraphNodes(value: unknown): GraphNode[] {
 }
 
 async function saveGraphDataAsync(data: GraphData) {
+  recordGraphDiagnostic('persistenceWrite');
   try {
     await graphStorage.setItem(GRAPH_STORAGE_KEY, data);
+    setGraphDiagnostic('persistedNodes', data.nodes.length);
   } catch (e) {
     console.warn('[smart-graph] IndexedDB 写入失败：', e);
     throw e;
@@ -169,6 +244,8 @@ interface GraphStore extends GraphData {
 
   // Actions
   addNode: (name: string, parentId?: string | null) => GraphNode;
+  addNodes: (drafts: GraphNodeDraft[], historyLabel?: string) => GraphNode[];
+  removeNodes: (ids: string[], restoreStatuses?: ReadonlyMap<string, GraphNode['status']>) => void;
   updateNode: (id: string, updates: Partial<Omit<GraphNode, 'id' | 'createdAt'>>) => void;
   deleteNode: (id: string) => void;
   restoreNode: (node: GraphNode, childrenIds: string[]) => void;
@@ -209,9 +286,12 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
               }
 
               if (raw) {
+                setGraphDiagnosticDetail('hydrationIntegrityRaw', inspectGraphNodes(Array.isArray(raw.nodes) ? raw.nodes.filter(isValidGraphNode) : []));
                 const nodes = normalizeGraphNodes(
                   Array.isArray(raw.nodes) ? raw.nodes.filter(isValidGraphNode) : [],
                 );
+                setGraphDiagnostic('reloadedNodes', nodes.length);
+                setGraphDiagnosticDetail('hydrationIntegrity', inspectGraphNodes(nodes));
                 set({
                   nodes,
                   isHydrated: true,
@@ -258,6 +338,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             createdAt: Date.now(),
           };
 
+          recordGraphDiagnostic('stateCommit');
           set((state) => {
             const newData = {
               nodes: [
@@ -271,6 +352,82 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
           });
 
           return newNode;
+        },
+
+        addNodes: (drafts, historyLabel = '导入知识目录') => {
+          if (drafts.length === 0) return [];
+          const existingNodes = get().nodes;
+          const currentIds = new Set(existingNodes.map((node) => node.id));
+          const createdAt = Date.now();
+          const created: GraphNode[] = [];
+          for (const [index, draft] of drafts.entries()) {
+            if (draft.parentIndex !== undefined && (!Number.isInteger(draft.parentIndex) || draft.parentIndex < 0 || draft.parentIndex >= index)) {
+              throw new Error(`知识目录第 ${index + 1} 行的父节点索引无效`);
+            }
+            let id = genId('gn');
+            while (currentIds.has(id)) id = genId('gn');
+            currentIds.add(id);
+            const generatedParentId = draft.parentIndex === undefined
+              ? draft.parentId ?? null
+              : created[draft.parentIndex]?.id ?? null;
+            if (generatedParentId && !currentIds.has(generatedParentId)) {
+              throw new Error(`知识目录第 ${index + 1} 行的父节点不存在`);
+            }
+            const parentId = generatedParentId;
+            created.push({ id, name: draft.name, parentId, createdAt: createdAt + index });
+          }
+
+          // 性能不足时可延迟计算、批处理、减少重复渲染或裁剪屏幕外绘制，绝不能丢弃用户数据。
+          const parentIds = new Set(created.map((node) => node.parentId).filter(Boolean));
+          const previousStatuses = new Map(existingNodes
+            .filter((node) => parentIds.has(node.id))
+            .map((node) => [node.id, node.status] as const));
+          recordGraphDiagnostic('stateCommit');
+          set((state) => ({
+            nodes: [
+              ...state.nodes.map((node) => parentIds.has(node.id)
+                ? { ...node, status: undefined }
+                : node),
+              ...created.map((node) => parentIds.has(node.id) ? { ...node, status: undefined } : node),
+            ],
+          }));
+          setGraphDiagnostic('generatedNodes', created.length);
+          setGraphDiagnostic('uniqueNodeIds', new Set(created.map((node) => node.id)).size);
+          setGraphDiagnostic('duplicateIds', created.length - new Set(created.map((node) => node.id)).size);
+          setGraphDiagnostic('committedStoreNodes', get().nodes.length);
+          setGraphDiagnosticDetail('lastImportIntegrity', inspectGraphNodes(get().nodes, created[0].id));
+
+          const ids = created.map((node) => node.id);
+          const operationId = recordOperation({
+            label: historyLabel,
+            detail: `新增 ${created.length} 个知识节点`,
+            modules: ['知识大盘'],
+          }, () => {
+            const state = useGraphStore.getState();
+            if (!ids.every((id) => state.nodes.some((node) => node.id === id))) return false;
+            state.removeNodes(ids, previousStatuses);
+          });
+          if (operationId) recordGraphDiagnostic('historyPush');
+          return created;
+        },
+
+        removeNodes: (ids, restoreStatuses) => {
+          const removed = new Set(ids);
+          if (removed.size === 0 || !get().nodes.some((node) => removed.has(node.id))) return;
+          recordGraphDiagnostic('stateCommit');
+          set((state) => ({
+            nodes: state.nodes
+              .filter((node) => !removed.has(node.id))
+              .map((node) => {
+                const restored = restoreStatuses?.has(node.id)
+                  ? { ...node, status: restoreStatuses.get(node.id) }
+                  : node;
+                return restored.parentId && removed.has(restored.parentId)
+                  ? { ...restored, parentId: null }
+                  : restored;
+              }),
+          }));
+          removeDeletedNodeReferences([...removed]);
         },
 
         updateNode: (id: string, updates: Partial<Omit<GraphNode, 'id' | 'createdAt'>>) => {
@@ -323,6 +480,10 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
           if (deletedIds.length === 0) return;
           const toDelete = new Set(deletedIds);
           const deletedNode = currentNodes.find((node) => node.id === id);
+          const deletedNodes = currentNodes.filter((node) => toDelete.has(node.id));
+          const previousParent = currentNodes.find((node) => node.id === deletedNode?.parentId);
+          const before = inspectGraphNodes(currentNodes, id);
+          const restoreReferences = captureDeletedNodeReferences(toDelete);
 
           set((state) => {
             const newData = {
@@ -330,12 +491,50 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                 .filter((node) => !toDelete.has(node.id))
                 .map((node) =>
                   node.id === deletedNode?.parentId
-                    ? { ...node, status: 'unactivated' as const }
+                    ? { ...node, status: state.nodes.some((child) => child.parentId === node.id && !toDelete.has(child.id))
+                      ? undefined : 'unactivated' as const }
                     : node
                 ),
             };
             return newData;
           });
+          recordGraphDiagnostic('stateCommit');
+          const after = inspectGraphNodes(get().nodes);
+          const deleteDiagnostic = {
+            selectedId: id,
+            selectedTitle: deletedNode?.name,
+            sameTitleNodesBefore: currentNodes.filter((node) => node.name === deletedNode?.name).length,
+            totalBefore: before.totalNodes,
+            directChildren: before.directChildren,
+            descendantCount: before.reachableNodes - 1,
+            deleteSetCount: deletedIds.length,
+            rootsBefore: before.rootNodes,
+            orphanCountBefore: before.missingParentNodes,
+            unreachableCountBefore: before.unreachableNodes,
+            totalAfterStore: after.totalNodes,
+            orphanCountAfter: after.missingParentNodes,
+            rootsAfter: after.rootNodes,
+            deletedTreeRemaining: get().nodes.filter((node) => toDelete.has(node.id)).length,
+            sameTitleNodesAfter: get().nodes.filter((node) => node.name === deletedNode?.name).length,
+          };
+          setGraphDiagnosticDetail('lastDelete', deleteDiagnostic);
+          if (import.meta.env.DEV) console.info('[GraphDelete]', deleteDiagnostic);
+          const order = new Map(currentNodes.map((node, index) => [node.id, index] as const));
+          const operationId = recordOperation({
+            label: `删除${deletedNode?.name ?? '知识节点'}子树`,
+            detail: `删除 ${deletedIds.length} 个知识节点`,
+            modules: ['知识大盘'],
+          }, () => {
+            if (get().nodes.some((node) => toDelete.has(node.id))) return false;
+            set((state) => ({
+              nodes: [...state.nodes.map((node) => node.id === previousParent?.id
+                ? { ...node, status: previousParent.status }
+                : node), ...deletedNodes]
+                .sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER)),
+            }));
+            restoreReferences();
+          });
+          if (operationId) recordGraphDiagnostic('historyPush');
 
           // Reference cleanup belongs to the explicit local delete command.
           // Never infer deletion from a smaller `nodes` snapshot: Liveblocks
@@ -366,6 +565,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
         archiveNodeCascade: (id: string, isArchived: boolean) => {
           set((state) => {
             const targetNode = state.nodes.find((node) => node.id === id);
+            if (!targetNode) return state;
             // 找到所有子孙节点
             const toArchive = new Set<string>([id]);
             let changed = true;
@@ -376,6 +576,16 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
                   toArchive.add(n.id);
                   changed = true;
                 }
+              }
+            }
+            // Restoring a descendant also needs its ancestor path. Otherwise the
+            // node exists in the store but has no visible root for layout to reach.
+            if (!isArchived) {
+              const byId = new Map(state.nodes.map((node) => [node.id, node]));
+              let parentId = targetNode.parentId;
+              while (parentId && !toArchive.has(parentId)) {
+                toArchive.add(parentId);
+                parentId = byId.get(parentId)?.parentId ?? null;
               }
             }
             
@@ -482,9 +692,11 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
   useGraphStore.subscribe((state) => {
     if (state.nodes === lastNodes) return;
     lastNodes = state.nodes;
+    recordGraphDiagnostic('persistenceSchedule');
     saveGraphData({ nodes: state.nodes });
 
     if (saveTimer) clearTimeout(saveTimer);
+    recordGraphDiagnostic('normalizationTimeoutScheduled');
     saveTimer = setTimeout(() => {
       const latest = useGraphStore.getState().nodes;
       const normalized = normalizeGraphNodes(latest);

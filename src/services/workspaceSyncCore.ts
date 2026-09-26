@@ -373,6 +373,45 @@ function mergeWorkspaceValue(
   };
 }
 
+function keepGraphSubtreeDeletions(
+  base: unknown,
+  local: unknown,
+  remote: unknown,
+  result: ThreeWayMergeResult,
+): ThreeWayMergeResult {
+  if (!isEntityArray(base) || !isEntityArray(local) || !isEntityArray(remote) || !isEntityArray(result.value)) return result;
+  const localIds = new Set(local.map((node) => entityId(node)!));
+  const baseById = new Map(base.map((node) => [entityId(node)!, node]));
+  const remoteById = new Map(remote.map((node) => [entityId(node)!, node]));
+  const deleted = new Set(base.map((node) => entityId(node)!).filter((id) => !localIds.has(id)));
+  if (deleted.size === 0) return result;
+
+  // A concurrent cloud edit must not turn a locally deleted descendant into a
+  // new root. Keep changed remote values in the existing conflict recovery log.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of remote) {
+      const id = entityId(node)!;
+      if (!localIds.has(id) && !deleted.has(id) && typeof node.parentId === 'string' && deleted.has(node.parentId)) {
+        deleted.add(id);
+        changed = true;
+      }
+    }
+  }
+  const alternates = [...result.alternates];
+  const conflicts = [...result.conflicts];
+  for (const id of deleted) {
+    const remoteNode = remoteById.get(id);
+    if (!remoteNode || workspaceValuesEqual(remoteNode, baseById.get(id))) continue;
+    const path = `nodes[${id}]`;
+    if (alternates.some((alternate) => alternate.path === path)) continue;
+    alternates.push({ path, baseValue: baseById.get(id), localValue: undefined, remoteValue: remoteNode });
+    conflicts.push(path);
+  }
+  return { ...result, value: result.value.filter((node) => !deleted.has(entityId(node)!)), conflicts, alternates };
+}
+
 export function mergeWorkspaceFieldChanges(
   fields: Record<string, unknown>,
   baseFields: Record<string, unknown>,
@@ -394,7 +433,10 @@ export function mergeWorkspaceFieldChanges(
       mergedFields[key] = localValue;
       continue;
     }
-    const result = mergeWorkspaceValue(baseFields[key], localValue, remote[key], key);
+    const merged = mergeWorkspaceValue(baseFields[key], localValue, remote[key], key);
+    const result = key === 'nodes'
+      ? keepGraphSubtreeDeletions(baseFields[key], localValue, remote[key], merged)
+      : merged;
     mergedFields[key] = result.value;
     conflicts.push(...result.conflicts);
   }
@@ -416,7 +458,10 @@ export async function mergeWorkspaceFieldChangesDetailed(
       appliedPaths.push(key);
       continue;
     }
-    const result = mergeWorkspaceValue(baseFields[key], localValue, remote[key], key);
+    const merged = mergeWorkspaceValue(baseFields[key], localValue, remote[key], key);
+    const result = key === 'nodes'
+      ? keepGraphSubtreeDeletions(baseFields[key], localValue, remote[key], merged)
+      : merged;
     mergedFields[key] = result.value;
     appliedPaths.push(...result.appliedPaths);
     rawAlternates.push(...result.alternates);

@@ -189,6 +189,41 @@ test('a failed primary write and failed emergency mirror reject and emit a visib
   expect(result.eventMessage).toContain('无法写入 IndexedDB 或应急日志');
 });
 
+test('pending async writes keep the newest emergency mirror until IndexedDB confirms it', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { createCoalescedPersistence } = await import('/src/utils/persistence.ts');
+    const key = 'pending-write-regression';
+    const finish: Array<() => void> = [];
+    const persistence = createCoalescedPersistence({
+      mirrorKey: key,
+      label: 'pending write regression',
+      writeAsync: () => new Promise<void>((resolve) => { finish.push(resolve); }),
+    });
+    const first = persistence.writeNow({ nodes: 62 });
+    await Promise.resolve();
+    window.dispatchEvent(new Event('beforeunload'));
+    const duringFirst = JSON.parse(localStorage.getItem(key) ?? 'null');
+    const second = persistence.writeNow({ nodes: 100 });
+    window.dispatchEvent(new Event('beforeunload'));
+    const duringSecond = JSON.parse(localStorage.getItem(key) ?? 'null');
+    finish[0]();
+    await first;
+    const afterOlderWrite = JSON.parse(localStorage.getItem(key) ?? 'null');
+    await Promise.resolve();
+    finish[1]();
+    await second;
+    const afterLatestWrite = localStorage.getItem(key);
+    return { duringFirst, duringSecond, afterOlderWrite, afterLatestWrite };
+  });
+  expect(result).toEqual({
+    duringFirst: { nodes: 62 },
+    duringSecond: { nodes: 100 },
+    afterOlderWrite: { nodes: 100 },
+    afterLatestWrite: null,
+  });
+});
+
 test('storage schema upgrade preserves data written by an older app version', async ({ page }) => {
   await page.route('**/__storage-seed__', (route) => route.fulfill({
     status: 200,

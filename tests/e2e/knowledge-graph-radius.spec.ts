@@ -133,7 +133,7 @@ test('knowledge graph keeps labels visible while panning', async ({ page }) => {
   await expect(label).toBeVisible();
 });
 
-test('knowledge graph uses canvas while scaling and restores sharp SVG labels', async ({ page }) => {
+test('knowledge graph keeps desktop wheel scaling on the composited SVG scene', async ({ page }) => {
   const canvas = page.locator('.knowledge-graph-view svg[data-radius-mode]');
   const cache = page.getByTestId('knowledge-graph-zoom-cache');
   const graph = canvas.locator(':scope > g');
@@ -150,8 +150,8 @@ test('knowledge graph uses canvas while scaling and restores sharp SVG labels', 
   await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.wheel(0, -240);
-  await expect.poll(() => cache.getAttribute('data-zoom-cache-state')).toBe('active');
-  await expect(cache.locator('canvas')).toHaveCSS('opacity', '1');
+  await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
+  await expect(cache.locator('canvas')).toHaveCSS('opacity', '0');
   await page.waitForTimeout(220);
   const settledScale = await readScale();
 
@@ -257,7 +257,7 @@ test('knowledge graph keeps sparse desktop wheel steps bounded', async ({ page }
     return { initialScale, results };
   }, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 });
 
-  expect(result.results.map(({ state }) => state)).toEqual(['active', 'active', 'active']);
+  expect(result.results.map(({ state }) => state)).toEqual(['ready', 'ready', 'ready']);
   expect(result.results[0].scale / result.initialScale).toBeGreaterThan(1.05);
   await expect(cache.locator('canvas')).toHaveCount(1);
   await expect(cache).toHaveAttribute('data-zoom-cache-state', 'ready');
