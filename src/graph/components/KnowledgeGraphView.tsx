@@ -1852,7 +1852,8 @@ export const KnowledgeGraphView: React.FC = () => {
                 >
                 {island.nodes.map((node) => {
                   const nodeId = node.data.id;
-                  const isSelected = selectedNodeId === nodeId || multiSelectedIds.has(nodeId);
+                  const isMultiSelected = multiSelectedIds.has(nodeId);
+                  const isSelected = selectedNodeId === nodeId || isMultiSelected;
                   const isBindingSelected = bindingSession.active && bindingSession.selectedNodeIds.includes(nodeId);
 
                   const isXRayActive = matchingNodeIds !== null;
@@ -1861,8 +1862,9 @@ export const KnowledgeGraphView: React.FC = () => {
 
                   const fillColor = node.data.color;
                   const hasOverdueRounds = node.data.overdueCount > 0;
-                  const strokeColor = isBindingSelected ? '#4f46e5' : (isSelected ? '#0f172a' : (hasOverdueRounds ? '#ef4444' : '#ffffff'));
-                  const strokeWidth = isBindingSelected ? 4 : (isSelected ? 2.5 : (hasOverdueRounds ? 3 : 1.5));
+                  const strokeColor = isBindingSelected ? '#4f46e5' : (isMultiSelected ? '#7c3aed' : (isSelected ? '#0f172a' : (hasOverdueRounds ? '#ef4444' : '#ffffff')));
+                  const strokeWidth = isBindingSelected ? 4 : (isMultiSelected ? 4 : (isSelected ? 2.5 : (hasOverdueRounds ? 3 : 1.5)));
+                  const strokeDasharray = isMultiSelected ? '7 3' : undefined;
 
               const angleDiff = node.x1 - node.x0;
                const radiusDiff = node.y1 - node.y0;
@@ -1911,6 +1913,7 @@ export const KnowledgeGraphView: React.FC = () => {
                  : `rotate(${x - 90}) translate(${y},0) rotate(${flipText ? 180 : 0})`;
 
                 const textFill = getAccessibleTextColor(fillColor);
+                const multiBadgeCenter: [number, number] | null = isMultiSelected ? arcGenerator.centroid(node) : null;
 
                   return (
                     <g 
@@ -1977,8 +1980,15 @@ export const KnowledgeGraphView: React.FC = () => {
                         fill={fillColor}
                         stroke={strokeColor}
                         strokeWidth={strokeWidth}
+                        strokeDasharray={strokeDasharray}
                         className="transition-all duration-300 hover:opacity-90"
                       />
+                      {multiBadgeCenter && (
+                        <g pointerEvents="none">
+                          <circle cx={multiBadgeCenter[0]} cy={multiBadgeCenter[1]} r={11} fill="#7c3aed" stroke="#ffffff" strokeWidth={2.5} />
+                          <text x={multiBadgeCenter[0]} y={multiBadgeCenter[1]} textAnchor="middle" dy="0.35em" fontSize={12} fontWeight={800} fill="#ffffff">✓</text>
+                        </g>
+                      )}
                       {showText && (
                         <text
                           transform={transform}
