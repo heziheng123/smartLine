@@ -395,7 +395,9 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
           setGraphDiagnostic('uniqueNodeIds', new Set(created.map((node) => node.id)).size);
           setGraphDiagnostic('duplicateIds', created.length - new Set(created.map((node) => node.id)).size);
           setGraphDiagnostic('committedStoreNodes', get().nodes.length);
-          setGraphDiagnosticDetail('lastImportIntegrity', inspectGraphNodes(get().nodes, created[0].id));
+          // 导入链路不再同步做全图 inspect（O(N*深度)，大目录下直接导致主线程长时间阻塞甚至 OOM）。
+          // 只记录轻量计数，完整性检查交给空闲时按需触发。
+          setGraphDiagnosticDetail('lastImport', { count: created.length, rootId: created[0].id });
 
           const ids = created.map((node) => node.id);
           const operationId = recordOperation({
@@ -697,12 +699,27 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
 
     if (saveTimer) clearTimeout(saveTimer);
     recordGraphDiagnostic('normalizationTimeoutScheduled');
-    saveTimer = setTimeout(() => {
+    // 归一化检查放到空闲时执行，且避免 JSON.stringify(全图) 的一次性大字符串开销。
+    const runNormalizationCheck = () => {
       const latest = useGraphStore.getState().nodes;
       const normalized = normalizeGraphNodes(latest);
-      if (JSON.stringify(latest) !== JSON.stringify(normalized)) {
+      if (normalized.length !== latest.length) {
         useGraphStore.setState({ nodes: normalized });
+        return;
       }
-    }, 500);
+      for (let i = 0; i < latest.length; i += 1) {
+        const a = latest[i];
+        const b = normalized[i];
+        if (a !== b && (a.id !== b.id || a.parentId !== b.parentId || a.status !== b.status || a.name !== b.name)) {
+          useGraphStore.setState({ nodes: normalized });
+          return;
+        }
+      }
+    };
+    saveTimer = setTimeout(() => {
+      const win = window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number };
+      if (typeof win.requestIdleCallback === 'function') win.requestIdleCallback(runNormalizationCheck, { timeout: 2000 });
+      else runNormalizationCheck();
+    }, 1500);
   });
 }

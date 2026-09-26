@@ -198,7 +198,13 @@ const toCanvasMatrix = (matrix: DOMMatrix): CanvasMatrix =>
 const buildGraphCanvasCommands = (source: SVGSVGElement): GraphCanvasCommand[] => {
   const commands: GraphCanvasCommand[] = [];
   const opacityCache = new WeakMap<SVGElement, number>();
-  source.querySelectorAll<SVGPathElement | SVGTextElement>('path, text').forEach((element) => {
+  // 大图下 path+text 全量 getCTM/getComputedStyle + Path2D 复制是 OOM 主因之一。
+  // 超过阈值时只缓存 path（缩放骨架），跳过 text，保证缩放不崩。
+  const elements = source.querySelectorAll<SVGPathElement | SVGTextElement>('path, text');
+  const SKIP_TEXT_BEYOND = 1500;
+  const skipText = elements.length > SKIP_TEXT_BEYOND;
+  elements.forEach((element) => {
+    if (skipText && element instanceof SVGTextElement) return;
     const matrix = element.getCTM();
     if (!matrix) return;
     const style = getComputedStyle(element);
@@ -1384,12 +1390,34 @@ export const KnowledgeGraphView: React.FC = () => {
     }
   }, [selectedNode, getDescendants]);
 
-  const handleImport = useCallback((text: string, baseParentId: string | null = null) => {
+  const handleImport = useCallback(async (text: string, baseParentId: string | null = null) => {
     if (!text.trim()) return;
     const drafts = parseGraphOutline(text, baseParentId);
     setGraphDiagnostic('sourceItems', drafts.length);
-    const created = addNodes(drafts, `导入${drafts[0]?.name ?? '知识'}目录`);
-    const duplicateIds = created
+    // 大目录分片提交：一次 set 110+ 节点会让全图 layout/SVG/Canvas 同帧全重算导致 OOM。
+    // 每片 20 个、每片让出一帧，使 React commit、GC、IndexedDB flush 交错进行。
+    // 注意各片之间存在父子引用：parentIndex 指向全局 drafts 下标，分片时需重映射为已创建 id。
+    const CHUNK = 20;
+    const createdAll: { id: string }[] = [];
+    const globalIdByIndex = new Map<number, string>();
+    let offset = 0;
+    while (offset < drafts.length) {
+      const slice = drafts.slice(offset, offset + CHUNK);
+      const remapped = slice.map((d) => {
+        if (d.parentIndex === undefined) return d;
+        const parentId = globalIdByIndex.get(d.parentIndex);
+        // 父节点一定在前面已创建；若不在（理论上不可能），退化为 baseParentId 避免整批失败。
+        return parentId ? { name: d.name, parentId } : { name: d.name, parentId: baseParentId };
+      });
+      const created = addNodes(remapped, `导入${drafts[0]?.name ?? '知识'}目录(${offset + 1}-${offset + slice.length})`);
+      created.forEach((node, i) => globalIdByIndex.set(offset + i, node.id));
+      createdAll.push(...created);
+      offset += slice.length;
+      if (offset < drafts.length) {
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+      }
+    }
+    const duplicateIds = createdAll
       .map((node) => node.id)
       .filter((id, index, ids) => ids.indexOf(id) !== index);
     setGraphDiagnosticDetail('duplicateIdValues', duplicateIds);
