@@ -1405,6 +1405,9 @@ export const KnowledgeGraphView: React.FC = () => {
       const slice = drafts.slice(offset, offset + CHUNK);
       const remapped = slice.map((d) => {
         if (d.parentIndex === undefined) return d;
+        // 同一片内的父节点：保留相对 parentIndex，让 addNodes 在本批内建链。
+        if (d.parentIndex >= offset) return { name: d.name, parentIndex: d.parentIndex - offset };
+        // 跨片的父节点：重映射为已创建 id。
         const parentId = globalIdByIndex.get(d.parentIndex);
         // 父节点一定在前面已创建；若不在（理论上不可能），退化为 baseParentId 避免整批失败。
         return parentId ? { name: d.name, parentId } : { name: d.name, parentId: baseParentId };
