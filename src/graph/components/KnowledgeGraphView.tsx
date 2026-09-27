@@ -258,11 +258,9 @@ const drawGraphCanvas = (
   const viewH = canvas.height / dpr / transform.k;
   const viewX = -transform.x / transform.k;
   const viewY = -transform.y / transform.k;
-  const showText = transform.k >= 0.35;
   const margin = 120;
   for (const command of commands) {
     if (command.kind !== 'path') {
-      if (!showText) continue;
       const tx = (command as { x: number }).x;
       const ty = (command as { y: number }).y;
       if (tx < viewX - margin || tx > viewX + viewW + margin || ty < viewY - margin || ty > viewY + viewH + margin) continue;
