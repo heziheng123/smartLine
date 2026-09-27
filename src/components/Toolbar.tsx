@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import React, { type ReactNode } from 'react';
 import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network } from 'lucide-react';
 import { MIND_MAP_ENABLED } from '@/mindMap/config';
 
@@ -22,12 +22,31 @@ const NAV_ITEMS: { module: AppModule; label: string; phoneLabel: string; icon: R
 ];
 
 const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPreload }) => {
+  const dockRef = React.useRef<HTMLDivElement>(null);
+  const pillRef = React.useRef<HTMLSpanElement>(null);
+  const activeIndex = NAV_ITEMS.findIndex((item) => item.module === currentView);
+  // 滑动小药丸：纯 CSS transform 位移（显卡画），位置按 active 按钮实测计算，
+  // 不用 framer-motion 量布局，主线程再忙也滑得动。
+  React.useLayoutEffect(() => {
+    const dock = dockRef.current;
+    const pill = pillRef.current;
+    if (!dock || !pill) return;
+    const activeBtn = dock.querySelector<HTMLElement>('.tl-dock-btn--active');
+    if (!activeBtn) return;
+    const dockRect = dock.getBoundingClientRect();
+    const btnRect = activeBtn.getBoundingClientRect();
+    const x = btnRect.left - dockRect.left + btnRect.width / 2;
+    pill.style.transform = `translateX(${x}px) translateX(-50%)`;
+    pill.style.opacity = '1';
+  }, [currentView, activeIndex]);
   return <nav className="tl-dock-wrapper" aria-label="应用导航">
     <div
+      ref={dockRef}
       className="tl-dock"
       role="tablist"
       aria-label="主导航"
     >
+      <span ref={pillRef} className="tl-dock-sliding-pill" aria-hidden="true" />
       {NAV_ITEMS.map((item) => {
         const active = currentView === item.module;
         return (
@@ -46,9 +65,6 @@ const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPrel
           >
             {item.icon}
             <span className="tl-dock-phone-label">{item.phoneLabel}</span>
-            {active && (
-              <span className="tl-dock-active-indicator tl-dock-active-indicator--css" />
-            )}
           </button>
         );
       })}

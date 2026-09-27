@@ -412,6 +412,22 @@ const App: React.FC = () => {
   const [weekRestoreContext, setWeekRestoreContext] = useState<WeekMatrixContext | null>(null);
   const [phoneFullView, setPhoneFullView] = useState(false);
   const [viewDirection, setViewDirection] = useState(1);
+  // 常驻缓存：去过的视图不再卸载，切回秒出；隐藏用 display:none，不收事件。
+  const [visitedViews, setVisitedViews] = useState<Set<AppModule>>(() => new Set([getInitialAppView()]));
+  React.useEffect(() => {
+    setVisitedViews((prev) => {
+      if (prev.has(currentView)) return prev;
+      const next = new Set(prev);
+      next.add(currentView);
+      // 内存封顶：只留最近 4 个，常驻太多反而拖慢首次渲染。
+      if (next.size > 4) {
+        const first = next.values().next().value as AppModule | undefined;
+        if (first && first !== currentView) next.delete(first);
+      }
+      return next;
+    });
+  }, [currentView]);
+  const viewSlideClass = `tl-view-slide ${viewDirection < 0 ? 'tl-view-slide--back' : ''}`;
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const viewMotionContext = useMemo<ViewMotionContext>(() => ({
     direction: viewDirection,
@@ -1042,15 +1058,17 @@ const App: React.FC = () => {
       ) : (
       /* 主视图必须立即卸载；保留退出视图会让它在卡顿时继续接收点击。 */
       <>
-        {currentView === 'ebb' && (
-          <motion.div 
+        {(currentView === 'ebb' || visitedViews.has('ebb')) && (
+          <motion.div
             key="ebb"
             id="view-ebb"
             role="tabpanel"
-            className="tl-app-split tl-app-split--ebb"
+            hidden={currentView !== 'ebb'}
+            style={{ display: currentView === 'ebb' ? 'flex' : 'none' }}
+            className={`tl-app-split tl-app-split--ebb ${currentView === 'ebb' ? viewSlideClass : ''}`}
             custom={viewMotionContext}
             variants={VIEW_MOTION_VARIANTS}
-            initial="initial"
+            initial={false}
             animate="animate"
           >
             <div className="tl-app-main">
@@ -1061,15 +1079,17 @@ const App: React.FC = () => {
           </motion.div>
         )}
 
-        {currentView === 'daily-schedule' && (
-          <motion.div 
+        {(currentView === 'daily-schedule' || visitedViews.has('daily-schedule')) && (
+          <motion.div
             key="daily-schedule"
             id="view-daily-schedule"
             role="tabpanel"
-            className="tl-app-split tl-app-split--ebb"
+            hidden={currentView !== 'daily-schedule'}
+            style={{ display: currentView === 'daily-schedule' ? 'flex' : 'none' }}
+            className={`tl-app-split tl-app-split--ebb ${currentView === 'daily-schedule' ? viewSlideClass : ''}`}
             custom={viewMotionContext}
             variants={VIEW_MOTION_VARIANTS}
-            initial="initial"
+            initial={false}
             animate="animate"
           >
             <div className="tl-app-main">
@@ -1084,15 +1104,17 @@ const App: React.FC = () => {
           </motion.div>
         )}
 
-        {currentView === 'week-matrix' && (
-          <motion.div 
+        {(currentView === 'week-matrix' || visitedViews.has('week-matrix')) && (
+          <motion.div
             key="week-matrix"
             id="view-week-matrix"
             role="tabpanel"
-            className="tl-app-split tl-app-split--ebb"
+            hidden={currentView !== 'week-matrix'}
+            style={{ display: currentView === 'week-matrix' ? 'flex' : 'none' }}
+            className={`tl-app-split tl-app-split--ebb ${currentView === 'week-matrix' ? viewSlideClass : ''}`}
             custom={viewMotionContext}
             variants={VIEW_MOTION_VARIANTS}
-            initial="initial"
+            initial={false}
             animate="animate"
           >
             <div className="tl-app-main week-matrix-workspace">
@@ -1113,15 +1135,17 @@ const App: React.FC = () => {
           </motion.div>
         )}
 
-        {currentView === 'knowledge-graph' && (
-          <motion.div 
+        {(currentView === 'knowledge-graph' || visitedViews.has('knowledge-graph')) && (
+          <motion.div
             key="knowledge-graph"
             id="view-knowledge-graph"
             role="tabpanel"
-            className="tl-app-split tl-app-split--ebb"
+            hidden={currentView !== 'knowledge-graph'}
+            style={{ display: currentView === 'knowledge-graph' ? 'flex' : 'none' }}
+            className={`tl-app-split tl-app-split--ebb ${currentView === 'knowledge-graph' ? viewSlideClass : ''}`}
             custom={viewMotionContext}
             variants={VIEW_MOTION_VARIANTS}
-            initial="initial"
+            initial={false}
             animate="animate"
           >
             <div className="tl-app-main">
@@ -1161,15 +1185,17 @@ const App: React.FC = () => {
           </motion.div>
         )}
 
-        {currentView === 'timeline' && (
-          <motion.div 
+        {(currentView === 'timeline' || visitedViews.has('timeline')) && (
+          <motion.div
             key="timeline"
             id="view-timeline"
             role="tabpanel"
-            className="tl-app-split project-workspace"
+            hidden={currentView !== 'timeline'}
+            style={{ display: currentView === 'timeline' ? 'flex' : 'none' }}
+            className={`tl-app-split project-workspace ${currentView === 'timeline' ? viewSlideClass : ''}`}
             custom={viewMotionContext}
             variants={VIEW_MOTION_VARIANTS}
-            initial="initial"
+            initial={false}
             animate="animate"
           >
             <div className="project-workspace-content">
