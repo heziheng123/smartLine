@@ -194,7 +194,7 @@ const PhoneProjectView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onAddP
                 <span className="phone-card__next">{next ? `下一步：${next.header.title}` : task.completed ? '项目已完成' : unscheduled ? '下一步：待安排' : '尚未添加智能任务'}</span>
               </button>
               <div className="phone-card__footer">
-                <span>{overdue ? '已逾期' : `${blocks.length} 项任务`}{unscheduled ? ` · ${unscheduled} 项待安排` : ''}{task.lifeMapProjection?.enabled ? ' · 已投影到人生地图' : ''}</span>
+                <span>{overdue ? '已逾期' : `${blocks.length} 项任务`}{unscheduled ? ` · ${unscheduled} 项待安排` : ''}</span>
                 <button type="button" onClick={() => toggleTaskComplete(task.id)}>{task.completed ? <RotateCcw size={15} /> : <Check size={15} />}{task.completed ? '恢复' : '完成'}</button>
               </div>
             </article>
@@ -464,7 +464,7 @@ const PhoneReviewView: React.FC<PhoneWorkspaceProps> = ({ onOpenFullView }) => {
   );
 };
 
-const PhoneLifeMapView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenProject, onOpenFullView }) => {
+const PhoneLifeMapView: React.FC<PhoneWorkspaceProps> = ({ onOpenFullView }) => {
   const store = useLifeMapStore();
   const today = todayStr();
   const areas = activeLifeMapItems(store.lifeMapAreas).filter((area) => !area.isHidden);
@@ -472,7 +472,6 @@ const PhoneLifeMapView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenProject,
   const plans = activeLifeMapItems(store.lifeMapGoals).filter((goal) => goal.kind === 'plan' && goal.status !== 'archived');
   const systems = activeLifeMapItems(store.lifeMapSystems).filter((system) => system.status === 'active');
   const events = activeLifeMapItems(store.lifeMapEvents).filter((event) => event.date >= today).sort((left, right) => left.date.localeCompare(right.date));
-  const projections = tasks.filter((task) => task.lifeMapProjection?.enabled && areaById.has(task.lifeMapProjection.areaId));
   const nextEvent = events[0];
 
   return (
@@ -510,13 +509,6 @@ const PhoneLifeMapView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenProject,
             </article>
           ))}
           {plans.length === 0 && <p className="phone-list-empty">还没有人生计划</p>}
-        </div>
-      </section>
-      <section className="phone-section-card">
-        <header><div><span>项目投影</span><small>项目规划是唯一数据源</small></div></header>
-        <div className="phone-compact-list">
-          {projections.slice(0, 6).map((task) => <button type="button" key={task.id} onClick={() => onOpenProject(task.id)}><i style={{ background: task.color ?? '#6366f1' }} /><span><strong>{task.name}</strong><small>{areaById.get(task.lifeMapProjection!.areaId)?.name} · 只读投影</small></span><ArrowRight size={16} /></button>)}
-          {projections.length === 0 && <p className="phone-list-empty">尚未从项目规划投影项目</p>}
         </div>
       </section>
     </section>

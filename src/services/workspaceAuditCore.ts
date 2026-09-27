@@ -162,9 +162,6 @@ function inspectReferences(backup: WorkspaceBackup, findings: WorkspaceAuditFind
     if (review.outlineNodeId && !outlineIds.has(review.outlineNodeId)) addMissingReference(findings, 'ebb.reviewTasks', review.id, '大纲节点', review.outlineNodeId);
   }
   for (const task of getUniqueTasks(backup.timeline.tasks, backup.timeline.groups)) {
-    if (task.lifeMapProjection?.areaId && !areaIds.has(task.lifeMapProjection.areaId)) {
-      addMissingReference(findings, 'timeline.tasks', task.id, '人生领域', task.lifeMapProjection.areaId);
-    }
     for (const block of task.blocks) {
       if (block.type !== 'smart-task') continue;
       const nodeIds = new Set([...(block.header.graphNodeIds ?? []), ...(block.header.graphNodeId ? [block.header.graphNodeId] : [])]);

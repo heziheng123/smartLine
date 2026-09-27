@@ -46,20 +46,8 @@ export function normalizeTimelineTask(task: Task): Task {
   // sources of truth and must not retain cross-database identifiers.
   delete normalizedTask.planningAreaId;
   delete normalizedTask.lifeMapSource;
-  const projection = normalizedTask.lifeMapProjection;
-  if (!projection
-    || projection.enabled !== true
-    || typeof projection.areaId !== 'string'
-    || !projection.areaId.trim()
-    || (projection.placement !== 'above' && projection.placement !== 'below')) {
-    delete normalizedTask.lifeMapProjection;
-  } else {
-    normalizedTask.lifeMapProjection = {
-      enabled: true,
-      areaId: projection.areaId.trim(),
-      placement: projection.placement,
-    };
-  }
+  // Life Map projection retired: drop silently on load/import.
+  delete (normalizedTask as { lifeMapProjection?: unknown }).lifeMapProjection;
   if (normalizedTask.markdown && (!normalizedTask.blocks || normalizedTask.blocks.length === 0)) {
     const blocks = migrateMarkdownToBlocks(normalizedTask);
     delete normalizedTask.markdown;
