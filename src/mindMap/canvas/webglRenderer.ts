@@ -139,7 +139,7 @@ class Renderer {
       if ((source.type === 'node' && hiddenNodeIds.has(source.id))
         || (target.type === 'node' && hiddenNodeIds.has(target.id))) continue;
       const rgba = edge.relationship === 'reference'
-        ? color('#b2bac6', 0.58)
+        ? color('#64748b', 0.85)
         : color(resolveTreeEdgeColor(edge, branchColors), 0.78);
       const points = edgePolyline(edge, routingDocument);
       for (let index = 1; index < points.length; index += 1) {

@@ -2,27 +2,29 @@ import type { CSSProperties } from 'react';
 
 export const MIND_MAP_VISUAL_TOKENS = {
   color: {
-    canvas: '#f8f9fb',
+    canvas: '#f4f5fa',
     surface: '#ffffff',
-    surfaceMuted: '#f3f4f7',
-    text: '#202124',
-    textMuted: '#6f7278',
-    border: 'rgba(32, 33, 36, 0.13)',
-    borderStrong: 'rgba(32, 33, 36, 0.2)',
+    surfaceMuted: '#f3f4f8',
+    text: '#1e2030',
+    textMuted: '#71748a',
+    border: 'rgba(35, 38, 70, 0.1)',
+    borderStrong: 'rgba(35, 38, 70, 0.18)',
     accent: '#5b5bd6',
-    accentSoft: '#f0f0ff',
+    accentInk: '#3f3fb8',
+    accentSoft: '#efeffd',
+    accentGradient: 'linear-gradient(135deg, #6d6df2 0%, #5b5bd6 55%, #8b5cf6 100%)',
     danger: '#b42318',
     dangerSoft: '#fff1f0',
   },
   radius: {
-    control: 8,
-    node: 10,
-    panel: 12,
+    control: 10,
+    node: 12,
+    panel: 16,
   },
   shadow: {
-    node: '0 2px 8px rgba(27, 31, 39, 0.07)',
-    floating: '0 8px 24px rgba(27, 31, 39, 0.1)',
-    modal: '0 18px 54px rgba(27, 31, 39, 0.18)',
+    node: '0 2px 10px rgba(43, 45, 92, 0.08)',
+    floating: '0 12px 32px rgba(43, 45, 92, 0.13)',
+    modal: '0 24px 64px rgba(43, 45, 92, 0.22)',
   },
   spacing: {
     xs: 4,
@@ -44,8 +46,8 @@ export const MIND_MAP_VISUAL_TOKENS = {
     paddingY: 8,
   },
   edge: {
-    width: 1.25,
-    arrowSize: 6,
+    width: 2,
+    arrowSize: 7,
   },
   selection: {
     ringWidth: 1.5,
@@ -69,6 +71,8 @@ export const mindMapVisualCssVariables = {
   '--mm-border': MIND_MAP_VISUAL_TOKENS.color.border,
   '--mm-border-strong': MIND_MAP_VISUAL_TOKENS.color.borderStrong,
   '--mm-accent': MIND_MAP_VISUAL_TOKENS.color.accent,
+  '--mm-accent-ink': MIND_MAP_VISUAL_TOKENS.color.accentInk,
+  '--mm-accent-gradient': MIND_MAP_VISUAL_TOKENS.color.accentGradient,
   '--mm-accent-soft': MIND_MAP_VISUAL_TOKENS.color.accentSoft,
   '--mm-danger': MIND_MAP_VISUAL_TOKENS.color.danger,
   '--mm-danger-soft': MIND_MAP_VISUAL_TOKENS.color.dangerSoft,
@@ -89,7 +93,7 @@ export const mindMapVisualCssVariables = {
 
 export function mindMapThemeCssVariables(theme: 'light' | 'dark' | 'minimal'): CSSProperties {
   if (theme === 'dark') return {
-    '--mm-canvas': '#17181c', '--mm-surface': '#24262c', '--mm-surface-muted': '#30333b', '--mm-text': '#f3f4f6', '--mm-text-muted': '#b6bbc6', '--mm-border': 'rgba(255,255,255,0.16)', '--mm-border-strong': 'rgba(255,255,255,0.28)', '--mm-accent-soft': '#30305b',
+    '--mm-canvas': '#12131a', '--mm-surface': 'rgba(32,34,45,0.92)', '--mm-surface-muted': '#3a3d4d', '--mm-text': '#f1f2f7', '--mm-text-muted': '#a8adbf', '--mm-border': 'rgba(255,255,255,0.12)', '--mm-border-strong': 'rgba(255,255,255,0.24)', '--mm-accent': '#8b8bf5', '--mm-accent-ink': '#b9b9ff', '--mm-accent-soft': '#2c2c55',
   } as CSSProperties;
   if (theme === 'minimal') return {
     '--mm-canvas': '#ffffff', '--mm-surface': '#ffffff', '--mm-surface-muted': '#fafafa', '--mm-border': 'rgba(32,33,36,0.08)', '--mm-shadow-floating': '0 3px 12px rgba(27,31,39,0.06)',

@@ -38,6 +38,7 @@ interface DailySlotSectionProps {
   onRemoveItem: (itemId: string) => void;
   onReturnToBacklog: (itemId: string) => void;
   onStartAddFree: () => void;
+  onPoolOpen: () => void;
   onFreeItemNameChange: (value: string) => void;
   onFreeItemDurationChange: (value: number) => void;
   onSubmitFree: () => void;
@@ -71,6 +72,7 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
   onFreeItemDurationChange,
   onSubmitFree,
   onCancelFree,
+  onPoolOpen,
 }) => {
   const loadRatio = stats.totalDuration / Math.max(1, stats.availableMinutes);
   const loadState = stats.totalDuration === 0
@@ -106,9 +108,8 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
         </div>
         <div className="ds-slot-capacity" aria-label={`${config.label}已安排 ${formatMinutes(stats.totalDuration)}，可规划 ${formatMinutes(stats.availableMinutes)}`}>
           <div className="ds-slot-capacity-copy">
-            <span className="ds-slot-capacity-value">已安排 {formatMinutes(stats.totalDuration)} / 可规划 {formatMinutes(stats.availableMinutes)}</span>
+            <span className="ds-slot-capacity-count">{stats.completed}/{stats.total} 项 · {formatMinutes(stats.totalDuration)}/{formatMinutes(stats.availableMinutes)}</span>
             <span className={`ds-slot-load-badge ds-slot-load-badge--${loadState}`}>{loadLabel}</span>
-            {stats.total > 0 && <span className="ds-slot-completion">{stats.completed}/{stats.total} 完成{stats.inProgress > 0 ? ` · ${stats.inProgress} 进行中` : ''}</span>}
           </div>
           <span className="ds-slot-capacity-track" aria-hidden="true">
             <span
@@ -127,10 +128,10 @@ const DailySlotSection: React.FC<DailySlotSectionProps> = ({
             className={`ds-slot-dropzone ${snapshot.isDraggingOver ? 'ds-slot-dropzone--active' : ''} ${items.length === 0 ? 'ds-slot-dropzone--empty' : ''}`}
           >
             {items.length === 0 && !snapshot.isDraggingOver && (
-              <div className="ds-slot-placeholder">
-                <strong>这个时段还没有安排</strong>
-                <span>可从右侧一键安排或拖入任务</span>
-              </div>
+              <button type="button" className="ds-slot-empty-add" onClick={onPoolOpen} aria-label={`${config.label}从任务池选择事项`}>
+                <strong>+ 添加事项</strong>
+                <span>从任务池选择，或拖入任务</span>
+              </button>
             )}
             {items.map((item, index) => {
               const quantity = isQuantitySource(item.sourceId);

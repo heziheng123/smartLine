@@ -105,7 +105,7 @@ test('orthogonal SVG export escapes user text and emits no executable markup', (
   assert.match(svg, /&lt;script&gt;/);
   assert.doesNotMatch(svg, /<script|foreignObject|\son[a-z]+=/i);
   assert.match(svg, /L 150 0 L 150 100/);
-  assert.match(svg, /font-size="17"/);
+  assert.match(svg, /font-size="20"/);
   assert.match(svg, /fill="#ef4444"/);
   assert.match(svg, />★</);
   assert.match(svg, />高</);

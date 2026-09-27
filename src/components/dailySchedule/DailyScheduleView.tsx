@@ -16,10 +16,11 @@ import {
 import {
   ArrowLeft,
   CalendarCheck2,
-  CalendarClock,
+  Clock3,
   NotebookPen,
   RotateCcw,
   Settings2,
+  Wand2,
   X,
 } from 'lucide-react';
 import { useTimelineStore } from '@/store';
@@ -724,6 +725,33 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
     });
   }, [addScheduledItem, selectedDate]);
 
+  // ── 自动排期：按紧急程度把待安排事项填入有余量的时段 ─────────────
+  const handleAutoSchedule = useCallback(() => {
+    const remaining = new Map<TimeSlot, number>();
+    for (const config of slotConfigs) {
+      const used = getSlotItems(config.slot).reduce((sum, item) => sum + (item.duration ?? 30), 0);
+      remaining.set(config.slot, config.availableMinutes - used);
+    }
+    let placed = 0;
+    const overflow: string[] = [];
+    for (const poolItem of poolItems) {
+      const need = poolItem.duration ?? 30;
+      const target = slotConfigs.find((config) => (remaining.get(config.slot) ?? 0) >= need);
+      if (!target) {
+        overflow.push(poolItem.name);
+        continue;
+      }
+      schedulePoolItemToSlot(poolItem, target.slot);
+      remaining.set(target.slot, (remaining.get(target.slot) ?? 0) - need);
+      placed += 1;
+    }
+    setBacklogFeedback({
+      text: placed > 0
+        ? `自动排期完成：${placed} 项已安排${overflow.length > 0 ? `，${overflow.length} 项余量不足（${overflow.slice(0, 3).join('、')}${overflow.length > 3 ? '…' : ''}）` : ''}`
+        : '今日各时段余量不足，未能自动安排',
+    });
+  }, [getSlotItems, poolItems, schedulePoolItemToSlot, slotConfigs]);
+
   // ── 拖拽处理（时段模式） ─────────────────────────────────
   const handleDragEnd = useCallback(
     async (result: DropResult) => {
@@ -1059,11 +1087,16 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
         {/* ── 顶部栏 ─────────────────────────────────────── */}
         <WorkspaceHeader className="ds-header" aria-label="每日安排工作区">
           <div className="ds-header-left ui-workspace-header__identity">
-            <span className="ui-workspace-header__identity-icon"><CalendarClock size={17} aria-hidden="true" /></span>
-            <div className="ui-workspace-header__identity-copy">
-              <h1 className="ds-title">每日安排</h1>
-              <p>当天执行工作台</p>
-            </div>
+            <button type="button" className="ds-date-nav" onClick={() => setSelectedDate(addDays(selectedDate, -1))} aria-label="上一日">‹</button>
+            <input
+              type="date"
+              className="ds-date-input"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              title="选择日期（键盘快捷键：J 下一日 / K 上一日 / T 今日）"
+              aria-label="选择日期，按 J 下一日、K 上一日、T 回到今日"
+            />
+            <button type="button" className="ds-date-nav" onClick={() => setSelectedDate(addDays(selectedDate, 1))} aria-label="下一日">›</button>
             {weekReturnContext && (
               <button
                 type="button"
@@ -1075,21 +1108,11 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             )}
           </div>
           <div className="ui-workspace-header__context">
-            <input
-              type="date"
-              className="ds-date-input"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              title="选择日期（键盘快捷键：J 下一日 / K 上一日 / T 今日）"
-              aria-label="选择日期，按 J 下一日、K 上一日、T 回到今日"
-            />
             <div className="ds-day-overview" aria-label="今日安排概览">
-              <span><strong>{dailyOverview.scheduled}</strong> 项已安排</span>
-              <i aria-hidden="true" />
+              <span className="ds-progress-ring" role="img" aria-label={`已完成 ${dailyOverview.completed}/${dailyOverview.scheduled}`} style={{ '--ds-progress': dailyOverview.scheduled > 0 ? dailyOverview.completed / dailyOverview.scheduled : 0 } as React.CSSProperties}><b>{dailyOverview.scheduled > 0 ? `${dailyOverview.completed}/${dailyOverview.scheduled}` : '—'}</b></span>
               <span><strong>{poolItems.length}</strong> 项待安排</span>
               <i aria-hidden="true" />
               <span>{formatPlanningMinutes(dailyOverview.plannedMinutes)} / {formatPlanningMinutes(dailyOverview.availableMinutes)}</span>
-              {dailyOverview.scheduled > 0 && <span className="ds-day-completion">{dailyOverview.completed}/{dailyOverview.scheduled} 完成</span>}
             </div>
             {dailyMilestones.length > 0 && (
               <div
@@ -1119,23 +1142,23 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             )}
           </div>
           <div className="ds-header-right ui-workspace-header__actions">
+            <button type="button" className="ds-header-btn ds-header-btn--primary" onClick={handleAutoSchedule} disabled={poolItems.length === 0} title="按紧急程度把待安排事项自动填入有余量的时段">
+              <Wand2 size={15} />自动排期
+            </button>
             <button type="button" className="ds-header-btn" onClick={() => setReviewOpen(true)}>
               <NotebookPen size={15} />每日复盘
             </button>
-            <button type="button" className="ds-header-btn" onClick={() => setDailyPlanOpen(true)} aria-label="明日负荷规划">
-              <CalendarCheck2 size={15} />明日负荷规划
-            </button>
-            <button
-              type="button"
-              className={`ds-header-btn ${showSlotSettings ? 'ds-header-btn--active' : ''}`}
-              onClick={() => setShowSlotSettings(!showSlotSettings)}
-              title="时间段设置"
-              aria-expanded={showSlotSettings}
-              aria-controls="daily-time-settings"
-            >
-              <Settings2 size={15} />
-              时间与容量
-            </button>
+            <details className="ds-header-menu">
+              <summary aria-label="更多设置"><Settings2 size={15} /></summary>
+              <div role="menu">
+                <button type="button" role="menuitem" onClick={() => setDailyPlanOpen(true)}>
+                  <CalendarCheck2 size={15} />明日负荷规划
+                </button>
+                <button type="button" role="menuitem" aria-expanded={showSlotSettings} aria-controls="daily-time-settings" onClick={() => setShowSlotSettings(!showSlotSettings)}>
+                  <Clock3 size={15} />时间与容量
+                </button>
+              </div>
+            </details>
             <SyncStatusIndicator />
           </div>
         </WorkspaceHeader>
@@ -1296,6 +1319,7 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
                       setFreeItemDuration(30);
                       setAddingFreeSlot(config.slot);
                     }}
+                    onPoolOpen={() => setPoolPreference('open')}
                     onFreeItemNameChange={setFreeItemName}
                     onFreeItemDurationChange={setFreeItemDuration}
                     onSubmitFree={() => handleAddFreeSubmit(config.slot)}

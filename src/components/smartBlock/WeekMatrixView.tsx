@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { MOTION_EASE_EXIT, MOTION_SPRING_GENTLE, MOTION_TRANSITION_EXIT } from '@/motion/system';
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, FolderOpen, Tag, LayoutGrid } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CircleDashed, BookMarked, Hash, Clock3, FolderOpen, Tag, StickyNote } from 'lucide-react';
 import type { Milestone, Task, TaskGroup, SmartTaskBlock, SmartBlockDragPayload } from '@/types';
 import { getQuantityCompleted, getQuantityDailyStatus, getQuantityProgressPercent, getQuantityTotal, getQuantityUnit, getSmartTaskBlocks, getTagColor, getTaskEstimatedMinutes, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
@@ -59,6 +59,7 @@ interface MatrixRow {
 }
 
 const GROUP_MODE_STORAGE_KEY = 'week-matrix-group-mode-v1';
+const NOTES_EXPANDED_STORAGE_KEY = 'week-matrix-notes-expanded-v1';
 
 function loadGroupMode(): MatrixGroupMode {
   try {
@@ -103,6 +104,15 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
   const [cursor, setCursor] = useState(() => restoredContext?.cursor ?? todayStr());
   const [mode, setMode] = useState<'week' | 'month'>(() => restoredContext?.mode ?? 'week');
   const [groupMode, setGroupMode] = useState<MatrixGroupMode>(() => restoredContext?.groupMode ?? loadGroupMode());
+  // 备注默认收起（只占两行），一键展开/收起全部，偏好持久化。
+  const [notesExpanded, setNotesExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(NOTES_EXPANDED_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [todayFlash, setTodayFlash] = useState<string | null>(null);
   const [externalBacklogDrag, setExternalBacklogDrag] = useState<SmartBlockDragPayload | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ rowKey: string; date: string } | null>(null);
@@ -606,6 +616,24 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
     setCursor(dateStr);
   }, []);
 
+  // “今天”按钮：月视图下今天本来就在当月，setCursor 不引起任何变化，
+  // 看起来像“没反应”。统一处理：先回今天，再把今天列滚动到视野中央并闪一下。
+  const goToday = useCallback(() => {
+    const today = todayStr();
+    setCursor(today);
+    setTodayFlash(today);
+    window.setTimeout(() => {
+      setTodayFlash((current) => (current === today ? null : current));
+    }, 1200);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`.wmv-matrix [data-date="${today}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      });
+    });
+  }, []);
+
   const rangeLabel =
     mode === 'week'
       ? `${formatDate(dateRange[0], 'M.D')} - ${formatDate(dateRange[6], 'M.D')}`
@@ -621,16 +649,9 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
       className="wmv-container"
       data-dragging={draggingId || hoverCell || externalBacklogDrag ? 'true' : undefined}
       data-backlog-project-dragging={groupMode === 'project' && externalBacklogDrag ? 'true' : undefined}
+      data-notes-expanded={notesExpanded ? 'true' : 'false'}
     >
       <WorkspaceHeader className="wmv-nav" aria-label="周矩阵工作区">
-        <div className="ui-workspace-header__identity">
-          <span className="ui-workspace-header__identity-icon"><LayoutGrid size={17} aria-hidden="true" /></span>
-          <div className="ui-workspace-header__identity-copy">
-            <h1>周矩阵</h1>
-            <p>{mode === 'week' ? '每周任务分布' : '月度任务分布'}</p>
-          </div>
-        </div>
-
         <div className="wmv-date-navigation ui-workspace-header__context">
           <button
             type="button"
@@ -647,19 +668,21 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
           >
             <ChevronRight size={16} />
           </button>
-          <button type="button" className="wmv-nav-btn" onClick={() => setCursor(todayStr())}>
+          <button type="button" className="wmv-nav-btn" onClick={goToday}>
             今天
           </button>
         </div>
 
         <div className="wmv-nav-right ui-workspace-header__actions">
           {hasOffRangeBlocks && (
-            <div
+            <details
               className="wmv-offrange-capsule"
-              title="存在不在当前显示范围内的任务块，悬停可查看最近日期"
             >
-              <span className="wmv-offrange-capsule-icon"><BookMarked size={14} aria-hidden="true" /></span>
-              <span className="wmv-offrange-capsule-count">{offRangeInfo.totalBefore + offRangeInfo.totalAfter}</span>
+              <summary title="范围外还有任务，点击查看并跳转">
+                <span className="wmv-offrange-capsule-icon"><BookMarked size={14} aria-hidden="true" /></span>
+                <span className="wmv-offrange-capsule-text">范围外 {offRangeInfo.totalBefore + offRangeInfo.totalAfter} 项</span>
+                <span className="wmv-offrange-capsule-chevron" aria-hidden="true">›</span>
+              </summary>
               <div className="wmv-offrange-popover">
                 <div className="wmv-offrange-popover-text">
                   共有 {offRangeInfo.totalBefore + offRangeInfo.totalAfter} 个智能任务块不在当前{mode === 'week' ? '周' : '月'}视图中
@@ -687,28 +710,31 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
                   )}
                 </div>
               </div>
-            </div>
+            </details>
           )}
 
-          <div className="wmv-group-switch" role="group" aria-label="周矩阵分组方式">
-            <span className="wmv-group-switch-label">分组</span>
-            <button
-              type="button"
-              className={`wmv-mode-btn ${groupMode === 'tag' ? 'wmv-mode-btn--active' : ''}`}
-              onClick={() => setGroupMode('tag')}
-              aria-pressed={groupMode === 'tag'}
-            >
-              <Tag size={13} />类型
-            </button>
-            <button
-              type="button"
-              className={`wmv-mode-btn ${groupMode === 'project' ? 'wmv-mode-btn--active' : ''}`}
-              onClick={() => setGroupMode('project')}
-              aria-pressed={groupMode === 'project'}
-            >
-              <FolderOpen size={13} />项目
-            </button>
-          </div>
+          <button
+            type="button"
+            className={`wmv-mode-btn wmv-notes-toggle ${notesExpanded ? 'wmv-mode-btn--active' : ''}`}
+            onClick={() => {
+              setNotesExpanded((current) => {
+                try {
+                  localStorage.setItem(NOTES_EXPANDED_STORAGE_KEY, current ? '0' : '1');
+                } catch { /* 忽略持久化失败 */ }
+                return !current;
+              });
+            }}
+            aria-pressed={notesExpanded}
+            title={notesExpanded ? '一键收起全部备注' : '一键展开全部备注'}
+          >
+            <StickyNote size={13} />{notesExpanded ? '收起备注' : '展开备注'}
+          </button>
+          <label className="wmv-group-select">分组
+            <select value={groupMode} onChange={(event) => setGroupMode(event.target.value as MatrixGroupMode)} aria-label="周矩阵分组方式">
+              <option value="tag">按类型</option>
+              <option value="project">按项目</option>
+            </select>
+          </label>
           <div className="wmv-mode-switch" role="group" aria-label="周矩阵时间范围">
             <button
               type="button"
@@ -742,7 +768,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
                 key={dateStr}
                 className={`wmv-cell wmv-cell--date ${isToday ? 'wmv-cell--today' : ''} ${
                   isWeekend ? 'wmv-cell--weekend' : ''
-                } ${dayMilestones.length > 0 ? 'wmv-cell--date-has-milestone' : ''} ${hoverCell?.rowKey === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''}`}
+                } ${dayMilestones.length > 0 ? 'wmv-cell--date-has-milestone' : ''} ${hoverCell?.rowKey === '' && hoverCell.date === dateStr ? 'wmv-cell--drop-target' : ''} ${todayFlash === dateStr ? 'wmv-cell--today-flash' : ''}`}
                 data-date={dateStr}
                 role="button"
                 tabIndex={0}
@@ -758,7 +784,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
                 onDragLeave={(event) => handleExternalCellDragLeave(event, '', dateStr)}
                 onDrop={(event) => handleExternalCellDrop(event, '', dateStr)}
               >
-                <span className="wmv-date-weekday">{WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}</span>
+                <span className="wmv-date-weekday">{WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1]}{isToday && <b className="wmv-date-today-badge">今</b>}</span>
                 <span className="wmv-date-num">{splitDate(dateStr).day}</span>
                 {dayMilestones.length > 0 && (
                   <span

@@ -2060,27 +2060,62 @@
 }
 
 .wmv-mode-switch {
-  display: flex;
-  background: #f3f4f6;
-  border-radius: 6px;
-  padding: 2px;
+  display: inline-flex;
+  background: #eef0f6;
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
 }
 
 .wmv-mode-btn {
-  padding: 4px 12px;
+  padding: 5px 16px;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: 999px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 650;
   cursor: pointer;
   color: #6b7280;
   transition: all var(--stb-transition);
 }
+.wmv-mode-btn:hover { color: #374151; }
 .wmv-mode-btn--active {
-  background: #fff;
-  color: #111827;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  background: linear-gradient(135deg, #6d6df2, #5865df);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(88, 101, 223, .35);
+}
+
+.wmv-group-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.wmv-group-select select {
+  height: 30px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 26px 0 10px;
+  color: #374151;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wmv-group-select select:focus {
+  outline: none;
+  border-color: #5865df;
+  box-shadow: 0 0 0 3px rgba(88, 101, 223, .14);
 }
 
 /* ── 矩阵表格 ── */
@@ -2123,23 +2158,32 @@
 /* ── 跳转提示胶囊（悬停展开） ── */
 .wmv-offrange-capsule {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
+  display: inline-block;
   background: #fef3c7;
   border: 1px solid #fbbf24;
   border-radius: 999px;
   font-size: 12px;
   color: #92400e;
-  cursor: default;
-  transition: background var(--stb-transition), border-color var(--stb-transition);
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
-.wmv-offrange-capsule:hover {
+.wmv-offrange-capsule > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.wmv-offrange-capsule > summary::-webkit-details-marker { display: none; }
+.wmv-offrange-capsule > summary::marker { content: ''; }
+.wmv-offrange-capsule[open] {
   background: #fde68a;
   border-color: #f59e0b;
 }
+.wmv-offrange-capsule-chevron { color: #b45309; font-size: 13px; transition: transform .15s ease; }
+.wmv-offrange-capsule[open] .wmv-offrange-capsule-chevron { transform: rotate(90deg); }
 .wmv-offrange-capsule-icon { display: inline-flex; align-items: center; line-height: 1; }
 .wmv-offrange-capsule-count {
   font-weight: 600;
@@ -2155,19 +2199,13 @@
   border-radius: 8px;
   padding: 10px 12px;
   box-shadow: 0 6px 20px rgba(0,0,0,.12);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: opacity .15s ease, transform .15s ease, visibility .15s;
   z-index: 30;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.wmv-offrange-capsule:hover .wmv-offrange-popover {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
+.wmv-offrange-capsule:not([open]) .wmv-offrange-popover {
+  display: none;
 }
 .wmv-offrange-popover-text {
   font-size: 12px;
@@ -2278,6 +2316,7 @@
 }
 
 .wmv-cell--date {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2286,11 +2325,49 @@
 }
 
 .wmv-cell--today {
-  background: #eff6ff;
+  background: #eef0ff;
+  box-shadow: inset 0 2px 0 #5865df;
+}
+
+.wmv-date-today-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6d6df2, #5865df);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  font-style: normal;
+  vertical-align: 1px;
+}
+
+@keyframes wmv-today-flash {
+  0%, 100% { box-shadow: inset 0 2px 0 #5865df; }
+  30%, 70% { box-shadow: inset 0 0 0 2px #5865df; background: #e3e6ff; }
+}
+
+.wmv-cell--today-flash {
+  animation: wmv-today-flash 1.2s ease;
 }
 
 .wmv-cell--weekend {
-  background: #fafafa;
+  background: #f4f5f7;
+}
+
+.wmv-cell--date-has-milestone::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f59e0b;
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, .2);
 }
 
 .wmv-cell--has-data {
@@ -2561,6 +2638,18 @@
   font-size: 11px;
   color: #6b7280;
   line-height: 1.4;
+}
+
+/* 备注收起 = 整个备注块不占位，就像任务没有备注一样；展开后全文显示 */
+.wmv-container[data-notes-expanded='false'] .wmv-block-body {
+  display: none;
+}
+
+.wmv-notes-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .wmv-toast {

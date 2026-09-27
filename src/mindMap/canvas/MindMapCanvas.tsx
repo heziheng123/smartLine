@@ -86,11 +86,12 @@ import { buildEdgeRoute, pointOnRoute, type EdgeRoute, type HierarchyPort } from
 import { connectableObjects, edgeConnectableObjects, hitConnectableObject, resolveConnectableObject, type ConnectableObject } from './connectableObjects';
 import { renderMindMapWebGl } from './webglRenderer';
 import { MindMapOutline } from './MindMapOutline';
+import { MindMapConfirmDialog, type MindMapConfirmDialogState } from './ConfirmDialog';
 import { MindMapMultiSelectionPanel } from './MindMapMultiSelectionPanel';
 import { mindMapSummaryConnector, traceMindMapBoundary } from './semanticGeometry';
 import { moveMindMapOutlineNode, setMindMapOutlineCollapsed, type OutlineDropPosition } from './treeInteractions';
-import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY, timelineTemporalState, type TimelineFocus, type TimelineVisibility } from './timelineLayer';
-import { timelineProjectionItems, timelineSelectedProjectIds, timelineUnscheduledItemCount, type TimelineProjectionItem } from '../timelineProjection';
+import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY, timelineTemporalState, TIMELINE_SUMMARY_SCALE, timelineDetailScale, type TimelineFocus, type TimelineVisibility } from './timelineLayer';
+import { timelineProjectionItems, timelineSelectedProjectIds, timelineUnscheduledItemCount, timelineUnscheduledItems, type TimelineProjectionItem } from '../timelineProjection';
 import { useLifeTimelineSnapshot } from '../timelineProjectionHooks';
 import { updateLifePlanningDates } from '../lifePlanning';
 import { createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, resizeTimelineRect, timelineRangeForScale, timelineScaleLabel } from '../timelineLayout';
@@ -127,6 +128,8 @@ interface MindMapCanvasProps {
   onConnectionModeChange?: (active: boolean) => void;
   remotePresences?: MindMapRemotePresence[];
   onPresenceChange?: (patch: Partial<Pick<MindMapPresence, 'cursor' | 'draggingId' | 'editingId'>>) => void;
+  pendingTimelineId?: string | null;
+  onPendingTimelineConsumed?: () => void;
 }
 
 type ResizeCorner = 'nw' | 'ne' | 'se' | 'sw';
@@ -297,6 +300,13 @@ const MINIMAP_HEIGHT = 90;
 const SHORTCUT_HINT_STORAGE_KEY = 'smartline:mind-map-shortcut-hint-seen';
 // 2D edge routing becomes the dominant cost while zooming before 2,500 nodes.
 const WEBGL_NODE_THRESHOLD = 1_000;
+
+// C2：把缩放离散成档位，档位不变则图层输出不变，从而可安全缓存。
+const timelineScaleBucket = (scale: number, timelineScale: 'week' | 'month' | 'long-range') => {
+  if (scale < TIMELINE_SUMMARY_SCALE) return { key: 'o', representative: 0.3 };
+  if (scale >= timelineDetailScale(timelineScale)) return { key: 'd', representative: 1.2 };
+  return { key: 'c', representative: 0.7 };
+};
 const CLIPBOARD_PREFIX = 'smart-line-mind-map-clipboard:';
 const MARKDOWN_COLLAPSED_HEIGHT = 600;
 const MARKDOWN_EXPANDED_HEIGHT = 2_400;
@@ -441,19 +451,34 @@ const drawCanvasAction = (
   point: Point,
   icon: string,
   primary = false,
-  size = 20,
+  size = 24,
 ) => {
   const half = size / 2;
   context.save();
-  context.fillStyle = primary ? MIND_MAP_VISUAL_TOKENS.color.accentSoft : 'rgba(255,255,255,0.01)';
-  context.strokeStyle = primary ? 'rgba(91, 91, 214, 0.22)' : 'rgba(91, 91, 214, 0.08)';
-  context.lineWidth = 1;
+  if (primary) {
+    context.shadowColor = 'rgba(91, 91, 214, 0.45)';
+    context.shadowBlur = 8;
+    context.shadowOffsetY = 2;
+    context.fillStyle = '#5b5bd6';
+  } else {
+    context.shadowColor = 'rgba(30, 32, 48, 0.12)';
+    context.shadowBlur = 6;
+    context.shadowOffsetY = 2;
+    context.fillStyle = 'rgba(255,255,255,0.98)';
+  }
   context.beginPath();
-  context.roundRect(point.x - half, point.y - half, size, size, Math.min(7, half));
+  context.roundRect(point.x - half, point.y - half, size, size, half);
   context.fill();
-  context.stroke();
-  context.fillStyle = MIND_MAP_VISUAL_TOKENS.color.accent;
-  context.font = `650 ${icon === '•••' ? 10 : 13}px ${MIND_MAP_VISUAL_TOKENS.typography.ui}`;
+  context.shadowColor = 'transparent';
+  context.shadowBlur = 0;
+  context.shadowOffsetY = 0;
+  if (!primary) {
+    context.strokeStyle = 'rgba(30, 32, 48, 0.12)';
+    context.lineWidth = 1;
+    context.stroke();
+  }
+  context.fillStyle = primary ? '#ffffff' : '#5558c7';
+  context.font = `${primary ? 700 : 650} ${icon === '•••' ? 11 : 15}px ${MIND_MAP_VISUAL_TOKENS.typography.ui}`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
   context.fillText(icon, point.x, point.y + (icon === '•••' ? -1 : 0.5));
@@ -462,20 +487,22 @@ const drawCanvasAction = (
 
 const drawNodeActionRail = (context: CanvasRenderingContext2D, points: Point[]) => {
   if (points.length === 0) return;
-  const left = Math.min(...points.map((point) => point.x)) - 12;
-  const right = Math.max(...points.map((point) => point.x)) + 12;
-  const top = Math.min(...points.map((point) => point.y)) - 12;
+  const left = Math.min(...points.map((point) => point.x)) - 16;
+  const right = Math.max(...points.map((point) => point.x)) + 16;
+  const top = Math.min(...points.map((point) => point.y)) - 16;
   context.save();
-  context.shadowColor = 'rgba(27, 31, 39, 0.07)';
-  context.shadowBlur = 6;
-  context.shadowOffsetY = 2;
-  context.fillStyle = 'rgba(255,255,255,0.96)';
-  context.strokeStyle = 'rgba(32,33,36,0.10)';
-  context.lineWidth = 1;
+  context.shadowColor = 'rgba(30, 32, 48, 0.14)';
+  context.shadowBlur = 12;
+  context.shadowOffsetY = 3;
+  context.fillStyle = 'rgba(255,255,255,0.97)';
   context.beginPath();
-  context.roundRect(left, top, right - left, 24, 8);
+  context.roundRect(left, top, right - left, 32, 16);
   context.fill();
   context.shadowColor = 'transparent';
+  context.shadowBlur = 0;
+  context.shadowOffsetY = 0;
+  context.strokeStyle = 'rgba(30, 32, 48, 0.10)';
+  context.lineWidth = 1;
   context.stroke();
   context.restore();
 };
@@ -816,6 +843,8 @@ export default function MindMapCanvas({
   onConnectionModeChange,
   remotePresences = [],
   onPresenceChange,
+  pendingTimelineId = null,
+  onPendingTimelineConsumed,
 }: MindMapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const webglCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -844,6 +873,13 @@ export default function MindMapCanvas({
   const handledPngRequest = useRef(0);
   const touchPoints = useRef(new Map<number, Point>());
   const pinchRef = useRef<PinchState | null>(null);
+  const lastDownRef = useRef<{ time: number; nodeId: string | null }>({ time: 0, nodeId: null });
+  const touchHoldRef = useRef<{ pointerId: number; view: Point; world: Point; time: number } | null>(null);
+  const lastTouchViewRef = useRef(new Map<number, Point>());
+  const panPendingRef = useRef({ dx: 0, dy: 0 });
+  const panFlushRef = useRef<number | null>(null);
+  const twoFingerTapRef = useRef<{ firstDown: number; secondDown: number; moved: boolean }>({ firstDown: 0, secondDown: 0, moved: false });
+  const [confirmDialog, setConfirmDialog] = useState<MindMapConfirmDialogState | null>(null);
   const renderedDocumentId = useRef<string | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [camera, setCameraState] = useState(document.viewport);
@@ -867,6 +903,8 @@ export default function MindMapCanvas({
   const [interaction, setInteractionState] = useState<Interaction>(null);
   const [editing, setEditing] = useState<EditingSession | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [moveDialog, setMoveDialog] = useState<{ nodeId: string; keyword: string } | null>(null);
+  const [edgeLabelEditing, setEdgeLabelEditing] = useState<{ edgeId: string; draft: string; viewX: number; viewY: number } | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandSearch, setCommandSearch] = useState('');
   const [searchCursor, setSearchCursor] = useState(0);
@@ -1049,17 +1087,25 @@ export default function MindMapCanvas({
   }, [branchThemeColors, document.nodes, editing?.connectFromId, editing?.height, editing?.nodeId, editing?.width, editing?.x, editing?.y, nodeDepthById]);
   const nodePresentationById = useMemo(() => {
     const presentations = new Map<string, MindMapNodePresentation>();
+    const dark = document.settings.theme === 'dark';
     for (const node of Object.values(document.nodes)) {
       const depth = nodeDepthById.get(node.id) ?? 0;
-      presentations.set(node.id, resolveMindMapNodePresentation(
+      const base = resolveMindMapNodePresentation(
         node,
         depth,
         branchThemeColors.get(node.id) ?? mindMapNodeThemeColor(node, document.settings.mapTheme),
         document.settings.mapTheme,
-      ));
+      );
+      // 深色模式：节点填充/文字跟随主题，避免白底黑字刺眼或看不清。
+      presentations.set(node.id, dark && node.colorMode !== 'custom' ? {
+        ...base,
+        fill: mixMindMapColor(base.accent, '#24262c', 0.72),
+        border: mixMindMapColor(base.accent, '#ffffff', 0.25),
+        text: '#f3f4f6',
+      } : base);
     }
     return presentations;
-  }, [branchThemeColors, document.nodes, document.settings.mapTheme, nodeDepthById]);
+  }, [branchThemeColors, document.nodes, document.settings.mapTheme, document.settings.theme, nodeDepthById]);
   const canvasNodes = useMemo(() => Object.fromEntries(
     Object.entries(renderDocument.nodes).filter(([id]) => !hiddenNodeIds.has(id)),
   ), [hiddenNodeIds, renderDocument.nodes]);
@@ -1103,6 +1149,27 @@ export default function MindMapCanvas({
       height: timeline.collapsed ? 46 : timeline.height,
     }));
   }, [camera, renderDocument.timelineSections, size]);
+  // C1/C2：时间线图层计算较重（排序 + 里程碑分桶 + weekends 按天展开）。
+  // 只在“影响结果”的因素变化时重算：可见时间线、数据源、可见性/聚焦、以及缩放的“档位”。
+  // 平移（x/y 变化）不再触发重算；缩放只在跨过档位阈值时重算。
+  const timelineScaleSignature = useMemo(
+    () => visibleTimelines.map((timeline) => timelineScaleBucket(camera.scale, timeline.scale).key).join(''),
+    [camera.scale, visibleTimelines],
+  );
+  const timelineLayers = useMemo(() => {
+    const map = new Map<string, { allItems: TimelineProjectionItem[]; layer: ReturnType<typeof buildMindMapTimelineLayer> }>();
+    for (const timeline of visibleTimelines) {
+      const allItems = timelineProjectionItems(timeline, projectPlanning, document.lifeMap ?? lifeTimeline);
+      const visibility = timelineVisibility[timeline.id] ?? DEFAULT_TIMELINE_VISIBILITY;
+      const focusMode = timelineFocus[timeline.id] ?? 'all';
+      map.set(timeline.id, {
+        allItems,
+        layer: buildMindMapTimelineLayer(timeline, allItems, timelineScaleBucket(camera.scale, timeline.scale).representative, visibility, focusMode),
+      });
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera.scale 仅通过 timelineScaleSignature 影响档位
+  }, [document.lifeMap, lifeTimeline, projectPlanning, timelineFocus, timelineScaleSignature, timelineVisibility, visibleTimelines]);
   const hitIndexedNode = useCallback((point: Point) => {
     const candidates = spatialIndex.query({ x: point.x - 1, y: point.y - 1, width: 2, height: 2 });
     const ids = new Set(candidates.map((node) => node.id));
@@ -1119,16 +1186,34 @@ export default function MindMapCanvas({
 
   useEffect(() => {
     if (editing) return;
+    const measureCanvas = window.document.createElement('canvas');
+    const measureContext = measureCanvas.getContext('2d');
     const sizes = Object.values(document.nodes).flatMap((node) => {
-      if (node.type !== 'markdown' || node.sizeMode !== 'auto') return [];
+      // 之前只处理 markdown，纯文本/链接节点导入后从不自动长高，
+      // 文本只能显示一行就被 … 截断。这里补上：按展示字号算出所需行数，
+      // 超出盒子容纳行才同步尺寸（只长不缩，不干扰手动调整）。
+      if (node.sizeMode !== 'auto') return [];
       const displayFontSize = nodePresentationById.get(node.id)?.fontSize ?? node.style.fontSize;
       const sizingKey = `${document.id}:${node.id}`;
       const expanded = expandedMarkdownNodeIds.has(node.id);
-      const revision = `${node.text}\n${displayFontSize}:${node.style.fontWeight}:${node.style.lineHeight}:${expanded ? 'expanded' : 'collapsed'}`;
+      const revision = `${node.text}\n${node.type}\n${displayFontSize}:${node.style.fontWeight}:${node.style.lineHeight}:${expanded ? 'expanded' : 'collapsed'}`;
       if (markdownSizeRevisionRef.current.get(sizingKey) === revision) return [];
       markdownSizeRevisionRef.current.set(sizingKey, revision);
-      const measured = measuredNodeSize(node.text, node, displayFontSize, expanded ? MARKDOWN_EXPANDED_HEIGHT : MARKDOWN_COLLAPSED_HEIGHT);
-      return Math.abs(measured.width - node.width) > 1 || Math.abs(measured.height - node.height) > 1
+      if (node.type === 'markdown') {
+        const measured = measuredNodeSize(node.text, node, displayFontSize, expanded ? MARKDOWN_EXPANDED_HEIGHT : MARKDOWN_COLLAPSED_HEIGHT);
+        return Math.abs(measured.width - node.width) > 1 || Math.abs(measured.height - node.height) > 1
+          ? [[node.id, measured] as const]
+          : [];
+      }
+      if ((node.type !== 'text' && node.type !== 'url') || !measureContext) return [];
+      const prefix = `${node.icon ? `${node.icon} ` : ''}${node.type === 'url' ? 'URL · ' : ''}`;
+      measureContext.font = `${node.style.fontWeight} ${displayFontSize}px sans-serif`;
+      const lines = wrapText(measureContext, prefix + (node.text || ' '), Math.max(10, node.width - MIND_MAP_VISUAL_TOKENS.node.paddingX * 2), 20);
+      const lineHeight = displayFontSize * node.style.lineHeight;
+      const fitLines = Math.max(1, Math.floor((node.height - 24) / lineHeight));
+      if (lines.length <= fitLines) return [];
+      const measured = measuredNodeSize(prefix + (node.text || ' '), node, displayFontSize, MARKDOWN_COLLAPSED_HEIGHT);
+      return measured.height > node.height + 1 || measured.width > node.width + 1
         ? [[node.id, measured] as const]
         : [];
     });
@@ -1264,6 +1349,7 @@ export default function MindMapCanvas({
   useEffect(() => () => {
     if (cameraFrame.current !== null) cancelAnimationFrame(cameraFrame.current);
     if (interactionFrame.current !== null) cancelAnimationFrame(interactionFrame.current);
+    if (panFlushRef.current !== null) cancelAnimationFrame(panFlushRef.current);
     if (presenceCursorTimer.current) clearTimeout(presenceCursorTimer.current);
     if (cameraSaveTimer.current) clearTimeout(cameraSaveTimer.current);
     setViewportForDocument(renderedDocumentId.current ?? document.id, cameraRef.current);
@@ -1306,6 +1392,20 @@ export default function MindMapCanvas({
   useEffect(() => {
     if (commandOpen) commandInputRef.current?.focus();
   }, [commandOpen]);
+
+  // A1：新建时间线后自动选中并打开内容选择器，空状态不再让人发愣。
+  useEffect(() => {
+    if (!pendingTimelineId || !document.timelineSections[pendingTimelineId]) return;
+    setSelectedTimelineId(pendingTimelineId);
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setSelectedSectionId(null);
+    setSelectedProjectReferenceId(null);
+    setTimelineSelectorSearch('');
+    setTimelineSelectorFilter('all');
+    setTimelineSelectorOpen(true);
+    onPendingTimelineConsumed?.();
+  }, [document.timelineSections, onPendingTimelineConsumed, pendingTimelineId]);
 
   let presenceDraggingId: string | null = null;
   if (interaction?.type === 'drag') presenceDraggingId = selectedNodeIds[0] ?? null;
@@ -1382,7 +1482,9 @@ export default function MindMapCanvas({
 
   useEffect(() => {
     const canvas = webglCanvasRef.current;
-    if (!canvas || Object.keys(canvasNodes).length < WEBGL_NODE_THRESHOLD) {
+    // WebGL 本就画边（edgeBuffer），阈值按节点或边数触发，避免 2000+ 边时 2D 主线程被贝塞尔采样拖死。
+    const edgeCount = Object.keys(renderDocument.edges).length;
+    if (!canvas || (Object.keys(canvasNodes).length < WEBGL_NODE_THRESHOLD && edgeCount < 1500)) {
       setWebglActive(false);
       return;
     }
@@ -1589,14 +1691,17 @@ export default function MindMapCanvas({
         const edgeHovered = hoveredEdgeId === edge.id;
         context.strokeStyle = edgeSelected
           ? MIND_MAP_VISUAL_TOKENS.color.accent
-          : edge.relationship === 'reference' ? '#b2bac6' : resolveTreeEdgeColor(edge, branchThemeColors);
+          : edge.relationship === 'reference' ? '#64748b' : resolveTreeEdgeColor(edge, branchThemeColors);
         const edgeWidth = edge.style.width === 2 ? MIND_MAP_VISUAL_TOKENS.edge.width : edge.style.width;
+        const targetDepth = nodeDepthById.get(edge.targetId) ?? 2;
+        // XMind 式层级线宽：中心/一级粗、深层细，形成视觉主干。
+        const depthBoost = edge.relationship === 'tree' ? (targetDepth <= 1 ? 1.6 : targetDepth === 2 ? 1.2 : 1) : 1;
         context.globalAlpha = edge.relationship === 'reference'
-          ? edgeSelected ? 1 : edgeHovered ? 0.82 : 0.62
+          ? edgeSelected ? 1 : edgeHovered ? 0.95 : 0.85
           : 1;
         context.lineWidth = edge.relationship === 'reference'
-          ? edgeSelected ? 1.7 : edgeHovered ? 1.45 : 1.15
-          : Math.max(1, edgeWidth * camera.scale);
+          ? edgeSelected ? 2 : edgeHovered ? 1.8 : 1.6
+          : Math.max(1, edgeWidth * depthBoost * camera.scale);
         context.setLineDash(edge.relationship === 'reference' || edge.style.dash === 'dashed' ? [4, 5] : []);
         context.stroke();
         context.setLineDash([]);
@@ -1760,9 +1865,9 @@ export default function MindMapCanvas({
             context.lineWidth = 5;
             context.stroke();
           }
-          if (!presentation.topic || selected) {
-            context.strokeStyle = selected ? presentation.accent : presentation.border;
-            context.lineWidth = selected ? MIND_MAP_VISUAL_TOKENS.selection.ringWidth : Math.min(1, node.style.borderWidth) * Math.max(0.75, camera.scale);
+          if (!presentation.topic || selected || hovered) {
+            context.strokeStyle = selected ? presentation.accent : hovered ? presentation.accent : presentation.border;
+            context.lineWidth = selected ? MIND_MAP_VISUAL_TOKENS.selection.ringWidth : hovered ? Math.max(1.5, 1.5 * camera.scale) : Math.min(1, node.style.borderWidth) * Math.max(0.75, camera.scale);
             context.setLineDash(node.style.borderStyle === 'dashed' ? [7, 5] : []);
             context.stroke();
             context.setLineDash([]);
@@ -1778,23 +1883,29 @@ export default function MindMapCanvas({
           context.stroke();
           context.globalAlpha = 1;
         }
-        const semanticHidden = camera.scale < 0.32 && depth > 1;
-        if (camera.scale >= 0.2 && !semanticHidden && node.type !== 'markdown' && node.type !== 'latex') {
+        const semanticHidden = camera.scale < 0.22 && depth > 2;
+        if (camera.scale >= 0.12 && !semanticHidden && node.type !== 'markdown' && node.type !== 'latex') {
           context.fillStyle = presentation.text;
           context.font = presentation.fontWeight + ' ' + Math.max(8, presentation.fontSize * camera.scale) + 'px sans-serif';
           context.textAlign = node.style.textAlign;
           context.textBaseline = 'middle';
           const typePrefix = `${node.icon ? `${node.icon} ` : ''}${node.type === 'url' ? 'URL · ' : ''}`;
           const lineHeight = presentation.fontSize * node.style.lineHeight * camera.scale;
-          const maximumLines = camera.scale < 0.65 ? 1 : node.type === 'image'
+          // 缩小时不再吞掉正文：保留最多 2 行并加省略号，避免用户误以为内容丢失。
+          const maximumLines = camera.scale < 0.65 ? 2 : node.type === 'image'
             ? 1
             : Math.max(1, Math.min(100, Math.floor((height - 24 * camera.scale) / lineHeight)));
+          const fullText = typePrefix + (node.text || '双击编辑');
           const lines = wrapText(
             context,
-            typePrefix + ((camera.scale < 0.65 ? node.text.split('\n')[0] : node.text) || '双击编辑'),
+            fullText,
             Math.max(10, width - MIND_MAP_VISUAL_TOKENS.node.paddingX * 2 * camera.scale),
             maximumLines,
           );
+          if (camera.scale < 0.65 && fullText.length > (lines.join('').length + 3)) {
+            const last = lines.length - 1;
+            lines[last] = lines[last].slice(0, Math.max(0, lines[last].length - 1)) + '…';
+          }
           const textX = node.style.textAlign === 'left'
             ? topLeft.x + MIND_MAP_VISUAL_TOKENS.node.paddingX * camera.scale
             : node.style.textAlign === 'right'
@@ -1853,7 +1964,7 @@ export default function MindMapCanvas({
         const node = previewNodes[nodeId];
         if (!node || !(treeChildrenById.get(node.id)?.length)) continue;
         const marker = worldToView(collapseHandlePoint(node, camera.scale), camera);
-        drawCanvasAction(context, marker, node.collapsed ? '+' : '−', false, 18);
+        drawCanvasAction(context, marker, node.collapsed ? '+' : '−', false, 22);
       }
 
       const handleNodeIds = [...new Set([
@@ -2093,8 +2204,39 @@ export default function MindMapCanvas({
     }));
   };
 
+  const createSiblingNodeImmediate = (nodeId: string): string | null => {
+    const node = document.nodes[nodeId];
+    if (!node || node.locked) return null;
+    const parentId = treeParentId(nodeId);
+    const anchor = parentId ? document.nodes[parentId] : node;
+    if (!anchor) return null;
+    const pos = parentId
+      ? suggestedChildPosition(anchor)
+      : { x: node.x, y: node.y + node.height / 2 + 88 };
+    const base = createMindMapNode(pos, 'text', { text: '' });
+    const order = parentId ? siblingEdges(parentId).length : 0;
+    const edge = parentId ? createMindMapEdge(parentId, base.id, { relationship: 'tree', order }) : null;
+    execute('大纲新建同级节点', (current) => ({
+      ...current,
+      nodes: { ...current.nodes, [base.id]: base },
+      edges: edge ? { ...current.edges, [edge.id]: edge } : current.edges,
+      zOrder: [...current.zOrder, base.id],
+    }));
+    setSelectedNodeIds([base.id]);
+    return base.id;
+  };
+
   const moveOutlineNode = (nodeId: string, targetId: string, position: OutlineDropPosition) => {
-    execute('调整大纲层级与顺序', (current) => moveMindMapOutlineNode(current, nodeId, targetId, position));
+    execute('调整大纲层级与顺序', (current) => {
+      const moved = moveMindMapOutlineNode(current, nodeId, targetId, position);
+      // 大纲拖拽后画布自动整理，避免节点堆叠。
+      try {
+        if (moved.settings.mode === 'mind-map') return layoutMindMap(moved);
+        const parentId = targetId ? (position === 'inside' ? targetId : treeParentId(targetId, moved) ?? targetId) : nodeId;
+        const root = parentId ? findMindMapTreeRoot(moved, parentId) : null;
+        return root ? layoutMindMapBranch(moved, root, treeDirection) : moved;
+      } catch { return moved; }
+    });
   };
 
   const collapseAllOutlineNodes = (collapsed: boolean) => execute(collapsed ? '全部折叠分支' : '全部展开分支', (current) => setMindMapOutlineCollapsed(current, collapsed));
@@ -2199,6 +2341,13 @@ export default function MindMapCanvas({
       if (edge) {
         setSelectedNodeIds([]);
         setSelectedEdgeIds([edge.id]);
+        // 双击连线中点直接改标签：回车提交、Esc 取消。
+        const points = edgePoints(edge, document, treeDirection, treeEdgePorts);
+        if (points) {
+          const midWorld = { x: (points.start.x + points.end.x) / 2, y: (points.start.y + points.end.y) / 2 };
+          const midView = worldToView(midWorld, cameraRef.current);
+          setEdgeLabelEditing({ edgeId: edge.id, draft: edge.label ?? '', viewX: midView.x, viewY: midView.y });
+        }
       } else {
         setEditing({ nodeId: null, x: world.x, y: world.y, width: 180, height: 56, draft: '', newNodeType: creationType });
       }
@@ -2215,7 +2364,16 @@ export default function MindMapCanvas({
     const view = pointerView(event, canvas);
     const world = viewToWorld(view, cameraRef.current);
     if (event.pointerType === 'touch') {
+      const now = Date.now();
+      if (touchPoints.current.size === 0) {
+        twoFingerTapRef.current = { firstDown: now, secondDown: 0, moved: false };
+        touchHoldRef.current = { pointerId: event.pointerId, view, world, time: now };
+      } else if (touchPoints.current.size === 1) {
+        twoFingerTapRef.current.secondDown = now;
+        touchHoldRef.current = null;
+      }
       touchPoints.current.set(event.pointerId, view);
+      lastTouchViewRef.current.set(event.pointerId, view);
       if (touchPoints.current.size >= 2) {
         // The first touch has already started a pan or drag. A second touch
         // must still take over as a pinch gesture.
@@ -2406,6 +2564,12 @@ export default function MindMapCanvas({
       setSelectedEdgeIds([]);
       setSelectedSectionId(null);
       if (!nextSelection.includes(node.id) || node.locked) return;
+      // 触控板双击去抖：300ms 内同一节点的第二次按下不开启拖拽，
+      // 把机会让给 dblclick 进入编辑，避免双击被识别成两次单击拖拽。
+      const now = Date.now();
+      const rapidSecondTap = now - lastDownRef.current.time < 300 && lastDownRef.current.nodeId === node.id;
+      lastDownRef.current = { time: now, nodeId: node.id };
+      if (rapidSecondTap) return;
       const initial: Record<string, Point> = {};
       for (const id of nextSelection) {
         const selected = document.nodes[id];
@@ -2460,7 +2624,8 @@ export default function MindMapCanvas({
       setSelectedSectionId(null);
     }
     canvas.setPointerCapture(event.pointerId);
-    if (event.pointerType === 'touch' || !event.shiftKey) {
+    // 默认拖拽=框选（对齐 Figma/Excalidraw），空格/中键=平移；触屏保持平移。
+    if (event.pointerType === 'touch') {
       setInteraction({
         type: 'pan',
         pointerId: event.pointerId,
@@ -2487,9 +2652,17 @@ export default function MindMapCanvas({
     if (!activeInteraction && event.pointerType !== 'touch') {
       const hoveredNode = hitIndexedNode(world);
       setHoveredNodeId(hoveredNode?.id ?? null);
-      setHoveredEdgeId(hoveredNode ? null : hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection, treeEdgePorts)?.id ?? null);
+      // 性能保护：边数超 1500 时跳过每帧 hover 命中测试（16 步贝塞尔采样很贵），只在选中时显示。
+      const edgeCount = Object.keys(document.edges).length;
+      setHoveredEdgeId(hoveredNode || edgeCount > 1500 ? null : hitEdge(world, document, 7 / cameraRef.current.scale, treeDirection, treeEdgePorts)?.id ?? null);
     }
     if (event.pointerType === 'touch' && touchPoints.current.has(event.pointerId)) {
+      const previous = lastTouchViewRef.current.get(event.pointerId);
+      if (previous && Math.hypot(view.x - previous.x, view.y - previous.y) > 12) {
+        touchHoldRef.current = null;
+        twoFingerTapRef.current.moved = true;
+      }
+      lastTouchViewRef.current.set(event.pointerId, view);
       touchPoints.current.set(event.pointerId, view);
       const pinch = pinchRef.current;
       if (pinch && touchPoints.current.size >= 2) {
@@ -2524,6 +2697,45 @@ export default function MindMapCanvas({
     if (!canvas) return;
     if (event.pointerType === 'touch') {
       touchPoints.current.delete(event.pointerId);
+      lastTouchViewRef.current.delete(event.pointerId);
+      const hold = touchHoldRef.current;
+      if (hold && hold.pointerId === event.pointerId && Date.now() - hold.time > 500) {
+        // 长按（>500ms 且几乎没动）= 右键菜单，平板核心手势。
+        touchHoldRef.current = null;
+        twoFingerTapRef.current = { firstDown: 0, secondDown: 0, moved: false };
+        const node = hitIndexedNode(hold.world);
+        const edge = node ? null : hitEdge(hold.world, renderDocument, 7 / cameraRef.current.scale, treeDirection, treeEdgePorts);
+        if (node && !selectedSet.has(node.id)) {
+          setSelectedNodeIds([node.id]);
+          setSelectedEdgeIds([]);
+          setSelectedSectionId(null);
+        } else if (edge) {
+          setSelectedNodeIds([]);
+          setSelectedEdgeIds([edge.id]);
+          setSelectedSectionId(null);
+        }
+        setInteraction(null);
+        setContextMenu({
+          x: Math.min(hold.view.x, Math.max(0, size.width - 190)),
+          y: Math.min(hold.view.y, Math.max(0, size.height - (node ? 360 : 260))),
+          world: hold.world,
+          nodeId: node?.id,
+          edgeId: edge?.id,
+        });
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+        return;
+      }
+      touchHoldRef.current = null;
+      const tap = twoFingerTapRef.current;
+      if (tap.secondDown > 0 && !tap.moved && Date.now() - tap.firstDown < 500 && touchPoints.current.size === 0) {
+        // 双指点按 = 撤销，平板习惯手势。
+        twoFingerTapRef.current = { firstDown: 0, secondDown: 0, moved: false };
+        if (pinchRef.current) pinchRef.current = null;
+        setInteraction(null);
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+        undo();
+        return;
+      }
       if (pinchRef.current) {
         pinchRef.current = null;
         if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
@@ -2661,12 +2873,33 @@ export default function MindMapCanvas({
     event.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const view = {
-      x: event.clientX - canvas.getBoundingClientRect().left,
-      y: event.clientY - canvas.getBoundingClientRect().top,
-    };
-    const factor = Math.exp(-event.deltaY * 0.0015);
-    updateCamera(zoomCameraAt(cameraRef.current, view, cameraRef.current.scale * factor));
+    // 行业标准：双指/滚轮=平移，Ctrl+滚轮=缩放（触控板捏合本质就是带 ctrl 的 wheel）。
+    if (event.ctrlKey || event.metaKey) {
+      const rect = canvas.getBoundingClientRect();
+      const view = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      // 手感修复：触控板捏合是高频小 delta，鼠标滚轮是低频大 delta（约±100/格）。
+      // 用 1.0015 指数曲线统一两者，单次事件钳制 ±10%，避免“轻捏一下跳很大”。
+      const factor = Math.max(0.9, Math.min(1.1, Math.pow(1.0015, -event.deltaY)));
+      updateCamera(zoomCameraAt(cameraRef.current, view, cameraRef.current.scale * factor));
+      return;
+    }
+    const panFactor = event.deltaMode === 1 ? 16 : 1;
+    const dx = (event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX) * panFactor;
+    const dy = (event.shiftKey && event.deltaX === 0 ? 0 : event.deltaY) * panFactor;
+    // 手感修复：触控板一秒能吐上百个 wheel 事件，逐个 setState 又贵又冲。
+    // 把同一帧内的位移累加起来一次应用，跟手且不丢滚动量。
+    panPendingRef.current.dx += dx;
+    panPendingRef.current.dy += dy;
+    if (panFlushRef.current === null) {
+      panFlushRef.current = requestAnimationFrame(() => {
+        panFlushRef.current = null;
+        const pending = panPendingRef.current;
+        panPendingRef.current = { dx: 0, dy: 0 };
+        if (pending.dx !== 0 || pending.dy !== 0) {
+          updateCamera({ ...cameraRef.current, x: cameraRef.current.x - pending.dx, y: cameraRef.current.y - pending.dy });
+        }
+      });
+    }
   }, [updateCamera]);
 
   useEffect(() => {
@@ -2972,9 +3205,19 @@ export default function MindMapCanvas({
     const isSingleDateLifeItem = current.source === 'life' && current.start === current.end && current.mode === 'end';
     if (!isSingleDateLifeItem && (preview.start !== current.start || preview.end !== current.end)) {
       if (current.source === 'project') {
-        if (projectPlanningAdapter.updateTaskDates(current.itemId, preview.start, preview.end)) {
-          setProjectDateUndo({ taskId: current.itemId, start: current.start, end: current.end });
-        } else setTimelineEditError('项目任务日期更新失败，源任务可能已被删除。');
+        // 高危操作二次确认：拖时间条会改项目源数据，用画布内对话框代替原生 confirm。
+        const snapshot = { ...current, previewStart: preview.start, previewEnd: preview.end };
+        setTimelineTaskInteraction(null);
+        setConfirmDialog({
+          message: `把任务日期从 ${snapshot.start} ~ ${snapshot.end} 改为 ${snapshot.previewStart} ~ ${snapshot.previewEnd}？这会同步修改项目规划，可撤销。`,
+          confirmLabel: '确认修改',
+          action: () => {
+            if (projectPlanningAdapter.updateTaskDates(snapshot.itemId, snapshot.previewStart, snapshot.previewEnd)) {
+              setProjectDateUndo({ taskId: snapshot.itemId, start: snapshot.start, end: snapshot.end });
+            } else setTimelineEditError('项目任务日期更新失败，源任务可能已被删除。');
+          },
+        });
+        return;
       } else {
         let changed = false;
         execute('调整人生规划日期', (map) => {
@@ -3155,10 +3398,49 @@ export default function MindMapCanvas({
     }
   };
 
+  const createImageNodeAt = async (world: Point, blob: Blob) => {
+    try {
+      const asset = await mindMapRepository.saveImageAsset(blob);
+      const base = createMindMapNode(world, 'image', { text: '' });
+      const node = { ...base, imageAssetId: asset.id, width: 240, height: 180, sizeMode: 'manual' as const };
+      execute('粘贴图片节点', (current) => ({
+        ...current,
+        nodes: { ...current.nodes, [node.id]: node },
+        zOrder: [...current.zOrder, node.id],
+      }));
+      setSelectedNodeIds([node.id]);
+      setSelectedEdgeIds([]);
+      setResourceError(null);
+    } catch {
+      setResourceError('图片超过 2MB 或格式不支持（png/jpeg/gif/webp）。');
+    }
+  };
+
   const handlePaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    const image = [...(event.clipboardData.files ?? [])].find((file) => file.type.startsWith('image/'));
+    if (image) {
+      event.preventDefault();
+      const rect = surfaceRef.current?.getBoundingClientRect();
+      const world = rect
+        ? viewToWorld({ x: rect.width / 2, y: rect.height / 2 }, cameraRef.current)
+        : viewToWorld({ x: size.width / 2, y: size.height / 2 }, cameraRef.current);
+      void createImageNodeAt(world, image);
+      return;
+    }
     const text = event.clipboardData.getData('text/plain');
     if (text && pasteClipboardText(text)) event.preventDefault();
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    const image = [...(event.dataTransfer.files ?? [])].find((file) => file.type.startsWith('image/'));
+    if (!image) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const world = viewToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, cameraRef.current);
+    void createImageNodeAt(world, image);
   };
 
   const handleContextMenu = (event: ReactMouseEvent<HTMLCanvasElement>) => {
@@ -3266,15 +3548,14 @@ export default function MindMapCanvas({
     handledPngRequest.current = pngRequest;
     const canvas = canvasRef.current;
     if (pngScope === 'viewport') {
-      // The visible 2D canvas intentionally omits graph content while WebGL is
-      // active, and WebGL does not retain a readable frame buffer.  Export the
-      // same document through the deterministic 2D exporter instead of a blank PNG.
-      if (webglActive) downloadMindMapPng(document, 'all');
+      // WebGL 下 2D canvas 是空的（无可读帧缓冲），用可视节点集合走确定性 2D 导出，
+      // 而不是静默导出全部，解决“选了视口却导了全部”的困惑。
+      if (webglActive) downloadMindMapPng(document, 'selection', [...visibleNodeIds]);
       else if (canvas) downloadCanvasPng(canvas, document.title);
     } else {
       downloadMindMapPng(document, pngScope, selectedNodeIds);
     }
-  }, [document, pngRequest, pngScope, selectedNodeIds, webglActive]);
+  }, [document, pngRequest, pngScope, selectedNodeIds, visibleNodeIds, webglActive]);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -3339,6 +3620,7 @@ export default function MindMapCanvas({
     }
     if (event.key === 'Escape') {
       event.preventDefault();
+      if (confirmDialog) { setConfirmDialog(null); return; }
       if (focusedBranchRootId) exitBranchFocus();
       setContextMenu(null);
       setInteraction(null);
@@ -3490,7 +3772,7 @@ export default function MindMapCanvas({
   const searchResults = normalizedSearch
     ? [
         ...Object.values(renderDocument.nodes)
-          .filter((node) => `${node.icon ?? ''} ${node.text} ${(node.tags ?? []).join(' ')}`.toLocaleLowerCase().includes(normalizedSearch))
+          .filter((node) => `${node.icon ?? ''} ${node.text} ${(node.tags ?? []).join(' ')} ${node.note ?? ''}`.toLocaleLowerCase().includes(normalizedSearch))
           .map((node) => ({ kind: 'node' as const, id: node.id, label: node.text || '空节点', x: node.x, y: node.y })),
         ...Object.values(renderDocument.edges)
           .filter((edge) => edge.label.toLocaleLowerCase().includes(normalizedSearch))
@@ -3507,12 +3789,19 @@ export default function MindMapCanvas({
               y: source && target ? (source.y + target.y) / 2 : 0,
             };
           }),
-      ].slice(0, 8)
+      ].slice(0, 20)
     : [];
   const revealSearchResult = (result: (typeof searchResults)[number]) => {
     const relatedNodeIds = result.kind === 'node'
       ? [result.id]
       : [document.edges[result.id]?.sourceId, document.edges[result.id]?.targetId];
+    // 展开折叠的祖先节点，否则搜到也看不见。
+    const ancestorIds = new Set<string>();
+    for (const id of relatedNodeIds) {
+      let current = id ? treeParentId(id) : null;
+      let guard = 0;
+      while (current && guard++ < 100) { ancestorIds.add(current); current = treeParentId(current); }
+    }
     const sectionIds = [...new Set(relatedNodeIds.flatMap((id) => {
       const sectionId = id ? document.nodes[id]?.parentSectionId : null;
       return sectionId && document.sections[sectionId]?.collapsed ? [sectionId] : [];
@@ -3520,6 +3809,9 @@ export default function MindMapCanvas({
     if (sectionIds.length > 0) {
       execute('展开搜索结果区域', (current) => ({
         ...current,
+        nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => (
+          ancestorIds.has(id) && node.collapsed ? [id, { ...node, collapsed: false, updatedAt: Date.now() }] : [id, node]
+        ))),
         sections: {
           ...current.sections,
           ...Object.fromEntries(sectionIds.map((id) => [id, {
@@ -3529,9 +3821,19 @@ export default function MindMapCanvas({
           }])),
         },
       }));
+    } else if (ancestorIds.size > 0) {
+      execute('展开搜索结果分支', (current) => ({
+        ...current,
+        nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => (
+          ancestorIds.has(id) && node.collapsed ? [id, { ...node, collapsed: false, updatedAt: Date.now() }] : [id, node]
+        ))),
+      }));
     }
     setSelectedNodeIds(result.kind === 'node' ? [result.id] : []);
     setSelectedEdgeIds(result.kind === 'edge' ? [result.id] : []);
+    // 选中即高亮描边（选中态已有 accent 光环），再给一次 hover 脉冲方便定位。
+    setHoveredNodeId(result.kind === 'node' ? result.id : null);
+    setHoveredEdgeId(result.kind === 'edge' ? result.id : null);
     setSelectedSectionId(null);
     setSelectedProjectReferenceId(null);
     setSelectedTimelineId(null);
@@ -3618,6 +3920,10 @@ export default function MindMapCanvas({
       tabIndex={0}
       aria-label="思维导图画布"
       onPaste={handlePaste}
+      onDrop={handleDrop}
+      onDragOver={(event) => {
+        if ([...(event.dataTransfer.types ?? [])].includes('Files')) event.preventDefault();
+      }}
       onKeyDown={handleKeyDown}
       onKeyUp={(event) => {
         if (event.key === ' ') spacePressed.current = false;
@@ -3668,6 +3974,13 @@ export default function MindMapCanvas({
         onToggleCollapse={(nodeId) => updateNode(nodeId, { collapsed: !document.nodes[nodeId]?.collapsed })}
         onCollapseAll={collapseAllOutlineNodes}
         onMove={moveOutlineNode}
+        onCreateSibling={(nodeId) => createSiblingNode(nodeId)}
+        onCreateSiblingImmediate={createSiblingNodeImmediate}
+        onHover={setHoveredNodeId}
+        hoveredNodeId={hoveredNodeId}
+        onClose={() => { setOutlineOpen(false); restoreCanvasFocus(); }}
+        onIndent={(nodeId) => indentNode(nodeId)}
+        onPromote={(nodeId) => promoteNode(nodeId)}
       />}
       {connectionMode && (
         <div className={styles.connectionHint} role="status">
@@ -3676,10 +3989,62 @@ export default function MindMapCanvas({
             : '连线模式：先点击起点对象，再点击终点对象'}
         </div>
       )}
+      {selectedNodeIds.length === 1 && document.nodes[selectedNodeIds[0]] && !editing && !edgeLabelEditing && (() => {
+        const node = document.nodes[selectedNodeIds[0]];
+        if (node.type !== 'text' && node.type !== 'markdown') return null;
+        // 格式条改放节点下方：操作 rail（+/↗/•••）固定在节点上方，两者不再重叠。
+        const bottomView = worldToView({ x: node.x, y: node.y + node.height / 2 }, camera);
+        const toggleWrap = (mark: string) => {
+          const text = node.text ?? '';
+          const wrapped = text.startsWith(mark) && text.endsWith(mark) && text.length >= mark.length * 2
+            ? text.slice(mark.length, -mark.length)
+            : `${mark}${text}${mark}`;
+          updateNode(node.id, { text: wrapped, ...(node.sizeMode === 'auto' ? measuredNodeSize(wrapped, node) : {}) });
+        };
+        return (
+          <div role="toolbar" aria-label="文字格式" className={styles.nodeFormatBar} style={{ left: Math.max(8, bottomView.x - 110), top: bottomView.y + 14 }}>
+            <span className={`${styles.nodeFormatCaret} ${styles.nodeFormatCaretTop}`} aria-hidden="true" />
+            <button type="button" title="加粗" aria-label="加粗" className={styles.formatBold} onClick={() => toggleWrap('**')}>B</button>
+            <button type="button" title="斜体" aria-label="斜体" className={styles.formatItalic} onClick={() => toggleWrap('*')}>I</button>
+            <span className={styles.nodeFormatDivider} aria-hidden="true" />
+            <button type="button" title={node.taskStatus === 'done' ? '标为待办' : '标为完成'} aria-label="切换待办" aria-pressed={node.taskStatus !== 'none' && node.taskStatus === 'done'} onClick={() => updateNode(node.id, { taskStatus: node.taskStatus === 'done' ? 'todo' : 'done' })}>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="3" />{node.taskStatus === 'done' && <path d="M5 8.2 7.2 10.4 11 5.8" />}</svg>
+            </button>
+            <button type="button" title="星标" aria-label="星标" aria-pressed={node.marker === 'star'} onClick={() => updateNode(node.id, { marker: node.marker === 'star' ? 'none' : 'star' })}>
+              <svg viewBox="0 0 16 16" fill={node.marker === 'star' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 2.2 9.9 6l4.2.3-3.2 2.7.9 4.1L8 10.9l-3.8 2.2.9-4.1L1.9 6.3 6.1 6z" /></svg>
+            </button>
+            <button type="button" title="转为链接节点" aria-label="转为链接" onClick={() => updateNode(node.id, { type: 'url', link: node.link ?? 'https://' })}>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M6.5 9.5a3.5 3.5 0 0 0 5 0l2-2a3.54 3.54 0 0 0-5-5l-1 1" /><path d="M9.5 6.5a3.5 3.5 0 0 0-5 0l-2 2a3.54 3.54 0 0 0 5 5l1-1" /></svg>
+            </button>
+          </div>
+        );
+      })()}
       {shortcutHintVisible && !connectionMode && (
         <div className={`${styles.connectionHint} ${styles.shortcutHint}`} role="status">
           Tab 子节点 · Enter 同级节点 · Shift+Tab 提升层级 · 按 ? 查看全部
         </div>
+      )}
+      {edgeLabelEditing && document.edges[edgeLabelEditing.edgeId] && (
+        <input
+          autoFocus
+          aria-label="连线标签"
+          placeholder="输入关系标注，回车保存"
+          value={edgeLabelEditing.draft}
+          maxLength={200}
+          onChange={(event) => setEdgeLabelEditing({ ...edgeLabelEditing, draft: event.target.value })}
+          onBlur={() => {
+            updateEdge(edgeLabelEditing.edgeId, { label: edgeLabelEditing.draft.trim() });
+            setEdgeLabelEditing(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              updateEdge(edgeLabelEditing.edgeId, { label: edgeLabelEditing.draft.trim() });
+              setEdgeLabelEditing(null);
+            } else if (event.key === 'Escape') setEdgeLabelEditing(null);
+            event.stopPropagation();
+          }}
+          style={{ position: 'absolute', left: edgeLabelEditing.viewX - 90, top: edgeLabelEditing.viewY - 14, width: 180, zIndex: 30 }}
+        />
       )}
       {focusedBranchRootId && focusedBranchNodeIds && document.nodes[focusedBranchRootId] && (
         <div className={styles.branchFocusHint} role="status" data-testid="mind-map-branch-focus" style={{ top: connectionMode ? 104 : 60 }}>
@@ -3760,10 +4125,13 @@ export default function MindMapCanvas({
       })}
       {visibleTimelines.map((sourceTimeline) => {
         const timeline = previewTimeline(sourceTimeline, interaction);
-        const allItems = timelineProjectionItems(timeline, projectPlanning, document.lifeMap ?? lifeTimeline);
+        const cached = timelineLayers.get(timeline.id);
+        const isPreview = timeline !== sourceTimeline;
         const visibility = timelineVisibility[timeline.id] ?? DEFAULT_TIMELINE_VISIBILITY;
         const focusMode = timelineFocus[timeline.id] ?? 'all';
-        const { range, summaryMode, density, rowCandidates, headerHeight, axisHeight, axisLineY, stageRowHeight, stages, milestoneLayouts, milestoneOverflow, items, lanes, rowStep, rowsTop, milestoneTop, coordinates, ticks, weekends, today, todayVisible, status } = buildMindMapTimelineLayer(timeline, allItems, camera.scale, visibility, focusMode);
+        const allItems = cached && !isPreview ? cached.allItems : timelineProjectionItems(timeline, projectPlanning, document.lifeMap ?? lifeTimeline);
+        const layerData = cached && !isPreview ? cached.layer : buildMindMapTimelineLayer(timeline, allItems, camera.scale, visibility, focusMode);
+        const { range, summaryMode, density, rowCandidates, headerHeight, axisHeight, axisLineY, stageRowHeight, stages, milestoneLayouts, milestoneOverflow, items, lanes, rowStep, rowsTop, milestoneTop, coordinates, ticks, weekends, today, todayVisible, status } = layerData;
         const todayLabel = `今天 ${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))}`;
         const densityLabel = density === 'detail' ? '详细' : density === 'compact' ? '紧凑' : '总览';
         const topLeft = worldToView({
@@ -3788,6 +4156,8 @@ export default function MindMapCanvas({
           ? `从“显示范围”中勾选分组或项目${automaticRange ? `；自动显示未来 ${diffDays(range.end, range.start)} 天` : ''}`
           : '为该来源中的项目、任务或人生条目设置日期后，会自动显示在这里';
         const scale = camera.scale;
+        // 折中方案：scale<0.5 时强制摘要视图（色块+标题+计数），避免时间条挤成一团。
+        const miniMode = scale < TIMELINE_SUMMARY_SCALE && !timeline.collapsed;
         const itemColor = (item: TimelineProjectionItem) => ({ '--timeline-item-color': item.color } as CSSProperties);
         return (
           <div
@@ -3823,12 +4193,12 @@ export default function MindMapCanvas({
               });
             }}
           >
-            {!timeline.collapsed && summaryMode ? (
+            {!timeline.collapsed && (summaryMode || miniMode) ? (
               <div className={styles.timelineSummary} data-testid={`mind-map-timeline-drag-handle-${timeline.id}`} onPointerDown={(event) => handleTimelinePointerDown(event, timeline)} onPointerMove={handleTimelinePointerMove} onPointerUp={finishTimelineInteraction} onPointerCancel={finishTimelineInteraction}>
                 <span><CalendarRange size={15} aria-hidden="true" /></span>
                 <strong>{timeline.title}</strong>
-                <small>{formatTimelineRange(range.start, range.end)}</small>
-                <p>{contentSummary}</p>
+                <small>{miniMode ? `${allItems.length} 项 · 缩小显示中，双击展开` : formatTimelineRange(range.start, range.end)}</small>
+                {!miniMode && <p>{contentSummary}</p>}
               </div>
             ) : <>
               <div className={styles.timelineHeader} data-testid={`mind-map-timeline-drag-handle-${timeline.id}`} aria-label="拖动时间线" style={{ height: headerHeight * scale, paddingInline: Math.max(8, 14 * scale) }} onPointerDown={(event) => handleTimelinePointerDown(event, timeline)} onPointerMove={handleTimelinePointerMove} onPointerUp={finishTimelineInteraction} onPointerCancel={finishTimelineInteraction}>
@@ -3965,7 +4335,7 @@ export default function MindMapCanvas({
                         {linkedReference && <small title="已关联画布引用">↗</small>}
                       </button>
                       <span
-                        className={`${styles.timelineBar} ${project ? styles.timelineProjectBar : ''} ${task ? styles.timelineTaskBar : ''} ${item.kind === 'system' ? styles.timelineSystemBar : ''} ${item.projectTaskId || item.lifeItemId ? styles.timelineEditable : ''} ${item.progress === undefined ? styles.timelineBarNoProgress : ''}`}
+                        className={`${styles.timelineBar} ${project ? styles.timelineProjectBar : ''} ${task ? styles.timelineTaskBar : ''} ${item.kind === 'system' ? styles.timelineSystemBar : ''} ${item.projectTaskId || item.lifeItemId ? styles.timelineEditable : ''} ${item.progress === undefined ? styles.timelineBarNoProgress : ''} ${timelineTaskInteraction?.itemId === (item.projectTaskId ?? item.lifeItemId) ? styles.timelineBarEditing : ''}`}
                         title={`${item.title} · ${renderedDates.start}${renderedDates.end !== renderedDates.start ? ` — ${renderedDates.end}` : ''}`}
                         style={{ ...itemColor(item), left, top: (rowStep * scale - Math.max(7, barHeight)) / 2, width, height: Math.max(7, barHeight) }}
                         onPointerDown={item.projectTaskId || item.lifeItemId ? (event) => handleTimelineTaskPointerDown(event, item, timeline, range.start, range.end, 'move') : undefined}
@@ -4029,13 +4399,15 @@ export default function MindMapCanvas({
                   execute('展开时间线内容', (current) => {
                     const currentTimeline = current.timelineSections[timeline.id];
                     if (!currentTimeline) return current;
+                    const targetHeight = Math.max(currentTimeline.height, recommendedTimelineHeight(allItems));
                     return {
                       ...current,
                       timelineSections: {
                         ...current.timelineSections,
                         [timeline.id]: {
                           ...currentTimeline,
-                          height: Math.max(currentTimeline.height, recommendedTimelineHeight(allItems)),
+                          // D2：高度差小于 4px 不写回，避免展开/选择变化时高度抖动。
+                          height: Math.abs(targetHeight - currentTimeline.height) >= 4 ? targetHeight : currentTimeline.height,
                           updatedAt: Date.now(),
                         },
                       },
@@ -4340,9 +4712,7 @@ export default function MindMapCanvas({
               <button type="button" role="menuitem" onClick={() => focusBranch(contextMenu.nodeId!)}>仅查看此分支</button>
               <button type="button" role="menuitem" onClick={() => {
                 const nodeId = contextMenu.nodeId!;
-                const candidate = window.prompt('输入目标父节点名称');
-                const parent = candidate ? Object.values(document.nodes).find((node) => node.text === candidate.trim()) : null;
-                if (parent) moveNodeToParent(nodeId, parent.id);
+                setMoveDialog({ nodeId, keyword: '' });
                 setContextMenu(null);
               }}>移动到…</button>
               <button type="button" role="menuitem" onClick={() => {
@@ -4422,6 +4792,23 @@ export default function MindMapCanvas({
               }}>隐藏网格</button>
             </>
           )}
+        </div>
+      )}
+      <MindMapConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+      {moveDialog && (
+        <div className={styles.contextMenu} role="dialog" aria-label="移动节点到新父级" style={{ left: '50%', top: '18%', transform: 'translateX(-50%)', minWidth: 280 }}>
+          <input autoFocus type="text" placeholder="搜索父节点名称…" aria-label="搜索父节点" value={moveDialog.keyword} onChange={(event) => setMoveDialog({ ...moveDialog, keyword: event.target.value })} style={{ width: '100%', marginBottom: 8 }} />
+          <div style={{ maxHeight: 220, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {Object.values(document.nodes)
+              .filter((n) => n.id !== moveDialog.nodeId && (!moveDialog.keyword.trim() || (n.text || '').includes(moveDialog.keyword.trim())))
+              .slice(0, 30)
+              .map((n) => (
+                <button key={n.id} type="button" role="menuitem" onClick={() => { moveNodeToParent(moveDialog.nodeId, n.id); setMoveDialog(null); }}>
+                  {(n.text || '空节点').slice(0, 24)}
+                </button>
+              ))}
+          </div>
+          <button type="button" onClick={() => setMoveDialog(null)}>取消（Esc）</button>
         </div>
       )}
       <button className={styles.unifiedEntry} type="button" onClick={() => {
@@ -4657,6 +5044,31 @@ export default function MindMapCanvas({
               ×
             </button>
           </div>
+          {selectedNode && (() => {
+            const ids = branchNodeIds(selectedNode.id);
+            const today = new Date().toISOString().slice(0, 10);
+            const tasks = ids.map((id) => document.nodes[id]).filter((n) => n && n.taskStatus !== 'none');
+            if (tasks.length === 0) return null;
+            const todo = tasks.filter((n) => n.taskStatus === 'todo').length;
+            const doing = tasks.filter((n) => n.taskStatus === 'doing').length;
+            const done = tasks.filter((n) => n.taskStatus === 'done').length;
+            const overdue = tasks.filter((n) => n.taskStatus !== 'done' && n.dueDate && n.dueDate < today);
+            return (
+              <div role="status" aria-label="分支任务聚合" style={{ padding: '8px 12px', borderBottom: '1px solid #eee', fontSize: 12 }}>
+                <span>待办 {todo} · 进行中 {doing} · 已完成 {done}{overdue.length > 0 && <strong style={{ color: '#dc2626' }}> · 逾期 {overdue.length}</strong>}</span>
+                {overdue.length > 0 && (
+                  <details style={{ marginTop: 4 }}>
+                    <summary style={{ cursor: 'pointer' }}>逾期清单</summary>
+                    {overdue.slice(0, 20).map((n) => (
+                      <button key={n.id} type="button" style={{ display: 'block', textAlign: 'left' }} onClick={() => { setSelectedNodeIds([n.id]); focusOutlineNode(n.id); }}>
+                        {n.dueDate} · {(n.text || '空节点').slice(0, 20)}
+                      </button>
+                    ))}
+                  </details>
+                )}
+              </div>
+            );
+          })()}
           {selectedTimeline && (
             <div className={styles.inspectorFields}>
               <label>
@@ -4680,16 +5092,45 @@ export default function MindMapCanvas({
                 const selectedGroups = (projectPlanning.groups ?? []).filter((group) => projectPlanning.projects.some((project) => project.groupId === group.id && selectedProjectIds.has(project.id)));
                 const names = selectedGroups.slice(0, 2).map((group) => group.name);
                 const summary = names.length && selectedGroups.length <= 2 ? names.join('、') : `${selectedGroups.length} 个分组 · ${selectedProjectIds.size} 个项目`;
+                const empty = selectedProjectIds.size === 0;
                 return <section className={styles.timelineSummarySection} aria-label="内容范围">
                   <h3>内容范围</h3>
                   <div className={styles.timelineSummaryRow}>
-                    <div><strong>{summary || '尚未选择内容'}</strong><small>{selectedGroups.length} 个分组 · {selectedProjectIds.size} 个项目</small></div>
+                    <div><strong>{empty ? '尚未选择内容' : summary}</strong><small>{empty ? '点右侧“更改”勾选分组或项目，有日期的任务会自动上轴' : `${timelineProjectionItems(selectedTimeline, projectPlanning, lifeTimeline).length} 项已上轴`}</small></div>
                     <button type="button" className={styles.timelineChangeButton} onClick={() => {
                       setTimelineSelectorSearch('');
                       setTimelineSelectorFilter('all');
                       setTimelineSelectorOpen(true);
                     }}>更改 <span aria-hidden="true">›</span></button>
                   </div>
+                </section>;
+              })()}
+              {(() => {
+                const unscheduled = timelineUnscheduledItems(selectedTimeline, projectPlanning);
+                if (unscheduled.length === 0) return null;
+                return <section className={styles.timelineUnscheduledSection} aria-label="未排期任务">
+                  <details>
+                    <summary><h3>未排期任务 <b>{unscheduled.length}</b></h3></summary>
+                    <div className={styles.timelineUnscheduledList}>
+                      {unscheduled.slice(0, 50).map((item) => (
+                        <div className={styles.timelineUnscheduledRow} key={item.taskId}>
+                          <span title={`${item.projectName} · ${item.title}`}><strong>{item.title}</strong><small>{item.projectName}</small></span>
+                          <label title="设置开始日期">
+                            <input
+                              type="date"
+                              aria-label={`设置${item.title}开始日期`}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                if (!value) return;
+                                if (projectPlanningAdapter.updateTaskDates(item.taskId, value, value)) setResourceError(null);
+                                else setResourceError('设置日期失败，任务可能已被删除。');
+                              }}
+                            />
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 </section>;
               })()}
               <label>
@@ -4778,7 +5219,7 @@ export default function MindMapCanvas({
                 });
                 setSelectedTimelineId(null);
               }}>删除时间线</button>
-              <small>拖动组件只改变画布位置，不会修改任何项目日期。</small>
+              <small>拖动时间线本体只移动画布位置（紫色高亮）；拖动内部任务条会修改项目日期（橙色高亮），并有二次确认。</small>
             </div>
           )}
           {timelineSelectorOpen && selectedTimeline && (() => {
@@ -4786,7 +5227,8 @@ export default function MindMapCanvas({
             const groups = projectPlanning.groups ?? [];
             const groupProjects = new Map(groups.map((group) => [group.id, projectPlanning.projects.filter((project) => project.groupId === group.id)]));
             const query = timelineSelectorSearch.trim().toLocaleLowerCase();
-            const matches = (project: typeof projectPlanning.projects[number], groupName = '') => !query || `${groupName} ${project.name}`.toLocaleLowerCase().includes(query);
+            const matches = (project: typeof projectPlanning.projects[number], groupName = '') => !query
+              || `${groupName} ${project.name} ${project.start ?? ''} ${project.end ?? ''}`.toLocaleLowerCase().includes(query);
             const visibleProject = (project: typeof projectPlanning.projects[number], groupName = '') => (timelineSelectorFilter === 'all' || selectedProjectIds.has(project.id)) && matches(project, groupName);
             const updateProjects = (projectIds: string[], checked: boolean) => execute('设置时间线显示内容', (current) => {
               const timeline = current.timelineSections[selectedTimeline.id];
@@ -4795,7 +5237,10 @@ export default function MindMapCanvas({
               const references = timeline.manualItems.filter((item) => !(item.source === 'project' && ids.has(item.contextId)));
               const additions = checked ? projectIds.map((id) => ({ source: 'project' as const, contextId: id, itemId: `project:${id}` })) : [];
               const next = { ...timeline, source: 'manual' as const, targetId: null, manualItems: [...references, ...additions] };
-              return { ...current, timelineSections: { ...current.timelineSections, [timeline.id]: { ...next, height: recommendedTimelineHeight(timelineProjectionItems(next, projectPlanning, lifeTimeline)), updatedAt: Date.now() } } };
+              const targetHeight = recommendedTimelineHeight(timelineProjectionItems(next, projectPlanning, lifeTimeline));
+              // D2：仅在高度实际变化（≥4px）时写回，避免选择切换引发高度抖动。
+              const height = Math.abs(targetHeight - next.height) >= 4 ? targetHeight : next.height;
+              return { ...current, timelineSections: { ...current.timelineSections, [timeline.id]: { ...next, height, updatedAt: Date.now() } } };
             });
             const projectRow = (project: typeof projectPlanning.projects[number], groupName = '') => <label className={styles.timelineSelectorProject} key={project.id}>
               <input type="checkbox" checked={selectedProjectIds.has(project.id)} onChange={(event) => updateProjects([project.id], event.target.checked)} />
@@ -5167,7 +5612,13 @@ export default function MindMapCanvas({
                   <button type="button" onClick={() => copyNodes(branchNodeIds(selectedNode.id))}>复制整棵子树</button>
                   <button type="button" onClick={() => {
                     const branchIds = branchNodeIds(selectedNode.id);
-                    if (window.confirm(`删除“${selectedNode.text || '未命名节点'}”及其 ${Math.max(0, branchIds.length - 1)} 个子节点？`)) deleteNodes(branchIds);
+                    const label = selectedNode.text || '未命名节点';
+                    const count = Math.max(0, branchIds.length - 1);
+                    setConfirmDialog({
+                      message: `删除“${label}”及其 ${count} 个子节点？可撤销。`,
+                      confirmLabel: '删除',
+                      action: () => deleteNodes(branchIds),
+                    });
                   }}>删除整棵子树</button>
                   <button type="button" onClick={() => {
                     const branchIds = new Set(branchNodeIds(selectedNode.id));
@@ -5181,6 +5632,8 @@ export default function MindMapCanvas({
                 </div>
               </section>
 
+              <details className={styles.inspectorGroup}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>更多设置（外观 / 尺寸 / 排列 / 状态）</summary>
               <section className={styles.inspectorGroup}>
                 <h3>外观</h3>
                 <label><span>颜色模式</span><select aria-label="节点颜色模式" value={selectedNode.colorMode ?? 'auto'} onChange={(event) => updateNode(selectedNode.id, { colorMode: event.target.value as MindMapNode['colorMode'] })}><option value="auto">自动兼容</option><option value="inherit">继承分支色</option><option value="custom">使用节点颜色</option></select></label>
@@ -5231,6 +5684,7 @@ export default function MindMapCanvas({
                   return { ...current, groups, nodes: { ...current.nodes, [node.id]: { ...node, parentSectionId: null, groupId: null, updatedAt: Date.now() } } };
                 })}>移出区域/分组</button>}
               </section>
+              </details>
             </div>
           )}
           {selectedEdge && (

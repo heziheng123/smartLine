@@ -6,6 +6,8 @@ import {
   isMindMapMarkdownOutline,
   serializeMindMapDocument,
   serializeMindMapMarkdownOutline,
+  serializeMindMapOpml,
+  serializeMindMapHtml,
   serializeMindMapSvg,
 } from '../../src/mindMap/importExport.ts';
 import { extractMindMapWikiLinks, isMindMapMarkdown, mindMapBacklinks, setMindMapTaskChecked } from '../../src/mindMap/richText.ts';
@@ -186,9 +188,29 @@ test('brain-map templates assign distinct stable colors and semantic components'
   const colors = resolveBranchThemeColors(document);
   assert.notEqual(colors.get('first'), colors.get('second'));
   assert.equal(colors.get('leaf'), colors.get('first'));
-  assert.equal(resolveMindMapNodePresentation(document.nodes.root, 0, colors.get('root')!, 'rainbow').fontSize, 17);
+  assert.equal(resolveMindMapNodePresentation(document.nodes.root, 0, colors.get('root')!, 'rainbow').fontSize, 20);
   assert.equal(resolveMindMapNodePresentation({ ...document.nodes.leaf, semantic: 'branch' }, 2, colors.get('leaf')!, 'rainbow').topic, false);
   assert.equal(resolveMindMapNodePresentation({ ...document.nodes.leaf, semantic: 'subtopic' }, 1, colors.get('leaf')!, 'professional').topic, true);
+});
+
+test('OPML and HTML exports preserve tree order, notes, and relation labels', () => {
+  const document = createEmptyMindMapDocument('导出', { id: 'doc', now: 1 });
+  document.nodes.root = createTextMindMapNode({ x: 0, y: 0 }, { id: 'root', text: 'root', now: 1 });
+  document.nodes.child = createTextMindMapNode({ x: 0, y: 0 }, { id: 'child', text: 'child & <kid>', now: 1 });
+  document.nodes.child.note = '备注 "引号"';
+  document.nodes.other = createTextMindMapNode({ x: 0, y: 0 }, { id: 'other', text: 'other', now: 1 });
+  document.edges = {
+    tree: createMindMapEdge('root', 'child', { id: 'tree', now: 1, relationship: 'tree', order: 0 }),
+    relation: { ...createMindMapEdge('child', 'other', { id: 'relation', now: 1 }), label: '依赖' },
+  };
+  document.zOrder = ['root', 'child', 'other'];
+  const opml = serializeMindMapOpml(document);
+  assert.match(opml, /<outline text="root">/);
+  assert.match(opml, /<outline text="child &amp; &lt;kid&gt;" _note="备注 &quot;引号&quot;"\/>/);
+  const html = serializeMindMapHtml(document);
+  assert.match(html, /child &amp; &lt;kid&gt;/);
+  assert.match(html, /child → other|child →|→ other/);
+  assert.match(html, /依赖/);
 });
 
 test('JSON export and import round-trip while invalid data is rejected', () => {

@@ -18,7 +18,7 @@ export type MindMapMode = 'canvas' | 'mind-map';
 export type MindMapBranchSide = 'left' | 'right';
 export type MindMapNodeSemantic = 'auto' | 'topic' | 'branch' | 'subtopic' | 'summary' | 'note';
 export type MindMapMarker = 'none' | 'star' | 'flag' | 'question' | 'idea';
-export type MindMapVisualTheme = 'classic' | 'rainbow' | 'professional' | 'warm';
+export type MindMapVisualTheme = 'classic' | 'rainbow' | 'professional' | 'warm' | 'underline';
 export type MindMapNodeColorMode = 'auto' | 'inherit' | 'custom';
 export type MindMapBoundaryShape = 'box' | 'bracket' | 'cloud' | 'fill';
 

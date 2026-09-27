@@ -9,6 +9,7 @@ import {
   type LifePlanningDraft,
   type LifePlanningKind,
 } from './lifePlanning';
+import { MindMapConfirmDialog } from './canvas/ConfirmDialog';
 import styles from './styles/MindMapWorkspace.module.css';
 
 interface LifePlanningPanelProps {
@@ -92,6 +93,7 @@ const entriesFor = (data: LifeMapData, kind: LifePlanningKind): Array<{ id: stri
 const LifePlanningPanel = ({ data, onChange, onClose }: LifePlanningPanelProps) => {
   const [kind, setKind] = useState<LifePlanningKind>('stage');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [draft, setDraft] = useState<LifePlanningDraft>(() => emptyDraft(data));
   const [error, setError] = useState<string | null>(null);
   const entries = useMemo(() => entriesFor(data, kind), [data, kind]);
@@ -139,9 +141,7 @@ const LifePlanningPanel = ({ data, onChange, onClose }: LifePlanningPanelProps) 
           {kind === 'system' && <button type="button" onClick={() => onChange(addLifeSystemCheckIn(data, entry.id, today()), '记录长期系统')}>今日 +1</button>}
           <button type="button" onClick={() => beginEdit(entry.id)}>编辑</button>
           <button type="button" onClick={() => {
-            if (!window.confirm(`确定删除“${entry.name}”吗？可通过地图撤销恢复。`)) return;
-            try { onChange(deleteLifePlanningItem(data, kind, entry.id), `删除${kindLabels[kind]}`); }
-            catch (caught) { setError(caught instanceof Error ? caught.message : '删除失败。'); }
+            setPendingDeleteId(entry.id);
           }}>删除</button>
         </div></article>)}
       </div>
@@ -160,6 +160,23 @@ const LifePlanningPanel = ({ data, onChange, onClose }: LifePlanningPanelProps) 
         {error && <p role="alert">{error}</p>}
         <footer><button type="button" onClick={() => setEditingId(null)}>取消</button><button type="submit">保存</button></footer>
       </form>}
+      {pendingDeleteId !== null && (() => {
+        const target = entries.find((entry) => entry.id === pendingDeleteId);
+        return (
+          <MindMapConfirmDialog
+            floating
+            dialog={{
+              message: `确定删除“${target?.name ?? ''}”吗？可通过地图撤销恢复。`,
+              confirmLabel: '删除',
+              action: () => {
+                try { onChange(deleteLifePlanningItem(data, kind, pendingDeleteId), `删除${kindLabels[kind]}`); }
+                catch (caught) { setError(caught instanceof Error ? caught.message : '删除失败。'); }
+              },
+            }}
+            onClose={() => setPendingDeleteId(null)}
+          />
+        );
+      })()}
     </aside>
   </div>;
 };

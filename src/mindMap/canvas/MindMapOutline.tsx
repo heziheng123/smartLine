@@ -14,6 +14,13 @@ interface MindMapOutlineProps {
   onToggleCollapse: (nodeId: string) => void;
   onCollapseAll: (collapsed: boolean) => void;
   onMove: (nodeId: string, targetId: string, position: OutlineDropPosition) => void;
+  onCreateSibling?: (nodeId: string) => void;
+  onCreateSiblingImmediate?: (nodeId: string) => string | null;
+  onHover?: (nodeId: string | null) => void;
+  hoveredNodeId?: string | null;
+  onClose?: () => void;
+  onIndent?: (nodeId: string) => void;
+  onPromote?: (nodeId: string) => void;
 }
 
 const dropPosition = (event: DragEvent<HTMLElement>): OutlineDropPosition => {
@@ -32,6 +39,13 @@ export function MindMapOutline({
   onToggleCollapse,
   onCollapseAll,
   onMove,
+  onCreateSibling,
+  onCreateSiblingImmediate,
+  onHover,
+  hoveredNodeId,
+  onClose,
+  onIndent,
+  onPromote,
 }: MindMapOutlineProps) {
   const [query, setQuery] = useState('');
   const [tag, setTag] = useState('all');
@@ -76,8 +90,17 @@ export function MindMapOutline({
     setDraft(node.text);
   };
   const handleRenameKey = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') commitRename();
-    if (event.key === 'Escape') setEditingId(null);
+    // 大纲连续书写：Enter 提交并在大纲内新建同级（焦点不跳回画布），Tab 缩进，Esc 回画布。
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitRename();
+      const currentId = editingId!;
+      const freshId = onCreateSiblingImmediate?.(currentId);
+      if (freshId) { setEditingId(freshId); setDraft(''); }
+      else onCreateSibling?.(currentId);
+    }
+    else if (event.key === 'Tab') { event.preventDefault(); commitRename(); (event.shiftKey ? onPromote : onIndent)?.(editingId!); }
+    else if (event.key === 'Escape') setEditingId(null);
   };
 
   const renderNode = (nodeId: string, depth = 0): ReactNode => {
@@ -85,13 +108,16 @@ export function MindMapOutline({
     if (!node || (visibleIds && !visibleIds.has(nodeId))) return null;
     const childIds = childrenById.get(nodeId) ?? [];
     const selected = selectedNodeIds.length === 1 && selectedNodeIds[0] === nodeId;
+    const hovered = hoveredNodeId === nodeId;
     const dropping = dropTarget?.id === nodeId ? dropTarget.position : null;
     return <li key={nodeId} className={styles.outlineItem}>
       <div
-        className={`${styles.outlineRow} ${selected ? styles.outlineRowSelected : ''}`}
+        className={`${styles.outlineRow} ${selected ? styles.outlineRowSelected : ''} ${hovered && !selected ? styles.outlineRowHovered : ''}`}
         style={{ paddingLeft: 8 + depth * 16 }}
         draggable={editingId !== nodeId}
         data-drop-position={dropping ?? undefined}
+        onMouseEnter={() => onHover?.(nodeId)}
+        onMouseLeave={() => onHover?.(null)}
         onDragStart={(event) => {
           setDraggedId(nodeId);
           event.dataTransfer.effectAllowed = 'move';
@@ -139,7 +165,9 @@ export function MindMapOutline({
     </li>;
   };
 
-  return <aside className={styles.outlinePanel} aria-label="思维导图大纲">
+  return <aside className={styles.outlinePanel} aria-label="思维导图大纲" onKeyDown={(event) => {
+    if (event.key === 'Escape' && !editingId) { event.stopPropagation(); onClose?.(); }
+  }}>
     <header><strong>大纲</strong><small>{Object.keys(nodes).length} 个节点</small></header>
     <div className={styles.outlineTools}>
       <input aria-label="筛选大纲" placeholder="搜索节点" value={query} onChange={(event) => setQuery(event.target.value)} />

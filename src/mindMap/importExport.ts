@@ -275,6 +275,104 @@ const escapeXml = (value: string) => value
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&apos;');
 
+// 按 tree 边排出有序子节点，供 OPML / HTML 分享页复用。
+const orderedTreeChildren = (document: MindMapDocument) => {
+  const children = new Map<string, string[]>();
+  const treeEdges = Object.values(document.edges).filter((edge) => edge.relationship === 'tree');
+  treeEdges.sort((left, right) => (
+    (left.order ?? 0) - (right.order ?? 0) || left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+  ));
+  for (const edge of treeEdges) {
+    const list = children.get(edge.sourceId) ?? [];
+    list.push(edge.targetId);
+    children.set(edge.sourceId, list);
+  }
+  const childIds = new Set(treeEdges.map((edge) => edge.targetId));
+  const roots = document.zOrder.filter((id) => document.nodes[id] && !childIds.has(id));
+  if (roots.length === 0 && document.zOrder.length > 0) roots.push(document.zOrder[0]);
+  return { children, roots };
+};
+
+const escapeHtml = (value: string) => escapeXml(value).replace(/\n/g, '<br>');
+
+export function serializeMindMapOpml(document: MindMapDocument) {
+  const { children, roots } = orderedTreeChildren(document);
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<opml version="2.0"><head><title>${escapeXml(document.title)}</title></head><body>`,
+  ];
+  const visit = (id: string, depth: number) => {
+    if (depth > 64) return;
+    const node = document.nodes[id];
+    if (!node) return;
+    const note = node.note ? ` _note="${escapeXml(node.note)}"` : '';
+    const indent = '  '.repeat(depth + 2);
+    const kids = children.get(id) ?? [];
+    if (kids.length === 0) {
+      lines.push(`${indent}<outline text="${escapeXml(node.text || '空节点')}"${note}/>`);
+    } else {
+      lines.push(`${indent}<outline text="${escapeXml(node.text || '空节点')}"${note}>`);
+      kids.forEach((childId) => visit(childId, depth + 1));
+      lines.push(`${indent}</outline>`);
+    }
+  };
+  roots.forEach((rootId) => visit(rootId, 0));
+  lines.push('</body></opml>');
+  return lines.join('\n');
+}
+
+export function downloadMindMapOpml(document: MindMapDocument) {
+  const blob = new Blob([serializeMindMapOpml(document)], { type: 'text/xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement('a');
+  anchor.href = url;
+  anchor.download = safeFileName(document.title) + '.opml';
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+// 带主题样式的 HTML 分享页：一页纸打印（Ctrl+P→PDF）+ 大纲 + 关系标注。
+export function serializeMindMapHtml(document: MindMapDocument) {
+  const { presentations } = exportVisuals(document);
+  const { children, roots } = orderedTreeChildren(document);
+  const renderNode = (id: string, depth: number): string => {
+    if (depth > 64) return '';
+    const node = document.nodes[id];
+    if (!node) return '';
+    const presentation = presentations.get(id);
+    const accent = presentation?.accent ?? '#5b5bd6';
+    const kids = children.get(id) ?? [];
+    const badges = [
+      ...(node.tags ?? []).map((tag) => `<span class="tag">#${escapeHtml(tag)}</span>`),
+      node.taskStatus !== 'none' ? `<span class="pill">${escapeHtml(node.taskStatus)}</span>` : '',
+      node.priority !== 'none' ? `<span class="pill priority-${node.priority}">${escapeHtml(node.priority)}</span>` : '',
+      node.progress != null ? `<span class="pill">${Math.round(node.progress)}%</span>` : '',
+    ].join('');
+    const note = node.note ? `<p class="note">${escapeHtml(node.note)}</p>` : '';
+    const link = node.type === 'url' && node.link ? `<p class="link"><a href="${escapeXml(node.link)}">${escapeHtml(node.link)}</a></p>` : '';
+    const kidHtml = kids.map((childId) => renderNode(childId, depth + 1)).join('');
+    return `<li><div class="node" style="--accent:${accent}"><span class="dot"></span><span class="text">${escapeHtml(node.text || '空节点') || ''}</span>${badges}</div>${note}${link}${kidHtml ? `<ul>${kidHtml}</ul>` : ''}</li>`;
+  };
+  const relationEdges = Object.values(document.edges).filter((edge) => edge.relationship === 'reference' && edge.label);
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(document.title)}</title><style>
+body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#1e2030;background:#f4f5fa;margin:0;padding:32px}main{max-width:860px;margin:0 auto;background:#fff;border-radius:16px;padding:32px 36px;box-shadow:0 12px 32px rgb(43 45 92/.1)}
+h1{font-size:24px;margin:0 0 4px}p.meta{color:#6f7278;font-size:12px;margin:0 0 20px}ul{list-style:none;margin:6px 0;padding-left:22px;border-left:2px solid #ececf6}li{margin:4px 0}
+.node{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none}.text{font-weight:600}
+.tag{font-size:11px;color:#5b5bd6;background:#f0f0ff;border-radius:999px;padding:1px 8px}.pill{font-size:11px;color:#555;background:#f3f4f7;border-radius:999px;padding:1px 8px}.priority-high{background:#fde4e2;color:#b42318}.priority-medium{background:#fef3c7;color:#92400e}.priority-low{background:#e0e7ff;color:#3730a3}
+.note{font-size:12px;color:#555;background:#fafafc;border-radius:8px;padding:6px 10px;margin:4px 0 4px 16px}.link{font-size:12px;margin:2px 0 2px 16px}h2{font-size:15px;margin:24px 0 8px}.relations li{font-size:13px;color:#444}
+@media print{body{background:#fff;padding:0}main{box-shadow:none;max-width:none}}</style></head><body><main><h1>${escapeHtml(document.title)}</h1><p class="meta">由 SmartLine 思维导图导出 · 打印此页即可存为 PDF</p><ul>${roots.map((id) => renderNode(id, 0)).join('')}</ul>${relationEdges.length ? `<h2>关系标注</h2><ul class="relations">${relationEdges.map((edge) => `<li>${escapeHtml(document.nodes[edge.sourceId]?.text || '?')} → ${escapeHtml(document.nodes[edge.targetId]?.text || '?')}：${escapeHtml(edge.label)}</li>`).join('')}</ul>` : ''}</main></body></html>`;
+}
+
+export function downloadMindMapHtml(document: MindMapDocument) {
+  const blob = new Blob([serializeMindMapHtml(document)], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement('a');
+  anchor.href = url;
+  anchor.download = safeFileName(document.title) + '.html';
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function serializeMindMapSvg(document: MindMapDocument) {
   const nodes = Object.values(document.nodes);
   const projectReferences = Object.values(document.projectReferences);

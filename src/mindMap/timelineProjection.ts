@@ -108,6 +108,39 @@ export function timelineUnscheduledItemCount(section: TimelineSection, data: Pro
   return section.manualItems.filter((reference) => unscheduled.has(reference.itemId)).length;
 }
 
+export interface TimelineUnscheduledItem {
+  taskId: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+}
+
+// B2：可操作的未排期清单，点击即可回填开始/截止日期，补完自动上轴。
+export function timelineUnscheduledItems(section: TimelineSection, data: ProjectPlanningSnapshot): TimelineUnscheduledItem[] {
+  const projectIds = section.selectionScopes.length > 0
+    ? timelineSelectedProjectIds(section, data)
+    : section.source === 'project' && section.targetId
+      ? [section.targetId]
+      : section.source === 'manual'
+        ? [...new Set(section.manualItems.filter((reference) => reference.source === 'project').map((reference) => reference.contextId))]
+        : [];
+  const result: TimelineUnscheduledItem[] = [];
+  for (const projectId of projectIds) {
+    const project = data.projects.find((item) => item.id === projectId);
+    if (!project) continue;
+    for (const block of project.blocks) {
+      if (block.type !== 'smart-task' || block.header.date || block.header.deadline) continue;
+      result.push({
+        taskId: `project-blk:${project.id}::${block.id}`,
+        projectId: project.id,
+        projectName: project.name,
+        title: block.header.title || '未命名任务',
+      });
+    }
+  }
+  return result;
+}
+
 export function lifeTimelineItems(areaId: string, data: LifeTimelineSnapshot): TimelineProjectionItem[] {
   const area = active(data.lifeMapAreas).find((item) => item.id === areaId);
   if (!area) return [];

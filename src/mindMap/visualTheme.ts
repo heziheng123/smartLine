@@ -46,6 +46,14 @@ export const MIND_MAP_THEME_PRESETS: Record<MindMapVisualTheme, {
     childMix: 0.94,
     compactChildren: false,
   },
+  underline: {
+    label: '下划线脑图',
+    palette: ['#5b5bd6', '#0f766e', '#2563eb', '#7c3aed', '#c2410c', '#be185d'],
+    centerMix: 0.66,
+    branchMix: 0.83,
+    childMix: 0.96,
+    compactChildren: true,
+  },
 };
 
 export const MIND_MAP_TASK_STATUS_ICON = { todo: '○', doing: '◐', done: '✓' } as const;
@@ -116,10 +124,10 @@ export function resolveMindMapNodePresentation(
   if (component === 'topic') return {
     accent,
     fill: mixMindMapColor(accent, '#ffffff', preset.centerMix),
-    border: mixMindMapColor(accent, '#ffffff', 0.32),
-    text: textColor ?? mixMindMapColor(accent, '#202124', 0.62),
-    fontSize: Math.max(17, node.style.fontSize),
-    fontWeight: Math.max(680, node.style.fontWeight),
+    border: accent,
+    text: textColor ?? mixMindMapColor(accent, '#202124', 0.55),
+    fontSize: Math.max(20, node.style.fontSize + 5),
+    fontWeight: Math.max(750, node.style.fontWeight),
     shadow: theme !== 'professional' && node.style.shadow,
     topic: false,
   };
@@ -146,23 +154,28 @@ export function resolveMindMapNodePresentation(
   if (component === 'branch') return {
     accent,
     fill: mixMindMapColor(accent, '#ffffff', preset.branchMix),
-    border: mixMindMapColor(accent, '#ffffff', 0.58),
-    text: textColor ?? mixMindMapColor(accent, '#202124', 0.68),
-    fontSize: Math.max(14, node.style.fontSize),
-    fontWeight: Math.max(580, node.style.fontWeight),
+    border: accent,
+    text: textColor ?? mixMindMapColor(accent, '#202124', 0.6),
+    fontSize: Math.max(16, node.style.fontSize + 2),
+    fontWeight: Math.max(650, node.style.fontWeight),
     shadow: false,
-    topic: false,
+    topic: theme === 'underline' && depth >= 1,
   };
-  return {
+  const childPresentation = {
     accent,
     fill: mixMindMapColor(accent, '#ffffff', preset.childMix),
-    border: mixMindMapColor(accent, '#ffffff', 0.84),
-    text: textColor ?? mixMindMapColor(accent, '#202124', 0.78),
-    fontSize: node.style.fontSize,
-    fontWeight: Math.max(430, Math.min(520, node.style.fontWeight)),
+    border: mixMindMapColor(accent, '#ffffff', 0.7),
+    text: textColor ?? mixMindMapColor(accent, '#202124', 0.72),
+    fontSize: Math.max(14, node.style.fontSize),
+    fontWeight: Math.max(450, Math.min(540, node.style.fontWeight)),
     shadow: false,
     topic: preset.compactChildren,
   };
+  // 下划线脑图：depth>=2 的叶子只画底线不画面，字号再小一档，打印/导出更干净。
+  if (theme === 'underline' && depth >= 2) {
+    return { ...childPresentation, topic: true, fontSize: Math.max(13, node.style.fontSize - 1) };
+  }
+  return childPresentation;
 }
 
 export function resolveBranchThemeColors(document: MindMapDocument) {

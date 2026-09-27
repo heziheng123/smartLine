@@ -45,6 +45,12 @@ const matchesFocus = (item: TimelineProjectionItem, today: string, focus: Timeli
   focus === 'all' || timelineTemporalState(item, today) === focus
 );
 
+// C2：缩放档位阈值集中定义，画布与图层共用，避免 0.45/0.5 不一致导致摘要/详情闪跳。
+export const TIMELINE_SUMMARY_SCALE = 0.5;
+export const timelineDetailScale = (scale: TimelineSection['scale']) => (
+  scale === 'week' ? 0.78 : scale === 'month' ? 0.86 : 1.05
+);
+
 const orderRowsByLane = (items: TimelineProjectionItem[]) => {
   const children = new Map<string, TimelineProjectionItem[]>();
   for (const item of items) {
@@ -74,8 +80,8 @@ export function buildMindMapTimelineLayer(
   focus: TimelineFocus = 'all',
 ) {
   const range = mindMapTimelineRange(timeline, allItems);
-  const summaryMode = cameraScale < 0.45;
-  const detailThreshold = timeline.scale === 'week' ? 0.78 : timeline.scale === 'month' ? 0.86 : 1.05;
+  const summaryMode = cameraScale < TIMELINE_SUMMARY_SCALE;
+  const detailThreshold = timelineDetailScale(timeline.scale);
   const density: TimelineDensity = summaryMode ? 'overview' : cameraScale >= detailThreshold ? 'detail' : 'compact';
   const lodItems = summaryMode
     ? []

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timelineVisibleItems } from '../../src/mindMap/timelineProjection.ts';
+import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timelineUnscheduledItemCount, timelineUnscheduledItems, timelineVisibleItems } from '../../src/mindMap/timelineProjection.ts';
 import { createTimelineSection } from '../../src/mindMap/model.ts';
 import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, timelineRangeForScale, xToDate } from '../../src/mindMap/timelineLayout.ts';
-import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY } from '../../src/mindMap/canvas/timelineLayer.ts';
+import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY, TIMELINE_SUMMARY_SCALE, timelineDetailScale } from '../../src/mindMap/canvas/timelineLayer.ts';
 import type { ProjectPlanningSnapshot } from '../../src/projectPlanning/adapter.ts';
 import { addDays, todayStr } from '../../src/utils/dateSafe.ts';
 
@@ -55,6 +55,37 @@ test('life timeline only projects active items in the selected area', () => {
     lifeMapSystems: [], lifeMapEvents: [], lifeMapFocuses: [], lifeMapNotes: [], lifeMapReviews: [],
   });
   assert.deepEqual(manual.map((item) => item.title), ['目标']);
+});
+
+test('unscheduled project tasks are listable and countable for quick scheduling', () => {
+  const data: ProjectPlanningSnapshot = {
+    projects: [{
+      id: 'project-1', name: '发布', start: '2026-08-01', end: '2026-08-31', color: '#123456', blocks: [
+        { id: 'cell-1', type: 'smart-task', header: { title: '联调', duration: 30, tag: '', tagColor: '', date: '2026-08-10', deadline: '2026-08-12', isCompleted: false }, body: '' },
+        { id: 'cell-2', type: 'smart-task', header: { title: '写文档', duration: 30, tag: '', tagColor: '', date: '', deadline: '', isCompleted: false }, body: '' },
+        { id: 'cell-3', type: 'text', content: '说明' },
+      ],
+    }],
+    milestones: [],
+  };
+  const timeline = { ...createTimelineSection({ x: 0, y: 0 }), source: 'project' as const, targetId: 'project-1' };
+  const unscheduled = timelineUnscheduledItems(timeline, data);
+  assert.deepEqual(unscheduled.map((item) => item.title), ['写文档']);
+  assert.equal(unscheduled[0].taskId, 'project-blk:project-1::cell-2');
+  assert.equal(timelineUnscheduledItemCount(timeline, data), unscheduled.length);
+});
+
+test('timeline summary and detail scale thresholds stay ordered per scale', () => {
+  assert.ok(TIMELINE_SUMMARY_SCALE < timelineDetailScale('week'));
+  assert.ok(timelineDetailScale('week') < timelineDetailScale('month'));
+  assert.ok(timelineDetailScale('month') < timelineDetailScale('long-range'));
+  const timeline = createTimelineSection({ x: 0, y: 0 });
+  const summaryLayer = buildMindMapTimelineLayer(timeline, [], TIMELINE_SUMMARY_SCALE - 0.01, DEFAULT_TIMELINE_VISIBILITY);
+  const detailLayer = buildMindMapTimelineLayer(timeline, [], timelineDetailScale(timeline.scale) + 0.01, DEFAULT_TIMELINE_VISIBILITY);
+  assert.equal(summaryLayer.summaryMode, true);
+  assert.equal(summaryLayer.density, 'overview');
+  assert.equal(detailLayer.summaryMode, false);
+  assert.equal(detailLayer.density, 'detail');
 });
 
 test('recommended timeline height accounts for every stage lane and same-day marker stack', () => {

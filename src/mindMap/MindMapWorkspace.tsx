@@ -28,11 +28,14 @@ import { useAuth } from '@/auth/AuthContext';
 import { createEmptyLifeMapData } from '@/lifeMap/data';
 import { projectTaskReferenceId, useProjectPlanningSnapshot } from '@/projectPlanning/adapter';
 import MindMapCanvas from './canvas/MindMapCanvas';
+import { MindMapConfirmDialog, type MindMapConfirmDialogState } from './canvas/ConfirmDialog';
 import MindMapCatalog from './MindMapCatalog';
 import { MIND_MAP_SYNC_ENABLED } from './config';
 import {
   downloadMindMapJson,
   downloadMindMapMarkdownOutline,
+  downloadMindMapOpml,
+  downloadMindMapHtml,
   downloadMindMapSvg,
   parseMindMapDocumentJson,
   parseMindMapMarkdownOutline,
@@ -101,6 +104,7 @@ const MindMapWorkspace = () => {
   const [fitRequest, setFitRequest] = useState(0);
   const [pngRequest, setPngRequest] = useState(0);
   const [pngScope, setPngScope] = useState<MindMapPngScope>('viewport');
+  const [pendingTimelineId, setPendingTimelineId] = useState<string | null>(null);
   const [treeDirection, setTreeDirection] = useState<TreeDirection>('left-right');
   const [treeLayoutRequest, setTreeLayoutRequest] = useState(0);
   const [layoutRunning, setLayoutRunning] = useState(false);
@@ -162,6 +166,7 @@ const MindMapWorkspace = () => {
         setShortcutsOpen((open) => !open);
       } else if (event.key === 'Escape') {
         setShortcutsOpen(false);
+        setConfirmDialog(null);
       }
     };
     window.addEventListener('keydown', handleShortcutHelp);
@@ -335,14 +340,21 @@ const MindMapWorkspace = () => {
     syncSessionRef.current?.updatePresence(patch);
   }, []);
 
+  const [confirmDialog, setConfirmDialog] = useState<MindMapConfirmDialogState | null>(null);
+
   const confirmDelete = () => {
     if (!document) return;
-    if (window.confirm('确定删除“' + document.title + '”吗？此操作只删除这张独立思维导图。')) {
-      const deletedId = document.id;
-      void deleteCurrentDocument().then((deleted) => {
-        if (deleted) catalogSessionRef.current?.deleteDocument(deletedId);
-      });
-    }
+    const title = document.title;
+    const deletedId = document.id;
+    setConfirmDialog({
+      message: `确定删除“${title}”吗？此操作只删除这张独立思维导图。`,
+      confirmLabel: '删除',
+      action: () => {
+        void deleteCurrentDocument().then((deleted) => {
+          if (deleted) catalogSessionRef.current?.deleteDocument(deletedId);
+        });
+      },
+    });
   };
 
   const handleCatalogOpen = (id: string) => {
@@ -361,9 +373,14 @@ const MindMapWorkspace = () => {
   };
 
   const handleCatalogDelete = (id: string, title: string) => {
-    if (!window.confirm('确定删除“' + title + '”吗？此操作只删除这张独立思维导图。')) return;
-    void deleteDocument(id).then((deleted) => {
-      if (deleted) catalogSessionRef.current?.deleteDocument(id);
+    setConfirmDialog({
+      message: `确定删除“${title}”吗？此操作只删除这张独立思维导图。`,
+      confirmLabel: '删除',
+      action: () => {
+        void deleteDocument(id).then((deleted) => {
+          if (deleted) catalogSessionRef.current?.deleteDocument(id);
+        });
+      },
     });
   };
 
@@ -407,9 +424,19 @@ const MindMapWorkspace = () => {
 
   const migrateLifeMap = async () => {
     if (!document || !lifeMapHydrated || migrationRunning) return;
-    if (!window.confirm(document.lifeMap
-      ? '这会用旧 Life Store 的内容替换当前地图内的人生规划，并先下载备份。是否继续？'
-      : '将完整人生地图复制到当前导图，并先下载迁移前备份。是否继续？')) return;
+    const hasLifeMap = Boolean(document.lifeMap);
+    const title = document.title;
+    setConfirmDialog({
+      message: hasLifeMap
+        ? `用旧 Life Store 的内容替换“${title}”内的人生规划，并先下载备份。是否继续？`
+        : `将完整人生地图复制到“${title}”，并先下载迁移前备份。是否继续？`,
+      confirmLabel: '开始迁移',
+      action: () => void runLifeMapMigration(),
+    });
+  };
+
+  const runLifeMapMigration = async () => {
+    if (!document || !lifeMapHydrated || migrationRunning) return;
     setMigrationRunning(true);
     setLocalError(null);
     try {
@@ -473,6 +500,7 @@ const MindMapWorkspace = () => {
       ...current,
       timelineSections: { ...current.timelineSections, [timeline.id]: timeline },
     }));
+    setPendingTimelineId(timeline.id);
   };
 
   const hasCanvasContent = Boolean(document && (
@@ -630,6 +658,18 @@ const MindMapWorkspace = () => {
               }} disabled={!document}>
                 <FileCode2 size={15} aria-hidden="true" />导出 SVG
               </button>
+              <button type="button" role="menuitem" onClick={() => {
+                if (document) downloadMindMapOpml(document);
+                closeMoreMenu();
+              }} disabled={!document}>
+                <FileCode2 size={15} aria-hidden="true" />导出 OPML（XMind 互通）
+              </button>
+              <button type="button" role="menuitem" onClick={() => {
+                if (document) downloadMindMapHtml(document);
+                closeMoreMenu();
+              }} disabled={!document}>
+                <FileCode2 size={15} aria-hidden="true" />导出 HTML（分享 / 打印 PDF）
+              </button>
               <div className={styles.pngExportRow}>
                 <button type="button" onClick={() => {
                   setPngRequest((value) => value + 1);
@@ -663,9 +703,16 @@ const MindMapWorkspace = () => {
         <button type="button" className={styles.snapshotCreate} disabled={!document} onClick={() => createSnapshot('手动创建快照')}>创建当前快照</button>
         <small>每两分钟会在修改前自动保留一个版本。</small>
         {snapshots.length ? <div className={styles.snapshotList}>{snapshots.map((snapshot) => <div key={snapshot.id}><span title={snapshot.label}>{new Date(snapshot.savedAt).toLocaleString()} · {snapshot.label}</span><button type="button" onClick={() => {
-          if (window.confirm(`恢复到“${snapshot.label}”的版本？当前内容会先自动保存为快照。`)) restoreSnapshot(snapshot.id);
+          const id = snapshot.id;
+          const label = snapshot.label;
+          setConfirmDialog({
+            message: `恢复到“${label}”的版本？当前内容会先自动保存为快照。`,
+            confirmLabel: '恢复版本',
+            action: () => restoreSnapshot(id),
+          });
         }}>恢复</button></div>)}</div> : <p>尚无快照。首次修改前会自动创建。</p>}
       </aside>}
+      <MindMapConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} floating />
       {shortcutsOpen && <aside className={styles.shortcutPanel} role="dialog" aria-label="思维导图快捷键">
         <div className={styles.snapshotHeader}><strong>快捷键</strong><button type="button" aria-label="关闭快捷键" onClick={() => setShortcutsOpen(false)}>×</button></div>
         <div className={styles.shortcutGrid}>
@@ -721,6 +768,41 @@ const MindMapWorkspace = () => {
 
       <section ref={canvasSectionRef} className={styles.canvas} aria-label="思维导图画布">
         <nav className={styles.floatingToolbar} aria-label="思维导图工具">
+          <button type="button" className={styles.iconAction} title="整理脑图" aria-label="整理脑图" disabled={!document} onClick={runTreeLayout}>整理</button>
+          <button type="button" className={styles.iconAction} title="适合画布（F）" aria-label="适合画布" disabled={!hasCanvasContent} onClick={() => setFitRequest((v) => v + 1)}>适应</button>
+          <span className={styles.menuHint} title="拖拽=框选，空格+拖拽=平移，双击空白=新建">拖拽框选 · 空格平移 · 双击新建</span>
+          <details className={styles.layoutMenu}>
+            <summary aria-label="脑图主题模板" title={`模板：${MIND_MAP_THEME_PRESETS[document?.settings.mapTheme ?? 'classic']?.label ?? '经典脑图'}`}>
+              <span className={styles.themeSwatches} aria-hidden="true">
+                {(MIND_MAP_THEME_PRESETS[document?.settings.mapTheme ?? 'classic']?.palette ?? []).slice(0, 3).map((color) => (
+                  <i key={color} style={{ background: color }} />
+                ))}
+              </span>
+              <span className={styles.themeLabel}>{MIND_MAP_THEME_PRESETS[document?.settings.mapTheme ?? 'classic']?.label ?? '经典脑图'}</span>
+              <ChevronDown size={13} aria-hidden="true" />
+            </summary>
+            <div className={`${styles.layoutMenuPanel} ${styles.themeMenuPanel}`} role="menu" aria-label="脑图主题模板">
+              {Object.entries(MIND_MAP_THEME_PRESETS).map(([value, preset]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={(document?.settings.mapTheme ?? 'classic') === value}
+                  disabled={!document}
+                  onClick={(event) => {
+                    execute('切换脑图主题', (current) => ({ ...current, settings: { ...current.settings, mapTheme: value as MindMapVisualTheme } }));
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                  }}
+                >
+                  <span className={styles.themeSwatches} aria-hidden="true">
+                    {preset.palette.slice(0, 3).map((color) => <i key={color} style={{ background: color }} />)}
+                  </span>
+                  {preset.label}
+                  {(document?.settings.mapTheme ?? 'classic') === value && <span aria-hidden="true">✓</span>}
+                </button>
+              ))}
+            </div>
+          </details>
           <details ref={insertMenuRef} className={styles.layoutMenu}>
             <summary data-testid="mind-map-insert-menu">
               <Plus size={15} aria-hidden="true" />插入<ChevronDown size={13} aria-hidden="true" />
@@ -823,10 +905,28 @@ const MindMapWorkspace = () => {
                   },
                 }));
               }}><option value="light">浅色</option><option value="dark">深色</option><option value="minimal">简洁</option></select></label>
-              <label className={styles.layoutTheme}><span>脑图模板</span><select aria-label="脑图主题模板" value={document?.settings.mapTheme ?? 'classic'} onChange={(event) => {
-                const mapTheme = event.target.value as MindMapVisualTheme;
-                execute('切换脑图主题', (current) => ({ ...current, settings: { ...current.settings, mapTheme } }));
-              }}>{Object.entries(MIND_MAP_THEME_PRESETS).map(([value, preset]) => <option key={value} value={value}>{preset.label}</option>)}</select></label>
+              <div className={styles.layoutTheme} role="group" aria-label="脑图主题模板">
+                <span>脑图模板</span>
+                <span className={styles.themeInlineOptions}>
+                  {Object.entries(MIND_MAP_THEME_PRESETS).map(([value, preset]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      title={preset.label}
+                      aria-label={preset.label}
+                      aria-pressed={(document?.settings.mapTheme ?? 'classic') === value}
+                      disabled={!document}
+                      onClick={() => {
+                        execute('切换脑图主题', (current) => ({ ...current, settings: { ...current.settings, mapTheme: value as MindMapVisualTheme } }));
+                      }}
+                    >
+                      <span className={styles.themeSwatches} aria-hidden="true">
+                        {preset.palette.slice(0, 3).map((color) => <i key={color} style={{ background: color }} />)}
+                      </span>
+                    </button>
+                  ))}
+                </span>
+              </div>
               <span className={styles.menuDivider} aria-hidden="true" />
               <button type="button" role="menuitem" disabled={!hasCanvasContent} onClick={() => {
                 setFitRequest((value) => value + 1);
@@ -847,6 +947,8 @@ const MindMapWorkspace = () => {
             onLayoutRunningChange={setLayoutRunning}
             pngRequest={pngRequest}
             pngScope={pngScope}
+            pendingTimelineId={pendingTimelineId}
+            onPendingTimelineConsumed={() => setPendingTimelineId(null)}
             creationType={creationType}
             connectionMode={connectionMode}
             onConnectionModeChange={setConnectionMode}
@@ -857,6 +959,14 @@ const MindMapWorkspace = () => {
           />
         ) : (
           <div className={styles.loading} role="status">暂时无法打开思维导图。</div>
+        )}
+        {isHydrated && document && !hasCanvasContent && (
+          <div role="dialog" aria-label="新手引导" style={{ position: 'absolute', inset: '64px 16px auto 16px', display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+            <div style={{ pointerEvents: 'auto', background: 'var(--mindmap-surface, #fff)', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 16px', maxWidth: 520, boxShadow: '0 8px 24px rgba(0,0,0,.08)' }}>
+              <strong>从这里开始：</strong>
+              <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.7 }}>双击空白画布新建节点 · 选中节点按 <kbd>Tab</kbd> 建子节点、<kbd>Enter</kbd> 建同级 · 拖拽框选、按住 <kbd>空格</kbd> 拖拽平移 · 按 <kbd>?</kbd> 查看全部快捷键</div>
+            </div>
+          </div>
         )}
       </section>
 
