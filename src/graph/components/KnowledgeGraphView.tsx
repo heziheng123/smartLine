@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { requestConfirmation } from '@/services/confirmation';
 import { useShallow } from 'zustand/react/shallow';
 import { useGraphStore } from '../store';
@@ -155,6 +155,17 @@ type ZoomCanvasController = {
 };
 
 const ZOOM_CANVAS_MAX_PIXELS = 9_000_000;
+
+// 项目 block 的 graphNodeIds 解析缓存：header 对象引用不变时直接复用，
+// 避免每次重算全量遍历所有 blocks 时重复解析字符串。
+const graphNodeIdsCache = new WeakMap<object, string[]>();
+const getCachedGraphNodeIds = (header: object): string[] => {
+  const cached = graphNodeIdsCache.get(header);
+  if (cached) return cached;
+  const ids = getValidGraphNodeIds(header as Parameters<typeof getValidGraphNodeIds>[0]);
+  graphNodeIdsCache.set(header, ids);
+  return ids;
+};
 
 const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${k}, ${x}, ${y})`;
 
@@ -351,10 +362,14 @@ export const KnowledgeGraphView: React.FC = () => {
     (nodeId: string) => getSubtreeNodeIds(nodeId).slice(1),
     [getSubtreeNodeIds],
   );
-  const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const reviewTasks = useEbbStore(useShallow((state) => state.reviewTasks));
   const archiveReviewPlansForGraphNodes = useEbbStore((state) => state.archiveReviewPlansForGraphNodes);
   const { tasks, groups } = useTimelineStore(useShallow((state) => ({ tasks: state.tasks, groups: state.groups })));
   const allProjectTasks = useMemo(() => getUniqueTasks(tasks, groups), [tasks, groups]);
+  // 延迟重算：项目/复习的无关更新先让 dock 动画和当前帧画完，重算放到低优先级，
+  // 样子不变，只是从“立刻全算”变成“闲了再算”。
+  const deferredProjectTasks = React.useDeferredValue(allProjectTasks);
+  const deferredReviewTasks = React.useDeferredValue(reviewTasks);
   const bindingSession = useGraphBindingStore(useShallow((state) => ({
     active: state.active,
     isConfirming: state.isConfirming,
@@ -380,6 +395,12 @@ export const KnowledgeGraphView: React.FC = () => {
   const [radiusMode, setRadiusMode] = useState<GraphRadiusMode>('overview');
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  // 搜索防抖：输入框立刻跟手，高亮计算等停顿 150ms 再跑，输字不卡。
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 150);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
   const [activeDockPanel, setActiveDockPanel] = useState<DockPanel>(null);
   const [moveError, setMoveError] = useState('');
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -467,8 +488,21 @@ export const KnowledgeGraphView: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [activeDockPanel]);
 
+  // 首屏让路：挂载后延迟两帧再跑 stratify/partition 全量布局，
+  // 让 dock 的 layoutId 动画先拿到主线程，避免同 tick 互斥。
+  const [layoutReady, setLayoutReady] = useState(false);
   // Rotation angles for islands
   const [islandRotations, setIslandRotations] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setLayoutReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, []);
 
   const focusRoot = useCallback((rootId: string) => {
     setSelectedRootFilter(rootId);
@@ -565,29 +599,29 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [isHydrated]);
 
   const reviewsByNode = useMemo(() => {
-    const map = new Map<string, typeof reviewTasks>();
-    for (const task of reviewTasks) {
+    const map = new Map<string, typeof deferredReviewTasks>();
+    for (const task of deferredReviewTasks) {
       if (!task.graphNodeId || task.isArchived) continue;
       const list = map.get(task.graphNodeId) ?? [];
       list.push(task);
       map.set(task.graphNodeId, list);
     }
     return map;
-  }, [reviewTasks]);
+  }, [deferredReviewTasks]);
 
   const archivedReviewsByNode = useMemo(() => new Set(
-    reviewTasks
+    deferredReviewTasks
       .filter((task) => task.isArchived && task.graphNodeId)
       .map((task) => task.graphNodeId!),
-  ), [reviewTasks]);
+  ), [deferredReviewTasks]);
 
   const completedBindingsByNode = useMemo(() => {
     const map = new Map<string, { hasAutoReview: boolean; hasNoAutoReview: boolean }>();
-    allProjectTasks.forEach((task) => {
+    deferredProjectTasks.forEach((task) => {
       const blocks = Array.isArray(task.blocks) ? task.blocks : [];
       blocks.forEach((block) => {
         if (block.type !== 'smart-task' || block.header.isArchived || !block.header.isCompleted) return;
-        getValidGraphNodeIds(block.header).forEach((nodeId) => {
+        getCachedGraphNodeIds(block.header).forEach((nodeId) => {
           const current = map.get(nodeId) ?? { hasAutoReview: false, hasNoAutoReview: false };
           if (shouldAutoSyncEbb(block.header)) current.hasAutoReview = true;
           else current.hasNoAutoReview = true;
@@ -596,7 +630,7 @@ export const KnowledgeGraphView: React.FC = () => {
       });
     });
     return map;
-  }, [allProjectTasks]);
+  }, [deferredProjectTasks]);
 
   const nodeVisualStates = useMemo(() => {
     const states = new Map<string, NodeVisualState>();
@@ -652,6 +686,7 @@ export const KnowledgeGraphView: React.FC = () => {
   );
 
   const islandsData = useMemo(() => {
+    if (!layoutReady) return { islands: [], allFlatNodes: [] };
     recordGraphDiagnostic('layout');
     setGraphDiagnostic('layoutInputNodes', nodes.length);
     const today = todayStr();
@@ -794,7 +829,7 @@ export const KnowledgeGraphView: React.FC = () => {
 
     setGraphDiagnostic('layoutOutputNodes', islands.reduce((total, island) => total + island.nodes.length, 0));
     return { islands, allFlatNodes };
-  }, [activationStates, childrenByParent, dimensions.height, dimensions.width, getNodeColorHex, getNodeVisualState, getSubtreeNodeIds, nodeById, nodes, radiusMode, reviewsByNode, selectedRootFilter]);
+  }, [activationStates, childrenByParent, dimensions.height, dimensions.width, getNodeColorHex, getNodeVisualState, getSubtreeNodeIds, layoutReady, nodeById, nodes, radiusMode, reviewsByNode, selectedRootFilter]);
 
   const arcGenerator = useMemo(() => {
     return arc<HierarchyRectangularNode<ViewNode>>()
@@ -857,8 +892,8 @@ export const KnowledgeGraphView: React.FC = () => {
   }, [islandsData.allFlatNodes]);
 
   const matchingNodeIds = useMemo(() => {
-    if (statusFilter === 'all' && !searchQuery.trim()) return null;
-    const query = searchQuery.trim().toLowerCase();
+    if (statusFilter === 'all' && !debouncedSearchQuery.trim()) return null;
+    const query = debouncedSearchQuery.trim().toLowerCase();
     const matched = new Set<string>();
 
     islandsData.allFlatNodes.forEach((node: ViewNode) => {
@@ -887,7 +922,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
 
     return matched;
-  }, [islandsData.allFlatNodes, nodeById, searchQuery, statusFilter]);
+  }, [islandsData.allFlatNodes, nodeById, debouncedSearchQuery, statusFilter]);
 
   // Setup D3 Zoom
   useEffect(() => {
@@ -1175,10 +1210,12 @@ export const KnowledgeGraphView: React.FC = () => {
     }
   }, [islandsData.islands, dimensions.height, dimensions.width]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (dimensions.width === 0 || dimensions.height === 0 || islandsData.islands.length === 0) return;
     const modeKey = `${selectedRootFilter}:${radiusMode}`;
     if (didInitialViewportFitRef.current && lastViewportModeRef.current === modeKey) return;
+    // 首屏直接摆好，不做动画：useLayoutEffect 在浏览器绘制前执行，
+    // 看不到“从大缩到小”的中间态；之后点“视角归中”仍走 220ms 动画。
     zoomToFit(false);
     didInitialViewportFitRef.current = true;
     lastViewportModeRef.current = modeKey;
@@ -1286,11 +1323,11 @@ export const KnowledgeGraphView: React.FC = () => {
   const relatedTaskBlocks = useMemo(() => {
     if (!selectedNodeId) return [];
     const results: Array<{ task: Task; block: SmartTaskBlock }> = [];
-    allProjectTasks.forEach(task => {
+    deferredProjectTasks.forEach(task => {
       const blocks = Array.isArray(task.blocks) ? task.blocks : [];
       blocks.forEach(block => {
         if (block.type === 'smart-task' && !block.header.isArchived) {
-          const ids = getValidGraphNodeIds(block.header);
+          const ids = getCachedGraphNodeIds(block.header);
           if (ids.some(id => selectedScopeIds.has(id))) results.push({ task, block });
         }
       });
@@ -1303,7 +1340,7 @@ export const KnowledgeGraphView: React.FC = () => {
     });
     
     return results;
-  }, [selectedNodeId, selectedScopeIds, allProjectTasks]);
+  }, [selectedNodeId, selectedScopeIds, deferredProjectTasks]);
 
   const selectedLearningSummary = useMemo<NodeLearningSummaryData>(() => {
     const taskTotal = relatedTaskBlocks.length;

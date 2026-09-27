@@ -186,7 +186,7 @@ interface PanelMotionContext {
 
 const VIEW_MOTION_VARIANTS: Variants = {
   initial: ({ direction, reducedMotion }: ViewMotionContext) => (
-    reducedMotion ? { opacity: 0 } : { opacity: 0, x: direction * 10 }
+    reducedMotion ? { opacity: 0 } : { opacity: 0, x: direction * 4 }
   ),
   animate: ({ reducedMotion }: ViewMotionContext) => ({
     opacity: 1,

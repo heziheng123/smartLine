@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
+import { MOTION_DURATION, MOTION_EASE_ENTER } from '@/motion/system';
 import { MIND_MAP_ENABLED } from '@/mindMap/config';
 
 export type AppModule = 'life-map' | 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph' | 'mind-map';
@@ -60,7 +60,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPrel
               <motion.span
                 layoutId="dock-active-indicator"
                 className="tl-dock-active-indicator"
-                transition={prefersReducedMotion ? { duration: 0 } : MOTION_SPRING_GENTLE}
+                transition={prefersReducedMotion ? { duration: 0 } : { type: 'tween', duration: MOTION_DURATION.fast, ease: MOTION_EASE_ENTER }}
               />
             )}
           </motion.button>
