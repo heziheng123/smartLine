@@ -252,7 +252,21 @@ const drawGraphCanvas = (
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.setTransform(dpr * transform.k, 0, 0, dpr * transform.k, dpr * transform.x, dpr * transform.y);
+  // Viewport culling: text labels outside the visible world rect are skipped.
+  // Paths are structural and kept; text dominates large-graph draw cost.
+  const viewW = canvas.width / dpr / transform.k;
+  const viewH = canvas.height / dpr / transform.k;
+  const viewX = -transform.x / transform.k;
+  const viewY = -transform.y / transform.k;
+  const showText = transform.k >= 0.35;
+  const margin = 120;
   for (const command of commands) {
+    if (command.kind !== 'path') {
+      if (!showText) continue;
+      const tx = (command as { x: number }).x;
+      const ty = (command as { y: number }).y;
+      if (tx < viewX - margin || tx > viewX + viewW + margin || ty < viewY - margin || ty > viewY + viewH + margin) continue;
+    }
     context.save();
     context.transform(...command.matrix);
     context.globalAlpha = command.opacity;
