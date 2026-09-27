@@ -15,10 +15,12 @@
     "test:project-shift": "tsx --test tests/domain/project-shift.test.ts",
     "test:planning": "tsx --test tests/domain/planning-regressions.test.ts tests/domain/project-planning-adapter.test.ts",
     "test:security": "node scripts/security-check.mjs",
+    "test:unit": "node scripts/run-unit-tests.mjs",
+    "test:types": "tsc -p tests/tsconfig.json --noEmit",
     "test:system": "node scripts/system-simulation.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:all": "npm run test:security && npm run test:auth && npm run test:sync && npm run test:duration && npm run test:life-map && npm run test:mind-map && npm run test:project-shift && npm run test:planning && npm run test:system && npm run test:e2e",
+    "test:all": "npm run test:security && npm run test:types && npm run test:unit && npm run test:system && npm run test:e2e",
     "preview": "vite preview",
     "check": "tsc -b --noEmit && depcheck",
     "audit": "npm audit"

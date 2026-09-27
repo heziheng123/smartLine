@@ -12,6 +12,7 @@ import {
   createLocalSnapshot,
   createWorkspaceSnapshot,
   createWorkspaceBackup,
+  createWorkspaceBackupWithMindMap,
   restoreWorkspaceBackup,
   validateWorkspaceBackup,
   WORKSPACE_SCHEMA_VERSION,
@@ -1573,7 +1574,7 @@ function recordWorkspaceVerification(roomId: string, repairedFields: string[]): 
     : '云端五个数据域校验一致。');
   if (liveblocksAuthMode === 'authenticated') {
     // Optional R2 history must never hold up or downgrade real-time sync.
-    void saveWorkspaceDailyHistoryOnce(createWorkspaceBackup()).catch(() => undefined);
+    void createWorkspaceBackupWithMindMap().then(saveWorkspaceDailyHistoryOnce).catch(() => undefined);
   }
 }
 
@@ -2117,53 +2118,38 @@ async function flushWorkspaceQueueInternal(): Promise<{ applied: number; conflic
   }
   merged.alternates = merged.alternates.filter((alternate) =>
     !forcedKeys.has(alternate.path.split(/[.[]/, 1)[0] as WorkspaceStorageField));
-  // Conflict hashing awaits Web Crypto and gives newer user actions time to
-  // enter the queue. Re-read immediately before the synchronous room batch;
-  // if the queue revision changed, restart with the newest snapshot instead
-  // of replaying the stale one we read at the beginning of this flush.
-  const latest = await readPendingWorkspaceSync();
-  if (!latest) return { applied: 0, conflict: false };
-  if (getPendingWorkspaceSyncToken(latest) !== getPendingWorkspaceSyncToken(pending)) {
-    // The durable queue now has a newer immutable revision. Let the scheduler
-    // apply its trailing/max-wait policy instead of recursively sending every
-    // click that arrived while hashing and merging this snapshot.
-    deferWorkspaceQueueFlush();
-    return { applied: 0, conflict: false };
-  }
-
-  // Hashing and conflict analysis above are asynchronous. A remote Liveblocks
-  // update can land during that interval, so compare the live root again before
-  // entering the synchronous batch. Never write a merge produced from a stale
-  // remote snapshot.
-  const latestRootJson = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
-  if (hasWorkspaceFieldSnapshotChanged(rootJson, latestRootJson, [...pendingKeys, 'metadata'])) {
-    // A later scheduled attempt will merge against the latest remote root.
-    // This prevents an active remote editor from causing a hot retry loop.
-    deferWorkspaceQueueFlush();
-    return { applied: 0, conflict: false };
-  }
-
   if (flushKeys.length === 0) {
     throw new Error('同步暂停：旧队列缺少可恢复的完整 base，已保留原队列且未覆盖云端。');
   }
 
+  const queueRevision = getPendingWorkspaceSyncToken(pending);
+  const alternateRecords = buildWorkspaceAlternateRecords(
+    pending,
+    merged.alternates,
+    typeof metadata.queueRevision === 'string' ? metadata.queueRevision : undefined,
+  );
+  await persistWorkspaceAlternates(alternateRecords);
+  const recoveryIds = alternateRecords.map((record) => record.recoveryId);
+  const submittedHash = await hashWorkspaceValue(merged.fields);
+  const entityWrites = buildWorkspaceEntityWrites(
+    rootJson,
+    merged.fields,
+    queueRevision,
+    pending.updatedAt,
+  );
+  // Finish every asynchronous preparation before the final queue/root checks.
+  // Keep journaling enabled while awaiting so newer user edits remain durable.
+  const latest = await readPendingWorkspaceSync();
+  if (!latest) return { applied: 0, conflict: false };
+  if (getPendingWorkspaceSyncToken(latest) !== queueRevision
+    || hasWorkspaceFieldSnapshotChanged(rootJson,
+      materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>), [...pendingKeys, 'metadata'])) {
+    deferWorkspaceQueueFlush();
+    return { applied: 0, conflict: false };
+  }
+  // No await between checking the root and entering the synchronous batch.
   setWorkspaceQueueSuppressed(true);
   try {
-    const queueRevision = getPendingWorkspaceSyncToken(pending);
-    const alternateRecords = buildWorkspaceAlternateRecords(
-      pending,
-      merged.alternates,
-      typeof metadata.queueRevision === 'string' ? metadata.queueRevision : undefined,
-    );
-    await persistWorkspaceAlternates(alternateRecords);
-    const recoveryIds = alternateRecords.map((record) => record.recoveryId);
-    const submittedHash = await hashWorkspaceValue(merged.fields);
-    const entityWrites = buildWorkspaceEntityWrites(
-      rootJson,
-      merged.fields,
-      queueRevision,
-      pending.updatedAt,
-    );
     // The local queue is the last durable copy of offline edits. Keep it until
     // Liveblocks confirms that the batch reached the cloud; a disconnect or
     // timeout must leave the queue intact so the next reconnect can retry.

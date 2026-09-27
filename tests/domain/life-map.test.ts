@@ -164,7 +164,7 @@ test('二级分类删除保护只统计仍可见的规划引用', () => {
   assert.equal(canDeleteLifeArea({ ...base, lifeMapGoals: [plan] }, 'learning'), false);
   assert.equal(canDeleteLifeArea({ ...base, lifeMapGoals: [{ ...plan, deletedAt: '2026-08-09T00:00:00.000Z' }] }, 'learning'), true);
   assert.equal(canDeleteLifeArea({ ...base, lifeMapEvents: [{ id: 'event', areaId: 'learning', name: '关键日期', date: '2026-08-20', ...meta }] }, 'learning'), false);
-  assert.equal(canDeleteLifeArea({ ...base, lifeMapNotes: [{ id: 'note', areaId: 'learning', name: '便签', date: '2026-08-20', type: 'note', ...meta }] }, 'learning'), false);
+  assert.equal(canDeleteLifeArea({ ...base, lifeMapNotes: [{ id: 'note', areaId: 'learning', name: '便签', date: '2026-08-20', type: 'pin', ...meta }] }, 'learning'), false);
 });
 
 test('删除墓碑会保留在同步数据中，但不会出现在活动内容中', () => {

@@ -2088,7 +2088,7 @@ export const KnowledgeGraphView: React.FC = () => {
                       <Trash2 size={13} />
                     </button>
                   </div>
-                  <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn}><X size={13} /></button>
+                  <button type="button" aria-label="关闭节点控制台" onClick={() => setIsPanelOpen(false)} className={styles.closeBtn}><X size={13} /></button>
                 </div>
               </div>
 
@@ -2190,7 +2190,7 @@ export const KnowledgeGraphView: React.FC = () => {
             <div className={styles.panelContainer}>
               <div className={styles.header}>
                 <div className={styles.headerTitleWrapper}><Command size={14} /><h3 className={styles.headerTitle}>图谱控制台</h3></div>
-                <button onClick={() => setIsPanelOpen(false)} className={styles.closeBtn}><X size={14} /></button>
+                <button type="button" aria-label="关闭节点控制台" onClick={() => setIsPanelOpen(false)} className={styles.closeBtn}><X size={14} /></button>
               </div>
               <div className={styles.section}>
                 <div className={styles.sectionTitle}>快速构建</div>

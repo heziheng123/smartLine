@@ -9,7 +9,7 @@ test('daily review preserves source text and completed snapshots after later edi
   const completed = completeDailyReview(withItem, '2026-09-14T08:03:00.000Z');
   const editedAgain = addReviewItem(completed, 'adjustments', '明天开始文字 Core。', '2026-09-14T08:04:00.000Z');
 
-  assert.equal(editedAgain.inputSegments[0]?.text, '完成了方案评审。');
+  assert.equal((editedAgain.inputSegments[0]?.type === 'text' ? editedAgain.inputSegments[0].text : null), '完成了方案评审。');
   assert.equal(editedAgain.completedVersions[0]?.items.length, 1);
   assert.equal(completed.activeCompletedVersionId, completed.completedVersions[0]?.id);
   assert.equal(editedAgain.workingDraft.items.length, 2);

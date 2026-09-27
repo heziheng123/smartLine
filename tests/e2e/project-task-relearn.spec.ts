@@ -170,10 +170,10 @@ async function readState(page: Page) {
   return page.evaluate(async ({ sourceId }) => {
     const resources = performance.getEntriesByType('resource').map((entry) => entry.name);
     const resolveModule = (fragment: string, fallback: string) => resources.find((name) => name.includes(fragment)) ?? fallback;
-    const { useTimelineStore } = await import(/* @vite-ignore */ resolveModule('/src/store/index.ts?t=', '/src/store/index.ts'));
-    const { useEbbStore } = await import(/* @vite-ignore */ resolveModule('/src/ebb/store.ts?t=', '/src/ebb/store.ts'));
-    const { useGraphStore } = await import(/* @vite-ignore */ resolveModule('/src/graph/store.ts?t=', '/src/graph/store.ts'));
-    const { useDailyScheduleStore } = await import(/* @vite-ignore */ resolveModule('/src/components/dailySchedule/store.ts?t=', '/src/components/dailySchedule/store.ts'));
+    const { useTimelineStore } = await import(/* @vite-ignore */ resolveModule('/src/store/index.ts?t=', '/src/store/index.ts')) as typeof import('../../src/store/index');
+    const { useEbbStore } = await import(/* @vite-ignore */ resolveModule('/src/ebb/store.ts?t=', '/src/ebb/store.ts')) as typeof import('../../src/ebb/store');
+    const { useGraphStore } = await import(/* @vite-ignore */ resolveModule('/src/graph/store.ts?t=', '/src/graph/store.ts')) as typeof import('../../src/graph/store');
+    const { useDailyScheduleStore } = await import(/* @vite-ignore */ resolveModule('/src/components/dailySchedule/store.ts?t=', '/src/components/dailySchedule/store.ts')) as typeof import('../../src/components/dailySchedule/store');
     const project = useTimelineStore.getState().tasks.find((task) => task.id === 'relearn-project');
     const block = project?.blocks.find((item) => item.id === 'relearn-task');
     const reviews = useEbbStore.getState().reviewTasks.filter((task) => task.graphNodeId === 'limit-node');
@@ -273,7 +273,7 @@ test('unified undo refuses to overwrite a new cycle changed after completion', a
     const resources = performance.getEntriesByType('resource').map((entry) => entry.name);
     const ebbUrl = resources.find((name) => name.includes('/src/ebb/store.ts?t=')) ?? '/src/ebb/store.ts';
     const historyUrl = resources.find((name) => name.includes('/src/services/operationHistory.ts?t=')) ?? '/src/services/operationHistory.ts';
-    const { useEbbStore } = await import(/* @vite-ignore */ ebbUrl);
+    const { useEbbStore } = await import(/* @vite-ignore */ ebbUrl) as typeof import('../../src/ebb/store');
     const { useOperationHistory } = await import(/* @vite-ignore */ historyUrl);
     const current = useEbbStore.getState().reviewTasks;
     const target = current.find((task) => !task.isArchived && task.graphNodeId === 'limit-node');
@@ -308,8 +308,8 @@ test('quantity task asks only when the recorded amount first reaches 100 percent
     const resources = performance.getEntriesByType('resource').map((entry) => entry.name);
     const timelineUrl = resources.find((name) => name.includes('/src/store/index.ts?t=')) ?? '/src/store/index.ts';
     const ebbUrl = resources.find((name) => name.includes('/src/ebb/store.ts?t=')) ?? '/src/ebb/store.ts';
-    const { useTimelineStore } = await import(/* @vite-ignore */ timelineUrl);
-    const { useEbbStore } = await import(/* @vite-ignore */ ebbUrl);
+    const { useTimelineStore } = await import(/* @vite-ignore */ timelineUrl) as typeof import('../../src/store/index');
+    const { useEbbStore } = await import(/* @vite-ignore */ ebbUrl) as typeof import('../../src/ebb/store');
     const block = useTimelineStore.getState().tasks[0].blocks.find((item) => item.id === 'quantity-task');
     const reviews = useEbbStore.getState().reviewTasks.filter((task) => task.graphNodeId === 'quantity-node');
     return {

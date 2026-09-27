@@ -29,18 +29,7 @@ const businessSnapshot = async (page: Page) => page.evaluate(async () => {
       ebbSettings: ebb.ebbSettings,
     },
     graph: { nodes: graph.nodes },
-    lifeMap: {
-      areas: lifeMap.areas,
-      themes: lifeMap.themes,
-      goals: lifeMap.goals,
-      systems: lifeMap.systems,
-      systemLogs: lifeMap.systemLogs,
-      events: lifeMap.events,
-      focuses: lifeMap.focuses,
-      notes: lifeMap.notes,
-      relations: lifeMap.relations,
-      reviews: lifeMap.reviews,
-    },
+    lifeMap: Object.fromEntries(Object.entries(lifeMap).filter(([key]) => key.startsWith('lifeMap'))),
   });
 });
 

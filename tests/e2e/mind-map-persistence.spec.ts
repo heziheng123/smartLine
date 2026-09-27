@@ -97,7 +97,7 @@ test('a failed IndexedDB save keeps the edit in memory and the emergency journal
     const original = mindMapRepository.schedule;
     let callbackStatus = '';
     mindMapRepository.schedule = ((_document, _index, callbacks) => {
-      callbacks.onError?.(new Error('forced IndexedDB failure'));
+      callbacks?.onError?.(new Error('forced IndexedDB failure'));
       callbackStatus = useMindMapStore.getState().saveStatus;
     }) as typeof mindMapRepository.schedule;
     try {

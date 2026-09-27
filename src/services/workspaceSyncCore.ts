@@ -325,15 +325,36 @@ function mergeWorkspaceValue(
     const baseById = new Map(base.map((item) => [entityId(item)!, item]));
     const localById = new Map(local.map((item) => [entityId(item)!, item]));
     const remoteById = new Map(remote.map((item) => [entityId(item)!, item]));
-    const orderedIds = [...new Set([
-      ...remote.map((item) => entityId(item)!),
-      ...local.map((item) => entityId(item)!),
-      ...base.map((item) => entityId(item)!),
-    ])];
+    // Compare the common baseline entities so insertions/deletions do not
+    // masquerade as moves. Preserve a one-sided move alongside content edits.
+    const commonIds = new Set([...baseById.keys()].filter((id) => localById.has(id) && remoteById.has(id)));
+    const order = (items: Record<string, unknown>[]) => items.map((item) => entityId(item)!).filter((id) => commonIds.has(id));
+    const baseOrder = order(base);
+    const localMoved = !workspaceValuesEqual(order(local), baseOrder);
+    const remoteMoved = !workspaceValuesEqual(order(remote), baseOrder);
+    const orderConflict = localMoved && remoteMoved && !workspaceValuesEqual(order(local), order(remote));
+    const primary = localMoved && !remoteMoved ? local : remote;
+    const secondary = (primary === local ? remote : local).map((item) => entityId(item)!);
+    const orderedIds = [...new Set(primary.map((item) => entityId(item)!))];
+    const knownIds = new Set(orderedIds);
+    // Retain insertion positions too: place missing entities before their next
+    // neighbour rather than appending every local insertion to the remote list.
+    // ponytail: placement is O(n²); index positions if large concurrent inserts become slow.
+    for (let index = secondary.length - 1; index >= 0; index--) {
+      const id = secondary[index];
+      if (knownIds.has(id)) continue;
+      const anchor = orderedIds.indexOf(secondary[index + 1]);
+      if (anchor < 0) orderedIds.push(id);
+      else orderedIds.splice(anchor, 0, id);
+      knownIds.add(id);
+    }
+    for (const id of baseById.keys()) if (!knownIds.has(id)) orderedIds.push(id);
     const merged: unknown[] = [];
-    const conflicts: string[] = [];
+    const conflicts: string[] = orderConflict ? [`${path}.$order`] : [];
     const appliedPaths: string[] = [];
-    const alternates: RawWorkspaceMergeAlternate[] = [];
+    const alternates: RawWorkspaceMergeAlternate[] = orderConflict
+      ? [{ path: `${path}.$order`, baseValue: base, localValue: local, remoteValue: remote }]
+      : [];
     for (const id of orderedIds) {
       const result = mergeWorkspaceValue(
         baseById.get(id),

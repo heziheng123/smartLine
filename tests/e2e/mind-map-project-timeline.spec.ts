@@ -151,7 +151,7 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
   const timelineId = timelineTestId.replace(/^mind-map-timeline-/, '');
   await timeline.click();
   const createdStage = await mapLifeStage(page, '地图人生阶段（已编辑）');
-  const targetId = createdStage?.areaIds[0];
+  const targetId = createdStage?.areaIds?.[0];
   if (!targetId) throw new Error('Life planning stage area was not available.');
   await page.evaluate(async ({ lifeTargetId, selectedTimelineId }) => {
     const { useMindMapStore } = await import('/src/mindMap/testing.ts');

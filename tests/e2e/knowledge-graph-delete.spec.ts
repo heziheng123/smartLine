@@ -223,10 +223,10 @@ test('one undo restores knowledge links, review rounds, and their daily schedule
       id: 'scheduled-review', sourceId: 'review-linked-review', name: '复习', source: 'review', timeSlot: 'morning', order: 0,
     }] } } });
     useGraphStore.getState().deleteNode(node.id);
+    const deletedBlock = useTimelineStore.getState().tasks[0].blocks[0];
     const deleted = {
       nodes: useGraphStore.getState().nodes.length,
-      linked: useTimelineStore.getState().tasks[0].blocks[0].type === 'smart-task'
-        ? useTimelineStore.getState().tasks[0].blocks[0].header.graphNodeId : undefined,
+      linked: deletedBlock.type === 'smart-task' ? deletedBlock.header.graphNodeId : undefined,
       reviews: useEbbStore.getState().reviewTasks.length,
       scheduled: useDailyScheduleStore.getState().schedules['2026-09-26']?.items.length ?? 0,
     };

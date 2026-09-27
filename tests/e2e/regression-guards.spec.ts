@@ -97,7 +97,7 @@ test('overdue maintenance preserves archives and batches undo with daily restora
     ], '2026-08-10T00:00:00.000Z');
     const headers = Object.fromEntries(useTimelineStore.getState().tasks.map((task) => [
       task.id,
-      task.blocks[0]?.type === 'smart-task' ? task.blocks[0].header : {},
+      task.blocks[0]?.type === 'smart-task' ? task.blocks[0].header : null,
     ]));
     return {
       count,
@@ -112,11 +112,11 @@ test('overdue maintenance preserves archives and batches undo with daily restora
 
   expect(frozen.count).toBe(2);
   expect(frozen.duplicateCount).toBe(0);
-  expect(frozen.headers['freeze-a'].date).toBe('2026-01-01');
-  expect(frozen.headers['freeze-b'].date).toBe('2026-01-02');
-  expect(frozen.headers['freeze-a'].frozenAt).toBe('2026-08-09T00:00:00.000Z');
-  expect(frozen.headers['freeze-b'].frozenAt).toBe('2026-08-09T00:00:00.000Z');
-  expect(frozen.headers['archive-c'].date).toBe('2026-01-01');
+  expect(frozen.headers['freeze-a']?.date).toBe('2026-01-01');
+  expect(frozen.headers['freeze-b']?.date).toBe('2026-01-02');
+  expect(frozen.headers['freeze-a']?.frozenAt).toBe('2026-08-09T00:00:00.000Z');
+  expect(frozen.headers['freeze-b']?.frozenAt).toBe('2026-08-09T00:00:00.000Z');
+  expect(frozen.headers['archive-c']?.date).toBe('2026-01-01');
   expect(frozen.updatedAt['archive-c']).toBe('unchanged');
   expect(frozen.historyCount).toBe(1);
   expect(frozen.dailyCount).toBe(0);
@@ -295,23 +295,23 @@ test('manual rescheduling releases recovered state and undo restores it', async 
       normalizeManualProjectTaskPatch({ date: '2026-08-12' }),
     );
     const task = useTimelineStore.getState().tasks[0];
-    const header = task.blocks[0]?.type === 'smart-task' ? task.blocks[0].header : {};
+    const header = task.blocks[0]?.type === 'smart-task' ? task.blocks[0].header : null;
     const backlogCount = collectBacklogTasks(useTimelineStore.getState().tasks).length;
     const historyCount = useOperationHistory.getState().entries.length;
     const undone = await useOperationHistory.getState().undo();
     const restoredBlock = useTimelineStore.getState().tasks[0].blocks[0];
-    const restored = restoredBlock?.type === 'smart-task' ? restoredBlock.header : {};
+    const restored = restoredBlock?.type === 'smart-task' ? restoredBlock.header : null;
     return { result, header, backlogCount, historyCount, undone, restored };
   });
 
   expect(changed.result.changed).toBe(true);
-  expect(changed.header.date).toBe('2026-08-12');
-  expect(changed.header.frozenAt).toBeUndefined();
+  expect(changed.header?.date).toBe('2026-08-12');
+  expect(changed.header?.frozenAt).toBeUndefined();
   expect(changed.backlogCount).toBe(0);
   expect(changed.historyCount).toBe(1);
   expect(changed.undone).toBe(true);
-  expect(changed.restored.date).toBe('2026-01-01');
-  expect(changed.restored.frozenAt).toBe('2026-08-10T00:00:00.000Z');
+  expect(changed.restored?.date).toBe('2026-01-01');
+  expect(changed.restored?.frozenAt).toBe('2026-08-10T00:00:00.000Z');
 });
 
 test('batch date edits and load normalization cannot retain an invalid recovered marker', async ({ page }) => {
@@ -347,7 +347,7 @@ test('batch date edits and load normalization cannot retain an invalid recovered
       header: { ...project.blocks[0].header, date: '2026-08-12' },
     }]);
     const batchBlock = useTimelineStore.getState().tasks[0].blocks[0];
-    const batchHeader = batchBlock?.type === 'smart-task' ? batchBlock.header : {};
+    const batchHeader = batchBlock?.type === 'smart-task' ? batchBlock.header : null;
     const normalized = normalizeTimelineTask({
       ...project,
       blocks: [{
@@ -356,12 +356,12 @@ test('batch date edits and load normalization cannot retain an invalid recovered
       }],
     });
     const normalizedBlock = normalized.blocks[0];
-    const normalizedHeader = normalizedBlock?.type === 'smart-task' ? normalizedBlock.header : {};
+    const normalizedHeader = normalizedBlock?.type === 'smart-task' ? normalizedBlock.header : null;
     return { batchHeader, normalizedHeader };
   });
 
-  expect(state.batchHeader.date).toBe('2026-08-12');
-  expect(state.batchHeader.frozenAt).toBeUndefined();
-  expect(state.normalizedHeader.date).toBe('2099-01-01');
-  expect(state.normalizedHeader.frozenAt).toBeUndefined();
+  expect(state.batchHeader?.date).toBe('2026-08-12');
+  expect(state.batchHeader?.frozenAt).toBeUndefined();
+  expect(state.normalizedHeader?.date).toBe('2099-01-01');
+  expect(state.normalizedHeader?.frozenAt).toBeUndefined();
 });

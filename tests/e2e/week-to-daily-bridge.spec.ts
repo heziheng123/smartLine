@@ -26,6 +26,10 @@ test.beforeEach(async ({ page }) => {
 
 test('week date opens that exact daily date and returns to the same week', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
+  await expect(page.locator('.wmv-cell--date').first()).toBeVisible();
+  if (await page.locator(`.wmv-cell--date[data-date="${tomorrow}"]`).count() === 0) {
+    await page.locator('.wmv-date-navigation .wmv-nav-btn').nth(1).click();
+  }
   await page.locator(`.wmv-cell--date[data-date="${tomorrow}"]`).click();
 
   await expect(page.locator('.ds-date-input')).toHaveValue(tomorrow);

@@ -2,8 +2,7 @@ import { mergeDailyReviews, type DailyReview } from './model';
 import {
   loadReviewOutbox,
   loadReviewSyncStates,
-  loadDailyReviews,
-  saveDailyReviews,
+  updateDailyReviews,
   saveReviewOutbox,
   saveReviewSyncStates,
   type ReviewOutboxJob,
@@ -63,6 +62,22 @@ export async function fetchRemoteReview(reviewDate: string): Promise<{ review: D
   return response.json() as Promise<{ review: DailyReview; serverRevision: number }>;
 }
 
+export function recordReviewServerRevision(reviewId: string, serverRevision: number): Promise<Record<string, ReviewSyncState>> {
+  return serialize(async () => {
+    const [states, jobs] = await Promise.all([loadReviewSyncStates(), loadReviewOutbox()]);
+    const current = states[reviewId];
+    if (current && (current.serverRevision ?? -1) >= serverRevision) return states;
+    const next = { ...states, [reviewId]: current?.status === 'conflict'
+      ? { ...current, serverRevision }
+      : { serverRevision, status: jobs.some((job) => job.review.id === reviewId) ? 'sync_pending' as const : 'synced' as const } };
+    await Promise.all([
+      saveReviewSyncStates(next),
+      saveReviewOutbox(jobs.map((job) => job.review.id === reviewId ? { ...job, baseRevision: serverRevision } : job)),
+    ]);
+    return next;
+  });
+}
+
 async function flush(): Promise<Record<string, ReviewSyncState>> {
   let [jobs, states] = await Promise.all([loadReviewOutbox(), loadReviewSyncStates()]);
   for (const job of jobs) {
@@ -82,9 +97,10 @@ async function flush(): Promise<Record<string, ReviewSyncState>> {
       } else {
         const accepted = await response.json() as { review?: DailyReview; serverRevision: number };
         if (accepted.review) {
-          const local = await loadDailyReviews();
-          await saveDailyReviews([...local.filter((item) => item.id !== accepted.review!.id), accepted.review]
-            .sort((left, right) => right.reviewDate.localeCompare(left.reviewDate)));
+          // An acknowledgement only replaces the submitted version. A user may
+          // have already saved a newer local edit while this request was pending.
+          await updateDailyReviews((local) => local.map((item) => item.id === job.review.id
+            && JSON.stringify(item) === JSON.stringify(job.review) ? accepted.review! : item));
         }
         states = { ...states, [job.review.id]: { serverRevision: accepted.serverRevision, status: 'synced' } };
         jobs = jobs.filter((item) => item.operationId !== job.operationId).map((item) => item.review.id === job.review.id ? { ...item, baseRevision: accepted.serverRevision } : item);

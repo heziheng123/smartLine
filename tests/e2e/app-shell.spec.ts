@@ -46,6 +46,7 @@ test('project details use a landscape split and a portrait right-side drawer', a
 
   const drawer = page.locator('.tl-project-workspace-drawer');
   await expect(drawer).toBeVisible();
+  await expect(drawer.locator('.pdv-container')).toBeVisible();
   const projectMain = page.locator('.project-workspace-content > .tl-app-main');
   await expect(projectMain).toBeVisible();
   await page.waitForTimeout(400);
@@ -68,6 +69,7 @@ test('project details use a landscape split and a portrait right-side drawer', a
   expect(landscape.drawerRight).toBeLessThanOrEqual(1367);
 
   await page.setViewportSize({ width: 820, height: 1180 });
+  await expect(drawer.locator('.pdv-container')).toBeVisible();
   const portrait = await drawer.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const contentRect = element.querySelector<HTMLElement>('.pdv-container')!.getBoundingClientRect();
@@ -112,7 +114,7 @@ test('six main workspaces remain reachable through the real interface', async ({
 
 test('switching workspaces immediately removes the previous interactive view', async ({ page }) => {
   const state = await page.getByTitle('每日安排').evaluate(async (button) => {
-    button.click();
+    (button as HTMLElement).click();
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
     return {

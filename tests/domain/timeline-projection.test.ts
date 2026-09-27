@@ -4,15 +4,16 @@ import { lifeTimelineItems, projectTimelineItems, timelineProjectionItems, timel
 import { createTimelineSection } from '../../src/mindMap/model.ts';
 import { buildTimelineTicks, createTimelineCoordinates, dateToX, formatTimelineRange, recommendedTimelineHeight, timelineRangeForScale, xToDate } from '../../src/mindMap/timelineLayout.ts';
 import { buildMindMapTimelineLayer, DEFAULT_TIMELINE_VISIBILITY } from '../../src/mindMap/canvas/timelineLayer.ts';
+import type { ProjectPlanningSnapshot } from '../../src/projectPlanning/adapter.ts';
 import { addDays, todayStr } from '../../src/utils/dateSafe.ts';
 
 test('project timeline is a live projection with temporal row culling', () => {
-  const projectData = {
+  const projectData: ProjectPlanningSnapshot = {
     projects: [{
       id: 'project-1', name: '发布', start: '2026-08-01', end: '2026-08-31', color: '#123456', blocks: [{
         id: 'block-1', type: 'smart-task', header: {
-          title: '联调', tag: '', tagColor: '#654321', date: '2026-08-10', deadline: '2026-08-12', isCompleted: false,
-        }, items: [],
+          title: '联调', duration: 30, tag: '', tagColor: '#654321', date: '2026-08-10', deadline: '2026-08-12', isCompleted: false,
+        }, body: '',
       }],
     }],
     milestones: [{ id: 'milestone-1', name: '上线', date: '2026-08-20', relatedPlanId: 'project-1' }],

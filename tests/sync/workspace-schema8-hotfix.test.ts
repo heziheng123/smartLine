@@ -28,7 +28,7 @@ function backupWithBlocks(blocks: Array<Record<string, unknown>>): WorkspaceBack
     timeline: {
       tasks: [{ id: 'task-1', name: '项目', start: '2026-09-01', end: '2026-09-30', blocks }],
       groups: [], notes: [], milestones: [], lifeStages: [],
-    } as WorkspaceBackup['timeline'],
+    } as unknown as WorkspaceBackup['timeline'],
     lifeMap: {
       lifeMapAreas: [], lifeMapPlanGroups: [], lifeMapStages: [], lifeMapThemes: [],
       lifeMapGoals: [], lifeMapSystems: [], lifeMapSystemCheckIns: [], lifeMapEvents: [],

@@ -565,7 +565,7 @@ export async function listWorkspaceConflicts(): Promise<WorkspaceConflictRecord[
 export function buildPendingWorkspaceSyncRemainder(
   pending: PendingWorkspaceSync,
   acknowledgedFields: WorkspaceStorageField[],
-  writeId = crypto.randomUUID(),
+  writeId: string = crypto.randomUUID(),
 ): PendingWorkspaceSync | null {
   const acknowledged = new Set(acknowledgedFields);
   const fields = Object.fromEntries(Object.entries(pending.fields)

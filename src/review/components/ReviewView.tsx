@@ -6,6 +6,7 @@ import {
   activeReviewAnnotations,
   activeTextVersion,
   applyAiAnalysis,
+  applyVoiceTranscript,
   appendTextSegment,
   appendVoiceSegment,
   completeDailyReview,
@@ -27,8 +28,8 @@ import {
 import { cleanExpiredVoiceAudio, eraseVoiceAudio, localReviewDeviceId, prepareVoiceWav, recoverStoredVoiceAudio, settleVoiceAudioRetention, type CapturedVoiceAudio } from '@/review/audio';
 import AnnotatedReviewText from '@/review/components/AnnotatedReviewText';
 import VoiceCaptureButton from '@/review/components/VoiceCaptureButton';
-import { loadDailyReviews, loadReviewSyncStates, loadReviewTextDrafts, saveDailyReviews, saveReviewTextDrafts, type ReviewSyncState } from '@/review/repository';
-import { enqueueReviewSync, fetchRemoteReview, flushReviewOutbox, resolveReviewConflict, sterilizeAsrDraft, structureReview, transcribeVoiceSegment, type PersonalTerm } from '@/review/sync';
+import { loadDailyReviews, loadReviewSyncStates, loadReviewTextDrafts, saveDailyReview, saveDailyReviews, saveReviewTextDrafts, type ReviewSyncState } from '@/review/repository';
+import { enqueueReviewSync, fetchRemoteReview, flushReviewOutbox, recordReviewServerRevision, resolveReviewConflict, sterilizeAsrDraft, structureReview, transcribeVoiceSegment, type PersonalTerm } from '@/review/sync';
 import { useAuth } from '@/auth/AuthContext';
 
 const sections: { id: ReviewSection; title: string; hint: string }[] = [
@@ -61,24 +62,36 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   const [viewMode, setViewMode] = useState<'source' | 'organized'>('source');
   const reviewsRef = useRef<DailyReview[] | null>(null);
   const syncEnabled = auth.enabled && auth.status === 'authenticated';
+  const reviewsReady = reviews !== null;
+  const publishReview = useCallback((next: DailyReview) => {
+    const nextReviews = [...(reviewsRef.current ?? []).filter((item) => item.id !== next.id), next]
+      .sort((left, right) => right.reviewDate.localeCompare(left.reviewDate));
+    reviewsRef.current = nextReviews;
+    setReviews(nextReviews);
+  }, []);
 
   useEffect(() => setReviewDate(targetDate), [targetDate]);
   useEffect(() => setViewMode('source'), [reviewDate]);
 
-  useEffect(() => { void Promise.all([loadDailyReviews(), loadReviewTextDrafts(), loadReviewSyncStates(), cleanExpiredVoiceAudio()]).then(async ([storedReviews, drafts, states]) => {
-    const repaired = await Promise.all(storedReviews.map(async (stored) => {
-      let changed = false;
-      const inputSegments = await Promise.all(stored.inputSegments.map(async (segment) => {
-        if (segment.type !== 'voice' || segment.transcriptionState !== 'recording') return segment;
-        const audio = segment.originDeviceId === localReviewDeviceId() ? await recoverStoredVoiceAudio(segment.id) : null;
-        changed = true;
-        return audio ? { ...segment, audio: { mimeType: audio.mimeType, durationMs: audio.durationMs, chunkCount: audio.chunkCount, byteLength: audio.byteLength, sampleRate: audio.sampleRate }, transcriptionState: 'interrupted' as const } : { ...segment, transcriptionState: 'audio_unavailable' as const };
+  useEffect(() => {
+    let active = true;
+    void Promise.all([loadDailyReviews(), loadReviewTextDrafts(), loadReviewSyncStates(), cleanExpiredVoiceAudio()]).then(async ([storedReviews, drafts, states]) => {
+      const repaired = await Promise.all(storedReviews.map(async (stored) => {
+        let changed = false;
+        const inputSegments = await Promise.all(stored.inputSegments.map(async (segment) => {
+          if (segment.type !== 'voice' || segment.transcriptionState !== 'recording') return segment;
+          const audio = segment.originDeviceId === localReviewDeviceId() ? await recoverStoredVoiceAudio(segment.id) : null;
+          changed = true;
+          return audio ? { ...segment, audio: { mimeType: audio.mimeType, durationMs: audio.durationMs, chunkCount: audio.chunkCount, byteLength: audio.byteLength, sampleRate: audio.sampleRate }, transcriptionState: 'interrupted' as const } : { ...segment, transcriptionState: 'audio_unavailable' as const };
+        }));
+        return changed ? { ...stored, inputSegments, updatedAt: new Date().toISOString() } : stored;
       }));
-      return changed ? { ...stored, inputSegments, updatedAt: new Date().toISOString() } : stored;
-    }));
-    reviewsRef.current = repaired; setReviews(repaired); setTextDrafts(drafts); setSyncStates(states);
-    if (repaired.some((item, index) => item !== storedReviews[index])) await saveDailyReviews(repaired);
-  }).catch(() => setStorageError('无法恢复本地录音，请暂时不要清理浏览器数据。')); }, []);
+      if (!active) return;
+      reviewsRef.current = repaired; setReviews(repaired); setTextDrafts(drafts); setSyncStates(states);
+      if (repaired.some((item, index) => item !== storedReviews[index])) await saveDailyReviews(repaired);
+    }).catch(() => { if (active) setStorageError('无法恢复本地录音，请暂时不要清理浏览器数据。'); });
+    return () => { active = false; };
+  }, []);
 
   const flushSync = useCallback(() => {
     if (!syncEnabled) return;
@@ -93,40 +106,37 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   }, [flushSync, syncEnabled]);
 
   useEffect(() => {
-    if (!syncEnabled) return;
+    if (!syncEnabled || !reviewsReady) return;
+    let active = true;
     void fetchRemoteReview(reviewDate).then((remote) => {
-      if (!remote) return;
-      setReviews((current) => {
-        if (!current || current.some((item) => item.reviewDate === reviewDate)) return current;
-        const next = [...current, remote.review].sort((left, right) => right.reviewDate.localeCompare(left.reviewDate));
-        void saveDailyReviews(next).catch(() => setStorageError('云端复盘未能缓存到本机。'));
-        return next;
-      });
-      setSyncStates((current) => current && current[remote.review.id]
-        ? current
-        : { ...(current ?? {}), [remote.review.id]: { serverRevision: remote.serverRevision, status: 'synced' } });
+      if (!active || !remote || reviewsRef.current?.some((item) => item.reviewDate === reviewDate)) return;
+      publishReview(remote.review);
+      void saveDailyReview(remote.review).catch(() => setStorageError('云端复盘未能缓存到本机。'));
+      void recordReviewServerRevision(remote.review.id, remote.serverRevision).then(setSyncStates)
+        .catch(() => setStorageError('云端复盘版本未能保存，请稍后重试同步。'));
     }).catch(() => undefined);
-  }, [reviewDate, syncEnabled]);
+    return () => { active = false; };
+  }, [reviewDate, syncEnabled, reviewsReady, publishReview]);
 
   const review = useMemo(() => reviews?.find((item) => item.reviewDate === reviewDate) ?? null, [reviewDate, reviews]);
   const update = useCallback((next: DailyReview, shouldSync = true) => {
-    const existing = reviewsRef.current ?? [];
-    const nextReviews = [...existing.filter((item) => item.id !== next.id), next].sort((left, right) => right.reviewDate.localeCompare(left.reviewDate));
-    reviewsRef.current = nextReviews; setReviews(nextReviews);
+    publishReview(next);
     const persist = async (): Promise<Record<string, ReviewSyncState> | null> => {
+      // Save before waiting on the network queue; later edits must not be
+      // overwritten by an earlier full-list snapshot or server acknowledgement.
+      try { await saveDailyReview(next); }
+      catch (error) { console.error('[review] 本机保存失败', error); setStorageError('本机保存失败，请暂时不要关闭页面。'); return null; }
       let queued: Record<string, ReviewSyncState> | null = null;
       if (shouldSync && syncEnabled) {
         try { queued = await enqueueReviewSync(next); setSyncStates(queued); }
         catch { setStorageError('同步队列保存失败，本机内容仍会保存。'); }
       }
-      try { await saveDailyReviews(nextReviews); }
-      catch (error) { console.error('[review] 本机保存失败', error); setStorageError('本机保存失败，请暂时不要关闭页面。'); return queued; }
       if (!queued || queued[next.id]?.status === 'conflict') return queued;
       try { const states = await flushReviewOutbox(); setSyncStates(states); return states; }
       catch { setStorageError('同步失败，本机内容和待传队列仍已保存。'); return queued; }
     };
     return persist();
-  }, [syncEnabled]);
+  }, [syncEnabled, publishReview]);
   const current = review ?? createDailyReview(reviewDate);
   const currentItems = activeReviewItems(current);
   const sourceText = textDrafts?.[reviewDate] ?? '';
@@ -160,12 +170,23 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
         if (states[processing.id]?.status !== 'synced') throw new Error('请先联网同步这段语音的记录，再重试识别。');
         const wav = await prepareVoiceWav({ segmentId, ...voice.audio });
         const receipt = await transcribeVoiceSegment(processing.reviewDate, segmentId, wav, force, personalTerms);
-        const nextReviews = [...(reviewsRef.current ?? []).filter((item) => item.id !== receipt.review.id), receipt.review].sort((left, right) => right.reviewDate.localeCompare(left.reviewDate));
-        await saveDailyReviews(nextReviews); // The server receipt and this local copy exist before retention can delete audio.
-        reviewsRef.current = nextReviews; setReviews(nextReviews);
-        setSyncStates((states) => ({ ...(states ?? {}), [receipt.review.id]: { serverRevision: receipt.serverRevision, status: 'synced' } }));
+        setSyncStates(await recordReviewServerRevision(receipt.review.id, receipt.serverRevision));
+        const latest = reviewsRef.current?.find((item) => item.id === processing.id);
+        const receivedVoice = receipt.review.inputSegments.find((segment): segment is VoiceInputSegment => segment.id === segmentId && segment.type === 'voice');
+        if (latest) {
+          const next = latest === processing ? receipt.review
+            : applyVoiceTranscript(latest, segmentId, receipt.transcript, receivedVoice?.providerReceipt);
+          // Persist the latest local document before audio retention can delete it.
+          publishReview(next);
+          await saveDailyReview(next);
+          if (latest !== processing) {
+            setSyncStates(await enqueueReviewSync(next));
+            flushSync();
+          }
+        }
       } catch (error) {
-        update(setVoiceTranscriptionState(processing, segmentId, 'retryable_failed'));
+        const latest = reviewsRef.current?.find((item) => item.id === processing.id);
+        if (latest) update(setVoiceTranscriptionState(latest, segmentId, 'retryable_failed'));
         setStorageError(error instanceof Error ? error.message : '语音识别失败，请稍后重试。');
         return;
       }
@@ -190,7 +211,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
     update(next, false);
   };
   const pauseVoice = async (audio: CapturedVoiceAudio) => {
-    const base = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
+    const base = reviewsRef.current?.find((item) => item.inputSegments.some((segment) => segment.id === audio.segmentId));
     if (!base) throw new Error('录音片段未建立，请重新开始。');
     const next = updateVoiceAudio(base, audio.segmentId, { mimeType: audio.mimeType, durationMs: audio.durationMs, chunkCount: audio.chunkCount, byteLength: audio.byteLength, sampleRate: audio.sampleRate }, 'waiting_transcription');
     const states = await update(next, true);
@@ -200,14 +221,14 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
       if (!wav) return;
       try {
         const receipt = await transcribeVoiceSegment(next.reviewDate, audio.segmentId, wav, false, personalTerms, true);
-        const latest = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
+        const latest = reviewsRef.current?.find((item) => item.id === next.id);
         if (latest) update(setVoiceInterimTranscript(latest, audio.segmentId, receipt.transcript), false);
       } catch { /* interim draft is best-effort; the audio stays local for the final request */ }
     }
   };
   const finishVoice = async (audios: CapturedVoiceAudio[]) => {
     for (const audio of audios) {
-      const base = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
+      const base = reviewsRef.current?.find((item) => item.inputSegments.some((segment) => segment.id === audio.segmentId));
       if (base) await transcribeVoice(base, audio.segmentId);
     }
   };
@@ -216,7 +237,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   const autoRetrying = useRef(false);
   // 离线兜底：恢复联网后自动补识别本机待转写录音（音频仍只存本机，识别仍走一次性上传）。
   useEffect(() => {
-    if (!syncEnabled || !voiceConsent) return;
+    if (!syncEnabled || !voiceConsent || !reviewsReady) return;
     const retryPending = () => {
       if (autoRetrying.current || !navigator.onLine) return;
       const latest = reviewsRef.current?.find((item) => item.reviewDate === reviewDate);
@@ -239,7 +260,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
     retryPending();
     window.addEventListener('online', retryPending);
     return () => window.removeEventListener('online', retryPending);
-  }, [reviewDate, syncEnabled, voiceConsent]);
+  }, [reviewDate, syncEnabled, voiceConsent, reviewsReady]);
   const saveItem = () => {
     const next = addReviewItem(current, itemSection, itemText);
     if (next === current) return;
@@ -268,7 +289,12 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
     if (!syncEnabled) { setAiError('登录并启用云端配置后，才能使用 AI 整理。'); return; }
     if (!current.inputSegments.some((segment) => segment.type === 'text' || segment.asrText || segment.correctedText)) { setAiError('先保存文字记录，或先完成一段语音识别。'); return; }
     setAiError(null); setIsStructuring(true);
-    try { const analysis = await structureReview(current); update(applyAiAnalysis(current, analysis.candidates, analysis.annotations)); }
+    try {
+      const analysis = await structureReview(current);
+      const latest = reviewsRef.current?.find((item) => item.id === current.id);
+      if (latest !== current) { setAiError('整理期间内容已更新，已保留最新记录；请重新运行 AI 整理。'); return; }
+      update(applyAiAnalysis(latest, analysis.candidates, analysis.annotations));
+    }
     catch (error) { setAiError(error instanceof Error ? error.message : 'AI 整理暂时不可用。'); }
     finally { setIsStructuring(false); }
   };

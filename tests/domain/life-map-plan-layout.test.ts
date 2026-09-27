@@ -34,7 +34,7 @@ test('包含结束日的计划分轨使用最少轨道，相邻次日可以复�
 });
 
 test('每个领域独立分轨，阶段继承父计划的大类、领域、侧边和轨道', () => {
-  const data = createEmptyLifeMapData('2026-08-09T00:00:00.000Z');
+  const data = createEmptyLifeMapData();
   const areas = [area('math', 'learning'), area('english', 'learning', 1), area('job', 'work')];
   const plans = [
     goal('math-a', 'math', '2026-08-01', '2026-08-10'),
@@ -63,7 +63,7 @@ test('每个领域独立分轨，阶段继承父计划的大类、领域、侧�
 });
 
 test('项目筛选只输出目标大类，全部大类同侧时仍按固定顺序稳定排列', () => {
-  const data = createEmptyLifeMapData('2026-08-09T00:00:00.000Z');
+  const data = createEmptyLifeMapData();
   const groups = data.lifeMapPlanGroups.map((group) => ({ ...group, placement: 'above' as const }));
   const areas = [area('study', 'learning'), area('career', 'work'), area('health', 'life')];
   const plans = [
@@ -84,7 +84,7 @@ test('项目筛选只输出目标大类，全部大类同侧时仍按固定顺�
 });
 
 test('长期系统进入所属领域并始终排在项目轨道上方', () => {
-  const data = createEmptyLifeMapData('2026-08-09T00:00:00.000Z');
+  const data = createEmptyLifeMapData();
   const areas = [area('math', 'learning')];
   const layout = createLifeMapPlanSwimlaneLayout({
     plans: [goal('plan-a', 'math', '2026-08-01', '2026-08-20')],

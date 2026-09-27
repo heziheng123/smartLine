@@ -35,7 +35,9 @@ npm run dev
 | `npm run dev` | 启动 Vite 开发服务器 |
 | `npm run build` | TypeScript 检查并生成生产包 |
 | `npm run lint` | 运行 ESLint |
-| `npm run test:all` | 运行安全、领域、系统和端到端测试 |
+| `npm run test:all` | 运行安全、测试类型、全部单元、系统和端到端测试 |
+| `npm run test:unit` | 自动发现并运行全部单元测试 |
+| `npm run test:types` | 严格检查测试代码类型 |
 | `npm run test:e2e` | 运行桌面与小屏 Chromium 测试 |
 | `npm run test:e2e:ui` | 以 Playwright UI 模式调试 |
 | `npm run check` | 类型检查并运行项目内固定版本的 `depcheck` |

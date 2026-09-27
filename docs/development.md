@@ -83,6 +83,8 @@ Daily `sourceId` 是引用键。删除、改期、整体顺延、完成与撤销
 | `npm run lint` | ESLint、Hooks 与未使用代码规则 |
 | `npm run build` | `tsc -b` + Vite 生产构建 |
 | `npm run test:security` | 敏感 token 模式与静态安全响应头；不是完整漏洞扫描 |
+| `npm run test:types` | 严格检查全部测试及其依赖的 TypeScript 类型 |
+| `npm run test:unit` | 自动发现并运行 tests 下全部 `*.test.ts`，包括复盘、语音和思维导图 |
 | `npm run test:auth` | OAuth、session、Liveblocks auth、R2 鉴权 |
 | `npm run test:sync` | 三方合并、版本门禁、队列、Service Worker 策略 |
 | `npm run test:duration` | 复习时长领域算法 |
@@ -98,27 +100,23 @@ Daily `sourceId` 是引用键。删除、改期、整体顺延、完成与撤销
 ```bash
 npm run lint
 npm run build
-npm run test:auth
-npm run test:sync
-npm run test:duration
-npm run test:life-map
-npm run test:project-shift
-npm run test:planning
+npm run test:types
+npm run test:unit
 npm run test:system
 npm run test:e2e
 npm run audit
 ```
 
-`npm run check` 使用项目 devDependencies 中固定版本的 `depcheck`，安装依赖后不需要临时从 registry 下载工具。CI 还会执行 `npm audit --audit-level=moderate`，并显式运行全部领域测试。
+`npm run check` 使用项目 devDependencies 中固定版本的 `depcheck`，安装依赖后不需要临时从 registry 下载工具。CI 还会执行 `npm audit --audit-level=moderate`、测试类型检查和自动发现的全部单元测试。新增 `*.test.ts` 无需修改文件清单。
 
 ## 6. Playwright
 
 配置包含：
 
 - `desktop-chromium`：Desktop Chrome 设备参数；
-- `small-screen`：iPhone 13 viewport + Chromium，明确关闭 Playwright 的 `isMobile`；
+- `small-screen`：820 × 1180 的平板 viewport + Chromium，明确关闭 Playwright 的 `isMobile`；手机行为由用例单独切换 viewport 验证；
 - 时区固定为 `Asia/Shanghai`；
-- 本地默认 4 workers，CI 为 2 workers；
+- 本地与 CI 默认均为 2 workers；
 - 单用例 30 秒、expect 7 秒；失败保留 trace、截图和视频。
 
 调试单个文件：

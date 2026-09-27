@@ -7,7 +7,11 @@ const MAX_BYTES = 10 * 1024 * 1024;
 
 export function redactRetiredFocusPayload(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
-  if (Array.isArray(value)) return value.some(redactRetiredFocusPayload);
+  if (Array.isArray(value)) {
+    let changed = false;
+    for (const item of value) changed = redactRetiredFocusPayload(item) || changed;
+    return changed;
+  }
   const record = value as Record<string, unknown>;
   let changed = false;
   if (record.focus && typeof record.focus === 'object' && !Array.isArray(record.focus)) {
@@ -23,7 +27,8 @@ export function redactRetiredFocusPayload(value: unknown): boolean {
       changed = true;
     }
   }
-  return Object.values(record).some(redactRetiredFocusPayload) || changed;
+  for (const item of Object.values(record)) changed = redactRetiredFocusPayload(item) || changed;
+  return changed;
 }
 
 export async function onRequestPost({ env, request }: FunctionContext): Promise<Response> {

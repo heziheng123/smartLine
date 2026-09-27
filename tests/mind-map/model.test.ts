@@ -4,6 +4,7 @@ import {
   MIND_MAP_SCHEMA_VERSION,
   MindMapVersionError,
   createEmptyMindMapDocument,
+  createMindMapEdge,
   duplicateMindMapDocument,
   normalizeMindMapDocument,
   type MindMapNode,
@@ -64,7 +65,7 @@ test('normalization drops dangling edges and repairs z-order and numeric ranges'
   document.nodes.a = { ...node('a'), width: -5, x: Number.POSITIVE_INFINITY };
   document.nodes.b = node('b', 20);
   document.edges.good = {
-    id: 'good',
+    ...createMindMapEdge('a', 'b', { id: 'good', now: 1 }), id: 'good',
     sourceId: 'a',
     targetId: 'b',
     type: 'straight',
@@ -74,7 +75,7 @@ test('normalization drops dangling edges and repairs z-order and numeric ranges'
     createdAt: 1,
     updatedAt: 1,
   };
-  document.edges.bad = { ...document.edges.good, id: 'bad', targetId: 'missing' };
+  document.edges.bad = { ...document.edges.good, id: 'bad', target: { type: 'node', id: 'missing' }, targetId: 'missing' };
   document.zOrder = ['b', 'b', 'missing'];
 
   const normalized = normalizeMindMapDocument(document);
@@ -90,7 +91,7 @@ test('duplicating a document remaps every internal id without retaining referenc
   source.nodes.a = node('a');
   source.nodes.b = node('b');
   source.edges.e = {
-    id: 'e',
+    ...createMindMapEdge('a', 'b', { id: 'e', now: 1 }), id: 'e',
     sourceId: 'a',
     targetId: 'b',
     type: 'curve',

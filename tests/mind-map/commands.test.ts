@@ -40,13 +40,11 @@ test('a node and its edge can be deleted and restored as one history entry', () 
 
 test('new commands clear redo and history keeps only the configured limit', () => {
   const document = createEmptyMindMapDocument('测试', { id: 'doc', now: 1 });
-  let history = { ...emptyMindMapHistory(), redo: [{
-    label: '旧重做',
-    nodes: [],
-    edges: [],
-    zOrderBefore: null,
-    zOrderAfter: null,
-  }] };
+  const redoEntry = createHistoryEntry('旧重做', document, {
+    ...document, nodes: { old: createTextMindMapNode({ x: 0, y: 0 }, { id: 'old', now: 1 }) }, zOrder: ['old'],
+  });
+  assert.ok(redoEntry);
+  let history: ReturnType<typeof emptyMindMapHistory> = { ...emptyMindMapHistory(), redo: [redoEntry] };
   for (let index = 0; index < 4; index += 1) {
     const next = {
       ...document,

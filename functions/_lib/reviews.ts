@@ -168,16 +168,16 @@ export function refreshPersistedReviewText(review: PersistedReview, now: string)
   return { ...review, activeTextVersionId: next.id, textVersions, annotations };
 }
 
-function normalizeVersion(value: unknown, kind: PersistedReviewVersion['kind']): PersistedReviewVersion | null {
+function normalizeVersion(value: unknown, kind: PersistedReviewVersion['kind'], enforceLimits = true): PersistedReviewVersion | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
   const { id, versionNo, baseRevision, createdAt, items: sourceItems, completedAt } = source;
   if (!isId(id) || !isInteger(versionNo) || !isInteger(baseRevision) || !isTimestamp(createdAt) || !Array.isArray(sourceItems)) return null;
-  if (sourceItems.length > 200) return null;
+  if (enforceLimits && sourceItems.length > 200) return null;
   const items = sourceItems.map((candidate) => {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
     const item = candidate as Record<string, unknown>;
-    if (!isId(item.itemId) || !sections.has(item.section as string) || !isText(item.text) || !['ai', 'user'].includes(item.createdBy as string) || typeof item.userEdited !== 'boolean' || typeof item.locked !== 'boolean' || !isTimestamp(item.updatedAt) || !(item.deletedAt === undefined || isTimestamp(item.deletedAt)) || !Array.isArray(item.sourceSegmentIds)) return null;
+    if (!isId(item.itemId) || !sections.has(item.section as string) || !isText(item.text, enforceLimits ? 10_000 : Infinity) || !['ai', 'user'].includes(item.createdBy as string) || typeof item.userEdited !== 'boolean' || typeof item.locked !== 'boolean' || !isTimestamp(item.updatedAt) || !(item.deletedAt === undefined || isTimestamp(item.deletedAt)) || !Array.isArray(item.sourceSegmentIds)) return null;
     const sourceSegmentIds = item.sourceSegmentIds.filter(isId);
     if (sourceSegmentIds.length !== item.sourceSegmentIds.length) return null;
     return { itemId: item.itemId, section: item.section as 'progress' | 'problems' | 'adjustments' | 'summary', text: item.text, createdBy: item.createdBy as 'ai' | 'user', userEdited: item.userEdited, locked: item.locked, sourceSegmentIds, updatedAt: item.updatedAt, ...(item.deletedAt ? { deletedAt: item.deletedAt } : {}) };
@@ -188,12 +188,15 @@ function normalizeVersion(value: unknown, kind: PersistedReviewVersion['kind']):
 }
 
 /** Whitelists review fields so D1 never receives audio bytes or arbitrary client fields. */
-export function normalizeReview(value: unknown, expectedDate: string): PersistedReview | null {
+export function normalizeReview(value: unknown, expectedDate: string, enforceLimits = true): PersistedReview | null {
+  // Portable backups retain oversized offline records. API callers keep all
+  // existing quotas by default; structural validation always remains enabled.
+  const isText = (input: unknown, max = 10_000): input is string => typeof input === 'string' && (!enforceLimits || input.length <= max);
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
   const { id, reviewDate, timezoneAtCreation, schemaVersion, revision, reviewStatus, activeCompletedVersionId, workingDraftVersionId, createdAt, updatedAt, inputSegments: sourceSegments, completedVersions: sourceVersions, conflictSnapshots: sourceSnapshots = [] } = source;
   if (!isId(id) || reviewDate !== expectedDate || !isDate(reviewDate) || !isText(timezoneAtCreation, 100) || schemaVersion !== 1 || !isInteger(revision) || !['draft', 'completed'].includes(reviewStatus as string) || !isId(workingDraftVersionId) || !(activeCompletedVersionId === undefined || isId(activeCompletedVersionId)) || !isTimestamp(createdAt) || !isTimestamp(updatedAt) || !Array.isArray(sourceSegments) || !Array.isArray(sourceVersions) || !Array.isArray(sourceSnapshots)) return null;
-  if (sourceSegments.length > 200 || sourceVersions.length > 50 || sourceSnapshots.length > 20) return null;
+  if (enforceLimits && (sourceSegments.length > 200 || sourceVersions.length > 50 || sourceSnapshots.length > 20)) return null;
   const inputSegments = sourceSegments.map((candidate): PersistedInputSegment | null => {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
     const segment = candidate as Record<string, unknown>;
@@ -227,6 +230,7 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
       audio: { mimeType: 'audio/wav', durationMs: audio.durationMs, chunkCount: audio.chunkCount, byteLength: audio.byteLength, sampleRate: audio.sampleRate },
       ...(segment.asrText ? { asrText: segment.asrText } : {}),
       ...(segment.correctedText ? { correctedText: segment.correctedText } : {}),
+      ...(!enforceLimits && typeof segment.interimTranscript === 'string' ? { interimTranscript: segment.interimTranscript } : {}),
       ...(providerReceipt ? { providerReceipt } : {}),
     };
   });
@@ -238,7 +242,7 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
   const textVersions = Array.isArray(sourceTextVersions) ? sourceTextVersions.map((candidate): PersistedInputTextVersion | null => {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
     const version = candidate as Record<string, unknown>;
-    if (!isId(version.id) || !isText(version.text, 100_000) || !isTimestamp(version.createdAt) || !Array.isArray(version.sourceRanges) || version.sourceRanges.length > 200) return null;
+    if (!isId(version.id) || !isText(version.text, 100_000) || !isTimestamp(version.createdAt) || !Array.isArray(version.sourceRanges) || enforceLimits && version.sourceRanges.length > 200) return null;
     const ranges = version.sourceRanges.map((candidateRange) => {
       if (!candidateRange || typeof candidateRange !== 'object' || Array.isArray(candidateRange)) return null;
       const range = candidateRange as Record<string, unknown>;
@@ -260,7 +264,7 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
     if (blocks.some((block) => !block) || blocks.length !== expectedBlocks.length || new Set((blocks as ReviewTextBlock[]).map((block) => block.blockId)).size !== blocks.length) return null;
     return { id: version.id, text: version.text, sourceRanges: ranges as PersistedInputTextVersion['sourceRanges'], blocks: blocks as ReviewTextBlock[], createdAt: version.createdAt };
   }) : [];
-  if (textVersions.some((version) => !version) || textVersions.length > 20) return null;
+  if (textVersions.some((version) => !version) || enforceLimits && textVersions.length > 20) return null;
   const normalizedTextVersions = (textVersions.length ? textVersions : [canonicalTextVersion]) as PersistedInputTextVersion[];
   const activeTextVersionId = isId(source.activeTextVersionId) && normalizedTextVersions.some((version) => version.id === source.activeTextVersionId) ? source.activeTextVersionId : normalizedTextVersions.at(-1)!.id;
   const activeVersion = normalizedTextVersions.find((version) => version.id === activeTextVersionId)!;
@@ -278,14 +282,14 @@ export function normalizeReview(value: unknown, expectedDate: string): Persisted
     if (!sourceSegmentIds.length || sourceSegmentIds.length !== annotation.sourceSegmentIds.length || sourceSegmentIds.length !== expectedSourceIds.length || !expectedSourceIds.every((sourceId) => sourceSegmentIds.includes(sourceId)) || annotation.sourceBlockId && version && (!sourceBlock || annotation.start < sourceBlock.startInDocument || annotation.end > sourceBlock.endInDocument)) return null;
     return { id: annotation.id, reviewId: id as string, textVersionId: annotation.textVersionId as string, type: annotation.type as PersistedReviewAnnotation['type'], start: annotation.start, end: annotation.end, sourceSegmentIds, ...(annotation.sourceBlockId ? { sourceBlockId: annotation.sourceBlockId as string } : {}), quotedText: annotation.quotedText, ...(annotation.summary ? { summary: annotation.summary } : {}), createdBy: annotation.createdBy as 'ai' | 'user', userEdited: annotation.userEdited, stale: annotation.stale, createdAt: annotation.createdAt, updatedAt: annotation.updatedAt, ...(annotation.deletedAt ? { deletedAt: annotation.deletedAt } : {}) };
   }) : [];
-  if (annotations.some((annotation) => !annotation) || annotations.length > 400) return null;
-  const workingDraft = normalizeVersion(source.workingDraft, 'working_draft');
-  const completedVersions = sourceVersions.map((version) => normalizeVersion(version, 'completed_snapshot'));
+  if (annotations.some((annotation) => !annotation) || enforceLimits && annotations.length > 400) return null;
+  const workingDraft = normalizeVersion(source.workingDraft, 'working_draft', enforceLimits);
+  const completedVersions = sourceVersions.map((version) => normalizeVersion(version, 'completed_snapshot', enforceLimits));
   const conflictSnapshots = sourceSnapshots.map((candidate) => {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
     const snapshot = candidate as Record<string, unknown>;
     const normalizeItems = (value: unknown): PersistedReviewVersion['items'] | null => {
-      if (!Array.isArray(value) || value.length > 20) return null;
+      if (!Array.isArray(value) || enforceLimits && value.length > 20) return null;
       return value.map((item) => {
         if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
         const entry = item as Record<string, unknown>;

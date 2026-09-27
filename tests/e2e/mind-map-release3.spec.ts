@@ -158,7 +158,7 @@ test('two browser contexts converge through the independent document room', asyn
       const { createEmptyMindMapDocument, summarizeMindMapDocument } = await import('/src/mindMap/model.ts');
       const { MindMapCatalogSession } = await import('/src/mindMap/sync.ts');
       const document = createEmptyMindMapDocument('实时同步验收', { id: documentId, now: 1 });
-      const state = {
+      const state: { entries: import('../../src/mindMap/syncCore').MindMapCatalogEntry[]; session: InstanceType<typeof MindMapCatalogSession> | null } = {
         entries: seed ? [{ ...summarizeMindMapDocument(document), deletedAt: null }] : [],
         session: null as InstanceType<typeof MindMapCatalogSession> | null,
       };

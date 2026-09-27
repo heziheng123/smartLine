@@ -83,7 +83,7 @@ async function simulateConnectedStorageLoading(page: Page) {
         useTimelineStore.setState({
           liveblocks: {
             ...current.liveblocks,
-            room: { getStatus: () => 'connected' },
+            room: { getStatus: () => 'connected' } as unknown as NonNullable<typeof current.liveblocks.room>,
             status: 'connected',
             isStorageLoading: true,
           },
@@ -104,7 +104,7 @@ async function simulateConnectedStorageReady(page: Page) {
     useTimelineStore.setState({
       liveblocks: {
         ...current.liveblocks,
-        room: { getStatus: () => 'connected' },
+        room: { getStatus: () => 'connected' } as unknown as NonNullable<typeof current.liveblocks.room>,
         status: 'connected',
         isStorageLoading: false,
       },
@@ -271,7 +271,7 @@ test('late storage hydration cannot overwrite an explicit pending completion', a
     useTimelineStore.setState((state) => ({
       tasks: state.tasks.map((task) => ({
         ...task,
-        blocks: task.blocks.map((block) => block.id === 'sync-journal-block'
+        blocks: task.blocks.map((block) => block.type === 'smart-task' && block.id === 'sync-journal-block'
           ? { ...block, header: { ...block.header, isCompleted: false } }
           : block),
       })),

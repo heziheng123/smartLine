@@ -28,7 +28,7 @@ test('AI result must cite an existing text segment', () => {
 
 test('voice metadata can sync but original audio cannot enter D1', () => {
   const review = appendVoiceSegment(createDailyReview('2026-09-14', '2026-09-14T08:00:00.000Z'), {
-    id: 'voice-segment-123456', type: 'voice', originDeviceId: 'review-device-123456', audioStorageScope: 'local_only', transcriptionState: 'waiting_transcription',
+    id: 'voice-segment-123456', type: 'voice', originDeviceId: 'review-device-123456', audioStorageScope: 'local_only', audioRetention: 'delete_after_transcription', transcriptionState: 'waiting_transcription',
     audio: { mimeType: 'audio/wav', durationMs: 1_000, chunkCount: 1, byteLength: 32_000, sampleRate: 16_000 },
   }, '2026-09-14T08:01:00.000Z') as unknown as { audioBase64?: string; inputSegments: Array<{ audio?: Record<string, unknown> }> };
   review.audioBase64 = 'must-not-reach-d1';

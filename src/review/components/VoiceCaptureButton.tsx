@@ -35,6 +35,7 @@ export default function VoiceCaptureButton({ disabled, retention, onStarted, onP
   const [silentSeconds, setSilentSeconds] = useState(0);
 
   useEffect(() => {
+    mounted.current = true;
     const currentTabId = tabId.current;
     const next = 'BroadcastChannel' in window ? new BroadcastChannel('smart-line-review-voice') : null;
     channel.current = next;
@@ -107,7 +108,7 @@ export default function VoiceCaptureButton({ disabled, retention, onStarted, onP
       });
       capture.current = next;
       await next.start();
-      if (!mounted.current) return;
+      if (!mounted.current || capture.current !== next) { next.interrupt(); return; }
       startedAt.current = Date.now();
       setElapsed(0);
       setLevel(0);

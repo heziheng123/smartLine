@@ -13,3 +13,14 @@ test('archive redaction removes retired focus data without touching unrelated re
   assert.equal(redactRetiredFocusPayload(archive), true);
   assert.deepEqual(archive, { data: { timeline: { tasks: [{ id: 'task-1' }] }, nested: {} } });
 });
+
+test('archive redaction visits every sibling in objects and arrays', () => {
+  const archive = {
+    first: { focusSessions: [1] },
+    second: [{ focusSubjects: [2] }, { nested: { focusWeeklyReviews: [3], keep: 'safe' } }],
+    last: { focusSessions: [4] },
+  };
+  assert.equal(redactRetiredFocusPayload(archive), true);
+  assert.deepEqual(archive, { first: {}, second: [{}, { nested: { keep: 'safe' } }], last: {} });
+  assert.equal(redactRetiredFocusPayload(archive), false);
+});

@@ -44,16 +44,16 @@ test('healthy foreground resume reuses the unified rooms instead of entering the
       stores.useLifeMapStore,
     ]) {
       const current = store.getState();
-      store.setState({
+      (store as unknown as typeof stores.useTimelineStore).setState({
         syncEnabled: true,
         syncRoomCode: 'resume-fast-path',
         syncStatus: 'connected',
         liveblocks: {
           ...current.liveblocks,
-          room,
+          room: room as unknown as NonNullable<typeof current.liveblocks.room>,
           status: 'connected',
           isStorageLoading: false,
-          enterRoom: () => { enterCount += 1; },
+          enterRoom: () => { enterCount += 1; return () => {}; },
         },
       });
     }
@@ -77,7 +77,7 @@ test('a local save waiting more than two seconds shows its cloud-confirmation de
       stores.useGraphStore,
       stores.useLifeMapStore,
     ]) {
-      store.setState({ syncEnabled: true, syncStatus: 'connected' });
+      (store as unknown as typeof stores.useTimelineStore).setState({ syncEnabled: true, syncStatus: 'connected' });
     }
     await queue.queueWorkspaceFields({ tasks: [] }, { tasks: [] }, { origin: 'user' });
   });
@@ -237,7 +237,7 @@ test('ordinary UI reports active conflicts and keeps resolved recovery copies re
       stores.useGraphStore,
       stores.useLifeMapStore,
     ]) {
-      store.setState({ syncEnabled: true, syncStatus: 'connected', syncRoomCode: roomCode });
+      (store as unknown as typeof stores.useTimelineStore).setState({ syncEnabled: true, syncStatus: 'connected', syncRoomCode: roomCode });
     }
 
     await queue.queueWorkspaceFields(

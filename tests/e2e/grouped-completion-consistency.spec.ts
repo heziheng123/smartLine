@@ -96,7 +96,7 @@ test.beforeEach(async ({ page }) => {
       .map((entry) => entry.name)
       .find((name) => name.includes('/src/store/index.ts?t='))
       ?? '/src/store/index.ts';
-    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/store/index');
     const state = useTimelineStore.getState();
     return state.isHydrated
       && state.tasks.some((task) => task.id === 'grouped-completion-project');
@@ -117,7 +117,7 @@ async function readCompletionCopies(page: Page) {
       .map((entry) => entry.name)
       .find((name) => name.includes('/src/store/index.ts?t='))
       ?? '/src/store/index.ts';
-    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/store/index');
     const task = useTimelineStore.getState().tasks.find((item) => item.id === 'grouped-completion-project');
     const child = useTimelineStore.getState().groups
       .flatMap((group) => group.children)
@@ -137,7 +137,7 @@ async function readNodeStatus(page: Page) {
       .map((entry) => entry.name)
       .find((name) => name.includes('/src/graph/store.ts?t='))
       ?? '/src/graph/store.ts';
-    const { useGraphStore } = await import(/* @vite-ignore */ moduleUrl);
+    const { useGraphStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/graph/store');
     return useGraphStore.getState().nodes
       .find((node) => node.id === 'completion-node')?.status;
   });
@@ -186,7 +186,7 @@ test('project document text blocks can be deleted and stay deleted after reload'
       .map((entry) => entry.name)
       .find((name) => name.includes('/src/store/index.ts?t='))
       ?? '/src/store/index.ts';
-    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/store/index');
     const state = useTimelineStore.getState();
     const taskHasBlock = state.tasks
       .find((task) => task.id === 'grouped-completion-project')
@@ -224,7 +224,7 @@ test('completed task without automatic review activates its knowledge node in bl
       .map((entry) => entry.name)
       .find((name) => name.includes('/src/ebb/store.ts?t='))
       ?? '/src/ebb/store.ts';
-    const { useEbbStore } = await import(/* @vite-ignore */ moduleUrl);
+    const { useEbbStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/ebb/store');
     return useEbbStore.getState().reviewTasks
       .filter((task) => task.graphNodeId === 'completion-node' && !task.isArchived)
       .length;
@@ -254,7 +254,7 @@ test('a remote legacy project without blocks cannot break linked-task cancellati
           .map((entry) => entry.name)
           .find((name) => name.includes('/src/store/index.ts?t='))
           ?? '/src/store/index.ts';
-        const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+        const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/store/index');
         const state = useTimelineStore.getState();
         if (state.tasks.some((task) => task.id === 'remote-legacy-without-blocks')) return;
         useTimelineStore.setState({
@@ -290,7 +290,7 @@ test('a remote legacy project without blocks cannot break linked-task cancellati
       .map((entry) => entry.name)
       .find((name) => name.includes('/src/store/index.ts?t='))
       ?? '/src/store/index.ts';
-    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+    const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/store/index');
     return useTimelineStore.getState().tasks
       .find((task) => task.id === 'remote-legacy-without-blocks')?.blocks;
   });
@@ -305,10 +305,10 @@ test('a divergent Liveblocks batch is repaired before a stale group copy can dri
           .map((entry) => entry.name)
           .find((name) => name.includes('/src/store/index.ts?t='))
           ?? '/src/store/index.ts';
-        const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl);
+        const { useTimelineStore } = await import(/* @vite-ignore */ moduleUrl) as typeof import('../../src/store/index');
         const setCompleted = (task: Task, value: boolean) => ({
           ...task,
-          blocks: task.blocks.map((block) => block.id === 'grouped-completion-block'
+          blocks: task.blocks.map((block) => block.type === 'smart-task' && block.id === 'grouped-completion-block'
             ? { ...block, header: { ...block.header, isCompleted: value } }
             : block),
         });

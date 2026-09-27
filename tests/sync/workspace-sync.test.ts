@@ -50,6 +50,9 @@ import {
   workspaceFieldsMatchEntityProjection,
 } from '../../src/services/workspaceEntityStorage.ts';
 
+import { DEFAULT_EBB_SETTINGS } from '../../src/ebb/constants.ts';
+
+
 function backup(): WorkspaceBackup {
   return {
     kind: 'smart-line-workspace',
@@ -62,18 +65,11 @@ function backup(): WorkspaceBackup {
       reviewTasks: [],
       inboxItems: [],
       outlineNodes: [],
-      ebbSettings: {
-        intervals: [1, 2, 4, 7],
-        defaultRoundCount: 4,
-        tagColors: {},
-      },
+      ebbSettings: { ...DEFAULT_EBB_SETTINGS },
     },
     daily: { schedules: {} },
     graph: { nodes: [] },
-    lifeMap: {
-      areas: [], themes: [], goals: [], systems: [], systemLogs: [],
-      events: [], focuses: [], notes: [], relations: [], reviews: [],
-    },
+    lifeMap: createEmptyLifeMapData(),
     settings: {},
   };
 }
@@ -82,6 +78,46 @@ const emptyCounts = {
   tasks: 0, groups: 0, lifeStages: 0, lifeMapItems: 0,
   reviewTasks: 0, dailyDays: 0, graphNodes: 0,
 };
+
+test('entity merge preserves a local move alongside remote content changes', () => {
+  const blocks = [{ id: 'a', type: 'text', content: 'a' }, { id: 'b', type: 'text', content: 'b' }];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: [{ id: 'task', blocks: [blocks[1], blocks[0]] }] },
+    { tasks: [{ id: 'task', blocks }] },
+    { tasks: [{ id: 'task', blocks: [{ ...blocks[0], content: 'remote a' }, blocks[1]] }] },
+  );
+  assert.deepEqual(result.fields.tasks, [{ id: 'task', blocks: [blocks[1], { ...blocks[0], content: 'remote a' }] }]);
+  assert.deepEqual(result.conflicts, []);
+});
+
+test('incompatible concurrent entity moves are reported as an order conflict', () => {
+  const blocks = ['a', 'b', 'c'].map((id) => ({ id, content: id }));
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: [{ id: 'task', blocks: [blocks[1], blocks[0], blocks[2]] }] },
+    { tasks: [{ id: 'task', blocks }] },
+    { tasks: [{ id: 'task', blocks: [blocks[0], blocks[2], blocks[1]] }] },
+  );
+  assert.deepEqual(result.conflicts, ['tasks[task].blocks.$order']);
+});
+
+test('entity merge retains local insertion positions alongside remote content edits', () => {
+  const base = [{ id: 'a', text: 'a' }, { id: 'b', text: 'b' }];
+  const result = mergeWorkspaceFieldChanges(
+    { tasks: [base[0], { id: 'x', text: 'new' }, base[1]] },
+    { tasks: base },
+    { tasks: [{ ...base[0], text: 'remote a' }, base[1]] },
+  );
+  assert.deepEqual(result.fields.tasks, [{ ...base[0], text: 'remote a' }, { id: 'x', text: 'new' }, base[1]]);
+  assert.deepEqual(result.conflicts, []);
+});
+
+test('independent inserts preserve both devices and their shared neighbour', () => {
+  const base = [{ id: 'a' }, { id: 'b' }];
+  const result = mergeWorkspaceFieldChanges({ tasks: [base[0], { id: 'x' }, base[1]] },
+    { tasks: base }, { tasks: [base[0], { id: 'y' }, base[1]] });
+  assert.deepEqual(result.fields.tasks, [base[0], { id: 'y' }, { id: 'x' }, base[1]]);
+  assert.deepEqual(result.conflicts, []);
+});
 
 test('sync diagnostics distinguish local durability, cloud confirmation, and a queued retry', () => {
   recordWorkspaceLocalSaved(12.6);

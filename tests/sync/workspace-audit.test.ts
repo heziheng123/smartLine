@@ -76,7 +76,7 @@ test('workspace audit counts a grouped task block once when groups mirror canoni
     blocks: [{ type: 'text' as const, id: 'block-1', content: '正文' }],
   };
   backup.timeline.tasks.push(task);
-  backup.timeline.groups.push({ id: 'group-1', name: '分组', children: [task] });
+  backup.timeline.groups.push({ id: 'group-1', name: '分组', start: task.start, end: task.end, children: [task] });
 
   const report = await createWorkspaceAuditReport(backup);
 

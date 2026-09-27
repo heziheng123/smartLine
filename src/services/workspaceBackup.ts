@@ -16,6 +16,7 @@ import { LIFE_MAP_FIELDS, activeLifeMapItems, normalizeLifeMapData, validateLife
 import type { LifeMapData } from '@/lifeMap/types';
 import { parseMindMapBackupBundle, mindMapRepository, type MindMapBackupBundle } from '@/mindMap/repository';
 import { useMindMapStore } from '@/mindMap/store';
+import { exportReviewBackup, parseReviewBackupBundle, restoreReviewBackup, type ReviewBackupBundle } from '@/review/repository';
 import {
   runWorkspaceMutationWithOrigin,
   type WorkspaceMutationOrigin,
@@ -50,6 +51,8 @@ export interface WorkspaceBackup {
   settings: { timelineViewPreferences?: unknown };
   /** Optional extension for schema 8. Missing on exports made before map backup. */
   mindMap?: MindMapBackupBundle;
+  /** Portable review records/drafts; raw local audio is not exported. */
+  reviews?: ReviewBackupBundle;
 }
 
 export interface WorkspaceBackupSummary {
@@ -63,6 +66,7 @@ export interface WorkspaceBackupSummary {
   dailyDays: number;
   graphNodes: number;
   mindMapDocuments: number;
+  dailyReviews?: number;
   issues: string[];
 }
 
@@ -77,7 +81,7 @@ export interface WorkspaceSnapshot {
   storedBytes?: number;
 }
 
-type SnapshotSection = 'header' | 'timeline' | 'lifeMap' | 'ebb' | 'graph' | 'daily' | 'settings' | 'mindMap';
+type SnapshotSection = 'header' | 'timeline' | 'lifeMap' | 'ebb' | 'graph' | 'daily' | 'settings' | 'mindMap' | 'reviews';
 
 interface SnapshotChunk {
   encoding: 'gzip' | 'json';
@@ -225,6 +229,11 @@ export function validateWorkspaceBackup(value: unknown): {
     const parsed = parseMindMapBackupBundle(value.mindMap);
     if (parsed.error) errors.push(parsed.error);
     else backup.mindMap = parsed.bundle;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'reviews')) {
+    const parsed = parseReviewBackupBundle(value.reviews);
+    if (!parsed) errors.push('每日复盘备份格式无效。');
+    else backup.reviews = parsed;
   }
   if (!backup.timeline.tasks.every((task) => isRecord(task)
     && typeof task.id === 'string' && typeof task.name === 'string'
@@ -553,6 +562,7 @@ export function validateWorkspaceBackup(value: unknown): {
       dailyDays: Object.keys(backup.daily.schedules).length,
       graphNodes: backup.graph.nodes.length,
       mindMapDocuments: backup.mindMap?.documents.length ?? 0,
+      dailyReviews: backup.reviews?.reviews.length ?? 0,
       issues: [...new Set(issues)].slice(0, 50),
     },
   };
@@ -599,6 +609,7 @@ function snapshotSections(backup: WorkspaceBackup): Partial<Record<SnapshotSecti
     daily: backup.daily,
     settings: backup.settings,
     ...(backup.mindMap ? { mindMap: backup.mindMap } : {}),
+    ...(backup.reviews ? { reviews: backup.reviews } : {}),
   };
 }
 
@@ -712,6 +723,7 @@ export async function materializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot):
     daily: values.daily as WorkspaceBackup['daily'],
     settings: values.settings as WorkspaceBackup['settings'],
     ...(values.mindMap ? { mindMap: values.mindMap as WorkspaceBackup['mindMap'] } : {}),
+    ...(values.reviews ? { reviews: values.reviews as WorkspaceBackup['reviews'] } : {}),
   };
 }
 
@@ -735,6 +747,7 @@ export async function createWorkspaceBackupWithMindMap(): Promise<WorkspaceBacku
   const backup = createWorkspaceBackup();
   await useMindMapStore.getState().flushSave();
   backup.mindMap = await mindMapRepository.exportBundle();
+  backup.reviews = await exportReviewBackup();
   return backup;
 }
 
@@ -744,6 +757,8 @@ export async function restoreWorkspaceBackup(
 ): Promise<void> {
   await createLocalSnapshot('恢复完整工作区前');
   const before = await createWorkspaceBackupWithMindMap();
+  const preferencesKey = 'smart-timeline-view-preferences-v2';
+  const previousPreferences = localStorage.getItem(preferencesKey);
   const apply = async (source: WorkspaceBackup) => {
     const safe = deepClone(source);
     const origin = options.origin ?? (options.suppressSyncJournal ? 'remote-hydration' : 'restore');
@@ -776,13 +791,16 @@ export async function restoreWorkspaceBackup(
   try {
     await apply(backup);
     if (backup.settings?.timelineViewPreferences !== undefined) {
-      localStorage.setItem('smart-timeline-view-preferences-v2', JSON.stringify(backup.settings.timelineViewPreferences));
+      localStorage.setItem(preferencesKey, JSON.stringify(backup.settings.timelineViewPreferences));
     }
     if (backup.mindMap) {
       await mindMapRepository.replaceFromBundle(backup.mindMap);
       await useMindMapStore.getState().reloadFromRepository();
     }
+    if (backup.reviews) await restoreReviewBackup(backup.reviews);
   } catch (error) {
+    if (previousPreferences === null) localStorage.removeItem(preferencesKey);
+    else localStorage.setItem(preferencesKey, previousPreferences);
     await apply(before);
     if (before.mindMap) {
       await mindMapRepository.replaceFromBundle(before.mindMap);

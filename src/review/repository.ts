@@ -1,6 +1,7 @@
 import { createDedicatedStorage } from '@/utils/persistence';
 import { createDailyReview, createInputTextVersion, type DailyReview, type InputTextVersion, type ReviewAnnotation, type ReviewVersion } from './model';
 import { buildReviewTextBlocks, reviewContentHash, type ReviewTextBlock } from './textBlocks';
+import { normalizeReview } from '../../functions/_lib/reviews';
 
 const storage = createDedicatedStorage('smart-line-review', 'reviews');
 const REVIEWS_KEY = 'daily-reviews-v1';
@@ -25,6 +26,48 @@ export interface ReviewOutboxJob {
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+export interface ReviewBackupBundle {
+  version: 1;
+  reviews: DailyReview[];
+  textDrafts: Record<string, string>;
+}
+
+export function parseReviewBackupBundle(value: unknown): ReviewBackupBundle | null {
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.reviews) || !isRecord(value.textDrafts)) return null;
+  const reviews = value.reviews.map((review) => isRecord(review) && typeof review.reviewDate === 'string'
+    ? normalizeReview(review, review.reviewDate, false) : null);
+  if (reviews.some((review) => !review)
+    || new Set(reviews.map((review) => review?.id)).size !== reviews.length
+    || new Set(reviews.map((review) => review?.reviewDate)).size !== reviews.length
+    || Object.entries(value.textDrafts).some(([date, text]) => !/^\d{4}-\d{2}-\d{2}$/.test(date) || typeof text !== 'string')) return null;
+  return { version: 1, reviews: reviews as DailyReview[], textDrafts: value.textDrafts as Record<string, string> };
+}
+
+export async function exportReviewBackup(): Promise<ReviewBackupBundle> {
+  await writes;
+  const [reviews, textDrafts] = await Promise.all([loadDailyReviews(), loadReviewTextDrafts()]);
+  return { version: 1, reviews, textDrafts };
+}
+
+export function restoreReviewBackup(bundle: ReviewBackupBundle): Promise<void> {
+  return queueWrite(async () => {
+    const keys = [REVIEWS_KEY, TEXT_DRAFTS_KEY, OUTBOX_KEY, SYNC_STATES_KEY];
+    const previous = await Promise.all(keys.map((key) => storage.getItem(key)));
+    try {
+      await storage.setItem(REVIEWS_KEY, bundle.reviews);
+      await storage.setItem(TEXT_DRAFTS_KEY, bundle.textDrafts);
+      // Revision baselines and requests belong to the current cloud account,
+      // not to a portable file. Restored documents remain safe local copies.
+      await storage.setItem(OUTBOX_KEY, []);
+      await storage.setItem(SYNC_STATES_KEY, {});
+    } catch (error) {
+      await Promise.all(keys.map((key, index) => previous[index] === null
+        ? storage.removeItem(key) : storage.setItem(key, previous[index])));
+      throw error;
+    }
+  });
+}
 
 function normalizeVersion(value: unknown, fallback: ReviewVersion): ReviewVersion {
   if (!isRecord(value)) return fallback;
@@ -81,6 +124,15 @@ export async function loadDailyReviews(): Promise<DailyReview[]> {
 
 export function saveDailyReviews(reviews: DailyReview[]): Promise<void> {
   return queueWrite(() => storage.setItem(REVIEWS_KEY, reviews));
+}
+
+export function updateDailyReviews(update: (reviews: DailyReview[]) => DailyReview[]): Promise<void> {
+  return queueWrite(async () => storage.setItem(REVIEWS_KEY, update(await loadDailyReviews())));
+}
+
+export function saveDailyReview(review: DailyReview): Promise<void> {
+  return updateDailyReviews((reviews) => [...reviews.filter((item) => item.id !== review.id), review]
+    .sort((left, right) => right.reviewDate.localeCompare(left.reviewDate)));
 }
 
 export async function loadReviewTextDrafts(): Promise<Record<string, string>> {

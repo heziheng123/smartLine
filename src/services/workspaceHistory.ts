@@ -9,7 +9,8 @@ export interface WorkspaceDailyHistory {
   backup: WorkspaceBackup;
 }
 
-const attemptedDates = new Set<string>();
+const savedDates = new Set<string>();
+const pendingDates = new Map<string, Promise<void>>();
 
 export function currentWorkspaceHistoryDate(): string {
   const now = new Date();
@@ -73,9 +74,15 @@ export async function saveWorkspaceDailyHistory(
 
 export async function saveWorkspaceDailyHistoryOnce(backup: WorkspaceBackup): Promise<void> {
   const date = currentWorkspaceHistoryDate();
-  if (attemptedDates.has(date)) return;
-  attemptedDates.add(date);
-  await saveWorkspaceDailyHistory(backup, date);
+  if (savedDates.has(date)) return;
+  let pending = pendingDates.get(date);
+  if (!pending) {
+    pending = saveWorkspaceDailyHistory(backup, date)
+      .then(() => { savedDates.add(date); })
+      .finally(() => { pendingDates.delete(date); });
+    pendingDates.set(date, pending);
+  }
+  await pending;
 }
 
 export async function loadWorkspaceDailyHistory(date: string): Promise<WorkspaceDailyHistory> {

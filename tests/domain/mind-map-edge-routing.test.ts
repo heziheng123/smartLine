@@ -79,8 +79,8 @@ test('new relation edges retain the weak, arrowless default semantics', () => {
 
 test('typed endpoints preserve project references and migrate old node edges', () => {
   const document = createEmptyMindMapDocument('Test', { now: 1 });
-  const node = createTextMindMapNode({ x: 0, y: 0 }, 'A', { id: 'node-a', now: 1 });
-  const nodeB = createTextMindMapNode({ x: 100, y: 0 }, 'B', { id: 'node-b', now: 1 });
+  const node = createTextMindMapNode({ x: 0, y: 0 }, { text: 'A', id: 'node-a', now: 1 });
+  const nodeB = createTextMindMapNode({ x: 100, y: 0 }, { text: 'B', id: 'node-b', now: 1 });
   const reference = createProjectReferenceCard({ x: 200, y: 0 }, { targetType: 'project', targetId: 'project-a' }, { id: 'reference-a', now: 1 });
   const normalized = normalizeMindMapDocument({
     ...document,

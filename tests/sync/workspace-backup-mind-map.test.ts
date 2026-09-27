@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createEmptyMindMapDocument } from '../../src/mindMap/model.ts';
+import { DEFAULT_EBB_SETTINGS } from '../../src/ebb/constants.ts';
+import { appendTextSegment, createDailyReview } from '../../src/review/model.ts';
+import { normalizeReview } from '../../functions/_lib/reviews.ts';
+import { createEmptyMindMapDocument, createTextMindMapNode } from '../../src/mindMap/model.ts';
 import { parseMindMapBackupBundle } from '../../src/mindMap/repository.ts';
 import { validateWorkspaceBackup, type WorkspaceBackup } from '../../src/services/workspaceBackup.ts';
 import { createMergedBackup } from '../../src/services/workspaceSync.ts';
@@ -30,7 +33,7 @@ function emptyBackup(): WorkspaceBackup {
       reviewTasks: [],
       inboxItems: [],
       outlineNodes: [],
-      ebbSettings: { intervals: [1, 2, 4, 7], defaultRoundCount: 4, tagColors: {} },
+      ebbSettings: { ...DEFAULT_EBB_SETTINGS },
     },
     graph: { nodes: [] },
     daily: { schedules: {} },
@@ -43,6 +46,26 @@ test('old workspace backups remain valid without a mind map field', () => {
   assert.equal(result.errors.length, 0);
   assert.equal(result.summary?.mindMapDocuments, 0);
   assert.equal(result.backup?.mindMap, undefined);
+});
+
+test('workspace backups validate portable review records and reject malformed bundles', () => {
+  const review = appendTextSegment(createDailyReview('2026-09-27'), 'local original');
+  const valid = validateWorkspaceBackup({ ...emptyBackup(), reviews: { version: 1, reviews: [review], textDrafts: { '2026-09-27': 'draft' } } });
+  assert.equal(valid.errors.length, 0);
+  assert.equal(valid.backup?.reviews?.reviews[0]?.id, review.id);
+  for (const bundle of [
+    { version: 1, reviews: [{}], textDrafts: {} },
+    { version: 1, reviews: [review, review], textDrafts: {} },
+    { version: 1, reviews: [review], textDrafts: { broken: 12 } },
+  ]) assert.ok(validateWorkspaceBackup({ ...emptyBackup(), reviews: bundle }).errors.some((error) => error.includes('复盘')));
+});
+
+test('backup validation preserves oversized offline text without relaxing API quotas', () => {
+  const review = appendTextSegment(createDailyReview('2026-09-27'), '长'.repeat(10_001));
+  assert.equal(normalizeReview(review, review.reviewDate), null);
+  const result = validateWorkspaceBackup({ ...emptyBackup(), reviews: { version: 1, reviews: [review], textDrafts: {} } });
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.backup?.reviews?.reviews[0]?.inputSegments[0]?.type, 'text');
 });
 
 test('workspace backups can carry map documents', () => {
@@ -79,8 +102,8 @@ test('invalid map payloads fail backup validation', () => {
 test('map backups validate embedded image resources', () => {
   const document = createEmptyMindMapDocument('图片图', { id: 'map-with-image' });
   document.nodes.image = {
-    id: 'image', type: 'image', text: '', x: 0, y: 0, width: 100, height: 100,
-    color: '#fff', parentId: null, isCollapsed: false, link: null,
+    ...createTextMindMapNode({ x: 0, y: 0 }, { id: 'image' }), id: 'image', type: 'image', text: '', x: 0, y: 0, width: 100, height: 100,
+    link: null,
     imageSrc: null, imageAssetId: 'asset-1', createdAt: 1, updatedAt: 1,
   };
   const baseBundle = {
@@ -103,10 +126,10 @@ test('parseMindMapBackupBundle ignores a missing payload', () => {
 test('first connection can keep cloud projects and local daily data by domain', () => {
   const local = emptyBackup();
   local.timeline.tasks = [{ id: 'local-project' }] as WorkspaceBackup['timeline']['tasks'];
-  local.daily.schedules = { '2026-09-05': { id: 'local-day' } } as WorkspaceBackup['daily']['schedules'];
+  local.daily.schedules = { '2026-09-05': { date: '2026-09-05', items: [], blocks: [] } } as WorkspaceBackup['daily']['schedules'];
   const remote = emptyBackup();
   remote.timeline.tasks = [{ id: 'cloud-project' }] as WorkspaceBackup['timeline']['tasks'];
-  remote.daily.schedules = { '2026-09-04': { id: 'cloud-day' } } as WorkspaceBackup['daily']['schedules'];
+  remote.daily.schedules = { '2026-09-04': { date: '2026-09-04', items: [], blocks: [] } } as WorkspaceBackup['daily']['schedules'];
 
   const merged = createMergedBackup(local, remote, {
     tasks: 'cloud',

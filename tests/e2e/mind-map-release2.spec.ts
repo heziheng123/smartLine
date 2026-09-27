@@ -157,20 +157,20 @@ test('advanced nodes, orthogonal edges, SVG export, minimap and command palette 
   expect((await imagePngDownload).suggestedFilename()).toMatch(/\.png$/);
   await expect.poll(async () => page.evaluate(async (assetId) => {
     const { mindMapRepository } = await import('/src/mindMap/repository.ts');
-    return (await mindMapRepository.loadImageAsset(assetId))?.refCount;
+    return (await mindMapRepository.loadImageAsset(assetId!))?.refCount;
   }, imageNode.imageAssetId)).toBe(1);
   await openMoreMenu(page);
   await page.getByRole('menuitem', { name: '复制当前导图' }).click();
   await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
   await expect.poll(async () => page.evaluate(async (assetId) => {
     const { mindMapRepository } = await import('/src/mindMap/repository.ts');
-    return (await mindMapRepository.loadImageAsset(assetId))?.refCount;
+    return (await mindMapRepository.loadImageAsset(assetId!))?.refCount;
   }, imageNode.imageAssetId)).toBe(2);
   page.once('dialog', (dialog) => void dialog.accept());
   await openMoreMenu(page);
   await page.getByRole('menuitem', { name: '删除当前导图' }).click();
   await expect.poll(async () => page.evaluate(async (assetId) => {
     const { mindMapRepository } = await import('/src/mindMap/repository.ts');
-    return (await mindMapRepository.loadImageAsset(assetId))?.refCount;
+    return (await mindMapRepository.loadImageAsset(assetId!))?.refCount;
   }, imageNode.imageAssetId)).toBe(1);
 });

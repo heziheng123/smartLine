@@ -938,7 +938,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           ? `\n检测到 ${result.summary.issues.length} 个数据问题，恢复后可运行健康检查。`
           : '';
         const confirmed = await requestConfirmation(
-          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n地图文档 ${result.summary.mindMapDocuments}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。当前若已连接云同步，恢复内容也会同步到原房间。是否继续？`,
+          `即将恢复完整工作区：\n时间轴任务 ${result.summary.tasks}\n旧人生时期 ${result.summary.lifeStages}\n独立人生地图 ${result.summary.lifeMapItems} 项（${result.summary.lifeMapAreas} 个领域）\n地图文档 ${result.summary.mindMapDocuments}\n项目文档 ${result.summary.projectDocuments}\nEBB 轮次 ${result.summary.reviewTasks}\n每日安排 ${result.summary.dailyDays} 天\n每日复盘 ${result.summary.dailyReviews ?? 0} 天\n知识节点 ${result.summary.graphNodes}${issueText}\n\n恢复前会自动保存当前工作区快照。已连接云同步的工作区内容会同步到原房间；复盘恢复为本机记录，编辑后再同步。是否继续？`,
         );
         if (!confirmed) return;
         await restoreWorkspaceBackup(result.backup);
@@ -1653,7 +1653,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
               </button>
             </div>
             <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#6B7280' }}>
-              包含时间轴、项目文档、地图与人生规划、EBB、每日安排、知识大盘和应用设置。恢复旧备份时若没有地图字段，本机地图不会被清空。
+              包含时间轴、项目文档、地图与人生规划、EBB、每日安排、每日复盘及文字草稿、知识大盘和应用设置。原始录音仅保存在录制设备，不包含在备份文件中。恢复旧备份时若没有地图或复盘字段，本机对应数据不会被清空。
             </small>
           </div>
 
@@ -1672,7 +1672,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             </div>
             {restoreSummary && (
               <small style={{ display: 'block', padding: '0 14px 10px', fontSize: 11, color: '#374151' }}>
-                最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.mindMapDocuments} 份地图文档、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.graphNodes} 个节点。
+                最近检查：{restoreSummary.tasks} 个项目任务、{restoreSummary.lifeMapItems} 项人生规划、{restoreSummary.mindMapDocuments} 份地图文档、{restoreSummary.dailyReviews ?? 0} 天复盘、{restoreSummary.reviewTasks} 个轮次、{restoreSummary.graphNodes} 个节点。
               </small>
             )}
           </div>

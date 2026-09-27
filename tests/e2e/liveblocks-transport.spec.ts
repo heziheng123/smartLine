@@ -143,7 +143,7 @@ test('real Liveblocks transport preserves offline disjoint edits and surfaces a 
       const { root } = await room.getStorage();
       const offline = useTimelineStore.getState().tasks.find((task) => task.id === 'offline-b');
       if (!offline) throw new Error('offline task missing');
-      room.batch(() => root.set('tasks', [offline]));
+      room.batch(() => root.set('tasks', JSON.parse(JSON.stringify([offline]))));
     });
     await expect.poll(async () => Object.hasOwn(await taskNames(pageB), 'online-a')).toBe(false);
     const projectionRepairMessage = await pageB.evaluate(async ({ owner }) => {
@@ -194,7 +194,7 @@ test('real Liveblocks transport preserves offline disjoint edits and surfaces a 
       const room = useTimelineStore.getState().liveblocks?.room;
       if (!room) throw new Error('timeline room missing');
       const { root } = await room.getStorage();
-      const raw = root.toJSON() as { tasks?: unknown[] };
+      const raw = root.toJSON();
       room.batch(() => root.set('tasks', [
         ...(Array.isArray(raw.tasks) ? raw.tasks : []),
         { id: 'delete-me', name: 'stale-delete-me', start: date, end: date, color: '#93c5fd', completed: false, blocks: [] },
