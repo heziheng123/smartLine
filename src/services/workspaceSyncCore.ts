@@ -335,19 +335,30 @@ function mergeWorkspaceValue(
     const orderConflict = localMoved && remoteMoved && !workspaceValuesEqual(order(local), order(remote));
     const primary = localMoved && !remoteMoved ? local : remote;
     const secondary = (primary === local ? remote : local).map((item) => entityId(item)!);
-    const orderedIds = [...new Set(primary.map((item) => entityId(item)!))];
-    const knownIds = new Set(orderedIds);
-    // Retain insertion positions too: place missing entities before their next
-    // neighbour rather than appending every local insertion to the remote list.
-    // ponytail: placement is O(n²); index positions if large concurrent inserts become slow.
+    const baseIds = [...new Set(primary.map((item) => entityId(item)!))];
+    const knownIds = new Set(baseIds);
+    // O(n) single-pass placement: group missing ids by their next neighbour,
+    // then sweep once. No indexOf/splice per insertion.
+    const pendingByAnchor = new Map<string | undefined, string[]>();
+    const primarySet = new Set(baseIds);
     for (let index = secondary.length - 1; index >= 0; index--) {
-      const id = secondary[index];
+      const id = secondary[index]!;
       if (knownIds.has(id)) continue;
-      const anchor = orderedIds.indexOf(secondary[index + 1]);
-      if (anchor < 0) orderedIds.push(id);
-      else orderedIds.splice(anchor, 0, id);
+      const nextId = secondary[index + 1];
+      const anchor: string | undefined = nextId !== undefined && primarySet.has(nextId) ? nextId : undefined;
+      const list = pendingByAnchor.get(anchor);
+      if (list) list.unshift(id);
+      else pendingByAnchor.set(anchor, [id]);
       knownIds.add(id);
     }
+    const orderedIds: string[] = [];
+    for (const id of baseIds) {
+      const waiting = pendingByAnchor.get(id);
+      if (waiting) orderedIds.push(...waiting);
+      orderedIds.push(id);
+    }
+    const tail = pendingByAnchor.get(undefined);
+    if (tail) orderedIds.push(...tail);
     for (const id of baseById.keys()) if (!knownIds.has(id)) orderedIds.push(id);
     const merged: unknown[] = [];
     const conflicts: string[] = orderConflict ? [`${path}.$order`] : [];

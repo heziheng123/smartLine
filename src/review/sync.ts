@@ -97,10 +97,15 @@ async function flush(): Promise<Record<string, ReviewSyncState>> {
       } else {
         const accepted = await response.json() as { review?: DailyReview; serverRevision: number };
         if (accepted.review) {
-          // An acknowledgement only replaces the submitted version. A user may
-          // have already saved a newer local edit while this request was pending.
-          await updateDailyReviews((local) => local.map((item) => item.id === job.review.id
-            && JSON.stringify(item) === JSON.stringify(job.review) ? accepted.review! : item));
+          // Fast path: revision/updatedAt identify the submitted version without
+          // serializing large textVersions on every acknowledgement.
+          const submitted = job.review;
+          await updateDailyReviews((local) => local.map((item) => {
+            if (item.id !== job.review.id) return item;
+            if (item.revision !== submitted.revision || item.updatedAt !== submitted.updatedAt) return item;
+            if (JSON.stringify(item) !== JSON.stringify(submitted)) return item;
+            return accepted.review!;
+          }));
         }
         states = { ...states, [job.review.id]: { serverRevision: accepted.serverRevision, status: 'synced' } };
         jobs = jobs.filter((item) => item.operationId !== job.operationId).map((item) => item.review.id === job.review.id ? { ...item, baseRevision: accepted.serverRevision } : item);
@@ -120,13 +125,23 @@ export function flushReviewOutbox(): Promise<Record<string, ReviewSyncState>> {
   return activeFlush;
 }
 
+async function reviewApiErrorMessage(response: Response, fallback: string): Promise<string> {
+  const data = await response.json().catch(() => null) as { error?: unknown; code?: unknown } | null;
+  if (data && typeof data.error === 'string' && data.error.trim()) return data.error;
+  if (response.status === 402) return 'DeepSeek 余额不足，整理未执行；充值后重试即可，本地记录不受影响。';
+  if (response.status === 401) return '登录已过期或 DeepSeek Key 无效；请重新登录或检查配置后重试。';
+  if (response.status === 429) return 'AI 请求太频繁被限流，稍后重试即可，本地记录不受影响。';
+  if (response.status === 503) return 'AI 服务尚未配置，请联系管理员；本地记录不受影响。';
+  return fallback;
+}
+
 export async function structureReview(review: DailyReview): Promise<{ candidates: import('./model').AiReviewItem[]; annotations: import('./model').AiReviewAnnotation[] }> {
   const response = await fetch(`/api/reviews/${encodeURIComponent(review.reviewDate)}/structure`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ review, operationId: `ai-${review.id}-${review.revision}` }),
   });
-  if (!response.ok) throw new Error('AI 整理暂时不可用。');
+  if (!response.ok) throw new Error(await reviewApiErrorMessage(response, 'AI 整理暂时不可用，请稍后重试；本地记录不受影响。'));
   const data = await response.json() as { candidates?: import('./model').AiReviewItem[]; annotations?: import('./model').AiReviewAnnotation[] };
-  if (!data.candidates || !data.annotations) throw new Error('AI 未返回可用整理结果。');
+  if (!data.candidates || !data.annotations) throw new Error('AI 未返回可用整理结果，请稍后重试；本地记录不受影响。');
   return { candidates: data.candidates, annotations: data.annotations };
 }
 

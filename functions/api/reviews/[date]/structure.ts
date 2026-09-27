@@ -1,6 +1,7 @@
 import { isSameOriginRequest, jsonResponse, readSession } from '../../../_lib/session.ts';
 import { normalizeReview, type PersistedReview } from '../../../_lib/reviews.ts';
 import { responseText, reviewStructureRequest, validateAiAnalysis, type ReviewAiEnv } from '../../../_lib/reviewAi.ts';
+import { classifyDeepSeekError } from '../../../_lib/providerErrors.ts';
 import { readLimitedBody } from '../../../_lib/r2.ts';
 
 interface FunctionContext { env: ReviewAiEnv; request: Request; params: { date?: string } }
@@ -55,7 +56,7 @@ export async function onRequestPost({ env, request, params }: FunctionContext): 
       ...reviewStructureRequest(review, env.DEEPSEEK_MODEL?.trim() || 'deepseek-flash'),
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     });
-    if (!response.ok) { await release(); return jsonResponse({ error: 'Review AI is temporarily unavailable.' }, response.status === 429 ? 429 : 502); }
+    if (!response.ok) { await release(); const payload = await response.text().catch(() => ''); const classified = classifyDeepSeekError(response.status, payload); return jsonResponse({ error: classified.message, code: classified.code }, classified.httpStatus); }
     const text = responseText(await response.json());
     if (!text) { await release(); return jsonResponse({ error: 'Review AI returned no structured result.' }, 502); }
     const analysis = validateAiAnalysis(JSON.parse(text), review);
