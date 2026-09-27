@@ -959,6 +959,9 @@ export const KnowledgeGraphView: React.FC = () => {
         if (event.sourceEvent) {
           zoomViewport.interrupt();
           userZoomInProgressRef.current = true;
+          // Composited layer only during the gesture for smooth frames;
+          // cleared on end so resting text rasterizes crisp vector.
+          scene.style.willChange = 'transform';
           controller.useCompositedScene = prefersCompositedScaleGesture(event.sourceEvent);
           if (controller.useCompositedScene) {
             clearReleaseFrames();
@@ -994,6 +997,8 @@ export const KnowledgeGraphView: React.FC = () => {
         commitPendingZoomTransform();
         releaseCanvas();
         controller.useCompositedScene = false;
+        // Drop the composited layer so resting text renders crisp vector.
+        scene.style.willChange = 'auto';
         if (programmaticZoomInProgressRef.current) {
           programmaticZoomInProgressRef.current = false;
           viewportShiftedRef.current = false;
