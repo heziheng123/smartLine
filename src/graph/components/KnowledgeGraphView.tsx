@@ -1835,13 +1835,14 @@ export const KnowledgeGraphView: React.FC = () => {
         <div
           ref={sceneRef}
           className="kg-canvas-scene absolute inset-0"
-          style={{ transformOrigin: '0 0', willChange: 'transform' }}
+          style={{ transformOrigin: '0 0' }}
         >
           <svg
             ref={svgRef}
             className="kg-canvas-stage ui-workspace-content-stage h-full w-full overflow-visible"
             data-radius-mode={radiusMode}
             data-island-radius={islandsData.islands[0]?.radius ?? 0}
+            style={{ textRendering: 'geometricPrecision', WebkitFontSmoothing: 'antialiased' }}
           >
             <rect width="100%" height="100%" fill="transparent" style={{ pointerEvents: 'all' }} />
             <g>
@@ -1862,10 +1863,10 @@ export const KnowledgeGraphView: React.FC = () => {
                   {island.root?.data.name}
                 </text>
                 
-                <g 
-                  style={{ 
-                    transform: `rotate(${islandRotation}deg)`, 
-                    transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' 
+                <g
+                  style={{
+                    transform: `rotate(${islandRotation}deg)`,
+                    transition: 'transform 0.35s ease-out'
                   }}
                 >
                 {island.nodes.map((node) => {
