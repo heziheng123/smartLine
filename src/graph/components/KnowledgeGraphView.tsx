@@ -160,9 +160,9 @@ const toTransformMatrix = ({ x, y, k }: ZoomTransform) => `matrix(${k}, 0, 0, ${
 
 const getZoomCanvasDpr = (width: number, height: number) => {
   const deviceDpr = Math.min(window.devicePixelRatio || 1, 2);
-  const candidates = [deviceDpr, 1.5, 1.25, 1]
+  const candidates = [deviceDpr, 1.5, 1.25]
     .filter((value, index, values) => value <= deviceDpr && values.indexOf(value) === index);
-  return candidates.find((dpr) => width * height * dpr * dpr <= ZOOM_CANVAS_MAX_PIXELS) ?? 1;
+  return candidates.find((dpr) => width * height * dpr * dpr <= ZOOM_CANVAS_MAX_PIXELS) ?? 1.25;
 };
 
 const isScaleGesture = (event: Event | undefined) =>
@@ -923,17 +923,15 @@ export const KnowledgeGraphView: React.FC = () => {
       if (!controller.active || controller.releaseFrames.length > 0) return;
       syncScene(transform);
       setCanvasState('releasing');
-      const firstFrame = requestAnimationFrame(() => {
-        const secondFrame = requestAnimationFrame(() => {
-          controller.releaseFrames = [];
-          controller.active = false;
-          canvas.style.opacity = '0';
-          scene.style.opacity = '';
-          setCanvasState(controller.ready ? 'ready' : 'building');
-        });
-        controller.releaseFrames = [secondFrame];
+      // Hard cut instead of two-frame crossfade to avoid ghosting blur.
+      const frame = requestAnimationFrame(() => {
+        controller.releaseFrames = [];
+        controller.active = false;
+        canvas.style.opacity = '0';
+        scene.style.opacity = '';
+        setCanvasState(controller.ready ? 'ready' : 'building');
       });
-      controller.releaseFrames = [firstFrame];
+      controller.releaseFrames = [frame];
     };
     const commitPendingZoomTransform = () => {
       const transform = pendingZoomTransformRef.current;
@@ -1071,6 +1069,13 @@ export const KnowledgeGraphView: React.FC = () => {
       canvas.dataset.dpr = String(dpr);
       const commands = buildGraphCanvasCommands(source);
       if (generation !== controller.generation) return;
+      // Small graphs stay pure SVG: no canvas takeover, always vector-crisp.
+      if (commands.length > 0 && commands.length < 600) {
+        controller.commands = [];
+        controller.ready = false;
+        if (canvasLayer) canvasLayer.dataset.zoomCacheState = 'ready';
+        return;
+      }
       controller.commands = commands;
       setGraphDiagnostic('cacheCommandCount', commands.length);
       setGraphDiagnostic('cacheGeneration', generation);
@@ -1082,9 +1087,10 @@ export const KnowledgeGraphView: React.FC = () => {
       if (canvasLayer) canvasLayer.dataset.zoomCacheState = controller.active ? 'active' : controller.ready ? 'ready' : 'building';
       // Node selection rotates islands with an 800ms CSS transition. Refresh
       // once it settles so later zoom gestures start from the exact SVG pose.
-      if (scheduleSettledRefresh) {
+      // Only wait when rotation actually changed; otherwise finish immediately.
+      if (scheduleSettledRefresh && needsSettledRotationRefresh) {
         recordGraphDiagnostic('cacheTimeoutScheduled');
-        controller.buildTimer = window.setTimeout(() => build(false), 850);
+        controller.buildTimer = window.setTimeout(() => build(false), 400);
       }
     };
 
