@@ -185,9 +185,7 @@ interface PanelMotionContext {
 }
 
 const VIEW_MOTION_VARIANTS: Variants = {
-  initial: ({ direction, reducedMotion }: ViewMotionContext) => (
-    reducedMotion ? { opacity: 0 } : { opacity: 0, x: direction * 4 }
-  ),
+  initial: () => ({ opacity: 0 }),
   animate: ({ reducedMotion }: ViewMotionContext) => ({
     opacity: 1,
     x: 0,
@@ -423,27 +421,37 @@ const App: React.FC = () => {
     reducedMotion: Boolean(prefersReducedMotion),
   }), [prefersReducedMotion]);
 
+  const currentViewRef = React.useRef(currentView);
+  currentViewRef.current = currentView;
   const handleViewChange = useCallback((view: AppModule) => {
     const target = view === 'life-map' && MIND_MAP_ENABLED ? 'mind-map' : view;
-    if (target !== currentView) {
-      const currentIndex = APP_VIEW_ORDER.indexOf(currentView);
+    const prev = currentViewRef.current;
+    if (target !== prev) {
+      const currentIndex = APP_VIEW_ORDER.indexOf(prev);
       const nextIndex = APP_VIEW_ORDER.indexOf(target);
       setViewDirection(nextIndex >= currentIndex ? 1 : -1);
-      setDrawerTaskId(null);
-      setDrawerBlockId(null);
-      setContextMenu(null);
-      setPhoneFullView(false);
+      // 点击帧只切视图，其余清理推迟到下一帧，避免同帧大 commit 堵住 dock 动画。
+      requestAnimationFrame(() => {
+        setDrawerTaskId(null);
+        setDrawerBlockId(null);
+        setContextMenu(null);
+        setPhoneFullView(false);
+      });
     }
     if (target !== 'daily-schedule') {
-      setDailyTargetDate(null);
-      setDailyWeekReturnContext(null);
+      requestAnimationFrame(() => {
+        setDailyTargetDate(null);
+        setDailyWeekReturnContext(null);
+      });
     }
-    if (target !== 'week-matrix') setWeekRestoreContext(null);
+    if (target !== 'week-matrix') {
+      requestAnimationFrame(() => setWeekRestoreContext(null));
+    }
     setCurrentView(target);
     if (isPhoneLayout) {
       try { localStorage.setItem(PHONE_LAST_VIEW_STORAGE_KEY, target); } catch { /* optional preference */ }
     }
-  }, [currentView, isPhoneLayout]);
+  }, [isPhoneLayout]);
 
   React.useEffect(() => {
     try {

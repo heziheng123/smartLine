@@ -69,6 +69,15 @@ html, body, #root {
   transform: translateX(-50%);
 }
 
+.tl-dock-active-indicator--css {
+  animation: tl-dock-dot-in 0.14s ease-out;
+}
+
+@keyframes tl-dock-dot-in {
+  from { opacity: 0; transform: translateX(-50%) scale(0.5); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
 /* 页面级操作留在页面头部，底部 Dock 只承担六个应用之间的切换。 */
 .tl-workspace-bar {
   position: sticky;

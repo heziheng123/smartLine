@@ -1,7 +1,5 @@
 import { type ReactNode } from 'react';
 import { BrainCircuit, CalendarClock, CalendarDays, LayoutGrid, Map, Network } from 'lucide-react';
-import { motion, useReducedMotion } from 'framer-motion';
-import { MOTION_DURATION, MOTION_EASE_ENTER } from '@/motion/system';
 import { MIND_MAP_ENABLED } from '@/mindMap/config';
 
 export type AppModule = 'life-map' | 'timeline' | 'ebb' | 'daily-schedule' | 'week-matrix' | 'knowledge-graph' | 'mind-map';
@@ -24,24 +22,16 @@ const NAV_ITEMS: { module: AppModule; label: string; phoneLabel: string; icon: R
 ];
 
 const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPreload }) => {
-  const prefersReducedMotion = useReducedMotion();
-
   return <nav className="tl-dock-wrapper" aria-label="应用导航">
-    <motion.div
+    <div
       className="tl-dock"
       role="tablist"
       aria-label="主导航"
-      initial={{ opacity: 1, scale: 1, y: 0 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      transition={{
-        duration: prefersReducedMotion ? 0 : MOTION_DURATION.fast,
-        ease: MOTION_EASE_ENTER,
-      }}
     >
       {NAV_ITEMS.map((item) => {
         const active = currentView === item.module;
         return (
-          <motion.button
+          <button
             key={item.module}
             role="tab"
             aria-selected={active}
@@ -57,16 +47,12 @@ const Toolbar: React.FC<ToolbarProps> = ({ currentView, onViewChange, onViewPrel
             {item.icon}
             <span className="tl-dock-phone-label">{item.phoneLabel}</span>
             {active && (
-              <motion.span
-                layoutId="dock-active-indicator"
-                className="tl-dock-active-indicator"
-                transition={prefersReducedMotion ? { duration: 0 } : { type: 'tween', duration: MOTION_DURATION.fast, ease: MOTION_EASE_ENTER }}
-              />
+              <span className="tl-dock-active-indicator tl-dock-active-indicator--css" />
             )}
-          </motion.button>
+          </button>
         );
       })}
-    </motion.div>
+    </div>
   </nav>;
 };
 
