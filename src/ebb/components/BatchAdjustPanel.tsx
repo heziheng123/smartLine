@@ -263,28 +263,29 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
   const impactedDailyCount = preview.sourceIdsToClear.filter((id) => scheduledReviewIds.has(id)).length;
   const overloadBefore = preview.dayLoads?.filter((day) => day.beforeOverCapacity).length ?? 0;
   const overloadAfter = preview.dayLoads?.filter((day) => day.afterOverCapacity).length ?? 0;
-  const presetImpacts = useMemo<Partial<Record<Exclude<PlanningPreset, 'custom'>, { moved: number; overloadBefore: number; overloadAfter: number }>>>(() => {
-    if (goalKind !== 'backlog' && goalKind !== 'balance') return {};
-    return Object.fromEntries((['gentle', 'balanced', 'rapid'] as const).map((preset) => {
-      const values = planningPresetValues[preset];
-      const presetRequest: BatchReviewRequest = {
-        topicKeys: [...selectedKeys],
-        mode: 'goal',
-        goal: {
-          kind: goalKind,
-          startDate: today,
-          ...values,
-          protectedTaskIds: [...scheduledReviewIds],
-        },
-      };
-      const result = planBatchReviewAdjustment(reviewTasks, settings, presetRequest);
-      return [preset, {
-        moved: result.rescheduledRounds,
-        overloadBefore: result.dayLoads?.filter((day) => day.beforeOverCapacity).length ?? 0,
-        overloadAfter: result.dayLoads?.filter((day) => day.afterOverCapacity).length ?? 0,
-      }];
-    }));
-  }, [goalKind, planningPresetValues, reviewTasks, scheduledReviewIds, selectedKeys, settings, today]);
+  // 预设影响懒算：只算当前悬停/选中的那一个，避免每次渲染 ×3 全量规划
+  const [hoveredPreset, setHoveredPreset] = useState<Exclude<PlanningPreset, 'custom'> | null>(null);
+  const activeImpactPreset = hoveredPreset ?? (planningPreset === 'custom' ? null : planningPreset);
+  const activePresetImpact = useMemo<{ moved: number; overloadBefore: number; overloadAfter: number } | null>(() => {
+    if ((goalKind !== 'backlog' && goalKind !== 'balance') || !activeImpactPreset) return null;
+    const values = planningPresetValues[activeImpactPreset];
+    const presetRequest: BatchReviewRequest = {
+      topicKeys: [...selectedKeys],
+      mode: 'goal',
+      goal: {
+        kind: goalKind,
+        startDate: today,
+        ...values,
+        protectedTaskIds: [...scheduledReviewIds],
+      },
+    };
+    const result = planBatchReviewAdjustment(reviewTasks, settings, presetRequest);
+    return {
+      moved: result.rescheduledRounds,
+      overloadBefore: result.dayLoads?.filter((day) => day.beforeOverCapacity).length ?? 0,
+      overloadAfter: result.dayLoads?.filter((day) => day.afterOverCapacity).length ?? 0,
+    };
+  }, [activeImpactPreset, goalKind, planningPresetValues, reviewTasks, scheduledReviewIds, selectedKeys, settings, today]);
   const hasInvalidIntervals = (goalKind === 'cadence'
     || (goalKind === 'lifecycle' && lifecycleOperation === 'restart')
     || (goalKind === 'advanced' && advancedKind === 'template'))
@@ -503,7 +504,7 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                   </div>
                   <div className="eb-adjust-preset-row" role="group" aria-label="规划预设">
                     {PLANNING_PRESETS.map((preset) => {
-                      const impact = presetImpacts[preset.kind];
+                      const impact = preset.kind === activeImpactPreset ? activePresetImpact : null;
                       return (
                         <button
                           key={preset.kind}
@@ -511,6 +512,10 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                           title={impact ? `${impact.moved} 轮改期 · 超载 ${impact.overloadBefore}→${impact.overloadAfter}` : preset.description}
                           className={planningPreset === preset.kind ? 'is-active' : ''}
                           onClick={() => applyPlanningPreset(preset.kind)}
+                          onMouseEnter={() => setHoveredPreset(preset.kind)}
+                          onFocus={() => setHoveredPreset(preset.kind)}
+                          onMouseLeave={() => setHoveredPreset((cur) => (cur === preset.kind ? null : cur))}
+                          onBlur={() => setHoveredPreset((cur) => (cur === preset.kind ? null : cur))}
                         >
                           <strong>{preset.label.replace('调整', '').replace('清理', '')}</strong>
                         </button>

@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useState, useTransition } from 'react';
 import { createPortal } from 'react-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useRef } from 'react';
 import { AlertTriangle, CalendarRange, Clock3, X } from 'lucide-react';
 import { previewProjectShift, shiftProjectSchedule } from '@/services/projectShiftCommands';
 
@@ -13,36 +15,54 @@ interface ProjectShiftDialogProps {
 const actionLabel = (days: number) => days > 0 ? `顺延 ${days} 天` : `提前 ${Math.abs(days)} 天`;
 
 const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskName, onClose, onApplied }) => {
+  const [daysInput, setDaysInput] = useState('1');
   const [days, setDays] = useState(1);
+  const [isPending, startTransition] = useTransition();
   const [selectedBlockIds, setSelectedBlockIds] = useState<string[] | null>(null);
   const [error, setError] = useState('');
-  const allPreviewState = useMemo(() => {
+  const listParentRef = useRef<HTMLDivElement>(null);
+  // 天数输入防抖：输入不堵，预览在 transition 中计算
+  const changeDays = (value: number) => {
+    const clamped = Number.isFinite(value) ? Math.max(-365, Math.min(365, Math.trunc(value))) : 1;
+    setDaysInput(String(clamped || 1));
+    setError('');
+    startTransition(() => setDays(clamped || 1));
+  };
+  // 全量候选只算一次骨架（selected==null 时复用为预览，避免双重全量计算）
+  const basePreviewState = useMemo(() => {
     try {
       return { preview: previewProjectShift(taskId, days), error: '' };
     } catch (cause) {
       return { preview: null, error: cause instanceof Error ? cause.message : '无法读取项目任务' };
     }
   }, [days, taskId]);
-  const candidates = allPreviewState.preview?.project.tasks ?? [];
-  const selected = selectedBlockIds ?? candidates.map((task) => task.blockId);
+  const candidates = basePreviewState.preview?.project.tasks ?? [];
+  const selectedSet = useMemo(
+    () => new Set(selectedBlockIds ?? candidates.map((task) => task.blockId)),
+    [selectedBlockIds, candidates],
+  );
+  const selected = useDeferredValue([...selectedSet]);
   const previewState = useMemo(() => {
+    if (selectedBlockIds === null) return basePreviewState;
     try {
       return { preview: previewProjectShift(taskId, days, selected), error: '' };
     } catch (cause) {
       return { preview: null, error: cause instanceof Error ? cause.message : '无法生成调整预览' };
     }
-  }, [days, selected, taskId]);
+  }, [basePreviewState, days, selected, selectedBlockIds, taskId]);
   const preview = previewState.preview;
+  // O(1) 查表替代渲染期 find
+  const nextByBlockId = useMemo(() => {
+    const map = new Map<string, (typeof candidates)[number]>();
+    for (const item of preview?.project.tasks ?? []) map.set(item.blockId, item);
+    return map;
+  }, [preview]);
+  const selectedCount = selectedSet.size;
   const deadlineRisks = preview?.project.tasks.filter((task) => task.exceedsDeadline) ?? [];
   const movedDailyCount = preview
     ? preview.daily.movedSlotItems + preview.daily.movedTimeBlocks + preview.daily.collisionFallbacks
     : 0;
-  const allSelected = candidates.length > 0 && selected.length === candidates.length;
-
-  const changeDays = (value: number) => {
-    setDays(value || 1);
-    setError('');
-  };
+  const allSelected = candidates.length > 0 && selectedCount === candidates.length;
 
   const toggleTask = (blockId: string) => {
     setSelectedBlockIds((current) => {
@@ -56,7 +76,7 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
   const toggleAll = () => setSelectedBlockIds(allSelected ? [] : candidates.map((task) => task.blockId));
 
   const apply = () => {
-    const result = shiftProjectSchedule(taskId, days, selected);
+    const result = shiftProjectSchedule(taskId, days, [...selectedSet]);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -98,9 +118,12 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
                   type="number"
                   min={-365}
                   max={365}
-                  value={days}
+                  value={daysInput}
                   aria-label="自定义调整天数"
-                  onChange={(event) => changeDays(Math.max(-365, Math.min(365, Math.trunc(Number(event.target.value) || 1))))}
+                  onChange={(event) => {
+                    setDaysInput(event.target.value);
+                    changeDays(Number(event.target.value));
+                  }}
                 />
                 天
               </label>
@@ -109,23 +132,19 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
 
           <section className="psd-task-section" aria-label="选择要调整的任务">
             <div className="psd-task-section-header">
-              <div><strong>选择任务</strong><small>已选 {selected.length} / {candidates.length} 个可调整任务</small></div>
+              <div><strong>选择任务</strong><small>已选 {selectedCount} / {candidates.length} 个可调整任务{isPending ? ' · 预览更新中…' : ''}</small></div>
               <button type="button" onClick={toggleAll} disabled={candidates.length === 0}>{allSelected ? '取消全选' : '全选'}</button>
             </div>
             {candidates.length === 0 ? (
               <p className="psd-empty">没有可调整的任务。已完成、未排期及数量任务会保留原状。</p>
             ) : (
-              <div className="psd-task-list">
-                {candidates.map((task) => {
-                  const checked = selected.includes(task.blockId);
-                  const next = preview?.project.tasks.find((item) => item.blockId === task.blockId);
-                  return <label key={task.blockId} className={checked ? 'is-selected' : ''}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleTask(task.blockId)} />
-                    <span><strong>{task.title}</strong><small>{task.fromDate} → {next?.toDate ?? task.toDate}</small></span>
-                    {next?.exceedsDeadline && <em>超过截止 {next.deadline}</em>}
-                  </label>;
-                })}
-              </div>
+              <ShiftTaskList
+                candidates={candidates}
+                selectedSet={selectedSet}
+                nextByBlockId={nextByBlockId}
+                onToggle={toggleTask}
+                listParentRef={listParentRef}
+              />
             )}
           </section>
 
@@ -150,14 +169,14 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
               )}
             </>
           )}
-          {(error || allPreviewState.error || previewState.error) && <div className="psd-error" role="alert">{error || allPreviewState.error || previewState.error}</div>}
+          {(error || previewState.error) && <div className="psd-error" role="alert">{error || previewState.error}</div>}
         </div>
 
         <footer className="psd-footer">
           <span>确认后可立即撤销本次调整</span>
           <div>
             <button type="button" onClick={onClose}>取消</button>
-            <button type="button" className="is-primary" disabled={!preview || selected.length === 0} onClick={apply}>确认{actionLabel(days)}</button>
+            <button type="button" className="is-primary" disabled={!preview || selectedCount === 0} onClick={apply}>确认{actionLabel(days)}</button>
           </div>
         </footer>
       </section>
@@ -165,5 +184,44 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
     document.body,
   );
 };
+
+type ShiftCandidate = { blockId: string; title: string; fromDate: string; toDate: string };
+
+function ShiftTaskList({ candidates, selectedSet, nextByBlockId, onToggle, listParentRef }: {
+  candidates: ShiftCandidate[];
+  selectedSet: Set<string>;
+  nextByBlockId: Map<string, { toDate: string; deadline?: string; exceedsDeadline?: boolean }>;
+  onToggle: (blockId: string) => void;
+  listParentRef: React.RefObject<HTMLDivElement>;
+}) {
+  const rowVirtualizer = useVirtualizer({
+    count: candidates.length,
+    getScrollElement: () => listParentRef.current,
+    estimateSize: () => 52,
+    overscan: 8,
+  });
+  return (
+    <div ref={listParentRef} className="psd-task-list" style={{ maxHeight: 320, overflowY: 'auto' }}>
+      <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const task = candidates[virtualRow.index];
+          const checked = selectedSet.has(task.blockId);
+          const next = nextByBlockId.get(task.blockId);
+          return (
+            <label
+              key={task.blockId}
+              className={checked ? 'is-selected' : ''}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
+            >
+              <input type="checkbox" checked={checked} onChange={() => onToggle(task.blockId)} />
+              <span><strong>{task.title}</strong><small>{task.fromDate} → {next?.toDate ?? task.toDate}</small></span>
+              {next?.exceedsDeadline && <em>超过截止 {next.deadline}</em>}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default ProjectShiftDialog;

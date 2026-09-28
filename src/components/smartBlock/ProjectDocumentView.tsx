@@ -98,7 +98,6 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   onDeleteTask,
 }) => {
   const {
-    tasks: storeTasks,
     updateBlockBody,
     updateTextBlockContent,
     removeBlock,
@@ -106,7 +105,6 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     updateTaskBlocks,
   } = useTimelineStore(
     useShallow((s) => ({
-      tasks: s.tasks,
       updateBlockBody: s.updateBlockBody,
       updateTextBlockContent: s.updateTextBlockContent,
       removeBlock: s.removeBlock,
@@ -114,6 +112,9 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       updateTaskBlocks: s.updateTaskBlocks,
     })),
   );
+  // 细粒度订阅：只跟当前项目的 blocks 引用，避免其他项目变化导致全量重算
+  const { id: taskId } = task;
+  const storeBlocks = useTimelineStore((s) => s.tasks.find((t) => t.id === taskId)?.blocks);
   const [metaExpanded, setMetaExpanded] = useState(false);
   const [slashMenu, setSlashMenu] = useState<{ position: { top: number; left: number }; blockId: string } | null>(null);
   const [showBatchImport, setShowBatchImport] = useState(false);
@@ -131,9 +132,13 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   const [highlightedBlockId, setHighlightedBlockId] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [shiftFeedback, setShiftFeedback] = useState<{ text: string; operationId: string } | null>(null);
+  // 分片挂载：首帧只渲染前 N 张重卡片，其余用轻量占位，空闲时补齐
+  const RENDER_CHUNK = 24;
+  const [renderBudget, setRenderBudget] = useState(RENDER_CHUNK);
 
   useEffect(() => {
     if (!focusBlockId) return;
+    setRenderBudget(10000);
     setHideCompleted(false);
     setTodayOnly(false);
     setActiveTag(null);
@@ -153,11 +158,11 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   }, [focusBlockId, focusRequest]);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // 实时从 store 读取最新 blocks（防止 stale data）
-  const { id: taskId } = task;
+  // 实时从 store 读取最新 blocks（细粒度订阅，防止 stale data 且避免全表重渲染）
   const currentTask = useMemo(
-    () => storeTasks.find(t => t.id === taskId) ?? task,
-    [storeTasks, taskId, task],
+    () => ({ ...task, blocks: storeBlocks ?? task.blocks ?? [] }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [storeBlocks, task.id],
   );
   const blocks = useMemo(
     () => currentTask.blocks ?? [],
@@ -218,6 +223,11 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
   };
 
   const nodes = useGraphStore((state) => state.nodes);
+  const nodeById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const n of nodes) map.set(n.id, n.name);
+    return map;
+  }, [nodes]);
 
   const groupedByDate = useMemo(() => {
     const groups: DateGroup[] = [];
@@ -247,9 +257,8 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
           // 在 ProjectDocumentView 分组时，如果绑了多个节点，按第一个节点分组展示，或者可以用逗号拼接
           // 这里为了与原有逻辑尽量保持一致并兼顾多节点，使用第一个节点
           const nodeId = graphNodeIds[0];
-          const node = nodes.find(n => n.id === nodeId);
           groupKey = nodeId;
-          label = node ? node.name : '未知节点';
+          label = nodeById.get(nodeId) ?? '未知节点';
           icon = <Network size={14} aria-hidden="true" />;
         }
       } else {
@@ -288,7 +297,47 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     }
 
     return { groups, textBlocks };
-  }, [filteredSmartBlocks, groupByWeek, groupDimension, nodes]);
+  }, [filteredSmartBlocks, groupByWeek, groupDimension, nodeById]);
+
+  // 切换项目/过滤条件时重置预算；空闲时分片补齐剩余卡片
+  useEffect(() => {
+    setRenderBudget(RENDER_CHUNK);
+  }, [task.id, hideCompleted, activeTag, todayOnly, groupDimension, groupByWeek]);
+  const totalSmartCount = useMemo(
+    () => groupedByDate.groups.reduce((sum, g) => sum + g.blocks.length, 0),
+    [groupedByDate],
+  );
+  useEffect(() => {
+    if (renderBudget >= totalSmartCount) return;
+    let cancelled = false;
+    let idleId = 0;
+    let timer = 0;
+    const grow = () => {
+      if (cancelled) return;
+      setRenderBudget((prev) => Math.min(prev + RENDER_CHUNK, totalSmartCount));
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(grow, { timeout: 800 });
+    } else {
+      timer = window.setTimeout(grow, 120);
+    }
+    return () => {
+      cancelled = true;
+      if (idleId) window.cancelIdleCallback(idleId);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [renderBudget, totalSmartCount]);
+
+  // 按预算切分每组可见卡片（折叠组不占预算）；超预算的只渲染轻量占位，保持拖拽索引连续
+  const budgetedGroups = useMemo(() => {
+    let remaining = renderBudget;
+    return groupedByDate.groups.map((group) => {
+      if (collapsedDates.has(group.key)) return { group, visibleCount: group.blocks.length, hiddenCount: 0 };
+      const visibleCount = Math.max(0, Math.min(group.blocks.length, remaining));
+      remaining -= visibleCount;
+      return { group, visibleCount, hiddenCount: group.blocks.length - visibleCount };
+    });
+  }, [groupedByDate, renderBudget, collapsedDates]);
 
   const toggleDateCollapse = useCallback((date: string) => {
     setCollapsedDates(prev => {
@@ -889,7 +938,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
               {/* 日期/周分组 */}
               {groupedByDate.groups.length > 0 && (
                 <div className="pdv-kanban-board">
-                  {groupedByDate.groups.map((group) => {
+                  {budgetedGroups.map(({ group, visibleCount }) => {
                     const isCollapsed = collapsedDates.has(group.key);
                     const duration = group.blocks.reduce((s, b) => s + (isQuantityTask(b.header) ? 0 : b.header.duration), 0);
                     const doneCount = group.blocks.filter(b => b.header.isCompleted).length;
@@ -937,16 +986,21 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                                         {...provided.draggableProps}
                                         {...provided.dragHandleProps}
                                         className={`${snapshot.isDragging ? 'pdv-drag-item--dragging' : ''} ${highlightedBlockId === block.id ? 'ring-2 ring-indigo-400 ring-offset-2 rounded-xl' : ''}`}
+                                        style={{ ...provided.draggableProps.style, contentVisibility: 'auto', containIntrinsicSize: 'auto 96px' }}
                                       >
-                                        <SmartTaskBlockCard
-                                          parentTaskId={task.id}
-                                          block={block}
-                                          onUpdateHeader={handleUpdateHeader}
-                                          onUpdateBody={handleUpdateBody}
-                                          onDelete={handleDeleteBlock}
-                                          onCommandError={setOperationError}
-                                          expandOverride={expandAll}
-                                        />
+                                        {idx < visibleCount ? (
+                                          <SmartTaskBlockCard
+                                            parentTaskId={task.id}
+                                            block={block}
+                                            onUpdateHeader={handleUpdateHeader}
+                                            onUpdateBody={handleUpdateBody}
+                                            onDelete={handleDeleteBlock}
+                                            onCommandError={setOperationError}
+                                            expandOverride={expandAll}
+                                          />
+                                        ) : (
+                                          <div className="stb-card" aria-hidden="true" style={{ minHeight: 64 }} />
+                                        )}
                                       </div>
                                     )}
                                   </Draggable>
@@ -959,6 +1013,16 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
                       </div>
                     );
                   })}
+                  {renderBudget < totalSmartCount && (
+                    <button
+                      type="button"
+                      className="pdv-btn"
+                      style={{ margin: '12px auto', display: 'block' }}
+                      onClick={() => setRenderBudget((prev) => Math.min(prev + RENDER_CHUNK * 2, totalSmartCount))}
+                    >
+                      加载更多任务（剩余 {totalSmartCount - renderBudget} 项）
+                    </button>
+                  )}
                 </div>
               )}
             </div>

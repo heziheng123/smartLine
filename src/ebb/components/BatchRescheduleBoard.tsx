@@ -207,6 +207,8 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
   // F-14 修复：单一 toast timer ref + helper。旧实现 3 处独立的 window.setTimeout
   // 会导致连续触发时第一个 timer 仍然运行、清掉第二个 toast 的 state。
   const toastTimerRef = useRef<number | null>(null);
+  // 拖拽预览节流：onDragUpdate 触发频率极高，用 rAF 合并为每帧一次 setState
+  const dragPreviewRaf = useRef<number | null>(null);
   const showToast = useCallback((next: MoveValidationError, durationMs = 3000) => {
     if (toastTimerRef.current !== null) {
       window.clearTimeout(toastTimerRef.current);
@@ -221,6 +223,10 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
     if (toastTimerRef.current !== null) {
       window.clearTimeout(toastTimerRef.current);
       toastTimerRef.current = null;
+    }
+    if (dragPreviewRaf.current !== null) {
+      cancelAnimationFrame(dragPreviewRaf.current);
+      dragPreviewRaf.current = null;
     }
   }, []);
 
@@ -333,6 +339,10 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
   };
 
   const handleDragEnd = (result: DropResult) => {
+    if (dragPreviewRaf.current !== null) {
+      cancelAnimationFrame(dragPreviewRaf.current);
+      dragPreviewRaf.current = null;
+    }
     setDragPreview(null);
     const { draggableId, destination } = result;
     if (!destination) return;
@@ -479,10 +489,19 @@ const BatchRescheduleBoard: React.FC<BatchRescheduleBoardProps> = ({
         </header>
 
         <DragDropContext onDragUpdate={(update) => {
-          if (update.destination) {
-            const targetDate = update.destination.droppableId.replace('ebb-day-', '');
-            handleDragUpdate(update.draggableId, targetDate);
+          if (!update.destination) {
+            dragPreviewRaf.current = null;
+            setDragPreview(null);
+            return;
           }
+          // 节流到 animation frame：拖拽移动每像素都会触发 onDragUpdate，直接 setState 会重渲染整板
+          const targetDate = update.destination.droppableId.replace('ebb-day-', '');
+          const dragId = update.draggableId;
+          if (dragPreviewRaf.current) return;
+          dragPreviewRaf.current = requestAnimationFrame(() => {
+            dragPreviewRaf.current = null;
+            handleDragUpdate(dragId, targetDate);
+          });
         }} onDragEnd={handleDragEnd}>
           <div className="ebb-new-main">
           {/* Calendar Area */}

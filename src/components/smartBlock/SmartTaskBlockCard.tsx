@@ -4,7 +4,7 @@
 // 支持：完成切换、标签选择、日期修改、Body 内联编辑
 // ============================================================
 
-import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useRef, useState, useEffect, useMemo, memo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
@@ -41,8 +41,7 @@ import { useGraphBindingStore } from '@/graph/bindingStore';
 import { requestCompletedBindingStrategy } from '@/graph/bindingDecision';
 import type { CompletedTaskBindingStrategy } from '@/domain/projectTaskEffects';
 import { useTimelineStore } from '@/store';
-import { motion, AnimatePresence } from 'framer-motion';
-import { MOTION_DURATION, MOTION_EASE_ENTER, MOTION_SPRING_GENTLE } from '@/motion/system';
+import { motion } from 'framer-motion';
 import QuantityProgressDialog from '@/components/dailySchedule/QuantityProgressDialog';
 import { requestProjectTaskCompletion, requestProjectTaskUpdate } from '@/services/projectTaskCompletion';
 
@@ -61,7 +60,7 @@ interface SmartTaskBlockCardProps {
 
 const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
 
-export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
+export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = memo(function SmartTaskBlockCardInner({
   parentTaskId,
   block,
   onUpdateHeader,
@@ -70,7 +69,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   onCommandError,
   compact = false,
   expandOverride = null,
-}) => {
+}) {
   const { header, body } = block;
   const isQuantity = isQuantityTask(header);
   const isLegacyVocabulary = isVocabularyTask(header);
@@ -155,9 +154,21 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     if (!showGraphPicker) graphBindingStrategyRef.current = null;
   }, [showGraphPicker]);
 
+  const [titleFocused, setTitleFocused] = useState(false);
   const { nodes, getNodeById } = useGraphStore(
     useShallow((state) => ({ nodes: state.nodes, getNodeById: state.getNodeById })),
   );
+  const nodePrefixIndex = useMemo(() => {
+    const index = new Map<string, string>();
+    for (const n of nodes) {
+      const key = n.name.toLowerCase();
+      for (let len = 1; len <= key.length; len += 1) {
+        const prefix = key.slice(0, len);
+        if (!index.has(prefix)) index.set(prefix, n.name);
+      }
+    }
+    return index;
+  }, [nodes]);
   const graphNodeIds = useMemo(() => getValidGraphNodeIds(header), [header]);
   const validGraphNodeIds = useMemo(() => graphNodeIds.filter(id => getNodeById(id)), [graphNodeIds, getNodeById]);
   const graphNodes = useMemo(() => {
@@ -165,15 +176,13 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     return validGraphNodeIds.map(id => getNodeById(id)) as typeof nodes;
   }, [graphNodeIds, validGraphNodeIds, getNodeById]);
 
-  // 计算任务标题的幽灵文本（智能推荐节点名称）
+  // 幽灵文本只在标题聚焦时计算，避免 100+ 卡片每行全表扫描
   const titleGhostText = useMemo(() => {
-    if (!titleDraft || header.isCompleted) return '';
-    const match = nodes.find(n => n.name.toLowerCase().startsWith(titleDraft.toLowerCase()));
-    if (match) {
-      return titleDraft + match.name.slice(titleDraft.length);
-    }
+    if (!titleFocused || !titleDraft || header.isCompleted) return '';
+    const hit = nodePrefixIndex.get(titleDraft.toLowerCase());
+    if (hit && hit.length > titleDraft.length) return titleDraft + hit.slice(titleDraft.length);
     return '';
-  }, [titleDraft, header.isCompleted, nodes]);
+  }, [titleFocused, titleDraft, header.isCompleted, nodePrefixIndex]);
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Tab' && titleGhostText && titleGhostText !== titleDraft) {
@@ -396,12 +405,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
     // 紧凑模式：单行卡条
     return (
       <>
-        <motion.div
-          layout
-          initial={{ opacity: 0, y: 4, scale: 0.995 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 2, scale: 0.995 }}
-          transition={MOTION_SPRING_GENTLE}
+        <div
           className={`stb-card stb-card--compact ${header.isCompleted ? 'stb-card--done' : ''}`}
           style={{ borderLeftColor: leftBarColor }}
           onClick={() => setBodyExpanded(!bodyExpanded)}
@@ -431,21 +435,17 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
             value={titleDraft}
             onChange={(e) => handleTitleChange(e.target.value)}
-            onBlur={commitTitle}
+            onFocus={() => setTitleFocused(true)}
+            onBlur={() => { setTitleFocused(false); commitTitle(); }}
           />
           <span className="stb-meta">
             {isQuantity
               ? <><Hash size={12} /> {quantityCompleted}/{quantityTotal} {quantityUnit} · <Clock size={12} /> 每日 {getTaskEstimatedMinutes(header)}min</>
               : <><Clock size={12} /> {getTaskEstimatedMinutes(header)}min</>}
           </span>
-          <AnimatePresence initial={false}>
-            {bodyExpanded && (
-              <motion.div
+          {bodyExpanded && (
+              <div
                 className="stb-body-compact"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: MOTION_DURATION.standard, ease: MOTION_EASE_ENTER }}
                 style={{ overflow: 'hidden', width: '100%' }}
               >
                 {hasBody ? (
@@ -453,10 +453,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                 ) : (
                   <span className="stb-body-empty">点击编辑详情...</span>
                 )}
-              </motion.div>
+              </div>
             )}
-          </AnimatePresence>
-        </motion.div>
+        </div>
         {showQuantityProgress && (
           <QuantityProgressDialog
             taskId={parentTaskId}
@@ -470,12 +469,7 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
   }
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 4, scale: 0.995 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 2, scale: 0.995 }}
-      transition={MOTION_SPRING_GENTLE}
+    <div
       className={`stb-card ${header.isCompleted ? 'stb-card--done' : ''}`}
       style={{ borderLeftColor: leftBarColor }}
     >
@@ -548,7 +542,8 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
               className={`stb-title ${header.isCompleted ? 'stb-title--done' : ''}`}
               value={titleDraft}
               onChange={(e) => handleTitleChange(e.target.value)}
-              onBlur={commitTitle}
+              onFocus={() => setTitleFocused(true)}
+              onBlur={() => { setTitleFocused(false); commitTitle(); }}
               onKeyDown={handleTitleKeyDown}
               rows={1}
               style={{ position: 'relative', zIndex: 2, background: 'transparent' }}
@@ -708,15 +703,10 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
             </div>
           )}
 
-          {/* 第三层：Body 详情区（紧贴元数据下方，缩进+引述线） */}
-          <AnimatePresence initial={false}>
-            {bodyExpanded && (
-              <motion.div 
+          {/* 第三层：Body 详情区（紧贴元数据下方，缩进+引述线，折叠时不挂载富文本） */}
+          {bodyExpanded && (
+              <div
                 className="stb-body"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: MOTION_DURATION.standard, ease: MOTION_EASE_ENTER }}
                 style={{ overflow: 'hidden' }}
               >
                 <div
@@ -733,9 +723,8 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
                     点击编辑详情...
                   </span>
                 )}
-              </motion.div>
+              </div>
             )}
-          </AnimatePresence>
         </div>
       </div>
 
@@ -814,9 +803,9 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = ({
           onClose={() => setShowQuantityProgress(false)}
         />
       )}
-    </motion.div>
+    </div>
   );
-};
+});
 
 /** 内联日历小组件（轻量版，用于 block 日期选择） */
 const MiniCalendarInline: React.FC<{

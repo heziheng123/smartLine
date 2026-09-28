@@ -2,7 +2,7 @@
 // 批量编辑对话框（沙盒预览 → 确认保存）
 // ============================================================
 
-import React, { useCallback, useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useState, useEffect } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -100,20 +100,46 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
     setRows(newRows);
   }, [rows]);
 
-  const summary = useMemo(() => summarizeRows(rows), [rows]);
+  const summaryRows = useDeferredValue(rows);
+  const summary = useMemo(() => summarizeRows(summaryRows), [summaryRows]);
   const canConfirm = summary.valid > 0 && summary.errors === 0;
-  
-  const { nodes } = useGraphStore();
 
-  // 直接编辑模式的更新
-  const updateRow = useCallback((rowId: string, field: keyof ParsedRow, value: ParsedRow[keyof ParsedRow]) => {
-    setRows(prev => cleanseRows(prev.map(r => r._rowId === rowId ? { ...r, [field]: value } : r)));
+  const nodes = useGraphStore((s) => s.nodes);
+  // 前缀索引：O(1) 幽灵补全，替代每行渲染期 nodes.find ×2
+  const nodePrefixIndex = useMemo(() => {
+    const index = new Map<string, string>();
+    for (const n of nodes) {
+      const key = n.name.toLowerCase();
+      for (let len = 1; len <= key.length; len += 1) {
+        const prefix = key.slice(0, len);
+        if (!index.has(prefix)) index.set(prefix, n.name);
+      }
+    }
+    return index;
+  }, [nodes]);
+
+  // 输入时只改单个字段（不全表 cleanse）；失焦/保存时再校验，保证打字不卡
+  const updateRowField = useCallback((rowId: string, field: keyof ParsedRow, value: ParsedRow[keyof ParsedRow]) => {
+    setRows((prev) => {
+      let changed = false;
+      const next = prev.map((r) => {
+        if (r._rowId !== rowId) return r;
+        if ((r[field] as unknown) === (value as unknown)) return r;
+        changed = true;
+        return { ...r, [field]: value };
+      });
+      return changed ? next : prev;
+    });
   }, []);
 
   const handleRowChange = (rowId: string, field: keyof ParsedRow, value: ParsedRow[keyof ParsedRow]) => {
-    // 这里为了性能可以防抖，但对于批量编辑场景，直接更新即可
-    updateRow(rowId, field, value);
+    updateRowField(rowId, field, value);
   };
+
+  // 失焦时对全表做一次校验（替代每次按键 cleanse，保证错误态最终一致）
+  const handleRowBlur = useCallback(() => {
+    setRows((prev) => cleanseRows(prev.map((r) => ({ ...r }))));
+  }, []);
 
   const deleteRow = (rowId: string) => {
     pushHistory(rows.filter((r) => r._rowId !== rowId));
@@ -135,9 +161,10 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   // ── 确认保存 ──────────────────────────────────────────────
 
   const doConfirm = () => {
-    const validRows = rows.filter((row) => row.title && !row._error);
+    const cleansed = cleanseRows(rows);
+    const validRows = cleansed.filter((row) => row.title && !row._error);
     if (validRows.length === 0) return;
-    onConfirm(rows);
+    onConfirm(cleansed);
   };
 
   const handleConfirm = () => {
@@ -340,22 +367,22 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                   const isEmpty = !r.title;
                   const hasError = !!r._error && !isEmpty;
                   const requiresStartDate = requiresTaskStartDate({ taskKind: r._taskKind });
-                  
-                  // 幽灵文本（知识节点）
+
+                  // 幽灵文本：前缀索引 O(1)，避免每行 nodes.find
                   let nodeGhost = '';
                   if (r.graphNodeName && r.graphNodeName.trim()) {
-                    const match = nodes.find(n => n.name.toLowerCase().startsWith(r.graphNodeName!.toLowerCase()));
-                    if (match) {
-                      nodeGhost = r.graphNodeName + match.name.slice(r.graphNodeName.length);
+                    const hit = nodePrefixIndex.get(r.graphNodeName.toLowerCase());
+                    if (hit && hit.length > r.graphNodeName.length) {
+                      nodeGhost = r.graphNodeName + hit.slice(r.graphNodeName.length);
                     }
                   }
 
-                  // 幽灵文本（任务名称）
+                  // 幽灵文本（任务名称）：前缀索引 O(1)
                   let titleGhost = '';
                   if (r.title && r.title.trim()) {
-                    const match = nodes.find(n => n.name.toLowerCase().startsWith(r.title.toLowerCase()));
-                    if (match) {
-                      titleGhost = r.title + match.name.slice(r.title.length);
+                    const hit = nodePrefixIndex.get(r.title.toLowerCase());
+                    if (hit && hit.length > r.title.length) {
+                      titleGhost = r.title + hit.slice(r.title.length);
                     }
                   }
 
@@ -387,6 +414,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                             className="bi-edit-input"
                             value={r.title}
                             onChange={(e) => handleRowChange(r._rowId, 'title', e.target.value)}
+                            onBlur={handleRowBlur}
                             onKeyDown={(e) => {
                               if (e.key === 'Tab' && titleGhost && titleGhost !== r.title) {
                                 e.preventDefault();
