@@ -47,7 +47,10 @@ import { getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/util
 import { addDays, todayStr } from '@/utils/dateSafe';
 import { openProjectTaskCreate } from '@/components/smartBlock/projectTaskCreate';
 import '@/styles/phone.css';
+import '@/styles/daily-review.css';
 import { MOTION_DURATION, MOTION_EASE_ENTER } from '@/motion/system';
+
+const ReviewView = React.lazy(() => import('@/review/components/ReviewView'));
 
 interface PhoneWorkspaceProps {
   currentView: AppModule;
@@ -213,6 +216,7 @@ type PhoneScheduleEntry =
 const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenProject, onOpenFullView }) => {
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [quickTitle, setQuickTitle] = useState('');
+  const [reviewMode, setReviewMode] = useState<'today' | 'archive' | null>(null);
   const schedules = useDailyScheduleStore((state) => state.schedules);
   const addScheduledItem = useDailyScheduleStore((state) => state.addScheduledItem);
   const updateScheduledItem = useDailyScheduleStore((state) => state.updateScheduledItem);
@@ -298,6 +302,7 @@ const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPr
         <button type="button" onClick={() => setSelectedDate(addDays(selectedDate, 1))} aria-label="后一天"><ChevronRight size={18} /></button>
         {selectedDate !== todayStr() && <button type="button" className="phone-text-button" onClick={() => setSelectedDate(todayStr())}>今天</button>}
       </div>
+      <div className="phone-review-actions"><button type="button" onClick={() => setReviewMode('today')}>每日复盘</button><button type="button" onClick={() => setReviewMode('archive')}>所有记录</button></div>
       <div className="phone-summary-grid">
         <button type="button" onClick={() => onOpenFullView()}><Target size={17} /><strong>{completed}/{entries.length}</strong><span>完成</span></button>
         <button type="button" onClick={() => onOpenFullView()}><Clock3 size={17} /><strong>{plannedMinutes}m</strong><span>已安排</span></button>
@@ -340,6 +345,7 @@ const PhoneTodayView: React.FC<PhoneWorkspaceProps> = ({ tasks, groups, onOpenPr
           );
         })}
       </div>
+      {reviewMode && <div className="phone-review-overlay" role="presentation"><div className="phone-review-dialog" role="dialog" aria-modal="true" aria-label="每日复盘"><React.Suspense fallback={<p className="phone-review-loading">正在加载每日复盘…</p>}><ReviewView key={reviewMode} targetDate={selectedDate} initialMode={reviewMode} onClose={() => setReviewMode(null)} /></React.Suspense></div></div>}
     </section>
   );
 };

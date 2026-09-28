@@ -27,10 +27,12 @@ import {
 } from '@/review/model';
 import { cleanExpiredVoiceAudio, eraseVoiceAudio, localReviewDeviceId, prepareVoiceWav, recoverStoredVoiceAudio, settleVoiceAudioRetention, type CapturedVoiceAudio } from '@/review/audio';
 import AnnotatedReviewText from '@/review/components/AnnotatedReviewText';
+import ReviewArchive from '@/review/components/ReviewArchive';
 import VoiceCaptureButton from '@/review/components/VoiceCaptureButton';
-import { loadDailyReviews, loadReviewSyncStates, loadReviewTextDrafts, saveDailyReview, saveDailyReviews, saveReviewTextDrafts, type ReviewSyncState } from '@/review/repository';
+import { loadDailyReviews, loadReviewSyncStates, loadReviewTextDrafts, saveDailyReview, saveDailyReviews, saveReviewSyncStates, saveReviewTextDrafts, type ReviewSyncState } from '@/review/repository';
 import { enqueueReviewSync, fetchRemoteReview, flushReviewOutbox, recordReviewServerRevision, resolveReviewConflict, sterilizeAsrDraft, structureReview, transcribeVoiceSegment, type PersonalTerm } from '@/review/sync';
 import { useAuth } from '@/auth/AuthContext';
+import { todayStr } from '@/utils/dateSafe';
 
 const sections: { id: ReviewSection; title: string; hint: string }[] = [
   { id: 'progress', title: '今日进展', hint: '完成、部分完成或正在推进的事情' },
@@ -42,9 +44,10 @@ const sections: { id: ReviewSection; title: string; hint: string }[] = [
 interface ReviewViewProps {
   targetDate: string;
   onClose: () => void;
+  initialMode?: 'today' | 'archive';
 }
 
-export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
+export default function ReviewView({ targetDate, onClose, initialMode = 'today' }: ReviewViewProps) {
   const auth = useAuth();
   const [reviews, setReviews] = useState<DailyReview[] | null>(null);
   const [textDrafts, setTextDrafts] = useState<Record<string, string> | null>(null);
@@ -60,6 +63,8 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   const [voiceConsent, setVoiceConsent] = useState(() => localStorage.getItem('smart-line-review-voice-consent-v1') === 'accepted');
   const [personalTerms, setPersonalTerms] = useState<PersonalTerm[]>(() => { try { const value = JSON.parse(localStorage.getItem('smart-line-review-personal-terms-v1') ?? '[]'); return Array.isArray(value) ? value.filter((item): item is PersonalTerm => item && typeof item.from === 'string' && typeof item.to === 'string').slice(0, 30) : []; } catch { return []; } });
   const [viewMode, setViewMode] = useState<'source' | 'organized'>('source');
+  const [pageMode, setPageMode] = useState<'today' | 'archive'>(initialMode);
+  const viewRef = useRef<HTMLElement | null>(null);
   const reviewsRef = useRef<DailyReview[] | null>(null);
   const syncEnabled = auth.enabled && auth.status === 'authenticated';
   const reviewsReady = reviews !== null;
@@ -140,6 +145,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   const current = review ?? createDailyReview(reviewDate);
   const currentItems = activeReviewItems(current);
   const sourceText = textDrafts?.[reviewDate] ?? '';
+  const changePage = (mode: 'today' | 'archive') => { setPageMode(mode); viewRef.current?.scrollTo(0, 0); };
   const updateSourceText = (text: string) => {
     setTextDrafts((currentDrafts) => {
       const nextDrafts = { ...(currentDrafts ?? {}), [reviewDate]: text };
@@ -306,17 +312,35 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
   const syncState = syncStates[current.id] ?? { serverRevision: null, status: 'local_only' as const };
 
   return (
-    <main className="review-view" aria-label="每日复盘">
+    <main ref={viewRef} className={`review-view ${pageMode === 'archive' ? 'review-view--archive' : ''}`} aria-label="每日复盘">
       <header className="review-view__header">
-        <div><p>每日复盘 · {reviewDate}</p><h1>今天发生了什么？</h1></div>
+        <div><p>每日复盘 · {pageMode === 'archive' ? '所有记录' : reviewDate}</p><h1>{pageMode === 'archive' ? '过去的复盘' : reviewDate === todayStr() ? '今天发生了什么？' : '这一天发生了什么？'}</h1></div>
         <div className="review-view__header-actions">
-          <span className={`review-sync-dot review-sync-dot--${syncState.status}`} title={syncState.status === 'synced' ? '已同步到云端' : syncState.status === 'sync_pending' ? '已保存到本机，等待同步' : syncState.status === 'sync_error' ? '同步失败，等待重试' : syncState.status === 'conflict' ? '发现冲突待处理' : '仅保存在本机'} aria-label="同步状态" role="img" />
-          {syncEnabled && <button type="button" className="review-button review-button--ghost" onClick={() => void update(current)}>立即同步</button>}
+          {pageMode === 'today' && <span className={`review-sync-dot review-sync-dot--${syncState.status}`} title={syncState.status === 'synced' ? '已同步到云端' : syncState.status === 'sync_pending' ? '已保存到本机，等待同步' : syncState.status === 'sync_error' ? '同步失败，等待重试' : syncState.status === 'conflict' ? '发现冲突待处理' : '仅保存在本机'} aria-label="同步状态" role="img" />}
+          {pageMode === 'today' && syncEnabled && review && <button type="button" className="review-button review-button--ghost" onClick={() => void update(current)}>立即同步</button>}
           <button type="button" className="review-button" onClick={onClose}><X size={16} />返回每日安排</button>
         </div>
       </header>
+      <nav className="review-page-tabs" aria-label="每日复盘页面">
+        <button type="button" className={pageMode === 'today' ? 'is-active' : ''} onClick={() => changePage('today')} aria-current={pageMode === 'today' ? 'page' : undefined}>当天复盘</button>
+        <button type="button" className={pageMode === 'archive' ? 'is-active' : ''} onClick={() => changePage('archive')} aria-current={pageMode === 'archive' ? 'page' : undefined}>所有记录</button>
+      </nav>
       {storageError && <p className="review-storage-error" role="alert">{storageError}</p>}
       {aiError && <p className="review-storage-error" role="alert">{aiError}</p>}
+      {pageMode === 'archive' ? <ReviewArchive key={auth.userId ?? 'local'} reviews={reviews} textDrafts={textDrafts} syncStates={syncStates} syncEnabled={syncEnabled} onOpenDate={(date, remote) => {
+        const local = reviewsRef.current?.find((item) => item.reviewDate === date);
+        if (!local && remote) {
+          publishReview(remote.review);
+          void saveDailyReview(remote.review).catch(() => setStorageError('云端复盘未能缓存到本机。'));
+          void recordReviewServerRevision(remote.review.id, remote.serverRevision).then(setSyncStates).catch(() => setStorageError('云端版本未能保存，请稍后重试同步。'));
+        } else if (local && remote && remote.serverRevision > (syncStates[local.id]?.serverRevision ?? 0)) {
+          const next = { ...syncStates, [local.id]: { serverRevision: remote.serverRevision, status: 'conflict' as const, error: '云端已有更新，本机内容已保留。', remoteReview: remote.review } };
+          setSyncStates(next);
+          void saveReviewSyncStates(next).catch(() => setStorageError('同步冲突状态未能保存，请暂时不要关闭页面。'));
+        }
+        setReviewDate(date);
+        changePage('today');
+      }} /> : <>
 
       <section className="review-card review-card--source">
         <textarea value={sourceText} onChange={(event) => updateSourceText(event.target.value)} placeholder="随便写写今天做了什么、哪里没做好、接下来怎么调整；也可以点右边直接说。" aria-label="记录今天发生的事" />
@@ -372,6 +396,7 @@ export default function ReviewView({ targetDate, onClose }: ReviewViewProps) {
         const solutions = annotations.filter((annotation) => annotation.type === 'solution').slice(0, 2).map((annotation) => version.text.slice(annotation.start, annotation.end));
         return <button type="button" key={item.id} className={item.reviewDate === reviewDate ? 'is-current' : ''} onClick={() => setReviewDate(item.reviewDate)}>{item.reviewDate}<span>{item.reviewStatus === 'completed' ? `完成 · v${item.completedVersions.length}` : '草稿'}</span>{problems.length > 0 && <small>问题：{problems.join('、')}</small>}{solutions.length > 0 && <small>调整：{solutions.join('、')}</small>}</button>;
       })}</div></section></div></details>}
+      </>}
     </main>
   );
 }

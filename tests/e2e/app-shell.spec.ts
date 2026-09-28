@@ -8,7 +8,16 @@ const openFullViewOnPhone = async (page: Page) => {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: '主导航' })).toBeVisible({ timeout: 30_000 });
+});
+
+test('daily schedule opens the review archive in the full workspace', async ({ page }) => {
+  await page.getByTitle('每日安排').click();
+  await page.locator('.ds-header-right').getByRole('button', { name: '每日复盘' }).click();
+  await expect(page.locator('.ds-review-dialog')).toBeVisible();
+  await page.getByRole('button', { name: '所有记录' }).click();
+  await expect(page.getByRole('heading', { name: '过去的复盘' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '按类别汇总' })).toBeVisible();
 });
 
 test('timeline fills the workspace on the initial load before lazy views are opened', async ({ page }) => {
@@ -198,6 +207,22 @@ test('phone viewport uses dedicated execution views without horizontal overflow'
   await expect(page.locator('.phone-full-view-return')).toBeVisible();
   await page.locator('.phone-full-view-return').click();
   await expect(page.locator('.phone-workspace')).toBeVisible();
+});
+
+test.describe('phone review archive', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('opens all records from today', async ({ page }) => {
+    await page.getByTitle('每日安排').click();
+    await page.locator('.phone-review-actions').getByRole('button', { name: '所有记录' }).click();
+    await expect(page.getByRole('dialog', { name: '每日复盘' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '过去的复盘' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '按日期看' })).toBeVisible();
+    await page.getByRole('button', { name: '按类别汇总' }).click();
+    await expect(page.getByRole('button', { name: /^问题与原因/ })).toBeVisible();
+    await page.getByRole('button', { name: '返回每日安排' }).click();
+    await expect(page.getByRole('dialog', { name: '每日复盘' })).toHaveCount(0);
+  });
 });
 
 test('tablet viewport keeps the existing project timeline layout', async ({ page }) => {

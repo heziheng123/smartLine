@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { DailyReview } from '../../src/review/model';
 
 const date = '2026-09-27';
 async function openHarness(page: Page) {
@@ -12,23 +13,108 @@ async function openHarness(page: Page) {
     </script></body></html>` }));
   await page.goto('/__regression__');
 }
-async function mountReview(page: Page, dates: string[]) {
-  await page.evaluate(async ({ dates, date }) => {
+async function mountReview(page: Page, dates: string[], withSections = false, conflict?: { review: DailyReview; serverRevision: number }) {
+  await page.evaluate(async ({ dates, date, withSections, conflict }) => {
     const { createElement, createRoot } = await import('/src/testing/reactTestAccess.ts');
     const { AuthContext } = await import('/src/auth/AuthContext.ts');
     const { default: ReviewView } = await import('/src/review/components/ReviewView.tsx');
     const model = await import('/src/review/model.ts');
     const repo = await import('/src/review/repository.ts');
-    await repo.saveDailyReviews(dates.map((day) => model.appendTextSegment(model.createDailyReview(day), 'old record')));
+    const reviews = dates.map((day) => {
+      let review = model.appendTextSegment(model.createDailyReview(day), 'old record');
+      if (withSections) review = model.addReviewItem(review, 'problems', `problem on ${day}`);
+      if (withSections && day === '2026-09-26') review = model.addReviewItem(review, 'progress', 'older progress');
+      if (withSections && day === '2026-09-26') review = model.addReviewAnnotation(review, 'problem', 0, 3);
+      return review;
+    });
+    await repo.saveDailyReviews(reviews);
+    if (conflict) await repo.saveReviewSyncStates({ [reviews[0]!.id]: { serverRevision: conflict.serverRevision, status: 'conflict', remoteReview: conflict.review } });
     createRoot(document.getElementById('probe')!).render(createElement(AuthContext.Provider, {
       value: { enabled: true, status: 'authenticated', userId: 'regression', logout: async () => {}, retry: () => {} },
     }, createElement(ReviewView, { targetDate: date, onClose: () => {} })));
-  }, { dates, date });
+  }, { dates, date, withSections, conflict });
   await expect(page.getByRole('button', { name: '保存为记录', exact: true })).toBeVisible();
 }
 async function readReviews(page: Page) {
   return page.evaluate(async () => (await import('/src/review/repository.ts')).loadDailyReviews());
 }
+
+test('all records shows local days and opens cloud-only days without changing saved local records', async ({ page }) => {
+  await openHarness(page);
+  const { addReviewItem, appendTextSegment, createDailyReview } = await import('../../src/review/model.ts');
+  const remote = addReviewItem(appendTextSegment(createDailyReview('2026-09-25'), 'cloud-only record'), 'problems', 'cloud problem');
+  await page.route('**/api/review-list*', (route) => route.fulfill({ json: { entries: [{ reviewDate: remote.reviewDate, revision: 1, status: 'draft', updatedAt: remote.updatedAt, segments: [{ id: remote.inputSegments[0]!.id, type: 'text', capturedAt: remote.inputSegments[0]!.capturedAt, text: 'cloud-only record' }], items: [{ itemId: remote.workingDraft.items[0]!.itemId, section: 'problems', text: 'cloud problem' }], annotations: [], snapshots: [] }], nextCursor: null } }));
+  await page.route('**/api/reviews/2026-09-25', (route) => route.fulfill({ json: { review: remote, serverRevision: 1 } }));
+  await mountReview(page, ['2026-09-27', '2026-09-26'], true);
+  await page.getByRole('button', { name: '所有记录' }).click();
+  const localDay = page.locator('.review-archive__day').filter({ hasText: '2026-09-26' });
+  await expect(localDay).toContainText('old record');
+  await expect(localDay.locator('.review-archive__raw')).toBeVisible();
+  await expect(localDay).toContainText('problem on 2026-09-26');
+  const cloudDay = page.locator('.review-archive__day').filter({ hasText: '2026-09-25' });
+  await expect(cloudDay).toContainText('cloud-only record');
+  await expect(cloudDay).toContainText('cloud problem');
+  await page.getByRole('button', { name: '按类别汇总' }).click();
+  await expect(page.getByText('问题与原因：3 天 · 4 条')).toBeVisible();
+  await expect(page.locator('.review-archive__day')).toHaveCount(3);
+  await expect(localDay).toContainText('原文标注 · 问题');
+  await page.locator('.review-archive__categories').getByRole('button', { name: /今日进展/ }).click();
+  await expect(page.locator('.review-archive__day')).toHaveCount(1);
+  await expect(page.locator('.review-archive__day')).toContainText('older progress');
+  await page.locator('.review-archive__categories').getByRole('button', { name: /问题与原因/ }).click();
+  await page.getByLabel('开始日期').fill('2026-09-26');
+  await expect(cloudDay).toHaveCount(0);
+  await page.getByLabel('开始日期').fill('');
+  await expect(cloudDay).toBeVisible();
+  expect((await readReviews(page)).map((review) => review.reviewDate)).toEqual(['2026-09-27', '2026-09-26']);
+  await cloudDay.getByRole('button', { name: '打开当天复盘' }).click();
+  await expect(page.getByText('每日复盘 · 2026-09-25')).toBeVisible();
+  await expect(page.locator('.review-paper')).toContainText('cloud-only record');
+});
+
+test('all records keeps both local and newer cloud content available for merge', async ({ page }) => {
+  await openHarness(page);
+  const { appendTextSegment, createDailyReview } = await import('../../src/review/model.ts');
+  const remote = appendTextSegment(createDailyReview('2026-09-27'), 'newer cloud record');
+  await page.route('**/api/review-list*', (route) => route.fulfill({ json: { entries: [{ reviewDate: remote.reviewDate, revision: 4, status: 'draft', updatedAt: remote.updatedAt, segments: [{ id: remote.inputSegments[0]!.id, type: 'text', capturedAt: remote.inputSegments[0]!.capturedAt, text: 'newer cloud record' }], items: [], annotations: [], snapshots: [] }], nextCursor: null } }));
+  await page.route('**/api/reviews/2026-09-27', (route) => route.fulfill({ json: { review: remote, serverRevision: 4 } }));
+  await mountReview(page, ['2026-09-27']);
+  await page.getByRole('button', { name: '所有记录' }).click();
+  const day = page.locator('.review-archive__day').filter({ hasText: '2026-09-27' });
+  await expect(day).toContainText('云端版本待核对');
+  await expect(day).toContainText('old record');
+  await expect(day.locator('.review-archive__cloud')).toContainText('newer cloud record');
+  expect((await readReviews(page))[0]?.inputSegments[0]?.type).toBe('text');
+  await day.getByRole('button', { name: '打开当天复盘' }).click();
+  await expect(page.getByRole('button', { name: '合并两台设备记录' })).toBeVisible();
+  await page.getByRole('button', { name: '合并两台设备记录' }).click();
+  await expect(page.locator('.review-paper')).toContainText('old record');
+  await expect(page.locator('.review-paper')).toContainText('newer cloud record');
+});
+
+test('all records shows a saved conflict even when the cloud list is unavailable', async ({ page }) => {
+  await openHarness(page);
+  const { addReviewItem, appendTextSegment, createDailyReview } = await import('../../src/review/model.ts');
+  const remote = addReviewItem(appendTextSegment(createDailyReview(date), 'saved cloud record'), 'problems', 'saved cloud problem');
+  const other = addReviewItem(createDailyReview('2026-09-26'), 'problems', 'recovered cloud problem');
+  let recovered = false;
+  await page.route('**/api/review-list*', (route) => route.fulfill(recovered
+    ? { json: { entries: [{ reviewDate: other.reviewDate, revision: 1, status: 'draft', updatedAt: other.updatedAt, segments: [], items: [{ itemId: other.workingDraft.items[0]!.itemId, section: 'problems', text: 'recovered cloud problem' }], annotations: [], snapshots: [] }], nextCursor: null } }
+    : { status: 503, json: { error: 'offline' } }));
+  await mountReview(page, [date], false, { review: remote, serverRevision: 4 });
+  await page.getByRole('button', { name: '所有记录' }).click();
+  await expect(page.getByRole('button', { name: '立即同步' })).toHaveCount(0);
+  const day = page.locator('.review-archive__day').filter({ hasText: date });
+  await expect(day).toContainText('同步冲突');
+  await expect(day.locator('.review-archive__cloud')).toContainText('saved cloud record');
+  await page.getByRole('button', { name: '按类别汇总' }).click();
+  await expect(day).toContainText('saved cloud problem');
+  recovered = true;
+  await page.getByRole('button', { name: '重试读取云端' }).click();
+  await expect(page.locator('.review-archive__day').filter({ hasText: '2026-09-26' })).toContainText('recovered cloud problem');
+  await day.getByRole('button', { name: '打开当天复盘' }).click();
+  await expect(page.getByRole('button', { name: '合并两台设备记录' })).toBeVisible();
+});
 
 test('AI completion preserves records saved while the request is pending', async ({ page }) => {
   await openHarness(page);
@@ -74,6 +160,7 @@ test('cloud records and revision baselines survive editing another date', async 
   await mountReview(page, ['2026-09-26']);
   await expect(page.getByText('cloud new date', { exact: true }).first()).toBeVisible();
   await expect.poll(() => page.evaluate(async (id) => (await (await import('/src/review/repository.ts')).loadReviewSyncStates())[id]?.serverRevision, remote.id)).toBe(7);
+  await page.locator('.review-history-drawer > summary').last().click();
   await page.getByRole('button', { name: /2026-09-26/ }).click();
   await page.locator('.review-card--source textarea').fill('edit older date');
   await page.getByRole('button', { name: '保存为记录', exact: true }).click();
@@ -125,6 +212,7 @@ test('pausing a recording after switching dates saves audio on its original revi
   });
   await page.getByRole('button', { name: '开始说', exact: true }).click();
   await expect(page.getByRole('button', { name: '暂停思考', exact: true })).toBeVisible();
+  await page.locator('.review-history-drawer > summary').last().click();
   await page.getByRole('button', { name: /2026-09-26/ }).click();
   await page.getByRole('button', { name: '暂停思考', exact: true }).click();
   await expect(page.getByRole('button', { name: '继续说', exact: true })).toBeVisible();

@@ -164,7 +164,7 @@
 }
 
 .ds-review-dialog {
-  width: min(960px, 100%);
+  width: min(1200px, 100%);
   max-height: calc(100vh - 36px);
   overflow: auto;
   border-radius: 16px;
