@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Hash, X } from 'lucide-react';
 import type { SmartTaskBlock } from '@/types';
 import {
@@ -60,7 +61,7 @@ const QuantityProgressDialog: React.FC<QuantityProgressDialogProps> = ({ taskId,
     onClose();
   };
 
-  return (
+  return createPortal(
     <div className="ds-vocab-overlay" role="presentation" onMouseDown={onClose}>
       <section className="ds-vocab-dialog ds-vocab-dialog--progress" role="dialog" aria-modal="true" aria-labelledby="quantity-progress-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="ds-vocab-dialog-header">
@@ -91,7 +92,8 @@ const QuantityProgressDialog: React.FC<QuantityProgressDialogProps> = ({ taskId,
           </div>
         </form>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

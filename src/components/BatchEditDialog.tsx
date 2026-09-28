@@ -2,7 +2,8 @@
 // 批量编辑对话框（沙盒预览 → 确认保存）
 // ============================================================
 
-import React, { useCallback, useDeferredValue, useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useRef, useState, useEffect } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -23,6 +24,7 @@ import { DEFAULT_TAGS, requiresTaskStartDate } from '@/utils/blocks';
 import { todayStr, isBeforeDay } from '@/utils/dateSafe';
 
 import { useGraphStore } from '@/graph/store';
+import { handleVirtualTableTab } from './virtualTableTab';
 
 interface BatchEditDialogProps {
   /**
@@ -46,16 +48,20 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   onClose,
   onConfirm,
 }) => {
-  const [rows, setRows] = useState<ParsedRow[]>([]);
-  const [initialized, setInitialized] = useState(false);
-
-  useEffect(() => {
-    if (!initialized) {
-      const blocksToEdit = initialBlocks || (task.blocks?.filter(b => b.type === 'smart-task') as SmartTaskBlock[]) || [];
-      setRows(blocksToRows(blocksToEdit));
-      setInitialized(true);
-    }
-  }, [initialized, initialBlocks, task.blocks]);
+  const [rows, setRows] = useState<ParsedRow[]>(() => {
+    const blocksToEdit = initialBlocks || (task.blocks?.filter(b => b.type === 'smart-task') as SmartTaskBlock[]) || [];
+    return blocksToRows(blocksToEdit);
+  });
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 33,
+    overscan: 8,
+  });
+  const visibleRows = rowVirtualizer.getVirtualItems();
+  const topSpace = visibleRows[0]?.start ?? 0;
+  const bottomSpace = rowVirtualizer.getTotalSize() - (visibleRows.at(-1)?.end ?? 0);
 
   // 批量排期工具栏
   const [showScheduler, setShowScheduler] = useState(false);
@@ -136,9 +142,29 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
     updateRowField(rowId, field, value);
   };
 
-  // 失焦时对全表做一次校验（替代每次按键 cleanse，保证错误态最终一致）
-  const handleRowBlur = useCallback(() => {
-    setRows((prev) => cleanseRows(prev.map((r) => ({ ...r }))));
+  const handleDateChange = useCallback((rowId: string, field: 'date' | 'deadline', value: string) => {
+    setRows((prev) => prev.map((row) => {
+      if (row._rowId !== rowId) return row;
+      const updated = field === 'date'
+        ? { ...row, date: value, dateRaw: value }
+        : { ...row, deadline: value, deadlineRaw: value };
+      return cleanseRows([updated])[0];
+    }));
+  }, []);
+
+  // 失焦只校验当前行；确认保存时再完整校验。
+  const handleRowBlur = useCallback((rowId: string) => {
+    setRows((prev) => {
+      const index = prev.findIndex((row) => row._rowId === rowId);
+      if (index < 0) return prev;
+      const checked = cleanseRows([prev[index]])[0];
+      const current = prev[index];
+      if (checked.tag === current.tag && checked.date === current.date
+        && checked.deadline === current.deadline && checked._error === current._error) return prev;
+      const next = [...prev];
+      next[index] = checked;
+      return next;
+    });
   }, []);
 
   const deleteRow = (rowId: string) => {
@@ -343,8 +369,10 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
           )}
 
           {/* 预览表格 */}
-          <div className="bi-table-wrap">
-            <table className="bi-table">
+          <div className="bi-table-wrap" ref={tableScrollRef}>
+            <table className="bi-table" aria-rowcount={rows.length + 1} onKeyDownCapture={(event) =>
+              handleVirtualTableTab(event, tableScrollRef.current, rows.length, (index) => rowVirtualizer.scrollToIndex(index, { align: 'center' }))
+            }>
               <thead>
                 <tr>
                   <th className="bi-th-title">任务名称</th>
@@ -358,12 +386,14 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                 </tr>
               </thead>
               <tbody>
+                {topSpace > 0 && <tr className="bi-virtual-spacer" aria-hidden="true"><td colSpan={8} style={{ height: topSpace }} /></tr>}
                 {rows.length === 0 && (
                   <tr>
                     <td colSpan={8} className="bi-empty-row">没有可显示的行</td>
                   </tr>
                 )}
-                {rows.map((r) => {
+                {visibleRows.map((virtualRow) => {
+                  const r = rows[virtualRow.index];
                   const isEmpty = !r.title;
                   const hasError = !!r._error && !isEmpty;
                   const requiresStartDate = requiresTaskStartDate({ taskKind: r._taskKind });
@@ -389,6 +419,9 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                   return (
                     <tr
                       key={r._rowId}
+                      ref={rowVirtualizer.measureElement}
+                      data-index={virtualRow.index}
+                      aria-rowindex={virtualRow.index + 2}
                       className={`bi-row ${hasError ? 'bi-row--error' : ''} ${isEmpty ? 'bi-row--empty' : ''}`}
                     >
                       <td className="bi-td-title" style={{ position: 'relative' }}>
@@ -414,7 +447,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                             className="bi-edit-input"
                             value={r.title}
                             onChange={(e) => handleRowChange(r._rowId, 'title', e.target.value)}
-                            onBlur={handleRowBlur}
+                            onBlur={() => handleRowBlur(r._rowId)}
                             onKeyDown={(e) => {
                               if (e.key === 'Tab' && titleGhost && titleGhost !== r.title) {
                                 e.preventDefault();
@@ -459,10 +492,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                           required={requiresStartDate}
                           aria-label={requiresStartDate ? '数量任务开始日期（必填）' : '任务排期日期'}
                           title={requiresStartDate ? '数量任务从开始日期起每天生效，不能清除' : '可清除为未排期'}
-                          onChange={(e) => {
-                            handleRowChange(r._rowId, 'date', e.target.value);
-                            handleRowChange(r._rowId, 'dateRaw', e.target.value);
-                          }}
+                          onChange={(e) => handleDateChange(r._rowId, 'date', e.target.value)}
                         />
                       </td>
                       <td className="bi-td-date">
@@ -471,10 +501,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                           className="bi-edit-input"
                           value={r.deadline}
                           min={r.date || undefined}
-                          onChange={(e) => {
-                            handleRowChange(r._rowId, 'deadline', e.target.value);
-                            handleRowChange(r._rowId, 'deadlineRaw', e.target.value);
-                          }}
+                          onChange={(e) => handleDateChange(r._rowId, 'deadline', e.target.value)}
                         />
                       </td>
                       <td className="bi-td-node">
@@ -524,6 +551,7 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
                     </tr>
                   );
                 })}
+                {bottomSpace > 0 && <tr className="bi-virtual-spacer" aria-hidden="true"><td colSpan={8} style={{ height: bottomSpace }} /></tr>}
               </tbody>
             </table>
           </div>

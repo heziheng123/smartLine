@@ -307,8 +307,9 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     () => groupedByDate.groups.reduce((sum, g) => sum + g.blocks.length, 0),
     [groupedByDate],
   );
+  const hasBatchDialog = showBatchImport || showBatchEdit || showProjectShift;
   useEffect(() => {
-    if (renderBudget >= totalSmartCount) return;
+    if (hasBatchDialog || renderBudget >= totalSmartCount) return;
     let cancelled = false;
     let idleId = 0;
     let timer = 0;
@@ -326,7 +327,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       if (idleId) window.cancelIdleCallback(idleId);
       if (timer) window.clearTimeout(timer);
     };
-  }, [renderBudget, totalSmartCount]);
+  }, [hasBatchDialog, renderBudget, totalSmartCount]);
 
   // 按预算切分每组可见卡片（折叠组不占预算）；超预算的只渲染轻量占位，保持拖拽索引连续
   const budgetedGroups = useMemo(() => {
@@ -712,6 +713,139 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
     [task.id, onUpdateTask],
   );
 
+  // 弹窗开合只改变工具栏状态；缓存任务区，避免重建整棵拖拽卡片树。
+  const documentBody = useMemo(() => (
+    <div className="pdv-body">
+      {sortedBlocks.length === 0 ? (
+        <div className="pdv-empty">
+          <div className="pdv-empty-icon"><FileText size={32} aria-hidden="true" /></div>
+          <div className="pdv-empty-text">
+            这是一个空白文档。输入 <code>/</code> 触发命令，或点击上方按钮添加内容。
+          </div>
+        </div>
+      ) : filteredSmartBlocks.length === 0 ? (
+        <div className="pdv-empty">
+          <div className="pdv-empty-icon"><SearchX size={32} aria-hidden="true" /></div>
+          <div className="pdv-empty-text">
+            当前筛选条件下没有匹配的任务，试试调整过滤条件。
+          </div>
+        </div>
+      ) : (
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <div className="pdv-layout-content">
+            {groupedByDate.textBlocks.length > 0 && (
+              <div className="pdv-text-blocks">
+                {groupedByDate.textBlocks.map((block) => (
+                  <TextBlockCard
+                    key={block.id}
+                    block={block}
+                    onUpdate={handleUpdateTextBlock}
+                    onDelete={handleDeleteTextBlock}
+                    onSlashCommand={handleSlashCommandTrigger}
+                  />
+                ))}
+              </div>
+            )}
+            {groupedByDate.groups.length > 0 && (
+              <div className="pdv-kanban-board">
+                {budgetedGroups.map(({ group, visibleCount }) => {
+                  const isCollapsed = collapsedDates.has(group.key);
+                  const duration = group.blocks.reduce((s, b) => s + (isQuantityTask(b.header) ? 0 : b.header.duration), 0);
+                  const doneCount = group.blocks.filter(b => b.header.isCompleted).length;
+                  const today = todayStr();
+                  const isToday = groupByWeek
+                    ? getMondayOfWeek(today) === group.key
+                    : group.key === today;
+                  return (
+                    <div key={group.key} className="pdv-date-group">
+                      <div
+                        className={`pdv-date-header ${isToday ? 'pdv-date-header--today' : ''} ${groupByWeek ? 'pdv-date-header--week' : ''}`}
+                        onClick={() => toggleDateCollapse(group.key)}
+                      >
+                        <span className="pdv-date-chevron">
+                          {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                        </span>
+                        <span className="pdv-date-icon">{group.icon || <CalendarDays size={14} aria-hidden="true" />}</span>
+                        <span className="pdv-date-label">{group.label}</span>
+                        {group.subLabel && (
+                          <span className="pdv-date-sublabel">{group.subLabel}</span>
+                        )}
+                        <span className="pdv-date-summary">
+                          {group.blocks.length}项任务{doneCount > 0 ? `，${doneCount}项已完成` : ''}
+                          {duration > 0 ? `，共 ${duration} min` : ''}
+                        </span>
+                      </div>
+                      {!isCollapsed && (
+                        <Droppable droppableId={group.key}>
+                          {(provided, snapshot) => (
+                            <div
+                              ref={provided.innerRef}
+                              {...provided.droppableProps}
+                              className={`pdv-date-tasks ${snapshot.isDraggingOver ? 'pdv-date-tasks--drag-over' : ''}`}
+                            >
+                              {group.blocks.map((block, idx) => (
+                                <Draggable
+                                  key={block.id}
+                                  draggableId={`block-${block.id}`}
+                                  index={idx}
+                                >
+                                  {(provided, snapshot) => (
+                                    <div
+                                      data-smart-block-id={block.id}
+                                      ref={provided.innerRef}
+                                      {...provided.draggableProps}
+                                      {...provided.dragHandleProps}
+                                      className={`${snapshot.isDragging ? 'pdv-drag-item--dragging' : ''} ${highlightedBlockId === block.id ? 'ring-2 ring-indigo-400 ring-offset-2 rounded-xl' : ''}`}
+                                      style={{ ...provided.draggableProps.style, contentVisibility: 'auto', containIntrinsicSize: 'auto 96px' }}
+                                    >
+                                      {idx < visibleCount ? (
+                                        <SmartTaskBlockCard
+                                          parentTaskId={task.id}
+                                          block={block}
+                                          onUpdateHeader={handleUpdateHeader}
+                                          onUpdateBody={handleUpdateBody}
+                                          onDelete={handleDeleteBlock}
+                                          onCommandError={setOperationError}
+                                          expandOverride={expandAll}
+                                        />
+                                      ) : (
+                                        <div className="stb-card" aria-hidden="true" style={{ minHeight: 64 }} />
+                                      )}
+                                    </div>
+                                  )}
+                                </Draggable>
+                              ))}
+                              {provided.placeholder}
+                            </div>
+                          )}
+                        </Droppable>
+                      )}
+                    </div>
+                  );
+                })}
+                {renderBudget < totalSmartCount && (
+                  <button
+                    type="button"
+                    className="pdv-btn"
+                    style={{ margin: '12px auto', display: 'block' }}
+                    onClick={() => setRenderBudget((prev) => Math.min(prev + RENDER_CHUNK * 2, totalSmartCount))}
+                  >
+                    加载更多任务（剩余 {totalSmartCount - renderBudget} 项）
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </DragDropContext>
+      )}
+    </div>
+  ), [
+    sortedBlocks, filteredSmartBlocks, handleDragEnd, groupedByDate, handleUpdateTextBlock,
+    handleDeleteTextBlock, handleSlashCommandTrigger, budgetedGroups, collapsedDates,
+    groupByWeek, toggleDateCollapse, highlightedBlockId, task.id, handleUpdateHeader,
+    handleUpdateBody, handleDeleteBlock, expandAll, renderBudget, totalSmartCount,
+  ]);
+
   return (
     <aside className={`pdv-container ${isFullscreen ? 'pdv-container--fullscreen' : ''} ${groupDimension === 'node' ? 'pdv-container--node' : ''}`} ref={containerRef}>
       {/* ── 顶部导航栏 ── */}
@@ -902,133 +1036,7 @@ const ProjectDocumentView: React.FC<ProjectDocumentViewProps> = ({
       />
 
       {/* ── 文档主体：按日期分组 + 粘性表头 ── */}
-      <div className="pdv-body">
-        {sortedBlocks.length === 0 ? (
-          <div className="pdv-empty">
-            <div className="pdv-empty-icon"><FileText size={32} aria-hidden="true" /></div>
-            <div className="pdv-empty-text">
-              这是一个空白文档。输入 <code>/</code> 触发命令，或点击上方按钮添加内容。
-            </div>
-          </div>
-        ) : filteredSmartBlocks.length === 0 ? (
-          <div className="pdv-empty">
-            <div className="pdv-empty-icon"><SearchX size={32} aria-hidden="true" /></div>
-            <div className="pdv-empty-text">
-              当前筛选条件下没有匹配的任务，试试调整过滤条件。
-            </div>
-          </div>
-        ) : (
-          <DragDropContext onDragEnd={handleDragEnd}>
-            <div className="pdv-layout-content">
-              {/* 无日期的 text 块 */}
-              {groupedByDate.textBlocks.length > 0 && (
-                <div className="pdv-text-blocks">
-                  {groupedByDate.textBlocks.map((block) => (
-                    <TextBlockCard
-                      key={block.id}
-                      block={block}
-                      onUpdate={handleUpdateTextBlock}
-                      onDelete={handleDeleteTextBlock}
-                      onSlashCommand={handleSlashCommandTrigger}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* 日期/周分组 */}
-              {groupedByDate.groups.length > 0 && (
-                <div className="pdv-kanban-board">
-                  {budgetedGroups.map(({ group, visibleCount }) => {
-                    const isCollapsed = collapsedDates.has(group.key);
-                    const duration = group.blocks.reduce((s, b) => s + (isQuantityTask(b.header) ? 0 : b.header.duration), 0);
-                    const doneCount = group.blocks.filter(b => b.header.isCompleted).length;
-                    const today = todayStr();
-                    const isToday = groupByWeek
-                      ? getMondayOfWeek(today) === group.key
-                      : group.key === today;
-                    return (
-                      <div key={group.key} className="pdv-date-group">
-                        <div
-                          className={`pdv-date-header ${isToday ? 'pdv-date-header--today' : ''} ${groupByWeek ? 'pdv-date-header--week' : ''}`}
-                          onClick={() => toggleDateCollapse(group.key)}
-                        >
-                          <span className="pdv-date-chevron">
-                            {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                          </span>
-                          <span className="pdv-date-icon">{group.icon || <CalendarDays size={14} aria-hidden="true" />}</span>
-                          <span className="pdv-date-label">{group.label}</span>
-                          {group.subLabel && (
-                            <span className="pdv-date-sublabel">{group.subLabel}</span>
-                          )}
-                          <span className="pdv-date-summary">
-                            {group.blocks.length}项任务{doneCount > 0 ? `，${doneCount}项已完成` : ''}
-                            {duration > 0 ? `，共 ${duration} min` : ''}
-                          </span>
-                        </div>
-                        {!isCollapsed && (
-                          <Droppable droppableId={group.key}>
-                            {(provided, snapshot) => (
-                              <div
-                                ref={provided.innerRef}
-                                {...provided.droppableProps}
-                                className={`pdv-date-tasks ${snapshot.isDraggingOver ? 'pdv-date-tasks--drag-over' : ''}`}
-                              >
-                                {group.blocks.map((block, idx) => (
-                                  <Draggable
-                                    key={block.id}
-                                    draggableId={`block-${block.id}`}
-                                    index={idx}
-                                  >
-                                    {(provided, snapshot) => (
-                                      <div
-                                        data-smart-block-id={block.id}
-                                        ref={provided.innerRef}
-                                        {...provided.draggableProps}
-                                        {...provided.dragHandleProps}
-                                        className={`${snapshot.isDragging ? 'pdv-drag-item--dragging' : ''} ${highlightedBlockId === block.id ? 'ring-2 ring-indigo-400 ring-offset-2 rounded-xl' : ''}`}
-                                        style={{ ...provided.draggableProps.style, contentVisibility: 'auto', containIntrinsicSize: 'auto 96px' }}
-                                      >
-                                        {idx < visibleCount ? (
-                                          <SmartTaskBlockCard
-                                            parentTaskId={task.id}
-                                            block={block}
-                                            onUpdateHeader={handleUpdateHeader}
-                                            onUpdateBody={handleUpdateBody}
-                                            onDelete={handleDeleteBlock}
-                                            onCommandError={setOperationError}
-                                            expandOverride={expandAll}
-                                          />
-                                        ) : (
-                                          <div className="stb-card" aria-hidden="true" style={{ minHeight: 64 }} />
-                                        )}
-                                      </div>
-                                    )}
-                                  </Draggable>
-                                ))}
-                                {provided.placeholder}
-                              </div>
-                            )}
-                          </Droppable>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {renderBudget < totalSmartCount && (
-                    <button
-                      type="button"
-                      className="pdv-btn"
-                      style={{ margin: '12px auto', display: 'block' }}
-                      onClick={() => setRenderBudget((prev) => Math.min(prev + RENDER_CHUNK * 2, totalSmartCount))}
-                    >
-                      加载更多任务（剩余 {totalSmartCount - renderBudget} 项）
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </DragDropContext>
-        )}
-      </div>
+      {documentBody}
 
       {/* ── Slash 命令菜单 ── */}
       {slashMenu && createPortal(

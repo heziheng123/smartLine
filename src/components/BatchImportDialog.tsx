@@ -4,6 +4,7 @@
 // ============================================================
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Download,
   FileSpreadsheet,
@@ -29,6 +30,7 @@ import {
   type BatchScheduleConfig,
 } from '@/utils/excelImport';
 import { todayStr, isBeforeDay } from '@/utils/dateSafe';
+import { handleVirtualTableTab } from './virtualTableTab';
 
 interface BatchImportDialogProps {
   /**
@@ -64,6 +66,7 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
   const [parseError, setParseError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   // 导入目标（仅在没有 fixedTask 时使用）
   const [targetMode, setTargetMode] = useState<'new' | 'existing'>('new');
@@ -89,6 +92,15 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
   } | null>(null);
 
   const summary = useMemo(() => summarizeRows(rows), [rows]);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 33,
+    overscan: 8,
+  });
+  const visibleRows = rowVirtualizer.getVirtualItems();
+  const topSpace = visibleRows[0]?.start ?? 0;
+  const bottomSpace = rowVirtualizer.getTotalSize() - (visibleRows.at(-1)?.end ?? 0);
   const canConfirm = summary.valid > 0 && summary.errors === 0 && (
     fixedTask
       ? true
@@ -427,8 +439,10 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
               )}
 
               {/* 预览表格 */}
-              <div className="bi-table-wrap">
-                <table className="bi-table">
+              <div className="bi-table-wrap" ref={tableScrollRef}>
+                <table className="bi-table" aria-rowcount={rows.length + 1} onKeyDownCapture={(event) =>
+                  handleVirtualTableTab(event, tableScrollRef.current, rows.length, (index) => rowVirtualizer.scrollToIndex(index, { align: 'center' }))
+                }>
                   <thead>
                     <tr>
                       <th className="bi-th-title">任务名称</th>
@@ -441,18 +455,23 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
                     </tr>
                   </thead>
                   <tbody>
+                    {topSpace > 0 && <tr className="bi-virtual-spacer" aria-hidden="true"><td colSpan={7} style={{ height: topSpace }} /></tr>}
                     {rows.length === 0 && (
                       <tr>
                         <td colSpan={7} className="bi-empty-row">没有可显示的行</td>
                       </tr>
                     )}
-                    {rows.map((r) => {
+                    {visibleRows.map((virtualRow) => {
+                      const r = rows[virtualRow.index];
                       const isEditing = editingRowId === r._rowId;
                       const isEmpty = !r.title;
                       const hasError = !!r._error && !isEmpty;
                       return (
                         <tr
                           key={r._rowId}
+                          ref={rowVirtualizer.measureElement}
+                          data-index={virtualRow.index}
+                          aria-rowindex={virtualRow.index + 2}
                           className={`bi-row ${hasError ? 'bi-row--error' : ''} ${isEmpty ? 'bi-row--empty' : ''}`}
                         >
                           <td className="bi-td-title">
@@ -555,6 +574,7 @@ const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
                         </tr>
                       );
                     })}
+                    {bottomSpace > 0 && <tr className="bi-virtual-spacer" aria-hidden="true"><td colSpan={7} style={{ height: bottomSpace }} /></tr>}
                   </tbody>
                 </table>
               </div>

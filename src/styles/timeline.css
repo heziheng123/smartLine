@@ -2431,6 +2431,11 @@ html, body, #root {
   border-right: 1px solid transparent;
 }
 
+.bi-table .bi-virtual-spacer td {
+  padding: 0;
+  border: 0;
+}
+
 /* ── 无缝内联输入框 ── */
 .bi-edit-input {
   width: 100%;
@@ -3059,8 +3064,8 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .tl-dialog--workspace {

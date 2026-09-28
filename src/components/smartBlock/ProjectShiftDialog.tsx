@@ -36,12 +36,14 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
       return { preview: null, error: cause instanceof Error ? cause.message : '无法读取项目任务' };
     }
   }, [days, taskId]);
-  const candidates = basePreviewState.preview?.project.tasks ?? [];
+  const candidates = useMemo(() => basePreviewState.preview?.project.tasks ?? [], [basePreviewState]);
   const selectedSet = useMemo(
     () => new Set(selectedBlockIds ?? candidates.map((task) => task.blockId)),
     [selectedBlockIds, candidates],
   );
-  const selected = useDeferredValue([...selectedSet]);
+  const selectedIds = useMemo(() => [...selectedSet], [selectedSet]);
+  const selected = useDeferredValue(selectedIds);
+  const previewPending = selected !== selectedIds || isPending;
   const previewState = useMemo(() => {
     if (selectedBlockIds === null) return basePreviewState;
     try {
@@ -132,7 +134,7 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
 
           <section className="psd-task-section" aria-label="选择要调整的任务">
             <div className="psd-task-section-header">
-              <div><strong>选择任务</strong><small>已选 {selectedCount} / {candidates.length} 个可调整任务{isPending ? ' · 预览更新中…' : ''}</small></div>
+              <div><strong>选择任务</strong><small>已选 {selectedCount} / {candidates.length} 个可调整任务{previewPending ? ' · 预览更新中…' : ''}</small></div>
               <button type="button" onClick={toggleAll} disabled={candidates.length === 0}>{allSelected ? '取消全选' : '全选'}</button>
             </div>
             {candidates.length === 0 ? (
@@ -176,7 +178,7 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
           <span>确认后可立即撤销本次调整</span>
           <div>
             <button type="button" onClick={onClose}>取消</button>
-            <button type="button" className="is-primary" disabled={!preview || selectedCount === 0} onClick={apply}>确认{actionLabel(days)}</button>
+            <button type="button" className="is-primary" disabled={!preview || previewPending || selectedCount === 0} onClick={apply}>确认{actionLabel(days)}</button>
           </div>
         </footer>
       </section>
