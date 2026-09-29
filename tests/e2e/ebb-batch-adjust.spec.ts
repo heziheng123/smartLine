@@ -125,6 +125,44 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+test('large adjustment keeps input and preview lists bounded while planning in a worker', async ({ page }) => {
+  await openEbbLibrary(page);
+  await page.evaluate(async ({ start }) => {
+    const { useEbbStore } = await import('/src/ebb/store.ts');
+    const tasks = Array.from({ length: 250 }, (_, topic) => Array.from({ length: 4 }, (_, round) => ({
+      id: `large-review-${topic}-${round}`,
+      topicName: `大量主题 ${String(topic).padStart(3, '0')}`,
+      dueDate: new Date(new Date(`${start}T12:00:00+08:00`).getTime() + (round + 1) * 86400000).toISOString().slice(0, 10),
+      roundOrder: round + 1,
+      isCompleted: false,
+      complexity: 'normal' as const,
+    }))).flat();
+    useEbbStore.setState({ reviewTasks: tasks });
+  }, { start: today });
+  const dialog = await openAdjustmentCenter(page);
+  const topicRows = dialog.locator('.eb-adjust-topic-grid .eb-adjust-topic');
+  await expect.poll(() => topicRows.count()).toBeLessThan(30);
+  await expect(dialog.locator('details.eb-adjust-preview-details summary')).toContainText('250 项');
+  await dialog.locator('details.eb-adjust-preview-details summary').click();
+  await expect.poll(() => dialog.locator('.eb-adjust-preview-details .eb-batch-preview-row').count()).toBeLessThan(30);
+  await dialog.getByLabel('搜索复习主题').fill('大量主题 249');
+  await expect(topicRows).toHaveCount(1);
+  await expect(topicRows.first()).toContainText('大量主题 249');
+});
+
+test('adjustment preview still works when browser workers are unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'Worker', { value: class {
+      constructor() { throw new Error('Worker unavailable'); }
+    } });
+  });
+  await page.reload();
+  await openEbbLibrary(page);
+  const dialog = await openAdjustmentCenter(page);
+  await expect(dialog.locator('details.eb-adjust-preview-details summary')).toContainText('1 项');
+  await expect(dialog.getByRole('status')).not.toContainText('预览计算失败');
+});
+
 test('quick adjustment keeps advanced tools folded and presets update the live rule summary', async ({ page }) => {
   await openEbbLibrary(page);
   const dialog = await openAdjustmentCenter(page);

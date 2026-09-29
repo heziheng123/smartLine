@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArchiveRestore, ArrowUpRight, Hash, CalendarDays, Clock3, FolderOpen, Layers3, ListTodo, RotateCcw, Tag, X } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
 import { SmartTaskBlockCard } from './SmartTaskBlockCard';
 import { PROJECT_TASK_MODAL_EVENT, type ProjectTaskModalDetail } from './projectTaskModal';
@@ -15,13 +14,13 @@ const ProjectTaskBlockModal: React.FC = () => {
   const [target, setTarget] = useState<ProjectTaskModalDetail | null>(null);
   const [backlogNotice, setBacklogNotice] = useState<{ text: string; operationId?: string } | null>(null);
   const undoOperation = useOperationHistory((state) => state.undo);
-  const { tasks, groups, updateBlockBody } = useTimelineStore(
-    useShallow((state) => ({
-      tasks: state.tasks,
-      groups: state.groups,
-      updateBlockBody: state.updateBlockBody,
-    })),
-  );
+  const updateBlockBody = useTimelineStore((state) => state.updateBlockBody);
+  const task = useTimelineStore((state) => {
+    if (!target) return null;
+    return state.tasks.find((item) => item.id === target.taskId)
+      ?? state.groups.flatMap((group) => group.children).find((item) => item.id === target.taskId)
+      ?? null;
+  });
 
   useEffect(() => {
     const handleOpen = (event: Event) => {
@@ -39,13 +38,6 @@ const ProjectTaskBlockModal: React.FC = () => {
       window.removeEventListener('tl-navigate', handleNavigate);
     };
   }, []);
-
-  const task = useMemo(() => {
-    if (!target) return null;
-    return tasks.find((item) => item.id === target.taskId)
-      ?? groups.flatMap((group) => group.children).find((item) => item.id === target.taskId)
-      ?? null;
-  }, [groups, target, tasks]);
 
   const block = useMemo(() => {
     if (!task || !target) return null;

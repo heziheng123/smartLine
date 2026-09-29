@@ -400,6 +400,10 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     const group = groups.find((item) => item.id === groupId);
     if (group) onGroupDoubleClick?.(group);
   }, [groups, onGroupDoubleClick]);
+  const editGroupFromList = useCallback((group: TaskGroup) => {
+    setIsProjectPanelOpen(false);
+    onGroupDoubleClick?.(group);
+  }, [onGroupDoubleClick]);
 
   const hasFilteredContent = layout.tasks.length > 0 || notes.length > 0 || milestones.length > 0;
   const activeFilterCount = preferences.hiddenGroupIds.length
@@ -475,7 +479,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
             onClick={() => { setIsViewMenuOpen(false); setIsProjectPanelOpen(true); }}
           >
             <Settings2 size={15} />
-            <span>项目显示与排序</span>
+            <span>管理项目分组</span>
             <ChevronRight size={15} />
           </button>
 
@@ -531,6 +535,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
           </button>
           {isMoreMenuOpen && (
             <div className="tl-workspace-menu-panel tl-create-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => runMoreAction(() => setIsProjectPanelOpen(true))}><Settings2 size={16} /><span>管理项目分组</span></button>
               <button type="button" role="menuitem" onClick={() => runMoreAction(onAddGroup)}><FolderPlus size={16} /><span>新建项目分组</span></button>
               <button type="button" role="menuitem" onClick={() => runMoreAction(onAddNote)}><BookmarkPlus size={16} /><span>新建便签</span></button>
               <button type="button" role="menuitem" onClick={() => runMoreAction(onAddMilestone)}><Flag size={16} /><span>新建里程碑</span></button>
@@ -546,14 +551,14 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     <div className="tl-project-drawer-overlay" onPointerDown={(event) => {
       if (event.target === event.currentTarget) setIsProjectPanelOpen(false);
     }}>
-      <aside className="tl-project-drawer" role="dialog" aria-modal="true" aria-label="项目显示与排序">
+      <aside className="tl-project-drawer" role="dialog" aria-modal="true" aria-label="管理项目分组">
         <div className="tl-project-drawer-header">
-          <span>项目显示与排序</span>
+          <span>管理项目分组</span>
           <button type="button" onClick={() => setIsProjectPanelOpen(false)} title="关闭"><X size={18} /></button>
         </div>
         <label className="tl-project-drawer-search">
           <Search size={15} />
-          <input value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索项目" autoFocus />
+          <input value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索分组" autoFocus />
           {projectQuery && <button type="button" onClick={() => setProjectQuery('')} title="清除"><X size={14} /></button>}
         </label>
         <div className="tl-project-list">
@@ -579,12 +584,13 @@ const TimelineView: React.FC<TimelineViewProps> = ({
                 >{visible && <Check size={12} />}</button>
                 <span className="tl-project-color" style={{ backgroundColor: group.color || '#9CA3AF' }} />
                 <span className="tl-project-name">{group.name}</span>
+                <button className="tl-project-edit" type="button" onClick={() => editGroupFromList(group)} aria-label={`编辑分组：${group.name}`}>编辑</button>
                 <button type="button" onClick={() => moveGroup(group.id, -1)} disabled={orderIndex === 0} title="上移"><ChevronUp size={15} /></button>
                 <button type="button" onClick={() => moveGroup(group.id, 1)} disabled={orderIndex === orderedGroupIds.length - 1} title="下移"><ChevronDown size={15} /></button>
               </div>
             );
           })}
-          {projectListGroups.length === 0 && <div className="tl-project-list-empty">没有匹配的项目</div>}
+          {projectListGroups.length === 0 && <div className="tl-project-list-empty">没有匹配的分组</div>}
         </div>
         <div className="tl-project-drawer-footer">
           <button type="button" onClick={() => updatePreferences({ hiddenGroupIds: [] })} disabled={preferences.hiddenGroupIds.length === 0}>显示全部</button>

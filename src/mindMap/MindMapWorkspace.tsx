@@ -1,4 +1,4 @@
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Cloud,
   CalendarRange,
@@ -1002,4 +1002,4 @@ const MindMapWorkspace = () => {
   );
 };
 
-export default MindMapWorkspace;
+export default memo(MindMapWorkspace);

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Cloud, CloudOff, LoaderCircle, TriangleAlert } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '@/store';
@@ -73,6 +73,8 @@ function formatLastConnected(value: string | null): string {
 }
 
 const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' }) => {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [visible, setVisible] = useState(false);
   const timeline = useTimelineStore(useShallow((state) => ({ enabled: state.syncEnabled, status: state.syncStatus })));
   const ebb = useEbbStore(useShallow((state) => ({ enabled: state.syncEnabled, status: state.syncStatus })));
   const daily = useDailyScheduleStore(useShallow((state) => ({ enabled: state.syncEnabled, status: state.syncStatus })));
@@ -129,6 +131,26 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
   }, []);
 
   useEffect(() => {
+    if (!('IntersectionObserver' in window)) {
+      setVisible(true);
+      return;
+    }
+    let intersects = false;
+    const updateVisible = () => setVisible(intersects && !document.hidden);
+    const observer = new IntersectionObserver(([entry]) => {
+      intersects = entry.isIntersecting;
+      updateVisible();
+    });
+    if (buttonRef.current) observer.observe(buttonRef.current);
+    document.addEventListener('visibilitychange', updateVisible);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', updateVisible);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
     void refreshQueueState();
     const handleOnline = () => { setOnline(true); void refreshQueueState(); };
     const handleOffline = () => setOnline(false);
@@ -180,14 +202,14 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
       window.removeEventListener(WORKSPACE_SYNC_DIAGNOSTICS_EVENT, handleDiagnostics);
       window.removeEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, handleMindMapRuntime);
     };
-  }, [refreshQueueState]);
+  }, [refreshQueueState, visible]);
 
   useEffect(() => {
-    if (!pendingUpdatedAt) return;
+    if (!visible || !pendingUpdatedAt) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
-  }, [pendingUpdatedAt]);
+  }, [pendingUpdatedAt, visible]);
 
   const auth = useAuth();
   const mapHint = !MIND_MAP_ENABLED
@@ -261,6 +283,7 @@ const SyncStatusIndicator: React.FC<{ className?: string }> = ({ className = '' 
 
   return (
     <button
+      ref={buttonRef}
       type="button"
       className={`workspace-sync-status workspace-sync-status--${indicatorState} ${className}`.trim()}
       onClick={() => window.dispatchEvent(new CustomEvent(OPEN_WORKSPACE_SYNC_EVENT))}

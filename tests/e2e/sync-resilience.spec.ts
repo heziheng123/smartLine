@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 test.setTimeout(60_000);
 
@@ -87,6 +88,38 @@ test('a local save waiting more than two seconds shows its cloud-confirmation de
   await expect(indicator).toHaveAttribute('title', /本地已保存，等待云端确认/);
   await expect.poll(() => indicator.getAttribute('title')).toMatch(/已等待 [2-9]\d* 秒/);
   await expect(indicator.locator('.workspace-sync-status__badge')).toHaveText(/[2-9]\d*秒/);
+});
+
+test('a cached sync indicator refreshes when its workspace becomes visible again', async ({ page }) => {
+  await waitForApp(page);
+  const indicator = page.locator('#view-timeline .workspace-sync-status');
+  await expect(indicator).toBeVisible();
+  await page.getByTitle('艾宾浩斯复习').click();
+  await expect(indicator).toBeHidden();
+  await page.evaluate(async () => {
+    const stores = await import('/src/testing/workspaceStoreAccess.ts');
+    const queue = await import('/src/services/workspaceOfflineQueue.ts');
+    for (const store of [stores.useTimelineStore, stores.useEbbStore, stores.useDailyScheduleStore, stores.useGraphStore, stores.useLifeMapStore]) {
+      (store as unknown as typeof stores.useTimelineStore).setState({ syncEnabled: true, syncStatus: 'connected' });
+    }
+    await queue.queueWorkspaceFields({ tasks: [] }, { tasks: [] }, { origin: 'user' });
+  });
+  await page.getByTitle('项目规划').click();
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveAttribute('data-sync-state', 'pending');
+});
+
+test('workspace hashing in the browser preserves canonical cross-device values', async ({ page }) => {
+  await waitForApp(page);
+  const hashes = await page.evaluate(async () => {
+    const { hashWorkspaceValue } = await import('/src/services/workspaceSyncCore.ts');
+    return Promise.all([
+      hashWorkspaceValue({ z: 1, a: [{ b: 2, a: 3 }] }),
+      hashWorkspaceValue({ a: [{ a: 3, b: 2 }], z: 1 }),
+    ]);
+  });
+  const expected = createHash('sha256').update('{"a":[{"a":3,"b":2}],"z":1}').digest('hex');
+  expect(hashes).toEqual([expected, expected]);
 });
 
 test('edits made while first connection is being inspected enter the durable queue', async ({ page }) => {

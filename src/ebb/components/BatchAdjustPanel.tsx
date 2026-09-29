@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   AlertTriangle,
   CalendarClock,
@@ -116,7 +117,9 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
     const grouped = new Map<string, ReviewTask[]>();
     reviewTasks.filter((task) => !task.isArchived).forEach((task) => {
       const key = getReviewTopicKey(task);
-      grouped.set(key, [...(grouped.get(key) ?? []), task]);
+      const group = grouped.get(key);
+      if (group) group.push(task);
+      else grouped.set(key, [task]);
     });
     return [...grouped.entries()].map(([key, tasks]) => {
       const pending = tasks.filter((task) => !task.isCompleted).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -192,6 +195,13 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
       return true;
     });
   }, [complexityFilter, query, scopeFilter, topics]);
+  const topicScrollRef = useRef<HTMLDivElement>(null);
+  const topicVirtualizer = useVirtualizer({
+    count: visibleTopics.length,
+    getScrollElement: () => topicScrollRef.current,
+    estimateSize: () => 56,
+    overscan: 8,
+  });
 
   const selectedTopics = useMemo(() => topics.filter((topic) => selectedKeys.has(topic.key)), [selectedKeys, topics]);
   const selectedPending = selectedTopics.reduce((sum, topic) => sum + topic.pending, 0);
@@ -248,44 +258,84 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
     return { topicKeys, mode: 'goal', goal: { kind: 'advanced', action: advancedAction } };
   }, [advancedAction, cadenceIntervals, capacityMinutes, dailyHandling, deadline, goalKind, horizonDays, lifecycleCount, lifecycleOperation, maxMoveDays, maxRoundsPerDay, scheduledReviewIds, selectedKeys, startDate]);
 
-  const preview = useMemo(() => planBatchReviewAdjustment(reviewTasks, settings, request), [request, reviewTasks, settings]);
+  const [previewResult, setPreviewResult] = useState<{ request: BatchReviewRequest; plan: BatchReviewPlan } | null>(null);
+  const [previewError, setPreviewError] = useState<{ request: BatchReviewRequest; message: string } | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const requestId = useRef(0);
+  const latestPreviewInput = useRef({ reviewTasks, settings, request });
+  latestPreviewInput.current = { reviewTasks, settings, request };
+  useEffect(() => {
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('../batchAdjust.worker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      return;
+    }
+    workerRef.current = worker;
+    worker.onerror = () => {
+      worker.terminate();
+      workerRef.current = null;
+      const input = latestPreviewInput.current;
+      window.setTimeout(() => {
+        setPreviewResult({ request: input.request, plan: planBatchReviewAdjustment(input.reviewTasks, input.settings, input.request) });
+      }, 0);
+    };
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    const id = ++requestId.current;
+    const timer = window.setTimeout(() => {
+      const worker = workerRef.current;
+      if (!worker) {
+        setPreviewResult({ request, plan: planBatchReviewAdjustment(reviewTasks, settings, request) });
+        return;
+      }
+      worker.onmessage = (event: MessageEvent<{ id: number; plan?: BatchReviewPlan; error?: string }>) => {
+        if (event.data.id !== requestId.current) return;
+        if (event.data.plan) {
+          setPreviewResult({ request, plan: event.data.plan });
+          setPreviewError(null);
+        } else setPreviewError({ request, message: event.data.error ?? '预览计算失败' });
+      };
+      try {
+        worker.postMessage({ id, tasks: reviewTasks, settings, request });
+      } catch {
+        setPreviewResult({ request, plan: planBatchReviewAdjustment(reviewTasks, settings, request) });
+      }
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [request, reviewTasks, settings]);
+  const previewReady = previewResult?.request === request;
+  const emptyPreview = useMemo<BatchReviewPlan>(() => ({
+    request, previousTasks: [], nextTasks: [], sourceIdsToClear: [], results: [],
+    affectedTopics: 0, skippedTopics: 0, removedRounds: 0, addedRounds: 0, rescheduledRounds: 0,
+  }), [request]);
+  const preview = previewReady ? previewResult.plan : emptyPreview;
   const previewDatesByTopic = useMemo(() => {
     const nextPendingDates = new Map<string, string>();
     preview.nextTasks
       .filter((task) => !task.isCompleted)
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
       .forEach((task) => {
         const key = getReviewTopicKey(task);
-        if (!nextPendingDates.has(key)) nextPendingDates.set(key, task.dueDate);
+        const existing = nextPendingDates.get(key);
+        if (!existing || task.dueDate < existing) nextPendingDates.set(key, task.dueDate);
       });
     return nextPendingDates;
   }, [preview.nextTasks]);
   const impactedDailyCount = preview.sourceIdsToClear.filter((id) => scheduledReviewIds.has(id)).length;
   const overloadBefore = preview.dayLoads?.filter((day) => day.beforeOverCapacity).length ?? 0;
   const overloadAfter = preview.dayLoads?.filter((day) => day.afterOverCapacity).length ?? 0;
-  // 预设影响懒算：只算当前悬停/选中的那一个，避免每次渲染 ×3 全量规划
-  const [hoveredPreset, setHoveredPreset] = useState<Exclude<PlanningPreset, 'custom'> | null>(null);
-  const activeImpactPreset = hoveredPreset ?? (planningPreset === 'custom' ? null : planningPreset);
-  const activePresetImpact = useMemo<{ moved: number; overloadBefore: number; overloadAfter: number } | null>(() => {
-    if ((goalKind !== 'backlog' && goalKind !== 'balance') || !activeImpactPreset) return null;
-    const values = planningPresetValues[activeImpactPreset];
-    const presetRequest: BatchReviewRequest = {
-      topicKeys: [...selectedKeys],
-      mode: 'goal',
-      goal: {
-        kind: goalKind,
-        startDate: today,
-        ...values,
-        protectedTaskIds: [...scheduledReviewIds],
-      },
-    };
-    const result = planBatchReviewAdjustment(reviewTasks, settings, presetRequest);
-    return {
-      moved: result.rescheduledRounds,
-      overloadBefore: result.dayLoads?.filter((day) => day.beforeOverCapacity).length ?? 0,
-      overloadAfter: result.dayLoads?.filter((day) => day.afterOverCapacity).length ?? 0,
-    };
-  }, [activeImpactPreset, goalKind, planningPresetValues, reviewTasks, scheduledReviewIds, selectedKeys, settings, today]);
+  const resultScrollRef = useRef<HTMLDivElement>(null);
+  const [resultExpanded, setResultExpanded] = useState(initialPreviewExpanded);
+  const resultVirtualizer = useVirtualizer({
+    count: resultExpanded ? (preview?.results.length ?? 0) : 0,
+    getScrollElement: () => resultScrollRef.current,
+    estimateSize: () => 43,
+    overscan: 8,
+  });
   const hasInvalidIntervals = (goalKind === 'cadence'
     || (goalKind === 'lifecycle' && lifecycleOperation === 'restart')
     || (goalKind === 'advanced' && advancedKind === 'template'))
@@ -315,7 +365,9 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
       : (preview.warnings?.length ?? 0) > 0 || impactedDailyCount > 0 || overloadAfter > 0
         ? 'caution'
         : 'safe';
-  const verdictText = verdictKind === 'blocked'
+  const verdictText = !previewReady
+    ? (previewError?.request === request ? previewError.message : '正在计算排期预览…')
+    : verdictKind === 'blocked'
     ? `暂时无法执行：${preview.blockingIssues?.[0] ?? '请检查自定义间隔。'}`
     : verdictKind === 'neutral'
       ? selectedKeys.size === 0 ? '请选择至少一个复习计划。' : '当前设置不会改变任何复习轮次。'
@@ -362,7 +414,7 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
     setMaxMoveDays(values.maxMoveDays);
   };
 
-  const canApply = preview.affectedTopics > 0
+  const canApply = previewReady && preview.affectedTopics > 0
     && !hasInvalidIntervals
     && (preview.blockingIssues?.length ?? 0) === 0;
 
@@ -414,10 +466,16 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                   </div>
                   <button type="button" className="eb-batch-link" onClick={toggleVisible}>{allVisibleSelected ? '取消当前全选' : '全选当前结果'}</button>
                 </div>
-                  <div className="eb-adjust-topic-grid">
-                    {visibleTopics.map((topic) => (
+                  <div className="eb-adjust-topic-grid" ref={topicScrollRef}>
+                    <div className="eb-adjust-virtual-space" style={{ height: topicVirtualizer.getTotalSize() }}>
+                    {topicVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const topic = visibleTopics[virtualRow.index];
+                      return (
                       <label
                         key={topic.key}
+                        data-index={virtualRow.index}
+                        ref={topicVirtualizer.measureElement}
+                        style={{ transform: `translateY(${virtualRow.start}px)` }}
                         className={`eb-adjust-topic ${selectedKeys.has(topic.key) ? 'is-selected' : ''} ${topic.pending === 0 ? 'is-disabled' : ''}`}
                         aria-label={`${topic.name}，${topic.pending}/${topic.total} 未完成，约 ${topic.minutes} 分钟${topic.nextDueDate ? `，下一轮 ${formatShortDate(topic.nextDueDate)}` : ''}`}
                       >
@@ -429,12 +487,13 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                         <span className="eb-adjust-topic-body">
                           <span className="eb-adjust-topic-main"><strong title={topic.name}>{topic.name}</strong><small>{topic.pending}/{topic.total} · 剩余 {topic.minutes} 分钟</small></span>
                           <span className="eb-adjust-topic-dates">
-                            {topic.nextDueDate ? <>原 {formatShortDate(topic.nextDueDate)} <b>→</b> {selectedKeys.has(topic.key) ? `新 ${formatShortDate(previewDatesByTopic.get(topic.key) ?? topic.nextDueDate)}` : '未选择'}</> : '等待排期'}
+                            {topic.nextDueDate ? <>原 {formatShortDate(topic.nextDueDate)} <b>→</b> {selectedKeys.has(topic.key) ? (previewReady ? `新 ${formatShortDate(previewDatesByTopic.get(topic.key) ?? topic.nextDueDate)}` : '计算中') : '未选择'}</> : '等待排期'}
                           </span>
                         </span>
                         {topic.overdue > 0 && <em>{topic.overdue} 轮逾期</em>}
                       </label>
-                    ))}
+                    ); })}
+                    </div>
                     {visibleTopics.length === 0 && <div className="eb-batch-empty"><ListChecks size={18} />没有匹配的复习计划</div>}
                 </div>
               </div>
@@ -503,24 +562,17 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                     <span className={planningPreset === 'custom' ? 'is-custom' : ''}>当前：{planningPresetLabel}</span>
                   </div>
                   <div className="eb-adjust-preset-row" role="group" aria-label="规划预设">
-                    {PLANNING_PRESETS.map((preset) => {
-                      const impact = preset.kind === activeImpactPreset ? activePresetImpact : null;
-                      return (
+                    {PLANNING_PRESETS.map((preset) => (
                         <button
                           key={preset.kind}
                           type="button"
-                          title={impact ? `${impact.moved} 轮改期 · 超载 ${impact.overloadBefore}→${impact.overloadAfter}` : preset.description}
+                          title={preset.description}
                           className={planningPreset === preset.kind ? 'is-active' : ''}
                           onClick={() => applyPlanningPreset(preset.kind)}
-                          onMouseEnter={() => setHoveredPreset(preset.kind)}
-                          onFocus={() => setHoveredPreset(preset.kind)}
-                          onMouseLeave={() => setHoveredPreset((cur) => (cur === preset.kind ? null : cur))}
-                          onBlur={() => setHoveredPreset((cur) => (cur === preset.kind ? null : cur))}
                         >
                           <strong>{preset.label.replace('调整', '').replace('清理', '')}</strong>
                         </button>
-                      );
-                    })}
+                    ))}
                   </div>
                 </div>
               )}
@@ -602,19 +654,22 @@ const BatchAdjustPanel: React.FC<BatchAdjustPanelProps> = ({ reviewTasks, settin
                 </div>
               </div>
 
-              <details className="eb-adjust-disclosure eb-adjust-preview-details" open={initialPreviewExpanded || undefined}>
+              <details className="eb-adjust-disclosure eb-adjust-preview-details" open={initialPreviewExpanded || undefined} onToggle={(event) => setResultExpanded(event.currentTarget.open)}>
                 <summary>查看逐计划安排明细 <span>{preview.results.length} 项</span></summary>
                   <div className="eb-adjust-preview-block">
                     <div className="eb-adjust-preview-heading"><strong>逐计划结果</strong><span>{preview.skippedTopics > 0 ? `${preview.skippedTopics} 个未修改，原因如下。` : '所有选中计划均已生成明确结果。'}</span></div>
-                    <div className="eb-batch-preview-list">
-                      {preview.results.map((result) => (
-                        <div key={result.topicKey} className={`eb-batch-preview-row ${result.status === 'skipped' ? 'is-skipped' : ''}`}>
+                    <div className="eb-batch-preview-list" ref={resultScrollRef}>
+                      <div className="eb-adjust-virtual-space" style={{ height: resultVirtualizer.getTotalSize() }}>
+                      {resultVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const result = preview.results[virtualRow.index];
+                        return <div key={result.topicKey} data-index={virtualRow.index} ref={resultVirtualizer.measureElement} style={{ transform: `translateY(${virtualRow.start}px)` }} className={`eb-batch-preview-row ${result.status === 'skipped' ? 'is-skipped' : ''}`}>
                           <span className="eb-batch-preview-status">{result.status === 'changed' ? <Check size={13} /> : '—'}</span>
                           <span className="eb-batch-preview-name">{result.topicName}</span>
                           <span className="eb-batch-preview-description">{result.description}</span>
                           <span className="eb-batch-preview-count">{result.beforeCount} → {result.afterCount}</span>
-                        </div>
-                      ))}
+                        </div>;
+                      })}
+                      </div>
                       {preview.results.length === 0 && <div className="eb-batch-empty"><ListChecks size={18} />请选择至少一个复习计划</div>}
                     </div>
                   </div>

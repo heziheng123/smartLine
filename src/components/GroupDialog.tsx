@@ -4,6 +4,7 @@
 // ============================================================
 
 import { useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { WandSparkles } from 'lucide-react';
 import type { Task, TaskGroup } from '@/types';
 import {
@@ -61,6 +62,18 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
     const ids = group?.children.map((c) => c.id) ?? [];
     return new Set(ids);
   });
+  const taskListRef = useRef<HTMLDivElement>(null);
+  const taskVirtualizer = useVirtualizer({
+    count: allTasks.length,
+    getScrollElement: () => taskListRef.current,
+    estimateSize: () => 35,
+    overscan: 5,
+  });
+  const groupById = useMemo(() => new Map(groups.map((item) => [item.id, item])), [groups]);
+  const virtualTasks = allTasks.length > 80;
+  const visibleTasks = virtualTasks
+    ? taskVirtualizer.getVirtualItems().map((row) => ({ task: allTasks[row.index], row }))
+    : allTasks.map((task) => ({ task, row: null }));
 
   const toggleTask = (taskId: string) => {
     setSelectedTaskIds((prev) => {
@@ -234,17 +247,18 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
       {/* 子任务选择 —— 业务特定，保留原 .tl-dialog-task-list 结构 */}
       <div className="tl-dialog-field">
         <span className="tl-dialog-label">选择任务（{selectedTaskIds.size} 个已选）</span>
-        <div className="tl-dialog-task-list" role="group" aria-label="子任务列表">
+        <div className="tl-dialog-task-list" role="group" aria-label="子任务列表" ref={taskListRef}>
           {allTasks.length === 0 ? (
             <div className="tl-dialog-task-empty">暂无任务，请先创建任务</div>
           ) : (
-            allTasks.map((task) => {
+            <div style={virtualTasks ? { height: taskVirtualizer.getTotalSize(), position: 'relative' } : undefined}>
+            {visibleTasks.map(({ task, row }) => {
               const currentGroup =
                 task.groupId && task.groupId !== group?.id
-                  ? groups.find((g) => g.id === task.groupId)
+                  ? groupById.get(task.groupId)
                   : null;
               return (
-                <label key={task.id} className="tl-dialog-task-item">
+                <label key={task.id} className="tl-dialog-task-item" data-index={row?.index} ref={row ? taskVirtualizer.measureElement : undefined} style={row ? { position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` } : undefined}>
                   <input
                     type="checkbox"
                     checked={selectedTaskIds.has(task.id)}
@@ -269,7 +283,8 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                   <span className="tl-dialog-task-date">{task.start} ~ {task.end}</span>
                 </label>
               );
-            })
+            })}
+            </div>
           )}
         </div>
       </div>

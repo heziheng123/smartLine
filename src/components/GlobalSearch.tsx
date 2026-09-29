@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, Archive, X, CalendarClock, BrainCircuit } from 'lucide-react';
 import { useGraphStore } from '@/graph/store';
 import { useTimelineStore } from '@/store';
@@ -10,20 +11,20 @@ import { requestConfirmation } from '@/services/confirmation';
 
 // 时光胶囊模态框：展示归档节点的内容
 export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose: () => void }) => {
-  const { nodes, archiveNodeCascade } = useGraphStore();
-  const { tasks: tlTasks } = useTimelineStore();
+  const nodes = useGraphStore((state) => state.nodes);
+  const archiveNodeCascade = useGraphStore((state) => state.archiveNodeCascade);
+  const tlTasks = useTimelineStore((state) => state.tasks);
   
   const node = nodes.find(n => n.id === nodeId);
-  if (!node) return null;
-  
   // 提取智能块中的备注
-  const relatedBlocks = tlTasks.flatMap(t =>
+  const relatedBlocks = useMemo(() => tlTasks.flatMap(t =>
     (t.blocks || []).filter((b): b is import('@/types').SmartTaskBlock => {
       if (b.type !== 'smart-task') return false;
       const ids = getValidGraphNodeIds(b.header);
       return ids.includes(nodeId);
     })
-  );
+  ), [tlTasks, nodeId]);
+  if (!node) return null;
 
   return createPortal(
     <AnimatePresence>
@@ -32,7 +33,7 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+          className="absolute inset-0 bg-slate-900/40"
           onClick={onClose}
         />
         <motion.div
@@ -40,7 +41,7 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.995, y: 4 }}
           transition={MOTION_TRANSITION_STANDARD}
-          className="relative w-full max-w-2xl bg-white/90 backdrop-blur-xl border border-white/50 shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
+          className="relative w-full max-w-2xl bg-white/95 border border-white/50 shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
         >
           {/* Header */}
           <div className="shrink-0 px-6 py-5 border-b border-slate-200/50 flex items-center justify-between bg-white/50">
@@ -143,7 +144,7 @@ export const TimeCapsuleModal = ({ nodeId, onClose }: { nodeId: string; onClose:
 };
 
 export const GlobalSearchModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
-  const { nodes } = useGraphStore();
+  const nodes = useGraphStore((state) => state.nodes);
   const [query, setQuery] = useState('');
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -161,7 +162,6 @@ export const GlobalSearchModal = ({ isOpen, onClose }: { isOpen: boolean; onClos
     const lowerQuery = query.toLowerCase();
     return nodes.filter(n => n.name.toLowerCase().includes(lowerQuery));
   }, [query, nodes]);
-
   if (!isOpen && !capsuleNodeId) return null;
 
   return (
@@ -172,7 +172,7 @@ export const GlobalSearchModal = ({ isOpen, onClose }: { isOpen: boolean; onClos
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-slate-900/20 backdrop-blur-sm"
+            className="absolute inset-0 bg-slate-900/20"
             onClick={onClose}
           />
           <motion.div
@@ -252,11 +252,13 @@ export const GlobalSearchModal = ({ isOpen, onClose }: { isOpen: boolean; onClos
 };
 
 export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
-  const { nodes } = useGraphStore();
+  const nodes = useGraphStore((state) => state.nodes);
   const [capsuleNodeId, setCapsuleNodeId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const archiveScrollRef = useRef<HTMLDivElement>(null);
 
   const { archivedRoots, archivedNodes } = useMemo(() => {
+    if (!isOpen) return { archivedNodes: [], archivedRoots: [] };
     const archived = nodes.filter(n => n.isArchived);
     const archivedIds = new Set(archived.map(n => n.id));
     return {
@@ -264,13 +266,22 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
       // 如果父节点也被归档了，就不作为根显示在库里（被折叠在里面）
       archivedRoots: archived.filter(n => !n.parentId || !archivedIds.has(n.parentId)),
     };
-  }, [nodes]);
+  }, [isOpen, nodes]);
 
   const displayedNodes = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase('zh-CN');
     if (!normalized) return archivedRoots;
     return archivedNodes.filter((node) => node.name.toLocaleLowerCase('zh-CN').includes(normalized));
   }, [archivedNodes, archivedRoots, query]);
+  const archiveVirtualizer = useVirtualizer({
+    count: displayedNodes.length,
+    getScrollElement: () => archiveScrollRef.current,
+    estimateSize: () => 52,
+    overscan: 5,
+  });
+  useEffect(() => {
+    if (archiveScrollRef.current) archiveScrollRef.current.scrollTop = 0;
+  }, [query]);
 
   useEffect(() => {
     if (!isOpen) setQuery('');
@@ -286,7 +297,7 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            className="absolute inset-0 bg-slate-900/40"
             onClick={onClose}
           />
           <motion.div
@@ -294,7 +305,7 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.995, y: 4 }}
             transition={MOTION_TRANSITION_STANDARD}
-            className="relative w-full max-w-4xl bg-white/90 backdrop-blur-xl border border-white/50 shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            className="relative w-full max-w-4xl bg-white/95 border border-white/50 shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
           >
             <div className="shrink-0 px-6 py-5 border-b border-slate-200/50 flex items-center justify-between bg-white/50">
               <div className="flex items-center gap-3">
@@ -338,9 +349,16 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
                     <div className="w-24"></div>
                   </div>
                   
-                  {displayedNodes.map(node => (
+                  <div className="max-h-[50vh] overflow-y-auto" ref={archiveScrollRef} data-testid="archive-node-list">
+                  <div style={{ height: archiveVirtualizer.getTotalSize(), position: 'relative' }}>
+                  {archiveVirtualizer.getVirtualItems().map((row) => {
+                    const node = displayedNodes[row.index];
+                    return (
                     <button
                       key={node.id}
+                      data-index={row.index}
+                      ref={archiveVirtualizer.measureElement}
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` }}
                       onClick={() => setCapsuleNodeId(node.id)}
                       className="w-full flex items-center px-4 py-3 bg-transparent hover:bg-white rounded-xl border border-transparent hover:border-slate-200/60 hover:shadow-sm transition-all group"
                     >
@@ -363,7 +381,9 @@ export const ArchiveLibraryModal = ({ isOpen, onClose }: { isOpen: boolean; onCl
                         </span>
                       </div>
                     </button>
-                  ))}
+                  ); })}
+                  </div>
+                  </div>
                 </div>
               ) : (
                 <div className="text-center py-20 text-slate-400">

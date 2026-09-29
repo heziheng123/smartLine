@@ -913,6 +913,17 @@ html, body, #root {
 .tl-project-item > button:disabled { opacity: 0.25; cursor: default; }
 .tl-project-color { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 .tl-project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #374151; font-size: 12px; }
+.tl-project-item > .tl-project-edit {
+  width: auto;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 8px;
+  color: #4338CA;
+  background: #EEF2FF;
+  font-size: 12px;
+  font-weight: 600;
+}
+.tl-project-item > .tl-project-edit:focus-visible { outline: 2px solid #4338CA; outline-offset: 2px; }
 
 .tl-project-show-all {
   min-height: 30px;
@@ -926,7 +937,7 @@ html, body, #root {
   cursor: pointer;
 }
 
-/* ── 项目显示与排序抽屉 ────────────────────────────────── */
+/* ── 项目分组管理抽屉 ────────────────────────────────── */
 .tl-project-drawer-overlay {
   position: fixed;
   inset: 0;
@@ -1572,8 +1583,6 @@ html, body, #root {
   position: fixed;
   inset: 0;
   background: var(--ui-overlay);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5579,7 +5588,12 @@ html, body, #root {
 }
 
 .workspace-sync-status__spinner {
+  display: block;
+  flex: none;
   animation: workspace-sync-spin 900ms linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
 }
 
 .workspace-sync-status__connected-icon {

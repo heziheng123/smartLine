@@ -1,5 +1,6 @@
 import type { WorkspaceBackup } from './workspaceBackup.ts';
 import { createEmptyLifeMapData } from '../lifeMap/data.ts';
+import { canonicalizeWorkspaceValue as canonicalize, hashWorkspaceValueDirect } from './workspaceHashCore.ts';
 
 export interface WorkspaceStoreReadiness {
   syncEnabled?: boolean;
@@ -193,19 +194,6 @@ export function buildUnifiedRoomCandidates(
     buildUnifiedRoomId(roomCode, primaryIdentity),
     ...(historicalIdentity ? [buildUnifiedRoomId(roomCode, historicalIdentity)] : []),
   ])];
-}
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      // Use locale-invariant comparison so the canonical form is identical regardless
-      // of the host system locale (e.g. en-US vs de-DE). This is required so
-      // hashWorkspaceValue() produces the same digest on all devices.
-      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-      .map(([key, item]) => [key, canonicalize(item)]));
-  }
-  return value;
 }
 
 export function workspaceValuesEqual(left: unknown, right: unknown): boolean {
@@ -539,10 +527,58 @@ export function mergePendingWorkspaceMigrationFields(
   };
 }
 
-export async function hashWorkspaceValue(value: unknown): Promise<string> {
-  const serialized = JSON.stringify(canonicalize(value)) ?? 'undefined';
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serialized));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+let hashWorker: Worker | null = null;
+let hashWorkerDisabled = false;
+let nextHashId = 0;
+const hashJobs = new Map<number, { value: unknown; resolve: (hash: string) => void; timer: number }>();
+
+function disableHashWorker(): void {
+  hashWorkerDisabled = true;
+  hashWorker?.terminate();
+  hashWorker = null;
+  for (const [id, job] of hashJobs) {
+    hashJobs.delete(id);
+    window.clearTimeout(job.timer);
+    void hashWorkspaceValueDirect(job.value).then(job.resolve);
+  }
+}
+
+function getHashWorker(): Worker | null {
+  if (hashWorkerDisabled) return null;
+  if (hashWorker) return hashWorker;
+  try {
+    hashWorker = new Worker(new URL('./workspaceHash.worker.ts', import.meta.url), { type: 'module' });
+    hashWorker.onmessage = (event: MessageEvent<{ id: number; hash?: string }>) => {
+      const job = hashJobs.get(event.data.id);
+      if (!job) return;
+      hashJobs.delete(event.data.id);
+      window.clearTimeout(job.timer);
+      void (event.data.hash === undefined ? hashWorkspaceValueDirect(job.value) : Promise.resolve(event.data.hash)).then(job.resolve);
+    };
+    hashWorker.onerror = disableHashWorker;
+  } catch {
+    hashWorker = null;
+    hashWorkerDisabled = true;
+  }
+  return hashWorker;
+}
+
+export function hashWorkspaceValue(value: unknown): Promise<string> {
+  if (typeof window === 'undefined' || typeof Worker === 'undefined') return hashWorkspaceValueDirect(value);
+  const worker = getHashWorker();
+  if (!worker) return hashWorkspaceValueDirect(value);
+  return new Promise((resolve) => {
+    const id = ++nextHashId;
+    const timer = window.setTimeout(disableHashWorker, 10_000);
+    hashJobs.set(id, { value, resolve, timer });
+    try {
+      worker.postMessage({ id, value });
+    } catch {
+      hashJobs.delete(id);
+      window.clearTimeout(timer);
+      void hashWorkspaceValueDirect(value).then(resolve);
+    }
+  });
 }
 
 export async function findWorkspaceFieldConflicts(

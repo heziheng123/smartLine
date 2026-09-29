@@ -51,6 +51,7 @@ import {
 } from '../../src/services/workspaceEntityStorage.ts';
 
 import { DEFAULT_EBB_SETTINGS } from '../../src/ebb/constants.ts';
+import { compareWorkspaceFields } from '../../src/services/workspaceHashCore.ts';
 
 
 function backup(): WorkspaceBackup {
@@ -319,6 +320,10 @@ test('workspace convergence compares actual content instead of connection state'
   assert.deepEqual(
     findWorkspaceFieldMismatches(remote, remote, ['tasks', 'reviewTasks', 'schedules']),
     [],
+  );
+  assert.deepEqual(
+    compareWorkspaceFields([local, remote], remote, ['tasks', 'reviewTasks', 'schedules']),
+    [['tasks'], []],
   );
 });
 

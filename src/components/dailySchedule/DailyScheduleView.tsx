@@ -1388,4 +1388,4 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
   );
 };
 
-export default DailyScheduleView;
+export default React.memo(DailyScheduleView);

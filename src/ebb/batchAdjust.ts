@@ -433,9 +433,12 @@ function planCapacityAdjustment(
     (task) => !task.isArchived && selectedKeys.has(getReviewTopicKey(task)),
   ));
   const groups = new Map<string, ReviewTask[]>();
+  // Grouping the already sorted tasks preserves each topic's round order.
   previousTasks.forEach((task) => {
     const key = getReviewTopicKey(task);
-    groups.set(key, [...(groups.get(key) ?? []), task]);
+    const group = groups.get(key);
+    if (group) group.push(task);
+    else groups.set(key, [task]);
   });
 
   // Selected pending rounds are removed from the baseline and placed back one
@@ -459,8 +462,8 @@ function planCapacityAdjustment(
     const leftProtected = left[1].some((task) => !task.isCompleted && protectedIds.has(task.id));
     const rightProtected = right[1].some((task) => !task.isCompleted && protectedIds.has(task.id));
     if (leftProtected !== rightProtected) return leftProtected ? -1 : 1;
-    const leftPending = sortRounds(left[1]).find((task) => !task.isCompleted);
-    const rightPending = sortRounds(right[1]).find((task) => !task.isCompleted);
+    const leftPending = left[1].find((task) => !task.isCompleted);
+    const rightPending = right[1].find((task) => !task.isCompleted);
     return (leftPending?.dueDate ?? '9999-12-31').localeCompare(rightPending?.dueDate ?? '9999-12-31')
       || (leftPending?.topicName ?? '').localeCompare(rightPending?.topicName ?? '', 'zh-CN');
   });
@@ -469,9 +472,24 @@ function planCapacityAdjustment(
   const results: BatchReviewTopicResult[] = [];
   const sourceIdsToClear = new Set<string>();
   const warnings: string[] = [];
+  const shiftedDates = new Map<string, string>();
+  const shiftDate = (date: string, delta: number) => {
+    const key = `${date}:${delta}`;
+    let shifted = shiftedDates.get(key);
+    if (shifted === undefined) {
+      shifted = addDays(date, delta);
+      if (shiftedDates.size >= 50_000) shiftedDates.clear();
+      shiftedDates.set(key, shifted);
+    }
+    return shifted;
+  };
+  const balanceDeltas = goal.kind === 'balance'
+    ? Array.from({ length: safeMoveDays * 2 + 1 }, (_, index) => index - safeMoveDays)
+      .sort((left, right) => Math.abs(left) - Math.abs(right) || left - right)
+    : [];
 
   for (const [topicKey, rawRounds] of orderedGroups) {
-    const rounds = sortRounds(rawRounds);
+    const rounds = rawRounds;
     const topicName = rounds[0]?.topicName ?? topicKey;
     const pending = rounds.filter((task) => !task.isCompleted);
     if (pending.length === 0) {
@@ -493,30 +511,30 @@ function planCapacityAdjustment(
     }
 
     const first = pending[0];
+    const pendingMinutes = pending.map((task, index) => getReviewRoundDuration(task, task.roundOrder ?? index + 1));
+    const hasProtectedPending = pending.some((task) => protectedIds.has(task.id));
     const latestCompleted = [...rounds].reverse().find((task) => task.isCompleted);
     const minimumDate = latestCompleted
       ? addDays(getEffectiveCompletedDate(latestCompleted), 1)
       : safeStartDate;
     const candidateDeltas = goal.kind === 'backlog'
       ? Array.from({ length: safeHorizon }, (_, index) => diffDays(addDays(safeStartDate, index), first.dueDate))
-      : Array.from({ length: safeMoveDays * 2 + 1 }, (_, index) => index - safeMoveDays)
-        .sort((left, right) => Math.abs(left) - Math.abs(right) || left - right);
+      : balanceDeltas;
 
     let best: { delta: number; score: number; dates: string[] } | null = null;
     for (const delta of candidateDeltas) {
       // Skip non-zero deltas if they would move any protected task.
       // Allow delta=0 so topics with protected tasks can still optimize other constraints.
-      if (delta !== 0 && pending.some((task) => !task.isCompleted && protectedIds.has(task.id))) continue;
-      const dates = pending.map((task) => addDays(task.dueDate, delta));
-      if (!isStrictlyOrdered(dates) || new Set(dates).size !== dates.length) continue;
+      if (delta !== 0 && hasProtectedPending) continue;
+      const dates = pending.map((task) => shiftDate(task.dueDate, delta));
+      if (!isStrictlyOrdered(dates)) continue;
       if (dates[0] < safeStartDate || dates[0] < minimumDate) continue;
       if (deadline && dates[dates.length - 1] > deadline) continue;
 
       let score = Math.abs(delta) * (goal.kind === 'balance' ? 3 : 1);
       dates.forEach((date, index) => {
-        const task = pending[index];
         const current = occupancy.get(date) ?? { minutes: 0, rounds: 0 };
-        const minutes = current.minutes + getReviewRoundDuration(task, task.roundOrder ?? index + 1);
+        const minutes = current.minutes + pendingMinutes[index];
         const roundsOnDay = current.rounds + 1;
         const minuteOverflow = Math.max(0, minutes - safeCapacity);
         const roundOverflow = Math.max(0, roundsOnDay - safeRoundLimit);
@@ -531,7 +549,7 @@ function planCapacityAdjustment(
     if (!best) {
       pending.forEach((task) => addOccupancy(task, task.dueDate));
       nextByTopic.set(topicKey, rounds);
-      const reason = pending.some((task) => !task.isCompleted && protectedIds.has(task.id))
+      const reason = hasProtectedPending
         ? '受保护的轮次无法移动，其他轮次已在当前约束下优化'
         : deadline
           ? `无法在截止日期 ${deadline} 前保持合法轮次顺序`
@@ -540,10 +558,10 @@ function planCapacityAdjustment(
       continue;
     }
 
-    const pendingIds = new Set(pending.map((task) => task.id));
+    const pendingIndex = new Map(pending.map((task, index) => [task.id, index]));
     const replacement = rounds.map((task) => {
-      if (!pendingIds.has(task.id)) return task;
-      const index = pending.findIndex((candidate) => candidate.id === task.id);
+      const index = pendingIndex.get(task.id);
+      if (index === undefined) return task;
       const dueDate = best!.dates[index];
       addOccupancy(task, dueDate);
       if (dueDate === task.dueDate) return task;

@@ -42,3 +42,29 @@ test('restoring an archived descendant keeps its ancestor path visible after rel
   await page.getByTitle('知识大盘').click();
   await expect(page.locator('[data-node-id]')).toHaveCount(3);
 });
+
+test('archive library keeps later nodes reachable in a large list', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTitle('知识大盘').click();
+  await expect.poll(() => page.evaluate(async () => {
+    const { useGraphStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    return useGraphStore.getState().isHydrated;
+  })).toBe(true);
+  await page.evaluate(async () => {
+    const { useGraphStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    useGraphStore.setState({
+      nodes: Array.from({ length: 150 }, (_, index) => ({
+        id: `archive-list-${index}`,
+        name: `归档长列表节点${index}`,
+        parentId: null,
+        createdAt: index + 1,
+        isArchived: true,
+      })),
+    });
+  });
+  await page.getByRole('button', { name: '打开归档库' }).click();
+  const list = page.getByTestId('archive-node-list');
+  await expect.poll(() => list.getByRole('button').count()).toBeLessThan(30);
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(list.getByRole('button', { name: /归档长列表节点149/ })).toBeVisible();
+});

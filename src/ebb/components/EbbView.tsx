@@ -1327,4 +1327,4 @@ const TimelineStripModal: React.FC<TimelineStripModalProps> = ({
   );
 };
 
-export default EbbView;
+export default React.memo(EbbView);

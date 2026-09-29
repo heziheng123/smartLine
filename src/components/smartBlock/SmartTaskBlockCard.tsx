@@ -5,7 +5,6 @@
 // ============================================================
 
 import React, { useCallback, useRef, useState, useEffect, useMemo, memo } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import { createPortal } from 'react-dom';
 import dayjs from 'dayjs';
 import { todayStr, formatDate, getDayOfWeek, makeLocalDayjs } from '@/utils/dateSafe';
@@ -23,6 +22,7 @@ import { getTagColor, DEFAULT_TAG_COLORS } from '@/utils/blocks';
 import { sanitizeHtml } from '@/utils/sanitize';
 import { GraphNodeSelect } from '@/graph/components/GraphNodeSelect';
 import { useGraphStore } from '@/graph/store';
+import type { GraphNode } from '@/graph/types';
 import {
   getValidGraphNodeIds,
   getQuantityCompleted,
@@ -59,6 +59,32 @@ interface SmartTaskBlockCardProps {
 }
 
 const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
+const nodePrefixIndexes = new WeakMap<GraphNode[], Map<string, string>>();
+const nodeIdIndexes = new WeakMap<GraphNode[], Map<string, GraphNode>>();
+
+function getNodePrefixIndex(nodes: GraphNode[]): Map<string, string> {
+  const cached = nodePrefixIndexes.get(nodes);
+  if (cached) return cached;
+  const index = new Map<string, string>();
+  for (const node of nodes) {
+    const key = node.name.toLowerCase();
+    for (let len = 1; len <= key.length; len += 1) {
+      const prefix = key.slice(0, len);
+      if (!index.has(prefix)) index.set(prefix, node.name);
+    }
+  }
+  nodePrefixIndexes.set(nodes, index);
+  return index;
+}
+
+function getNodeIdIndex(nodes: GraphNode[]): Map<string, GraphNode> {
+  let index = nodeIdIndexes.get(nodes);
+  if (!index) {
+    index = new Map(nodes.map((node) => [node.id, node]));
+    nodeIdIndexes.set(nodes, index);
+  }
+  return index;
+}
 
 export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = memo(function SmartTaskBlockCardInner({
   parentTaskId,
@@ -155,26 +181,15 @@ export const SmartTaskBlockCard: React.FC<SmartTaskBlockCardProps> = memo(functi
   }, [showGraphPicker]);
 
   const [titleFocused, setTitleFocused] = useState(false);
-  const { nodes, getNodeById } = useGraphStore(
-    useShallow((state) => ({ nodes: state.nodes, getNodeById: state.getNodeById })),
-  );
-  const nodePrefixIndex = useMemo(() => {
-    const index = new Map<string, string>();
-    for (const n of nodes) {
-      const key = n.name.toLowerCase();
-      for (let len = 1; len <= key.length; len += 1) {
-        const prefix = key.slice(0, len);
-        if (!index.has(prefix)) index.set(prefix, n.name);
-      }
-    }
-    return index;
-  }, [nodes]);
+  const nodes = useGraphStore((state) => state.nodes);
+  const nodePrefixIndex = useMemo(() => getNodePrefixIndex(nodes), [nodes]);
+  const nodeById = useMemo(() => getNodeIdIndex(nodes), [nodes]);
   const graphNodeIds = useMemo(() => getValidGraphNodeIds(header), [header]);
-  const validGraphNodeIds = useMemo(() => graphNodeIds.filter(id => getNodeById(id)), [graphNodeIds, getNodeById]);
+  const validGraphNodeIds = useMemo(() => graphNodeIds.filter((id) => nodeById.has(id)), [graphNodeIds, nodeById]);
   const graphNodes = useMemo(() => {
     if (!Array.isArray(graphNodeIds)) return [];
-    return validGraphNodeIds.map(id => getNodeById(id)) as typeof nodes;
-  }, [graphNodeIds, validGraphNodeIds, getNodeById]);
+    return validGraphNodeIds.map((id) => nodeById.get(id)!) as typeof nodes;
+  }, [graphNodeIds, validGraphNodeIds, nodeById]);
 
   // 幽灵文本只在标题聚焦时计算，避免 100+ 卡片每行全表扫描
   const titleGhostText = useMemo(() => {

@@ -127,14 +127,11 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   // 输入时只改单个字段（不全表 cleanse）；失焦/保存时再校验，保证打字不卡
   const updateRowField = useCallback((rowId: string, field: keyof ParsedRow, value: ParsedRow[keyof ParsedRow]) => {
     setRows((prev) => {
-      let changed = false;
-      const next = prev.map((r) => {
-        if (r._rowId !== rowId) return r;
-        if ((r[field] as unknown) === (value as unknown)) return r;
-        changed = true;
-        return { ...r, [field]: value };
-      });
-      return changed ? next : prev;
+      const index = prev.findIndex((row) => row._rowId === rowId);
+      if (index < 0 || prev[index][field] === value) return prev;
+      const next = [...prev];
+      next[index] = { ...prev[index], [field]: value };
+      return next;
     });
   }, []);
 
@@ -143,13 +140,17 @@ const BatchEditDialog: React.FC<BatchEditDialogProps> = ({
   };
 
   const handleDateChange = useCallback((rowId: string, field: 'date' | 'deadline', value: string) => {
-    setRows((prev) => prev.map((row) => {
-      if (row._rowId !== rowId) return row;
+    setRows((prev) => {
+      const index = prev.findIndex((row) => row._rowId === rowId);
+      if (index < 0) return prev;
+      const row = prev[index];
       const updated = field === 'date'
         ? { ...row, date: value, dateRaw: value }
         : { ...row, deadline: value, deadlineRaw: value };
-      return cleanseRows([updated])[0];
-    }));
+      const next = [...prev];
+      next[index] = cleanseRows([updated])[0];
+      return next;
+    });
   }, []);
 
   // 失焦只校验当前行；确认保存时再完整校验。

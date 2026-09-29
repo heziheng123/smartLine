@@ -20,8 +20,10 @@ interface SettingsPanelProps {
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }) => {
-  const store = useEbbStore();
-  const s = store.ebbSettings;
+  const s = useEbbStore((state) => state.ebbSettings);
+  const reviewTasks = useEbbStore((state) => state.reviewTasks);
+  const updateSettings = useEbbStore((state) => state.updateSettings);
+  const setTagColor = useEbbStore((state) => state.setTagColor);
   const graphNodes = useGraphStore((state) => state.nodes);
 
   const [customIntervals, setCustomIntervals] = useState(s.customIntervals);
@@ -50,9 +52,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
       overdueThreshold,
       loadThresholds,
     };
-    store.updateSettings(patch);
+    updateSettings(patch);
     onClose();
-  }, [customIntervals, dailyTaskLimit, dailyPointLimit, dailyReviewMinutes, maxSpreadDays, minTopicGapDays, autoProcessOverdue, overdueThreshold, loadThresholds, store, onClose]);
+  }, [customIntervals, dailyTaskLimit, dailyPointLimit, dailyReviewMinutes, maxSpreadDays, minTopicGapDays, autoProcessOverdue, overdueThreshold, loadThresholds, updateSettings, onClose]);
 
   // 复杂度配置编辑
   const [editingComplexity, setEditingComplexity] = useState<ComplexityLevel | null>(null);
@@ -60,14 +62,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
   const handleResetComplexity = useCallback(async (level: ComplexityLevel) => {
     if (!await requestConfirmation(`重置「${level}」复杂度为默认配置？`)) return;
     const newConfigs = { ...s.complexityConfigs, [level]: DEFAULT_COMPLEXITY_CONFIGS[level] };
-    store.updateSettings({ complexityConfigs: newConfigs });
-  }, [s.complexityConfigs, store]);
+    updateSettings({ complexityConfigs: newConfigs });
+  }, [s.complexityConfigs, updateSettings]);
 
   // 分类颜色：知识节点任务按大盘根节点归类，独立内容保留手动标签。
   const rootByNodeId = useMemo(() => buildRootNodeMap(graphNodes), [graphNodes]);
   const categoryEntries = useMemo(
-    () => collectReviewCategories(store.reviewTasks, rootByNodeId),
-    [store.reviewTasks, rootByNodeId],
+    () => collectReviewCategories(reviewTasks, rootByNodeId),
+    [reviewTasks, rootByNodeId],
   );
 
   const content = (
@@ -228,7 +230,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
                             ...s.complexityConfigs,
                             [level]: { ...cfg, intervals, weights },
                           };
-                          store.updateSettings({ complexityConfigs: newConfigs });
+                          updateSettings({ complexityConfigs: newConfigs });
                           setEditingComplexity(null);
                         }}
                       />
@@ -320,7 +322,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose, inline = false }
                             className={`eb-tag-color-swatch ${color === c ? 'eb-tag-color-swatch--active' : ''}`}
                             style={{ backgroundColor: c }}
                             aria-label={`将${category.label}设为${c}`}
-                            onClick={() => store.setTagColor(category.key, c)}
+                            onClick={() => setTagColor(category.key, c)}
                           />
                         ))}
                       </div>

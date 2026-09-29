@@ -207,6 +207,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
     }
     return result;
   }, [projectDescriptors, tasks]);
+  const animateCards = allBlocks.length <= 120;
 
   const rows = useMemo(() => {
     const rowMap = new Map<string, MatrixRow>();
@@ -846,7 +847,7 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
                     onDrop={(event) => handleExternalCellDrop(event, row.key, dateStr)}
                   >
                     {row.isGhost && <span className="wmv-ghost-drop-hint" aria-hidden="true">＋</span>}
-                    <AnimatePresence mode="popLayout">
+                    <AnimatePresence mode={animateCards ? 'popLayout' : 'sync'}>
                     {blocks.map((block) => {
                       const header = block.header;
                       const isOverdue = isTaskOverdueOnDate(header, todayString);
@@ -864,10 +865,10 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
 
                       return (
                         <motion.div
-                          layout
-                          initial={{ opacity: 0, scale: 0.985, y: 4 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.99, y: 2, transition: { ...MOTION_TRANSITION_EXIT, ease: MOTION_EASE_EXIT } }}
+                          layout={animateCards}
+                          initial={animateCards ? { opacity: 0, scale: 0.985, y: 4 } : false}
+                          animate={animateCards ? { opacity: 1, scale: 1, y: 0 } : undefined}
+                          exit={animateCards ? { opacity: 0, scale: 0.99, y: 2, transition: { ...MOTION_TRANSITION_EXIT, ease: MOTION_EASE_EXIT } } : undefined}
                           transition={MOTION_SPRING_GENTLE}
                           key={`${block._taskId}::${block.id}`}
                           tabIndex={0}
@@ -983,4 +984,4 @@ const WeekMatrixView: React.FC<WeekMatrixViewProps> = ({ tasks, groups, mileston
   );
 };
 
-export default WeekMatrixView;
+export default React.memo(WeekMatrixView);

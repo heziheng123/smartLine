@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { useShallow } from 'zustand/react/shallow';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useGraphStore } from '../store';
 import { Search, Plus, Sparkles, X, Check } from 'lucide-react';
 import type { GraphNode } from '../types';
@@ -12,6 +12,7 @@ interface GraphNodeSelectProps {
 }
 
 const stopWords = ['的', '了', '是', '复习', '看书', '看课', '做题', '笔记', '第', '章', '节', '课', '和', '与'];
+const EMPTY_NODE_IDS: string[] = [];
 
 const meaningfulCharacters = (value: string) => {
   const withoutStopWords = stopWords.reduce((text, word) => text.split(word).join(''), value);
@@ -19,7 +20,7 @@ const meaningfulCharacters = (value: string) => {
 };
 
 // 简单的相似度计算：计算 nodeName 在 taskTitle 中出现的比例，或者共有字符的比例
-function calculateSimilarity(taskTitle: string, nodeName: string): number {
+function calculateSimilarity(taskTitle: string, nodeName: string, titleChars: Set<string>): number {
   if (!taskTitle || !nodeName) return 0;
   const title = taskTitle.toLowerCase();
   const name = nodeName.toLowerCase();
@@ -31,14 +32,13 @@ function calculateSimilarity(taskTitle: string, nodeName: string): number {
   if (name.includes(title)) return 80;
   
   // 3. 计算去除完整停用词后的共有字符比例
-  const titleChars = meaningfulCharacters(title);
   const nameChars = meaningfulCharacters(name);
   
   if (nameChars.length === 0) return 0;
   
   let matchCount = 0;
   for (const char of nameChars) {
-    if (titleChars.includes(char)) {
+    if (titleChars.has(char)) {
       matchCount++;
     }
   }
@@ -53,15 +53,16 @@ function calculateSimilarity(taskTitle: string, nodeName: string): number {
 
 export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTitle = '', onChange, footer }) => {
   // 确保 value 始终是数组
-  const safeValue = Array.isArray(value) ? value : [];
-  const { nodes, addNode, getNodeById } = useGraphStore(useShallow((state) => ({
-    nodes: state.nodes,
-    addNode: state.addNode,
-    getNodeById: state.getNodeById,
-  })));
+  const safeValue = Array.isArray(value) ? value : EMPTY_NODE_IDS;
+  const nodes = useGraphStore((state) => state.nodes);
+  const addNode = useGraphStore((state) => state.addNode);
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const selectedIds = useMemo(() => new Set(safeValue), [safeValue]);
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const existingNames = useMemo(() => new Set(nodes.filter((node) => !node.isArchived).map((node) => node.name.toLowerCase())), [nodes]);
   const selectableNodes = useMemo(() => {
     const parentIds = new Set(
       nodes.filter(node => !node.isArchived && node.parentId).map(node => node.parentId as string),
@@ -76,10 +77,11 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
   // 重置选中索引
   useEffect(() => {
     setSelectedIndex(0);
+    if (listRef.current) listRef.current.scrollTop = 0;
   }, [search]);
 
   const handleSelect = (nodeId: string) => {
-    if (safeValue.includes(nodeId)) {
+    if (selectedIds.has(nodeId)) {
       onChange(safeValue.filter(id => id !== nodeId));
     } else {
       onChange([...safeValue, nodeId]);
@@ -95,7 +97,7 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
     const visited = new Set([node.id]);
     while (current?.parentId && !visited.has(current.parentId)) {
       visited.add(current.parentId);
-      current = getNodeById(current.parentId);
+      current = nodeById.get(current.parentId);
       if (current) {
         path.unshift(current.name);
       }
@@ -105,20 +107,29 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
 
   // 最近创建：按 createdAt 降序，取前 5 个
   const recentNodes = useMemo(() => {
-    return [...selectableNodes].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+    const recent: GraphNode[] = [];
+    for (const node of selectableNodes) {
+      const index = recent.findIndex((item) => node.createdAt > item.createdAt);
+      recent.splice(index < 0 ? recent.length : index, 0, node);
+      if (recent.length > 5) recent.pop();
+    }
+    return recent;
   }, [selectableNodes]);
 
   // 智能推荐：计算相似度
   const recommendedNodes = useMemo(() => {
     if (!taskTitle || !taskTitle.trim()) return [];
     
-    const scored = selectableNodes.map(node => ({
-      node,
-      score: calculateSimilarity(taskTitle, node.name)
-    })).filter(n => n.score > 0); // 只要有匹配度就尝试推荐，由降序和截取控制数量
-    
-    // 按分数降序排列，取前 3 个
-    return scored.sort((a, b) => b.score - a.score).slice(0, 3).map(s => s.node);
+    const titleChars = new Set(meaningfulCharacters(taskTitle.toLowerCase()));
+    const scored: Array<{ node: GraphNode; score: number }> = [];
+    for (const node of selectableNodes) {
+      const score = calculateSimilarity(taskTitle, node.name, titleChars);
+      if (score <= 0) continue;
+      const index = scored.findIndex((item) => score > item.score);
+      scored.splice(index < 0 ? scored.length : index, 0, { node, score });
+      if (scored.length > 3) scored.pop();
+    }
+    return scored.map((item) => item.node);
   }, [selectableNodes, taskTitle]);
 
   const filteredNodes = useMemo(() => {
@@ -131,14 +142,11 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
       // 如果什么都没有，返回空数组，而不是抛错
       return merged;
     }
-    return selectableNodes.filter(n => n.name.toLowerCase().includes(search.toLowerCase()));
+    const query = search.toLowerCase();
+    return selectableNodes.filter(n => n.name.toLowerCase().includes(query));
   }, [search, recentNodes, recommendedNodes, selectableNodes]);
 
-  const exactMatch = useMemo(() => {
-    return nodes.find(
-      n => !n.isArchived && n.name.toLowerCase() === search.trim().toLowerCase(),
-    );
-  }, [nodes, search]);
+  const exactMatch = existingNames.has(search.trim().toLowerCase());
 
   // 计算幽灵文本（Ghost Text）
   const ghostText = useMemo(() => {
@@ -158,6 +166,12 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
 
   const showCreate = search.trim() && !exactMatch;
   const totalItems = filteredNodes.length + (showCreate ? 1 : 0);
+  const rowVirtualizer = useVirtualizer({
+    count: totalItems,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 44,
+    overscan: 5,
+  });
 
   const handleCreate = () => {
     const trimmed = search.trim();
@@ -174,10 +188,18 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
       }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelectedIndex((prev) => (prev + 1) % totalItems);
+      if (totalItems > 0) {
+        const next = (selectedIndex + 1) % totalItems;
+        setSelectedIndex(next);
+        rowVirtualizer.scrollToIndex(next);
+      }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelectedIndex((prev) => (prev - 1 + totalItems) % totalItems);
+      if (totalItems > 0) {
+        const next = (selectedIndex - 1 + totalItems) % totalItems;
+        setSelectedIndex(next);
+        rowVirtualizer.scrollToIndex(next);
+      }
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (selectedIndex < filteredNodes.length) {
@@ -194,7 +216,7 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
       {safeValue.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '10px 12px 0' }}>
           {safeValue.map(id => {
-            const n = getNodeById(id);
+            const n = nodeById.get(id);
             if (!n) return null;
             return (
               <span key={id} style={{
@@ -264,48 +286,49 @@ export const GraphNodeSelect: React.FC<GraphNodeSelectProps> = ({ value, taskTit
         <div className="stb-graph-picker-title">最近创建</div>
       )}
 
-      <div className="stb-graph-picker-list">
-        {filteredNodes.map((node, index) => {
+      <div className="stb-graph-picker-list" ref={listRef}>
+        <div style={{ height: rowVirtualizer.getTotalSize(), flexShrink: 0, position: 'relative', width: '100%' }}>
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const index = virtualRow.index;
+          if (index === filteredNodes.length) return (
+            <div key="create" data-index={index} ref={rowVirtualizer.measureElement} style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}>
+              <button type="button" className={`stb-graph-option stb-graph-option--create ${selectedIndex === index ? 'stb-graph-option--active' : ''}`} style={{ width: '100%' }} onClick={handleCreate} onMouseEnter={() => { if (selectedIndex !== index) setSelectedIndex(index); }}>
+                <Plus size={14} /> 创建新知识节点："{search.trim()}"
+              </button>
+            </div>
+          );
+          const node = filteredNodes[index];
           const path = getNodePath(node);
           const isRecommended = !search && index < recommendedNodes.length;
           // 如果过了推荐区，并且是最近创建的第一个，插入一个小标题
           const isFirstRecent = !search && recommendedNodes.length > 0 && index === recommendedNodes.length;
           
           return (
-            <React.Fragment key={node.id}>
+            <div key={node.id} data-index={index} ref={rowVirtualizer.measureElement} style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}>
               {isFirstRecent && (
                 <div className="stb-graph-picker-title" style={{ marginTop: 8, borderTop: '1px solid #f3f4f6', paddingTop: 8 }}>最近创建</div>
               )}
               <button
                 type="button"
                 className={`stb-graph-option ${selectedIndex === index ? 'stb-graph-option--active' : ''}`}
-                style={isRecommended ? { backgroundColor: selectedIndex === index ? '#f5f3ff' : '#faf5ff' } : {}}
+                style={{ width: '100%', ...(isRecommended ? { backgroundColor: selectedIndex === index ? '#f5f3ff' : '#faf5ff' } : {}) }}
                 onClick={() => handleSelect(node.id)}
-                onMouseEnter={() => setSelectedIndex(index)}
+                onMouseEnter={() => { if (selectedIndex !== index) setSelectedIndex(index); }}
               >
                 <div className="stb-graph-option-main">
                   {isRecommended && <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', backgroundColor: '#8b5cf6', marginRight: 6 }} />}
                   {node.name}
                 </div>
-                {safeValue.includes(node.id) ? (
+                {selectedIds.has(node.id) ? (
                   <Check size={14} color="#10b981" style={{ flexShrink: 0 }} />
                 ) : path ? (
                   <div className="stb-graph-option-path">{path}</div>
                 ) : null}
               </button>
-            </React.Fragment>
+            </div>
           );
         })}
-        {showCreate && (
-          <button
-            type="button"
-            className={`stb-graph-option stb-graph-option--create ${selectedIndex === filteredNodes.length ? 'stb-graph-option--active' : ''}`}
-            onClick={handleCreate}
-            onMouseEnter={() => setSelectedIndex(filteredNodes.length)}
-          >
-            <Plus size={14} /> 创建新知识节点："{search.trim()}"
-          </button>
-        )}
+        </div>
       </div>
       {footer}
     </div>

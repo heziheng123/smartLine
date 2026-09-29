@@ -48,7 +48,6 @@ import {
   decideUnifiedWorkspaceActivation,
   findWorkspaceFieldConflicts,
   findWorkspaceFieldsSafeToBackfill,
-  findWorkspaceFieldMismatches,
   hasWorkspaceFieldSnapshotChanged,
   hashWorkspaceBackup,
   hashWorkspaceValue,
@@ -60,6 +59,7 @@ import {
   workspaceHasUserContent,
   workspaceValuesEqual,
 } from './workspaceSyncCore';
+import { compareWorkspaceFields } from './workspaceHashCore';
 import { applyWorkspaceFields } from './workspaceOfflineQueue';
 import {
   WORKSPACE_ENTITY_STORAGE_VERSION,
@@ -1578,6 +1578,40 @@ function recordWorkspaceVerification(roomId: string, repairedFields: string[]): 
   }
 }
 
+function compareWorkspaceFieldsAsync(
+  lefts: Record<string, unknown>[],
+  right: Record<string, unknown>,
+  fields: readonly string[],
+): Promise<string[][]> {
+  const fallback = () => compareWorkspaceFields(lefts, right, fields);
+  if (typeof window === 'undefined' || typeof Worker === 'undefined') return Promise.resolve(fallback());
+  return new Promise((resolve) => {
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('./workspaceCompare.worker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      resolve(fallback());
+      return;
+    }
+    let completed = false;
+    const finish = (result?: string[][]) => {
+      if (completed) return;
+      completed = true;
+      window.clearTimeout(timer);
+      worker.terminate();
+      resolve(result ?? fallback());
+    };
+    const timer = window.setTimeout(() => finish(), 15_000);
+    worker.onmessage = (event: MessageEvent<string[][]>) => finish(event.data);
+    worker.onerror = () => finish();
+    try {
+      worker.postMessage({ lefts, right, fields: [...fields] });
+    } catch {
+      finish();
+    }
+  });
+}
+
 async function ensureUnifiedWorkspaceConvergence(
   targetRoomId: string,
   shouldContinue: () => boolean = () => true,
@@ -1607,15 +1641,18 @@ async function ensureUnifiedWorkspaceConvergence(
     const localBackup = createWorkspaceBackup();
     const local = workspaceRootFromBackup(localBackup) as Record<string, unknown>;
     const canonicalRemote = workspaceRootFromBackup(rootToBackup(remote, localBackup)) as Record<string, unknown>;
-    const projectionMismatches = findWorkspaceFieldMismatches(rawRemote, remote, EXPECTED_KEYS);
+    const [localMismatches, projectionMismatches, canonicalMismatches] = await compareWorkspaceFieldsAsync(
+      [local, rawRemote, canonicalRemote], remote, EXPECTED_KEYS,
+    );
+    assertCurrent();
     const mismatches = [...new Set([
-      ...findWorkspaceFieldMismatches(local, remote, EXPECTED_KEYS),
+      ...localMismatches,
       ...projectionMismatches,
       // Even when Liveblocks hydrated the exact raw value into Zustand, legacy
       // data can still require normalization. Compare the cloud snapshot with
       // its canonical representation so those repairs are not skipped merely
       // because local and remote are identically stale.
-      ...findWorkspaceFieldMismatches(canonicalRemote, remote, EXPECTED_KEYS),
+      ...canonicalMismatches,
     ])];
     if (mismatches.length === 0) return [...repaired];
 
@@ -1678,7 +1715,7 @@ async function ensureUnifiedWorkspaceConvergence(
 
   const finalRemote = materializeWorkspaceEntityRoot(root.toJSON() as Record<string, unknown>);
   const finalLocal = workspaceRootFromBackup(createWorkspaceBackup()) as Record<string, unknown>;
-  const remaining = findWorkspaceFieldMismatches(finalLocal, finalRemote, EXPECTED_KEYS);
+  const [remaining] = await compareWorkspaceFieldsAsync([finalLocal], finalRemote, EXPECTED_KEYS);
   throw new Error(`云端已连接，但 ${remaining.join('、') || '部分数据'} 未能在本机收敛，请重新连接后重试。`);
 }
 

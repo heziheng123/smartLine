@@ -95,3 +95,35 @@ test('completed task binding asks for a strategy and reuses it during the same s
   await expect(page.getByText('旧知识节点', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('新知识节点', { exact: true })).toHaveCount(0);
 });
+
+test('large node picker keeps distant results selectable', async ({ page }) => {
+  await expect.poll(() => page.evaluate(async () => {
+    const { useGraphStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    return useGraphStore.getState().isHydrated;
+  })).toBe(true);
+  await page.evaluate(async () => {
+    const { useGraphStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    useGraphStore.setState((state) => ({
+      nodes: [
+        ...state.nodes,
+        ...Array.from({ length: 150 }, (_, index) => ({
+          id: `picker-node-${index}`,
+          name: `虚拟节点${index}`,
+          parentId: null,
+          createdAt: index + 10,
+          status: 'unactivated' as const,
+        })),
+      ],
+    }));
+  });
+  await page.getByTitle('项目规划').click();
+  await page.locator('.tl-seg').filter({ hasText: '改绑策略项目' }).first().click();
+  await page.locator('.stb-card').filter({ hasText: '已完成改绑任务' }).getByRole('button', { name: '旧知识节点' }).click();
+  await page.getByPlaceholder('搜索或创建知识节点...').fill('虚拟节点');
+  await expect.poll(() => page.locator('.stb-graph-option').count()).toBeLessThan(30);
+  await page.locator('.stb-graph-picker-list').evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await page.locator('.stb-graph-option').filter({ hasText: '虚拟节点149' }).click();
+  await page.getByRole('dialog', { name: '如何处理已完成任务的复习关联？' })
+    .getByRole('button', { name: /仅修改关联/ }).click();
+  await expect(page.locator('.stb-graph-picker')).toContainText('虚拟节点149');
+});

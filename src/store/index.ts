@@ -675,15 +675,22 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
                   : task,
               );
-              const groups = state.groups.map((group) => ({
-                ...group,
-                children: group.children.map((task) =>
-                  task.id === taskId
-                    ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
-                    : task,
-                ),
-              }));
-              const newData = { ...state, tasks, groups };
+              const groups = state.groups.map((group) => {
+                if (!group.children.some((task) => task.id === taskId)) return group;
+                return {
+                  ...group,
+                  children: group.children.map((task) =>
+                    task.id === taskId
+                      ? { ...task, blocks: updateBlockHeader(task.blocks, blockId, headerPatch), blocksUpdatedAt: now }
+                      : task,
+                  ),
+                };
+              });
+              const newData = {
+                ...state,
+                tasks: tasks.some((task, index) => task !== state.tasks[index]) ? tasks : state.tasks,
+                groups: groups.some((group, index) => group !== state.groups[index]) ? groups : state.groups,
+              };
               saveData(newData);
               return newData;
             });

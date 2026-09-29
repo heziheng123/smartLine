@@ -6,7 +6,6 @@
   place-items: center;
   padding: var(--space-5, 20px);
   background: rgb(15 23 42 / 42%);
-  backdrop-filter: blur(2px);
   animation: app-confirm-overlay-in 140ms ease-out both;
 }
 

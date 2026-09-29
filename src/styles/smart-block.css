@@ -2712,7 +2712,6 @@
   justify-content: center;
   padding: 24px;
   background: rgba(15, 23, 42, 0.35);
-  backdrop-filter: blur(3px);
 }
 
 .ptm-dialog {

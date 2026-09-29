@@ -313,7 +313,7 @@ const getAccessibleTextColor = (hexcolor: string) => {
   return contrast(0.0152) > contrast(1) ? '#0f172a' : '#ffffff';
 };
 
-export const KnowledgeGraphView: React.FC = () => {
+export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphView() {
   recordGraphDiagnostic('reactRender');
   useEffect(() => {
     recordGraphDiagnostic('reactCommit');
@@ -380,6 +380,7 @@ export const KnowledgeGraphView: React.FC = () => {
     cancel: state.cancel,
     confirm: state.confirm,
   })));
+  const bindingSelectedIds = useMemo(() => new Set(bindingSession.selectedNodeIds), [bindingSession.selectedNodeIds]);
   const [bindingError, setBindingError] = useState('');
 
   const [newRootName, setNewRootName] = useState('');
@@ -1090,6 +1091,9 @@ export const KnowledgeGraphView: React.FC = () => {
     scene.style.opacity = '';
     canvas.style.opacity = '0';
     if (canvasLayer) canvasLayer.dataset.zoomCacheState = 'building';
+    // Binding selection is rendered directly by SVG. Rebuilding a full canvas
+    // cache for every checked node blocks the next interaction unnecessarily.
+    if (bindingSession.active) return;
 
     const build = (scheduleSettledRefresh: boolean) => {
       if (generation !== controller.generation) return;
@@ -1157,7 +1161,7 @@ export const KnowledgeGraphView: React.FC = () => {
       controller.buildIdleCallback = null;
       controller.commands = [];
     };
-  }, [bindingSession.active, bindingSession.selectedNodeIds, dimensions.height, dimensions.width, islandsData, islandRotations, isHydrated, matchingNodeIds, selectedNodeId]);
+  }, [bindingSession.active, dimensions.height, dimensions.width, islandsData, islandRotations, isHydrated, matchingNodeIds, selectedNodeId]);
 
   useEffect(() => () => {
     const controller = zoomCanvasControllerRef.current;
@@ -1915,7 +1919,7 @@ export const KnowledgeGraphView: React.FC = () => {
                   const nodeId = node.data.id;
                   const isMultiSelected = multiSelectedIds.has(nodeId);
                   const isSelected = selectedNodeId === nodeId || isMultiSelected;
-                  const isBindingSelected = bindingSession.active && bindingSession.selectedNodeIds.includes(nodeId);
+                  const isBindingSelected = bindingSession.active && bindingSelectedIds.has(nodeId);
 
                   const isXRayActive = matchingNodeIds !== null;
                   const isXRayMatched = isXRayActive && matchingNodeIds.has(nodeId);
@@ -2275,4 +2279,4 @@ export const KnowledgeGraphView: React.FC = () => {
       ))}
     </div>
   );
-};
+});

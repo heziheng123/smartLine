@@ -357,4 +357,4 @@ const MonthRow: React.FC<{
   );
 };
 
-export default MonthRow;
+export default React.memo(MonthRow);

@@ -1152,4 +1152,4 @@ const LifeMapWorkspace: React.FC = () => {
   </div>;
 };
 
-export default LifeMapWorkspace;
+export default React.memo(LifeMapWorkspace);
