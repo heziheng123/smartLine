@@ -45,10 +45,10 @@ type NodeRollupStats = {
   overdueCount: number;
 };
 
-type NodeVisualState = 'inactive' | 'completed-no-review' | 'archived-no-review' | 'reviewing' | 'mastered';
+type NodeVisualState = 'inactive' | 'completed-no-review' | 'reviewing' | 'mastered';
 
 type GraphRadiusMode = 'overview' | 'reading' | 'expanded';
-type GraphStatusFilter = 'all' | 'inactive' | 'overdue' | 'reviewing' | 'completed-no-review' | 'archived-no-review' | 'mastered';
+type GraphStatusFilter = 'all' | 'inactive' | 'overdue' | 'reviewing' | 'completed-no-review' | 'mastered';
 type DockPanel = 'view' | 'filter' | 'search' | null;
 
 const GRAPH_RADIUS_FLOOR: Record<GraphRadiusMode, number> = {
@@ -65,7 +65,6 @@ const GRAPH_STATUS_OPTIONS: Array<{
   { value: 'inactive', label: '未激活', dotClass: 'bg-slate-500' },
   { value: 'overdue', label: '严重逾期', dotClass: 'bg-rose-500' },
   { value: 'completed-no-review', label: '已激活 · 无复习计划', dotClass: 'bg-blue-500' },
-  { value: 'archived-no-review', label: '旧复习已归档', dotClass: 'bg-slate-500' },
   { value: 'reviewing', label: '复习中', dotClass: 'bg-emerald-500' },
   { value: 'mastered', label: '复习已完成', dotClass: 'bg-amber-500' },
 ];
@@ -73,7 +72,6 @@ const GRAPH_STATUS_OPTIONS: Array<{
 const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
   inactive: '#64748b',
   'completed-no-review': '#3b82f6',
-  'archived-no-review': '#64748b',
   reviewing: '#10b981',
   mastered: '#eab308',
 };
@@ -81,7 +79,6 @@ const NODE_STATE_COLOR: Record<NodeVisualState, string> = {
 const NODE_STATE_LABEL: Record<NodeVisualState, string> = {
   inactive: '未激活',
   'completed-no-review': '已激活 · 无复习计划',
-  'archived-no-review': '旧复习已归档',
   reviewing: '复习中',
   mastered: '复习已完成',
 };
@@ -552,8 +549,8 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
   }, [showHint]);
 
   const activationStates = useMemo(
-    () => computeNodeActivationStates(nodes),
-    [nodes],
+    () => computeNodeActivationStates(nodes, deferredReviewTasks),
+    [nodes, deferredReviewTasks],
   );
 
   useEffect(() => {
@@ -610,29 +607,6 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
     return map;
   }, [deferredReviewTasks]);
 
-  const archivedReviewsByNode = useMemo(() => new Set(
-    deferredReviewTasks
-      .filter((task) => task.isArchived && task.graphNodeId)
-      .map((task) => task.graphNodeId!),
-  ), [deferredReviewTasks]);
-
-  const completedBindingsByNode = useMemo(() => {
-    const map = new Map<string, { hasAutoReview: boolean; hasNoAutoReview: boolean }>();
-    deferredProjectTasks.forEach((task) => {
-      const blocks = Array.isArray(task.blocks) ? task.blocks : [];
-      blocks.forEach((block) => {
-        if (block.type !== 'smart-task' || block.header.isArchived || !block.header.isCompleted) return;
-        getCachedGraphNodeIds(block.header).forEach((nodeId) => {
-          const current = map.get(nodeId) ?? { hasAutoReview: false, hasNoAutoReview: false };
-          if (shouldAutoSyncEbb(block.header)) current.hasAutoReview = true;
-          else current.hasNoAutoReview = true;
-          map.set(nodeId, current);
-        });
-      });
-    });
-    return map;
-  }, [deferredProjectTasks]);
-
   const nodeVisualStates = useMemo(() => {
     const states = new Map<string, NodeVisualState>();
     const visiting = new Set<string>();
@@ -654,18 +628,14 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
         const rounds = reviewsByNode.get(nodeId) ?? [];
         state = rounds.length > 0
           ? (rounds.every((task) => task.isCompleted) ? 'mastered' : 'reviewing')
-          : archivedReviewsByNode.has(nodeId)
-            ? 'archived-no-review'
-            : (completedBindingsByNode.get(nodeId)?.hasAutoReview ? 'reviewing' : 'completed-no-review');
+          : 'completed-no-review';
       } else {
         const childStates = childIds.map(visit);
         state = childStates.every((childState) => childState === 'mastered')
           ? 'mastered'
           : childStates.some((childState) => childState === 'reviewing')
             ? 'reviewing'
-            : childStates.every((childState) => childState === 'archived-no-review')
-              ? 'archived-no-review'
-              : 'completed-no-review';
+            : 'completed-no-review';
       }
       visiting.delete(nodeId);
       states.set(nodeId, state);
@@ -674,7 +644,7 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
 
     nodes.forEach((node) => visit(node.id));
     return states;
-  }, [activationStates, archivedReviewsByNode, childrenByParent, completedBindingsByNode, nodes, reviewsByNode]);
+  }, [activationStates, childrenByParent, nodes, reviewsByNode]);
 
   const getNodeVisualState = useCallback(
     (nodeId: string): NodeVisualState => nodeVisualStates.get(nodeId) ?? 'inactive',
@@ -878,7 +848,6 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
       overdue: 0,
       reviewing: 0,
       'completed-no-review': 0,
-      'archived-no-review': 0,
       mastered: 0,
     };
     islandsData.allFlatNodes.forEach((node: ViewNode) => {
@@ -886,7 +855,6 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
       if (node.isActivated && node.overdueCount > 0) counts.overdue += 1;
       if (node.visualState === 'reviewing' && node.overdueCount === 0) counts.reviewing += 1;
       if (node.visualState === 'completed-no-review') counts['completed-no-review'] += 1;
-      if (node.visualState === 'archived-no-review') counts['archived-no-review'] += 1;
       if (node.visualState === 'mastered') counts.mastered += 1;
     });
     return counts;
@@ -904,7 +872,6 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
         || (statusFilter === 'overdue' && node.isActivated && node.overdueCount > 0)
         || (statusFilter === 'reviewing' && node.visualState === 'reviewing' && node.overdueCount === 0)
         || (statusFilter === 'completed-no-review' && node.visualState === 'completed-no-review')
-        || (statusFilter === 'archived-no-review' && node.visualState === 'archived-no-review')
         || (statusFilter === 'mastered' && node.visualState === 'mastered');
 
       const matchQuery = !query || node.name.toLowerCase().includes(query);
@@ -1116,7 +1083,7 @@ export const KnowledgeGraphView: React.FC = React.memo(function KnowledgeGraphVi
       // Small graphs stay pure SVG: no canvas takeover, always vector-crisp.
       if (commands.length > 0 && commands.length < 600) {
         controller.commands = [];
-        controller.ready = false;
+        controller.ready = true;
         if (canvasLayer) canvasLayer.dataset.zoomCacheState = 'ready';
         return;
       }

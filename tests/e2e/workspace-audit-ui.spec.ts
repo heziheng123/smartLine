@@ -17,7 +17,7 @@ test('workspace audit report can be downloaded from backup settings', async ({ p
   await page.getByTitle('更多').click();
   await page.getByRole('menuitem', { name: '同步与备份' }).click();
   const dialog = page.getByRole('dialog', { name: '云同步与完整备份' });
-  await dialog.getByText('数据、备份与恢复').click();
+  await dialog.getByText('开发者详情：房间号、诊断、旧人生地图').click();
 
   const downloadPromise = page.waitForEvent('download');
   await dialog.getByRole('button', { name: '导出盘点报告' }).click();

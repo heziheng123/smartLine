@@ -1151,10 +1151,16 @@ const DailyScheduleView: React.FC<DailyScheduleViewProps> = ({ targetDate, weekR
             <details className="ds-header-menu">
               <summary aria-label="更多设置"><Settings2 size={15} /></summary>
               <div role="menu">
-                <button type="button" role="menuitem" onClick={() => setDailyPlanOpen(true)}>
+                <button type="button" role="menuitem" onClick={(event) => {
+                  event.currentTarget.closest('details')?.removeAttribute('open');
+                  setDailyPlanOpen(true);
+                }}>
                   <CalendarCheck2 size={15} />明日负荷规划
                 </button>
-                <button type="button" role="menuitem" aria-expanded={showSlotSettings} aria-controls="daily-time-settings" onClick={() => setShowSlotSettings(!showSlotSettings)}>
+                <button type="button" role="menuitem" aria-expanded={showSlotSettings} aria-controls="daily-time-settings" onClick={(event) => {
+                  event.currentTarget.closest('details')?.removeAttribute('open');
+                  setShowSlotSettings(!showSlotSettings);
+                }}>
                   <Clock3 size={15} />时间与容量
                 </button>
               </div>

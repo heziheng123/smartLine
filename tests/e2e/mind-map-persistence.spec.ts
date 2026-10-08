@@ -129,9 +129,9 @@ test('deleting a document keeps the remaining document intact', async ({ page })
   await page.getByTestId('mind-map-new-document').click();
   await page.getByTestId('mind-map-title').fill('待删除图');
   await expect(page.getByTestId('mind-map-save-status')).toHaveText('已保存');
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByLabel('更多操作', { exact: true }).click();
   await page.getByRole('menuitem', { name: '删除当前导图' }).click();
+  await page.getByRole('button', { name: '删除', exact: true }).click();
   await page.getByTestId('mind-map-catalog-toggle').click();
   await expect(page.getByTestId('mind-map-catalog').getByTestId('mind-map-catalog-item')).toHaveCount(1);
   await expect(page.getByTestId('mind-map-title')).toHaveValue('保留图');

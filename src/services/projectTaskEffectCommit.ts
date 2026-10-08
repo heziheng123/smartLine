@@ -90,19 +90,29 @@ export function commitProjectTaskEffects({
     ? useEbbStore.getState().applyProjectTaskSyncPlan(ebbPlan)
     : undefined;
   if (effectPlan.ebbPayloads.length > 0) affectedDomains.add('ebb');
+  if (ebbCommit?.changed && ebbCommit.affectedGraphNodeIds.length > 0) {
+    affectedDomains.add('knowledge-graph');
+  }
 
   const activatedGraphNodeIds: string[] = [];
   const deactivatedGraphNodeIds: string[] = [];
   effectPlan.graphNodeIdsToActivate.forEach((nodeId) => {
     const graphState = useGraphStore.getState();
     if (!isLeafGraphNode(graphState.nodes, nodeId)) return;
+    const expectsAutoReview = effectPlan.ebbPayloads.some((payload) =>
+      payload.action === 'add' && payload.graphNodeId === nodeId && payload.triggerSchedule,
+    );
+    if (expectsAutoReview && !useEbbStore.getState().reviewTasks.some((task) =>
+      task.graphNodeId === nodeId && !task.isArchived,
+    )) return;
     graphState.updateNode(nodeId, { status: 'activated' });
     activatedGraphNodeIds.push(nodeId);
   });
   effectPlan.graphNodeIdsToDeactivate.forEach((nodeId) => {
     const graphState = useGraphStore.getState();
     if (!isLeafGraphNode(graphState.nodes, nodeId)) return;
-    graphState.updateNode(nodeId, { status: 'unactivated' });
+    const reviewClosed = graphState.nodes.find((node) => node.id === nodeId)?.reviewClosed;
+    graphState.updateNode(nodeId, { status: 'unactivated', ...(reviewClosed === true ? { reviewClosed } : {}) });
     deactivatedGraphNodeIds.push(nodeId);
   });
   if (activatedGraphNodeIds.length > 0 || deactivatedGraphNodeIds.length > 0) {

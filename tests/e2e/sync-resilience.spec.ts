@@ -297,6 +297,8 @@ test('ordinary UI reports active conflicts and keeps resolved recovery copies re
   await expect(dialog.getByText(/冲突待处理 1/)).toBeVisible();
   await expect(dialog.getByRole('region', { name: '当前同步冲突' })).toHaveCount(0);
   await expect(dialog.getByRole('region', { name: '历史恢复副本' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: '查看处理' }).click();
+  await expect(dialog.getByRole('region', { name: '当前同步冲突' })).toBeVisible();
 
   await page.evaluate(async () => {
     const queue = await import('/src/services/workspaceSyncQueueCore.ts');
@@ -311,6 +313,9 @@ test('ordinary UI reports active conflicts and keeps resolved recovery copies re
   await expect(recovery.getByRole('checkbox')).toHaveCount(0);
   await expect(recovery.getByRole('button', { name: '需要从旧副本找回数据' })).toBeVisible();
   await expect(recovery.getByRole('button', { name: /删除/ })).toHaveCount(0);
+  await recovery.getByRole('button', { name: '需要从旧副本找回数据' }).click();
+  await expect(dialog.getByRole('region', { name: '选择恢复数据' }).getByRole('checkbox')).toHaveCount(1);
+  await dialog.getByRole('region', { name: '选择恢复数据' }).getByRole('button', { name: '取消' }).click();
   await expect(page.locator('.workspace-sync-status')).toHaveAttribute('data-sync-state', 'pending');
 
   const after = await page.evaluate(async () => {

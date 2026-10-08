@@ -247,7 +247,7 @@ test('week matrix omits daily workload controls and keeps the filtered backlog c
 test('week matrix groups by real project identity and remembers the view', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
 
-  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await page.getByLabel('周矩阵分组方式').selectOption('project');
 
   const primaryRow = page.locator('.wmv-row').filter({ has: page.locator('[data-project-id="backlog-project"]') });
   const secondaryRow = page.locator('.wmv-row').filter({ has: page.locator('[data-project-id="secondary-project"]') });
@@ -294,7 +294,7 @@ test('project grouping reveals a temporary row for the dragged backlog project',
   }, { date: today });
 
   await page.getByTitle('周矩阵').click();
-  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await page.getByLabel('周矩阵分组方式').selectOption('project');
   await expect(page.locator('[data-project-id="ghost-project"]')).toHaveCount(0);
 
   await page.getByRole('button', { name: /待排期箱，\d+ 个任务/ }).click();
@@ -331,7 +331,7 @@ test('project grouping reveals a temporary row for the dragged backlog project',
 test('docked backlog leaves Saturday reachable and supports dropping on the date header', async ({ page }) => {
   const saturday = saturdayOfCurrentWeek(today);
   await page.getByTitle('周矩阵').click();
-  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await page.getByLabel('周矩阵分组方式').selectOption('project');
   await page.getByRole('button', { name: '待排期箱，26 个任务' }).click();
 
   const panel = page.getByRole('region', { name: '待排期任务箱' });
@@ -396,7 +396,7 @@ test('recovered backlog tasks still confirm a missed deadline when dropped into 
   }, { sourceDate: addIsoDays(today, -10), deadline: addIsoDays(today, -1) });
 
   await page.getByTitle('周矩阵').click();
-  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await page.getByLabel('周矩阵分组方式').selectOption('project');
   await page.getByRole('button', { name: /待排期箱，\d+ 个任务/ }).click();
   const panel = page.getByRole('region', { name: '待排期任务箱' });
   await expect(panel.getByText('逾期回收截止提醒', { exact: true })).toBeVisible();
@@ -473,7 +473,7 @@ test('phone project and week views consistently treat recovered tasks as backlog
 test('project grouping rejects a drop onto another project row without changing ownership or date', async ({ page }) => {
   const targetDate = alternateDateInCurrentWeek(today);
   await page.getByTitle('周矩阵').click();
-  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await page.getByLabel('周矩阵分组方式').selectOption('project');
 
   await page.evaluate(({ sourceDate, destinationDate }) => {
     const source = document.querySelector<HTMLElement>('[data-block-id="scheduled-block"]');
@@ -532,7 +532,7 @@ test('daily backlog can schedule directly into a slot without creating a history
 
 test('week task can return to the backlog without losing metadata and inline undo restores every placement', async ({ page }) => {
   await page.getByTitle('周矩阵').click();
-  await page.getByRole('group', { name: '周矩阵分组方式' }).getByRole('button', { name: '项目' }).click();
+  await page.getByLabel('周矩阵分组方式').selectOption('project');
   const scheduledCard = page.locator('[data-block-id="scheduled-block"]');
   const backlogCapsule = page.getByRole('button', { name: '待排期箱，26 个任务' });
   await expect(scheduledCard).toBeVisible();

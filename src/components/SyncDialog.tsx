@@ -18,9 +18,10 @@ import {
   readWorkspaceSyncRuntimeState, WORKSPACE_SYNC_RUNTIME_EVENT,
 } from '@/services/workspaceSync';
 import { isCurrentTabSyncLeader, readWorkspaceTabLeadershipEpoch } from '@/services/workspaceTabCoordinator';
-import { createCurrentWorkspaceAuditReport } from '@/services/workspaceAudit';
+import { createCurrentWorkspaceAuditReport, downloadCurrentWorkspaceAuditReport } from '@/services/workspaceAudit';
 import type { WorkspaceAuditReport } from '@/services/workspaceAuditCore';
-import { listWorkspaceConflicts, readPendingWorkspaceSync, type WorkspaceConflictRecord } from '@/services/workspaceOfflineQueue';
+import { discardWorkspaceConflict, listWorkspaceConflicts, readPendingWorkspaceSync, restoreWorkspaceConflictFields, type WorkspaceConflictRecord } from '@/services/workspaceOfflineQueue';
+import { WORKSPACE_QUEUE_EVENT } from '@/services/workspaceSyncQueueCore';
 import { useShallow } from 'zustand/react/shallow';
 
 interface SyncDialogProps { onClose: () => void }
@@ -45,6 +46,8 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const auth = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const timeline = useTimelineStore(useShallow((s) => ({ enabled: s.syncEnabled, status: s.syncStatus })));
   const ebb = useEbbStore(useShallow((s) => ({ enabled: s.syncEnabled, status: s.syncStatus })));
   const daily = useDailyScheduleStore(useShallow((s) => ({ enabled: s.syncEnabled, status: s.syncStatus })));
@@ -54,11 +57,50 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
   const [busy, setBusy] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [conflicts, setConflicts] = useState<WorkspaceConflictRecord[]>([]);
+  const [showIssues, setShowIssues] = useState(false);
+  const [recoveryId, setRecoveryId] = useState<string | null>(null);
+  const [recoveryFields, setRecoveryFields] = useState<string[]>([]);
   const [report, setReport] = useState<WorkspaceAuditReport | null>(null);
   const [snapshots, setSnapshots] = useState<WorkspaceSnapshot[]>([]);
   const [arch, setArch] = useState(readWorkspaceSyncSettings);
   const [runtime, setRuntime] = useState(readWorkspaceSyncRuntimeState);
   const [mindMap, setMindMap] = useState(readMindMapSyncRuntimeState);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => element.getClientRects().length > 0);
+    (focusable()[0] ?? dialog).focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+      } else if (event.key === 'Tab') {
+        const items = focusable();
+        if (items.length === 0) {
+          event.preventDefault();
+          dialog.focus();
+          return;
+        }
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    dialog.addEventListener('keydown', onKeyDown);
+    return () => {
+      dialog.removeEventListener('keydown', onKeyDown);
+      opener?.focus();
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -79,15 +121,17 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     };
     refresh();
     const t = window.setInterval(() => { if (!document.hidden) refresh(); }, 30000);
+    window.addEventListener(WORKSPACE_QUEUE_EVENT, refresh);
     const onRt = () => { setRuntime(readWorkspaceSyncRuntimeState()); };
     const onMm = () => { setMindMap(readMindMapSyncRuntimeState()); };
     window.addEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, onRt);
     window.addEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, onMm);
-    return () => { disposed = true; window.clearTimeout(timer); window.clearInterval(t); window.removeEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, onRt); window.removeEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, onMm); };
+    return () => { disposed = true; window.clearTimeout(timer); window.clearInterval(t); window.removeEventListener(WORKSPACE_QUEUE_EVENT, refresh); window.removeEventListener(WORKSPACE_SYNC_RUNTIME_EVENT, onRt); window.removeEventListener(MIND_MAP_SYNC_RUNTIME_EVENT, onMm); };
   }, []);
 
   const totalRecords = report ? Object.values(report.collections).reduce((s, c) => s + c.count, 0) : null;
   const activeConflicts = conflicts.filter((c) => c.status !== 'resolved');
+  const historicalConflicts = conflicts.filter((c) => c.status === 'resolved');
   const blockers = report?.integrity.blockerCount ?? 0;
   const warnings = report?.integrity.warningCount ?? 0;
   const needAttention = activeConflicts.length + pendingCount + blockers;
@@ -130,6 +174,18 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
     } catch (e) { setMessage(e instanceof Error ? e.message : '导出失败。'); }
   }, []);
 
+  const handleRecovery = async (id: string) => {
+    try {
+      await restoreWorkspaceConflictFields(id, recoveryFields as Parameters<typeof restoreWorkspaceConflictFields>[1]);
+      setRecoveryId(null);
+      setRecoveryFields([]);
+      setConflicts(await listWorkspaceConflicts());
+      setMessage('已恢复所选数据，恢复前内容已保存为本地快照。');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '恢复失败。');
+    }
+  };
+
   const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; e.target.value = '';
     if (!f) return;
@@ -155,12 +211,30 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
           <div style={{ fontSize: 20 }}>{hero.icon} <strong style={{ color: hero.tone }}>{hero.title}</strong></div>
           <p style={{ margin: '8px 0 12px', fontSize: 13, color: '#374151', lineHeight: 1.6 }}>{hero.desc}</p>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="tl-dialog-btn tl-dialog-btn--primary" disabled={busy} onClick={() => { if (!isConnected) void handleConnect(); else void handleExport(); }}>{busy ? '处理中…' : hero.primary}</button>
+            <button type="button" className="tl-dialog-btn tl-dialog-btn--primary" disabled={busy} onClick={() => { if (!isConnected) void handleConnect(); else if (needAttention > 0) setShowIssues(true); else void handleExport(); }}>{busy ? '处理中…' : hero.primary}</button>
             {!isConnected && <button type="button" className="tl-dialog-btn tl-dialog-btn--cancel" onClick={() => void handleExport()}>导出备份</button>}
             {isConnected && needAttention > 0 && <button type="button" className="tl-dialog-btn tl-dialog-btn--cancel" onClick={() => setMessage(`冲突 ${activeConflicts.length} · 待确认 ${pendingCount} · 阻断 ${blockers}。`)}>详情</button>}
           </div>
           {isConnected && <small style={{ display: 'block', marginTop: 8, color: '#6B7280' }}>上次导出：{describeExport()} · 快照 {snapshots.length}</small>}
         </section>
+
+        {activeConflicts.length > 0 && <p style={{ margin: '0 20px 12px' }}>冲突待处理 {activeConflicts.length}</p>}
+        {historicalConflicts.length > 0 && <p style={{ margin: '0 20px 12px' }}>历史副本 {historicalConflicts.length}</p>}
+        {showIssues && activeConflicts.map((conflict) => <section key={conflict.id} role="region" aria-label="当前同步冲突" style={{ margin: '0 20px 14px' }}>
+          <strong>当前同步冲突</strong><p>检测于 {new Date(conflict.detectedAt).toLocaleString('zh-CN')}，请确认要保留的数据。</p>
+          <button type="button" onClick={() => { setRecoveryId(conflict.id); setRecoveryFields(Object.keys(conflict.pending.fields)); }}>从旧副本找回数据</button>
+          <button type="button" onClick={() => void discardWorkspaceConflict(conflict.id).then(() => listWorkspaceConflicts().then(setConflicts)).catch((error: Error) => setMessage(error.message))}>保留当前数据</button>
+        </section>)}
+        {historicalConflicts.map((conflict) => <section key={conflict.id} role="region" aria-label="历史恢复副本" style={{ margin: '0 20px 14px' }}>
+          <strong>历史恢复副本</strong><p>这是已解决冲突时留下的副本，不代表当前仍有同步故障。</p>
+          <button type="button" onClick={() => { setRecoveryId(conflict.id); setRecoveryFields(Object.keys(conflict.pending.fields)); }}>需要从旧副本找回数据</button>
+        </section>)}
+        {recoveryId && <section role="region" aria-label="选择恢复数据" style={{ margin: '0 20px 14px' }}>
+          <strong>选择要恢复的数据</strong>
+          {Object.keys(conflicts.find((item) => item.id === recoveryId)?.pending.fields ?? {}).map((field) => <label key={field} style={{ display: 'block' }}><input type="checkbox" checked={recoveryFields.includes(field)} onChange={(event) => setRecoveryFields((fields) => event.target.checked ? [...fields, field] : fields.filter((item) => item !== field))} />{field}</label>)}
+          <button type="button" disabled={recoveryFields.length === 0} onClick={() => void handleRecovery(recoveryId)}>恢复所选数据</button>
+          <button type="button" onClick={() => setRecoveryId(null)}>取消</button>
+        </section>}
 
         <section style={{ margin: '0 20px 14px', border: '1px solid #E5E7EB', borderRadius: 10 }}>
           <div style={{ padding: '10px 14px', fontSize: 13, fontWeight: 600 }}>数据分布</div>
@@ -197,6 +271,7 @@ const SyncDialog: React.FC<SyncDialogProps> = ({ onClose }) => {
             <span>记录：{totalRecords ?? '统计中'} 条{report ? ` · ${(report.backupBytes / 1024).toFixed(1)} KB` : ''}</span>
             <span>旧人生地图模块状态：{lifeMap.enabled ? lifeMap.status : '未启用'}（仅用于旧数据恢复，新规划请用地图文档）</span>
             <span style={{ display: 'flex', gap: 6 }}>
+              <button type="button" className="tl-sync-backup-btn" onClick={() => void downloadCurrentWorkspaceAuditReport().then(() => setMessage('数据盘点报告已导出。')).catch((error: Error) => setMessage(error.message))}>导出盘点报告</button>
               <button type="button" className="tl-sync-backup-btn" onClick={() => { if (window.confirm('暂时断开云端吗？本机数据保留。')) { disconnectWorkspace(false); setMessage('已断开，本机数据保留。'); } }}><Check size={12} />暂时断开</button>
             </span>
           </div>

@@ -166,9 +166,9 @@ test('advanced nodes, orthogonal edges, SVG export, minimap and command palette 
     const { mindMapRepository } = await import('/src/mindMap/repository.ts');
     return (await mindMapRepository.loadImageAsset(assetId!))?.refCount;
   }, imageNode.imageAssetId)).toBe(2);
-  page.once('dialog', (dialog) => void dialog.accept());
   await openMoreMenu(page);
   await page.getByRole('menuitem', { name: '删除当前导图' }).click();
+  await page.getByRole('button', { name: '删除', exact: true }).click();
   await expect.poll(async () => page.evaluate(async (assetId) => {
     const { mindMapRepository } = await import('/src/mindMap/repository.ts');
     return (await mindMapRepository.loadImageAsset(assetId!))?.refCount;

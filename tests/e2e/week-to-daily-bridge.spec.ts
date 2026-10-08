@@ -58,7 +58,7 @@ test('milestones appear on their exact date without becoming schedulable tasks',
   await expect(headerMilestones).toContainText('版本上线');
   await expect(headerMilestones).toContainText('验收评审');
   await expect(headerMilestones).not.toContainText('下周节点');
-  await expect(page.locator('.ds-day-overview')).toContainText('0 项已安排');
+  await expect(page.locator('.ds-day-overview')).toContainText('0 项待安排');
 
   await page.getByTitle('周矩阵').click();
   const todayCell = page.locator(`.wmv-cell--date[data-date="${today}"]`);
@@ -69,6 +69,6 @@ test('milestones appear on their exact date without becoming schedulable tasks',
   await expect(page.locator('.wmv-block-card')).toHaveCount(0);
   await expect(page.getByText('当前周暂无已排期项目任务')).toBeVisible();
 
-  await page.locator('.wmv-group-switch').getByRole('button', { name: '项目' }).click();
+  await page.getByLabel('周矩阵分组方式').selectOption('project');
   await expect(todayCell).toContainText('版本上线');
 });

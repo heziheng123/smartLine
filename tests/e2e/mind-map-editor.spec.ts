@@ -80,6 +80,7 @@ test('a text card can be resized from every corner and by exact dimensions', asy
   expect(box).not.toBeNull();
 
   await canvas.click({ position: { x: before.x, y: before.y } });
+  await page.getByText('更多设置（外观 / 尺寸 / 排列 / 状态）').click();
   await page.getByLabel('节点自动适应文字').uncheck();
   await page.mouse.move(box!.x + before.x - before.width / 2, box!.y + before.y - before.height / 2);
   await page.mouse.down();
@@ -109,7 +110,9 @@ test('wheel zoom is centered on the canvas and updates only the local viewport',
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
   await page.mouse.move(box!.x + 300, box!.y + 220);
+  await page.keyboard.down('Control');
   await page.mouse.wheel(0, -500);
+  await page.keyboard.up('Control');
   await expect(page.locator('footer').getByText(/%/)).not.toHaveText('100%');
 });
 
@@ -123,7 +126,9 @@ test('node action handles keep screen-space spacing after zooming out', async ({
   expect(box).not.toBeNull();
   await page.mouse.move(box!.x + 320, box!.y + 240);
   const initialScale = (await graphState(page)).viewport.scale;
+  await page.keyboard.down('Control');
   await page.mouse.wheel(0, 285);
+  await page.keyboard.up('Control');
   await expect.poll(async () => (await graphState(page)).viewport.scale).toBeLessThan(initialScale);
 
   const state = await graphState(page);
@@ -446,6 +451,7 @@ test('Markdown node links open safely and notes provide a rendered preview', asy
   await expect(preview.getByRole('heading', { name: '背景' })).toBeVisible();
   await expect(preview.locator('strong')).toHaveText('完整备注');
 
+  await page.route('https://example.com/docs', (route) => route.fulfill({ body: 'ok', contentType: 'text/html' }));
   const popupPromise = page.waitForEvent('popup');
   await page.locator('[data-testid^="mind-map-markdown-"] a').click();
   const popup = await popupPromise;
@@ -453,16 +459,19 @@ test('Markdown node links open safely and notes provide a rendered preview', asy
   await popup.close();
 });
 
-test('dragging blank canvas pans the infinite board while Shift drag keeps marquee selection', async ({ page }) => {
+test('Space drag pans the infinite board', async ({ page }) => {
   await openMindMap(page);
   const canvas = page.getByTestId('mind-map-canvas');
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
   const before = (await graphState(page)).viewport;
+  await canvas.evaluate((element) => (element.parentElement as HTMLElement).focus());
+  await page.keyboard.down('Space');
   await page.mouse.move(box!.x + 700, box!.y + 500);
   await page.mouse.down();
   await page.mouse.move(box!.x + 580, box!.y + 420, { steps: 4 });
   await page.mouse.up();
+  await page.keyboard.up('Space');
   const after = (await graphState(page)).viewport;
   expect(after.x).toBeCloseTo(before.x - 120, 0);
   expect(after.y).toBeCloseTo(before.y - 80, 0);

@@ -799,12 +799,15 @@ export async function restoreWorkspaceBackup(
     }
     if (backup.reviews) await restoreReviewBackup(backup.reviews);
   } catch (error) {
-    if (previousPreferences === null) localStorage.removeItem(preferencesKey);
-    else localStorage.setItem(preferencesKey, previousPreferences);
-    await apply(before);
-    if (before.mindMap) {
-      await mindMapRepository.replaceFromBundle(before.mindMap);
-      await useMindMapStore.getState().reloadFromRepository();
+    try {
+      await apply(before);
+      if (before.mindMap) {
+        await mindMapRepository.replaceFromBundle(before.mindMap);
+        await useMindMapStore.getState().reloadFromRepository();
+      }
+    } finally {
+      if (previousPreferences === null) localStorage.removeItem(preferencesKey);
+      else localStorage.setItem(preferencesKey, previousPreferences);
     }
     throw error;
   }

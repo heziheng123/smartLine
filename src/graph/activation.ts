@@ -1,4 +1,5 @@
 import type { GraphNode } from './types';
+import type { ReviewTask } from '@/ebb/types';
 
 export interface NodeActivationState {
   isLeaf: boolean;
@@ -11,10 +12,20 @@ export interface NodeActivationState {
 /**
  * Computes activation for the visible knowledge tree.
  *
- * Leaf nodes use their persisted status. Parent nodes are activated only when
- * every non-archived direct child is effectively activated.
+ * Leaf nodes use their persisted status, except for closed review plans.
+ * Parent nodes activate only when every visible direct child is active.
  */
-export function computeNodeActivationStates(nodes: GraphNode[]): Map<string, NodeActivationState> {
+export function computeNodeActivationStates(
+  nodes: GraphNode[],
+  reviewTasks: readonly ReviewTask[] = [],
+): Map<string, NodeActivationState> {
+  const activeReviewIds = new Set<string>();
+  const manuallyArchivedReviewIds = new Set<string>();
+  for (const task of reviewTasks) {
+    if (!task.graphNodeId) continue;
+    if (task.isArchived && task.archivedReason === 'manual') manuallyArchivedReviewIds.add(task.graphNodeId);
+    else if (!task.isArchived) activeReviewIds.add(task.graphNodeId);
+  }
   const visibleNodes = nodes.filter((node) => !node.isArchived);
   const nodeById = new Map(visibleNodes.map((node) => [node.id, node]));
   const childrenByParentId = new Map<string, GraphNode[]>();
@@ -49,7 +60,13 @@ export function computeNodeActivationStates(nodes: GraphNode[]): Map<string, Nod
 
     let state: NodeActivationState;
     if (children.length === 0) {
-      const isActivated = node.status === 'activated';
+      // Old workspaces can have an activated status left behind by archiving a
+      // review plan. A later explicit activation records reviewClosed=false.
+      const isActivated = node.status === 'activated'
+        && node.reviewClosed !== true
+        && !(node.reviewClosed === undefined
+          && manuallyArchivedReviewIds.has(nodeId)
+          && !activeReviewIds.has(nodeId));
       state = {
         isLeaf: true,
         isActivated,

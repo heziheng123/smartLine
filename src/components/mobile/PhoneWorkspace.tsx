@@ -42,6 +42,7 @@ import { useLifeMapStore } from '@/lifeMap/store';
 import { activeLifeMapItems } from '@/lifeMap/data';
 import { currentSystemStats } from '@/lifeMap/metrics';
 import { useGraphStore } from '@/graph/store';
+import { computeNodeActivationStates } from '@/graph/activation';
 import { collectBacklogTasks, isBacklogTaskHeader } from '@/domain/taskBacklog';
 import { getSmartTaskBlocks, getValidGraphNodeIds, isQuantityTask } from '@/utils/blocks';
 import { addDays, todayStr } from '@/utils/dateSafe';
@@ -529,7 +530,11 @@ const PhoneKnowledgeView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenFullVi
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [addingParent, setAddingParent] = useState<string | 'root' | null>(null);
   const [nodeName, setNodeName] = useState('');
-  const activeNodes = nodes.filter((node) => !node.isArchived);
+  const activeNodes = useMemo(() => nodes.filter((node) => !node.isArchived), [nodes]);
+  const activationStates = useMemo(
+    () => computeNodeActivationStates(activeNodes, reviewTasks),
+    [activeNodes, reviewTasks],
+  );
   const childrenByParent = useMemo(() => {
     const result = new Map<string | null, typeof activeNodes>();
     activeNodes.forEach((node) => result.set(node.parentId, [...(result.get(node.parentId) ?? []), node]));
@@ -562,6 +567,7 @@ const PhoneKnowledgeView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenFullVi
     const children = childrenByParent.get(node.id) ?? [];
     const isExpanded = expanded.has(node.id);
     const isLeaf = children.length === 0;
+    const isActivated = activationStates.get(node.id)?.isActivated ?? false;
     return (
       <React.Fragment key={node.id}>
         <article className="phone-node-row" style={{ '--phone-node-depth': depth } as React.CSSProperties}>
@@ -569,7 +575,7 @@ const PhoneKnowledgeView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenFullVi
           <button type="button" className="phone-node-row__main" onClick={() => !isLeaf && setExpanded((current) => new Set(current).add(node.id))}>
             <strong>{node.name}</strong><span>{children.length ? `${children.length} 个子节点` : '叶子节点'}{reviewCounts.get(node.id) ? ` · ${reviewCounts.get(node.id)} 轮待复习` : ''}{relatedProjectCounts.get(node.id) ? ` · ${relatedProjectCounts.get(node.id)} 项目任务` : ''}</span>
           </button>
-          {isLeaf && <button type="button" className={`phone-node-activate ${node.status === 'activated' ? 'is-active' : ''}`} onClick={() => updateNode(node.id, { status: node.status === 'activated' ? 'unactivated' : 'activated' })} aria-label={`${node.status === 'activated' ? '取消激活' : '激活'}${node.name}`}><Zap size={16} /></button>}
+          {isLeaf && <button type="button" className={`phone-node-activate ${isActivated ? 'is-active' : ''}`} onClick={() => updateNode(node.id, { status: isActivated ? 'unactivated' : 'activated' })} aria-label={`${isActivated ? '取消激活' : '激活'}${node.name}`}><Zap size={16} /></button>}
           <button type="button" className="phone-node-add" onClick={() => { setAddingParent(node.id); setNodeName(''); }} aria-label={`向${node.name}添加子节点`}><Plus size={16} /></button>
         </article>
         {isExpanded && children.map((child) => renderNode(child, depth + 1))}
@@ -579,7 +585,7 @@ const PhoneKnowledgeView: React.FC<PhoneWorkspaceProps> = ({ tasks, onOpenFullVi
 
   return (
     <section className="phone-page" aria-label="知识大盘手机列表">
-      <PhoneHeader eyebrow="知识结构" title="知识节点" subtitle={`${activeNodes.length} 个节点 · ${activeNodes.filter((node) => node.status === 'activated').length} 个已激活`} onOpenFullView={onOpenFullView} onPrimaryAction={() => { setAddingParent('root'); setNodeName(''); }} primaryLabel="添加根节点" />
+      <PhoneHeader eyebrow="知识结构" title="知识节点" subtitle={`${activeNodes.length} 个节点 · ${activeNodes.filter((node) => activationStates.get(node.id)?.isLeaf && activationStates.get(node.id)?.isActivated).length} 个已激活`} onOpenFullView={onOpenFullView} onPrimaryAction={() => { setAddingParent('root'); setNodeName(''); }} primaryLabel="添加根节点" />
       <div className="phone-inline-summary"><span><ListTree size={17} />树形列表</span><button type="button" onClick={onOpenFullView}><Network size={16} />查看图谱</button></div>
       <div className="phone-node-tree">
         {roots.map((node) => renderNode(node))}

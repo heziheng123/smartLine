@@ -661,11 +661,11 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
           const relearnDailyBefore = completionSnapshotRequested
             ? captureDailySourceSnapshots(useDailyScheduleStore.getState().schedules, relearnSourceIds)
             : [];
-          const graphStatusBefore = completionSnapshotRequested
-            ? Object.fromEntries(relearnNodeIds.map((nodeId) => [
-                nodeId,
-                useGraphStore.getState().nodes.find((node) => node.id === nodeId)?.status,
-              ]))
+          const graphActivationBefore = completionSnapshotRequested
+            ? Object.fromEntries(relearnNodeIds.map((nodeId) => {
+                const node = useGraphStore.getState().nodes.find((item) => item.id === nodeId);
+                return [nodeId, { status: node?.status, reviewClosed: node?.reviewClosed }];
+              }))
             : {};
 
           const commitReport = runWorkspaceTrackedTransaction(() => {
@@ -753,10 +753,10 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   useDailyScheduleStore.getState().schedules,
                   relearnSourceIds,
                 );
-                const graphStatusExpected = Object.fromEntries(relearnNodeIds.map((nodeId) => [
-                  nodeId,
-                  useGraphStore.getState().nodes.find((node) => node.id === nodeId)?.status,
-                ]));
+                const graphActivationExpected = Object.fromEntries(relearnNodeIds.map((nodeId) => {
+                  const node = useGraphStore.getState().nodes.find((item) => item.id === nodeId);
+                  return [nodeId, { status: node?.status, reviewClosed: node?.reviewClosed }];
+                }));
                 recordOperation({
                   label: relearnRequested
                     ? `完成并重启“${currentBlock.header.title}”的复习周期`
@@ -781,8 +781,11 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                     return '相关复习周期在此操作后又被修改';
                   }
                   const graphState = useGraphStore.getState();
-                  if (relearnNodeIds.some((nodeId) =>
-                    graphState.nodes.find((node) => node.id === nodeId)?.status !== graphStatusExpected[nodeId])) {
+                  if (relearnNodeIds.some((nodeId) => {
+                    const node = graphState.nodes.find((item) => item.id === nodeId);
+                    return node?.status !== graphActivationExpected[nodeId].status
+                      || node?.reviewClosed !== graphActivationExpected[nodeId].reviewClosed;
+                  })) {
                     return '知识节点在此操作后又被修改';
                   }
                   const currentDaily = captureDailySourceSnapshots(
@@ -820,7 +823,7 @@ export const useTimelineStore = create<WithLiveblocks<TimelineStore>>()(
                   dailyState.restoreSourceSnapshots(relearnDailyBefore);
                   const latestGraphState = useGraphStore.getState();
                   relearnNodeIds.forEach((nodeId) => {
-                    latestGraphState.updateNode(nodeId, { status: graphStatusBefore[nodeId] });
+                    latestGraphState.updateNode(nodeId, graphActivationBefore[nodeId]);
                   });
                 });
                 return { ...commitReport, changed: true };

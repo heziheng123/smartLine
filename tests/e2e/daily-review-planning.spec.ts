@@ -350,7 +350,8 @@ test('reopening the same workload plan does not double-count deferrals and can r
 
 test('daily schedule exposes the same workload planning transaction', async ({ page }) => {
   await page.getByTitle('每日安排').click();
-  await page.getByRole('button', { name: '明日负荷规划' }).click();
+  await page.getByLabel('更多设置').click();
+  await page.getByRole('menuitem', { name: '明日负荷规划' }).click();
   const dialog = page.getByRole('dialog', { name: '明日负荷规划' });
   await expect(dialog.locator('.eb-workload-card')).toHaveCount(2);
   await dialog.getByLabel('安排重点关系知识').selectOption(tomorrow);

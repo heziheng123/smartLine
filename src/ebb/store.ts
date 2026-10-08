@@ -58,6 +58,8 @@ import {
 export { normalizeEbbData } from './dataNormalization';
 import { loadEbbData, loadEbbSyncSettings, saveEbbData, saveEbbSyncSettings } from './persistence';
 import { planEbbTaskSync } from './taskSyncPlanner';
+import { getReviewActivationChanges } from './reviewGraphActivation';
+import { useGraphStore } from '@/graph/store';
 import type { ProjectTaskEbbBatchPlan, ProjectTaskEbbNodeResult } from './projectTaskSyncBatch';
 import {
   archiveReviewPlan as buildArchivedReviewPlan,
@@ -71,6 +73,29 @@ let ebbHydrationPromise: Promise<void> | null = null;
 
 function getInitialEbbData(): EbbData {
   return getDefaultEbbData();
+}
+
+function syncGraphReviewActivation(before: readonly ReviewTask[], after: readonly ReviewTask[]): void {
+  const changes = getReviewActivationChanges(before, after);
+  if (changes.length === 0) return;
+  const previouslyActive = new Set(before
+    .filter((task) => task.graphNodeId && !task.isArchived)
+    .map((task) => task.graphNodeId!));
+  const apply = () => {
+    // Hydration or another command may have changed the plan while the graph loaded.
+    const latest = new Set(useEbbStore.getState().reviewTasks
+      .filter((task) => task.graphNodeId && !task.isArchived)
+      .map((task) => task.graphNodeId!));
+    const graph = useGraphStore.getState();
+    graph.setReviewActivation(changes.filter(({ nodeId, active }) =>
+      latest.has(nodeId) === active
+      && (active || previouslyActive.has(nodeId)
+        || graph.nodes.find((node) => node.id === nodeId)?.reviewClosed !== false),
+    ));
+  };
+  const graph = useGraphStore.getState();
+  if (graph.isHydrated) apply();
+  else void graph.hydrateStore().then(apply);
 }
 
 interface BatchReviewUndoPayload {
@@ -276,6 +301,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         // ── 复习任务 ──────────────────────────────────────
 
         addReviewTasks: (tasks) => {
+          const before = get().reviewTasks;
           set((state) => {
             const reviewTasks = normalizeReviewRoundOrders([...state.reviewTasks, ...tasks]);
             const ebbSettings = ensureTagColors(reviewTasks, state.ebbSettings);
@@ -288,6 +314,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+          syncGraphReviewActivation(before, get().reviewTasks);
         },
 
         applyBatchReviewAdjustment: (request) => {
@@ -658,7 +685,8 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         },
 
         archiveReviewPlan: (topicKey) => {
-          const result = buildArchivedReviewPlan(get().reviewTasks, topicKey, new Date().toISOString());
+          const before = get().reviewTasks;
+          const result = buildArchivedReviewPlan(before, topicKey, new Date().toISOString());
           if (result.archivedTaskIds.length === 0) return result;
           set((current) => {
             const newData: EbbData = {
@@ -673,6 +701,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           useDailyScheduleStore.getState().removeBySourceIds(
             result.archivedTaskIds.map((id) => getReviewSourceId(id)),
           );
+          syncGraphReviewActivation(before, get().reviewTasks);
           return result;
         },
 
@@ -698,11 +727,13 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           useDailyScheduleStore.getState().removeBySourceIds(
             result.archivedTaskIds.map((id) => getReviewSourceId(id)),
           );
+          syncGraphReviewActivation(currentTasks, get().reviewTasks);
           return result;
         },
 
         restoreArchivedReviewPlan: (taskIds) => {
-          const result = buildRestoredReviewPlan(get().reviewTasks, taskIds, new Date().toISOString());
+          const before = get().reviewTasks;
+          const result = buildRestoredReviewPlan(before, taskIds, new Date().toISOString());
           if (result.restoredTaskIds.length === 0) return result;
           set((current) => {
             const newData: EbbData = {
@@ -717,6 +748,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           useDailyScheduleStore.getState().removeBySourceIds(
             [...result.activeTaskIds, ...result.restoredTaskIds].map((id) => getReviewSourceId(id)),
           );
+          syncGraphReviewActivation(before, get().reviewTasks);
           return result;
         },
 
@@ -744,6 +776,8 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
         },
 
         deleteReviewTask: (id) => {
+          const before = get().reviewTasks;
+          if (!before.some((task) => task.id === id)) return;
           setTimeout(() => {
             useDailyScheduleStore.getState().removeBySourceIds([getReviewSourceId(id)]);
           }, 0);
@@ -771,6 +805,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return { ...newData, undoStack };
           });
+          syncGraphReviewActivation(before, get().reviewTasks);
         },
 
         toggleReviewTask: (id) => {
@@ -991,6 +1026,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
 
         clearAllTasks: () => {
           const state = get();
+          if (state.reviewTasks.length === 0) return;
           const allSourceIds = state.reviewTasks.map((t) => getReviewSourceId(t.id));
           if (allSourceIds.length > 0) {
             setTimeout(() => {
@@ -1019,6 +1055,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return { ...newData, undoStack };
           });
+          syncGraphReviewActivation(state.reviewTasks, get().reviewTasks);
         },
 
         removeGraphNodeReferences: (graphNodeIds) => {
@@ -1334,6 +1371,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               undoStack: s.undoStack.slice(1),
             };
           });
+          syncGraphReviewActivation(state.reviewTasks, get().reviewTasks);
           return entry;
         },
 
@@ -1390,6 +1428,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           });
           saveEbbData(merged);
           set({ ...merged, undoStack: [] });
+          syncGraphReviewActivation(current.reviewTasks, get().reviewTasks);
         },
 
         replaceEbbData: (data) => {
@@ -1448,6 +1487,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
             saveEbbData(newData);
             return newData;
           });
+          syncGraphReviewActivation(before.reviewTasks, get().reviewTasks);
           if (plan.dailySourceIdsToRemove.length > 0) {
             setTimeout(() => {
               useDailyScheduleStore.getState().removeBySourceIds(plan.dailySourceIdsToRemove);
@@ -1471,6 +1511,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
           );
 
           if (plan.changed) {
+            const before = get().reviewTasks;
             set((state) => {
               const newData: EbbData = {
                 reviewTasks: plan.reviewTasks,
@@ -1481,6 +1522,7 @@ export const useEbbStore = create<WithLiveblocks<EbbStore>>()(
               saveEbbData(newData);
               return newData;
             });
+            syncGraphReviewActivation(before, get().reviewTasks);
           }
           if (plan.dailySourceIdsToRemove.length > 0) {
             dailyState.removeBySourceIds(plan.dailySourceIdsToRemove);

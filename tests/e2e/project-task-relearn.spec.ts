@@ -267,6 +267,50 @@ test('task-only completion leaves the existing review chain untouched', async ({
   });
 });
 
+test('undo restores the review-closure marker for a legacy archived node', async ({ page }) => {
+  const result = await page.evaluate(async (date) => {
+    const { useEbbStore, useGraphStore, useTimelineStore } = await import('/src/testing/workspaceStoreAccess.ts');
+    const { useOperationHistory } = await import('/src/services/operationHistory.ts');
+    const { computeNodeActivationStates } = await import('/src/graph/activation.ts');
+    await Promise.all([
+      useEbbStore.getState().hydrateStore(), useGraphStore.getState().hydrateStore(),
+      useTimelineStore.getState().hydrateStore(),
+    ]);
+    useGraphStore.setState((state) => ({
+      nodes: state.nodes.map((node) => node.id === 'limit-node'
+        ? { ...node, status: 'activated', reviewClosed: undefined }
+        : node),
+    }));
+    useEbbStore.setState((state) => ({
+      reviewTasks: state.reviewTasks.map((task) => task.graphNodeId === 'limit-node'
+        ? { ...task, isArchived: true, archivedReason: 'manual', archivedAt: `${date}T00:00:00.000Z` }
+        : task),
+    }));
+    const state = () => {
+      const node = useGraphStore.getState().nodes.find((item) => item.id === 'limit-node');
+      return {
+        status: node?.status,
+        reviewClosed: node?.reviewClosed,
+        effective: computeNodeActivationStates(useGraphStore.getState().nodes, useEbbStore.getState().reviewTasks)
+          .get('limit-node')?.isActivated,
+      };
+    };
+    const before = state();
+    const completed = useTimelineStore.getState().updateBlockHeader(
+      'relearn-project', 'relearn-task', { isCompleted: true, completedDate: date },
+      { completionReviewDecision: { mode: 'task-only' } },
+    );
+    const afterCompletion = state();
+    const undone = await useOperationHistory.getState().undo();
+    return { before, completed: completed.changed, afterCompletion, undone, afterUndo: state() };
+  }, today);
+  expect(result.before).toEqual({ status: 'activated', reviewClosed: undefined, effective: false });
+  expect(result.completed).toBe(true);
+  expect(result.afterCompletion).toEqual({ status: 'activated', reviewClosed: false, effective: true });
+  expect(result.undone).toBe(true);
+  expect(result.afterUndo).toEqual(result.before);
+});
+
 test('unified undo refuses to overwrite a new cycle changed after completion', async ({ page }) => {
   await completeWithRelearn(page);
   const undoResult = await page.evaluate(async () => {

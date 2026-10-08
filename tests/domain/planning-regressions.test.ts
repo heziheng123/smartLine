@@ -288,6 +288,32 @@ test('completion impact prompts only for active chains on non-archived leaf node
   assert.equal(impact.nodes[0].newRoundCount, 7);
 });
 
+test('turning off auto review preserves active graph nodes without reviving closed or archived nodes', () => {
+  const source = task('toggle-review', '2026-09-01', {
+    isCompleted: true,
+    autoSyncEbb: true,
+    graphNodeIds: ['active', 'closed', 'archived'],
+  });
+  const block = source.blocks[0];
+  assert.equal(block.type, 'smart-task');
+  if (block.type !== 'smart-task') return;
+  const effects = planProjectTaskEffects({
+    tasks: [source],
+    taskId: source.id,
+    blockId: block.id,
+    currentHeader: block.header,
+    nextHeader: { ...block.header, autoSyncEbb: false },
+    graphNodes: [
+      { id: 'active', name: '激活', parentId: null, createdAt: 1, status: 'activated', reviewClosed: false },
+      { id: 'closed', name: '关闭', parentId: null, createdAt: 2, status: 'unactivated', reviewClosed: true },
+      { id: 'archived', name: '归档', parentId: null, createdAt: 3, status: 'activated', isArchived: true },
+    ],
+  });
+
+  assert.deepEqual(effects.ebbPayloads.map((payload) => payload.action), ['remove', 'remove', 'remove']);
+  assert.deepEqual(effects.graphNodeIdsToActivate, ['active']);
+});
+
 test('past completion previews overdue new rounds while future completion disables relearn', () => {
   const block = task('date-impact', '2026-08-01', {
     autoSyncEbb: true,

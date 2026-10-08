@@ -55,6 +55,7 @@ function isValidGraphNode(node: unknown): node is GraphNode {
     && typeof record.createdAt === 'number'
     && Number.isFinite(record.createdAt)
     && (typeof record.isArchived === 'boolean' || record.isArchived === undefined)
+    && (typeof record.reviewClosed === 'boolean' || record.reviewClosed === undefined)
     && (
       record.status === 'activated'
       || record.status === 'unactivated'
@@ -251,7 +252,7 @@ interface GraphStore extends GraphData {
   restoreNode: (node: GraphNode, childrenIds: string[]) => void;
   archiveNodeCascade: (id: string, isArchived: boolean) => void;
   resetActivationCascade: (rootIds: string[]) => void;
-  activateLeafCascade: (rootId: string) => void;
+  setReviewActivation: (changes: Array<{ nodeId: string; active: boolean }>) => void;
   getNodeById: (id: string) => GraphNode | undefined;
   deleteNodesBatch: (ids: string[], label?: string) => boolean;
   importGraphData: (data: GraphData) => void;
@@ -440,9 +441,13 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             const targetHasChildren = state.nodes.some(
               (node) => !node.isArchived && node.parentId === id,
             );
-            const safeUpdates = targetHasChildren && updates.status
-              ? { ...updates, status: undefined }
+            const withReviewState = Object.prototype.hasOwnProperty.call(updates, 'status')
+              && !Object.prototype.hasOwnProperty.call(updates, 'reviewClosed')
+              ? { ...updates, reviewClosed: false }
               : updates;
+            const safeUpdates = targetHasChildren && updates.status
+              ? { ...withReviewState, status: undefined }
+              : withReviewState;
             const hasParentUpdate = Object.prototype.hasOwnProperty.call(safeUpdates, 'parentId');
             const requestedParentId = safeUpdates.parentId;
             const descendantIds = new Set(collectNodeCascadeIds(state.nodes, id));
@@ -619,7 +624,7 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
             const visibleReset = new Set(visibleResetIds);
             return {
               nodes: state.nodes.map((node) => visibleReset.has(node.id)
-                ? { ...node, status: state.nodes.some((child) => !child.isArchived && child.parentId === node.id)
+                ? { ...node, reviewClosed: true, status: state.nodes.some((child) => !child.isArchived && child.parentId === node.id)
                   ? undefined
                   : 'unactivated' as const }
                 : node),
@@ -627,21 +632,32 @@ export const useGraphStore = create<WithLiveblocks<GraphStore>>()(
           });
         },
 
-        activateLeafCascade: (rootId) => {
-          if (!rootId) return;
+        setReviewActivation: (changes) => {
+          if (changes.length === 0) return;
+          const activeById = new Map(changes.map(({ nodeId, active }) => [nodeId, active]));
           set((state) => {
-            if (!state.nodes.some((node) => node.id === rootId && !node.isArchived)) return state;
-            const cascade = new Set(collectNodeCascadeIds(state.nodes, rootId));
-            const leaves = state.nodes.filter((node) =>
-              !node.isArchived && cascade.has(node.id)
-              && !state.nodes.some((child) => !child.isArchived && child.parentId === node.id));
-            if (leaves.length === 0) return state;
-            const leafIds = new Set(leaves.map((node) => node.id));
-            return {
-              nodes: state.nodes.map((node) => leafIds.has(node.id)
-                ? { ...node, status: 'activated' as const }
-                : node),
-            };
+            const visibleParentIds = new Set(state.nodes.filter((node) => !node.isArchived && node.parentId).map((node) => node.parentId));
+            const allParentIds = new Set(state.nodes.filter((node) => node.parentId).map((node) => node.parentId));
+            let changed = false;
+            const nodes = state.nodes.map((node) => {
+              const active = activeById.get(node.id);
+              if (active === undefined || (node.isArchived ? allParentIds : visibleParentIds).has(node.id)) return node;
+              // A manual deactivation after closure takes precedence over a later undo/restore.
+              if (active && node.status !== 'activated' && node.reviewClosed === false) return node;
+              // Closing a plan must not turn an already inactive leaf into an
+              // activation candidate when the deleted plan is later restored.
+              if (!active && node.status !== 'activated') {
+                if (node.reviewClosed !== undefined) return node;
+                changed = true;
+                return { ...node, reviewClosed: false };
+              }
+              const status: GraphNode['status'] = active ? 'activated' : 'unactivated';
+              const reviewClosed = !active;
+              if (node.status === status && node.reviewClosed === reviewClosed) return node;
+              changed = true;
+              return { ...node, status, reviewClosed };
+            });
+            return changed ? { nodes } : state;
           });
         },
 

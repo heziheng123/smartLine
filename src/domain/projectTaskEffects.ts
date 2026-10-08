@@ -130,6 +130,10 @@ export function planProjectTaskEffects({
           });
         } else if (!hasOtherCompletedBinding(nodeId, true)) {
           plan.ebbPayloads.push({ action: 'remove', graphNodeId: nodeId, topicName: node.name });
+          // Keep an already active node active after removing its auto review.
+          if (!node.isArchived && node.status === 'activated' && node.reviewClosed !== true) {
+            plan.graphNodeIdsToActivate.push(nodeId);
+          }
         }
       });
     }

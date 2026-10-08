@@ -8,6 +8,8 @@ export interface GraphNode {
   parentId: string | null; // 支持用户后续手动整理层级，初始可为 null (孤立节点)
   createdAt: number;       // 创建时间
   status?: 'unactivated' | 'activated'; // 节点激活状态：静默点亮，无需复习
+  /** true: review plan closed; false: explicit status overrides legacy review history. */
+  reviewClosed?: boolean;
   isArchived?: boolean;    // 是否已归档（冷数据区）
 }
 

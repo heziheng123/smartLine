@@ -143,7 +143,9 @@ test('imports the complete 1 + 22 + 77 math analysis outline durably with one un
   await expect.poll(() => graphNodeCount(page)).toBe(0);
   await expect.poll(async () => (await readPersistedNodes(page)).length).toBe(0);
 
-  await page.getByTitle('打开节点控制台').click();
+  if (await page.getByTitle('打开节点控制台').isVisible()) {
+    await page.getByTitle('打开节点控制台').click();
+  }
   await importOutlineThroughUi(page, mathAnalysisOutline);
   await expect.poll(() => graphNodeCount(page)).toBe(100);
   await expect.poll(async () => (await readPersistedNodes(page)).length).toBe(100);

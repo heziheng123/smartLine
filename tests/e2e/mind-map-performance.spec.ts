@@ -57,7 +57,9 @@ for (const count of [500, 2_000, 5_000]) {
     const box = await canvas.boundingBox();
     expect(box).not.toBeNull();
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.keyboard.down('Control');
     await page.mouse.wheel(0, -300);
+    await page.keyboard.up('Control');
     await expect(page.locator('footer').getByText(/%/)).not.toHaveText('100%');
   });
 }

@@ -415,6 +415,14 @@ test(`cloud changes during ${phase} keep the pending queue recoverable`, async (
     stores.useTimelineStore.setState({ liveblocks: { ...state.liveblocks, room: room as unknown as NonNullable<typeof state.liveblocks.room> } });
     await queue.queueWorkspaceFields({ notes: [localNote] }, { notes: [baseNote] }, { origin: 'user' });
     const digest = crypto.subtle.digest.bind(crypto.subtle);
+    const postMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message: unknown, options?: Transferable[] | StructuredSerializeOptions) {
+      const value = (message as { value?: unknown })?.value;
+      if (phase === 'hash' && !injected && value && typeof value === 'object'
+        && !Array.isArray(value) && Object.keys(value).length === 1
+        && Array.isArray((value as { notes?: unknown }).notes)) injectRemote();
+      return Reflect.apply(postMessage, this, [message, options]);
+    };
     crypto.subtle.digest = async (algorithm, data) => {
       const value = JSON.parse(new TextDecoder().decode(data)) as Record<string, unknown>;
       // The final submitted hash wraps fields in an object; earlier per-field
@@ -425,7 +433,7 @@ test(`cloud changes during ${phase} keep the pending queue recoverable`, async (
     let failed = false;
     let applied = 0;
     try { applied = (await sync.flushWorkspaceQueue()).applied; } catch { failed = true; }
-    finally { crypto.subtle.digest = digest; }
+    finally { crypto.subtle.digest = digest; Worker.prototype.postMessage = postMessage; }
     return { injected, failed, applied, notes: entity.materializeWorkspaceEntityRoot(rootData).notes,
       pending: Boolean(await queue.readPendingWorkspaceSync()) };
   }, phase);

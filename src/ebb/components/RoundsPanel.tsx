@@ -14,7 +14,6 @@ import { getPointWeight } from '../complexity';
 import { ROUND_COLORS } from '../constants';
 import EbbDatePicker from './EbbDatePicker';
 import { requestManualReviewToggle } from '@/services/reviewCompletionCommands';
-import { useGraphStore } from '@/graph/store';
 import {
   getDefaultReviewBaseDuration,
   getReviewBaseDuration,
@@ -68,10 +67,6 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
   const [actionNotice, setActionNotice] = useState('');
   const [replanOpen, setReplanOpen] = useState(false);
   const [replanStartDate, setReplanStartDate] = useState(addDays(todayStr(), 1));
-  const { hydrateGraphStore, resetActivationCascade } = useGraphStore(useShallow((state) => ({
-    hydrateGraphStore: state.hydrateStore,
-    resetActivationCascade: state.resetActivationCascade,
-  })));
 
   // 该主题所有任务，按 dueDate 升序
   const topicTasks = useMemo(
@@ -226,7 +221,7 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     });
   }, [ebbSettings, topicTasks]);
 
-  const applyPendingChange = useCallback(async () => {
+  const applyPendingChange = useCallback(() => {
     if (!pendingChange) return;
     if (pendingChange.kind === 'reschedule') {
       rescheduleReviewRounds(pendingChange.updates);
@@ -238,14 +233,12 @@ const RoundsPanel: React.FC<RoundsPanelProps> = ({ topicKey, onClose }) => {
     if (pendingChange.kind === 'add' && pendingChange.task) addReviewTasks([pendingChange.task]);
     if (pendingChange.kind === 'restart') restartReviewCycle(topicKey, pendingChange.startDate);
     if (pendingChange.kind === 'archive') {
-      await hydrateGraphStore();
       archiveReviewPlan(topicKey);
-      resetActivationCascade(topicTasks.flatMap((task) => task.graphNodeId ? [task.graphNodeId] : []));
       onClose();
     }
     setPendingChange(null);
     setActionError('');
-  }, [addReviewTasks, archiveReviewPlan, deleteReviewTask, hydrateGraphStore, onClose, pendingChange, resetActivationCascade, rescheduleReviewRounds, restartReviewCycle, topicKey, topicTasks]);
+  }, [addReviewTasks, archiveReviewPlan, deleteReviewTask, onClose, pendingChange, rescheduleReviewRounds, restartReviewCycle, topicKey, topicTasks]);
 
   // 勾选
   const handleToggle = useCallback(

@@ -5,7 +5,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { formatDate } from '@/utils/dateSafe';
 import { listArchivedReviewPlans, type ArchivedReviewPlan } from '../reviewPlanArchive';
 import { useEbbStore } from '../store';
-import { useGraphStore } from '@/graph/store';
 
 interface ArchivedReviewPlansPanelProps {
   onClose: () => void;
@@ -16,18 +15,12 @@ const ArchivedReviewPlansPanel: React.FC<ArchivedReviewPlansPanelProps> = ({ onC
     reviewTasks: state.reviewTasks,
     restoreArchivedReviewPlan: state.restoreArchivedReviewPlan,
   })));
-  const { activateGraphLeaves, hydrateGraphStore } = useGraphStore(useShallow((state) => ({
-    activateGraphLeaves: state.activateLeafCascade,
-    hydrateGraphStore: state.hydrateStore,
-  })));
   const plans = useMemo(() => listArchivedReviewPlans(reviewTasks), [reviewTasks]);
   const [pendingPlan, setPendingPlan] = useState<ArchivedReviewPlan | null>(null);
 
-  const restore = async () => {
+  const restore = () => {
     if (!pendingPlan) return;
-    await hydrateGraphStore();
-    const result = restoreArchivedReviewPlan(pendingPlan.tasks.map((task) => task.id));
-    if (result.restoredTaskIds.length > 0 && pendingPlan.graphNodeId) activateGraphLeaves(pendingPlan.graphNodeId);
+    restoreArchivedReviewPlan(pendingPlan.tasks.map((task) => task.id));
     setPendingPlan(null);
   };
 

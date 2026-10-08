@@ -127,13 +127,13 @@ test('switching workspaces immediately removes the previous interactive view', a
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
     return {
-      timelineStillMounted: Boolean(document.querySelector('#view-timeline')),
+      timelineHidden: (document.querySelector('#view-timeline') as HTMLElement | null)?.style.display === 'none',
       hitView: hit?.closest('[role="tabpanel"]')?.id,
     };
   });
 
   expect(state).toEqual({
-    timelineStillMounted: false,
+    timelineHidden: true,
     hitView: 'view-daily-schedule',
   });
 });
@@ -160,7 +160,7 @@ test('view navigation also clears project interactions rendered outside the view
   });
 
   await expect(page.getByRole('menu', { name: '上下文菜单' })).toHaveCount(0);
-  await expect(page.locator('#view-timeline')).toHaveCount(0);
+  await expect(page.locator('#view-timeline')).toBeHidden();
   await expect(page.locator('#view-daily-schedule')).toBeVisible();
 });
 
@@ -262,7 +262,9 @@ test('project planning opens the timeline directly without an internal view menu
 test('daily schedule and week matrix keep focused planning controls without an all-project task shortcut', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   await openFullViewOnPhone(page);
-  await expect(page.getByRole('button', { name: '明日负荷规划' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '自动排期' })).toBeVisible();
+  await page.getByLabel('更多设置').click();
+  await expect(page.getByRole('menuitem', { name: '明日负荷规划' })).toBeVisible();
   await expect(page.getByRole('button', { name: '新建项目任务' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '查看全部项目任务' })).toHaveCount(0);
 
@@ -304,14 +306,15 @@ test('global search is removed while archive search remains available', async ({
 test('daily schedule uses the single slot view without a mode switch', async ({ page }) => {
   await page.getByTitle('每日安排').click();
   await openFullViewOnPhone(page);
-  await expect(page.getByRole('heading', { name: '每日安排' })).toBeVisible();
+  await expect(page.getByRole('banner', { name: '每日安排工作区' })).toBeVisible();
   await expect(page.getByRole('tab', { name: '时段' })).toHaveCount(0);
   await expect(page.getByRole('tab', { name: '时间块' })).toHaveCount(0);
   await expect(page.locator('.ds-mode-switch')).toHaveCount(0);
   await expect(page.getByTestId('daily-slot-morning')).toBeVisible();
   await expect(page.getByTestId('daily-slot-afternoon')).toBeVisible();
   await expect(page.getByTestId('daily-slot-evening')).toBeVisible();
-  const settingsButton = page.getByTitle('时间段设置');
+  await page.getByLabel('更多设置').click();
+  const settingsButton = page.getByRole('menuitem', { name: '时间与容量' });
   await expect(settingsButton).toBeVisible();
   await settingsButton.click();
   const settingsPanel = page.getByLabel('时间段与可规划时间设置');
@@ -328,6 +331,7 @@ test('daily schedule uses the single slot view without a mode switch', async ({ 
   await expect(morningCapacity).toHaveValue('180');
   await page.getByLabel('关闭时间设置').click();
   await expect(page.locator('.ds-slot-capacity').first()).toHaveAttribute('aria-label', /可规划 3 小时/);
+  await page.getByLabel('更多设置').click();
   await settingsButton.click();
   await expect(page.getByLabel('上午开始时间')).toHaveValue('7');
   await expect(page.getByLabel('上午可规划时间')).toHaveValue('180');

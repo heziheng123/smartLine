@@ -4431,7 +4431,7 @@ export default function MindMapCanvas({
           </div>
         );
       })}
-      {(timelineEditError || projectDateUndo || lifeDateUpdated) && (
+      {!timelineSelectorOpen && (timelineEditError || projectDateUndo || lifeDateUpdated) && (
         <div className={styles.timelineEditNotice} role={timelineEditError ? 'alert' : 'status'}>
           <span>{timelineEditError ?? (lifeDateUpdated ? '人生规划日期已更新，可使用地图撤销恢复' : '项目任务日期已更新')}</span>
           {projectDateUndo && !timelineEditError && (

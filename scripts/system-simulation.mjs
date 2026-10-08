@@ -720,6 +720,7 @@ try {
     useTimelineStore.getState().updateBlockHeader('p1', 'b1', { autoSyncEbb: false });
     assert.equal(useEbbStore.getState().reviewTasks.length, 0);
     assert.equal(useGraphStore.getState().nodes[0].status, 'activated');
+    assert.equal(activation.computeNodeActivationStates(useGraphStore.getState().nodes).get('leaf').isActivated, true);
   });
 
   check('项目任务改名和时长会同步每日安排，日期变化会移除旧排期', () => {

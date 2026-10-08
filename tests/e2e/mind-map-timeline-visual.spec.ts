@@ -91,7 +91,12 @@ test('timeline remains readable across annual, season, month, and week ranges', 
     const box = await timeline.boundingBox();
     if (!box) throw new Error('Timeline left the viewport.');
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.wheel(0, Math.log(current / target) / 0.0015);
+    const steps = Math.ceil(Math.abs(Math.log(target / current)) / Math.log(1.09));
+    await page.keyboard.down('Control');
+    for (let index = 0; index < steps; index += 1) {
+      await page.mouse.wheel(0, Math.log(current / target) / 0.0015 / steps);
+    }
+    await page.keyboard.up('Control');
     await expect.poll(async () => page.evaluate(async () => {
       const { useMindMapStore } = await import('/src/mindMap/testing.ts');
       return useMindMapStore.getState().document?.viewport.scale ?? 1;
@@ -148,7 +153,7 @@ test('timeline remains readable across annual, season, month, and week ranges', 
   await page.screenshot({ path: 'test-results/timeline-visual-zoom-68.png', fullPage: true });
 
   await setZoom(0.4);
-  await expect(timeline).toContainText('已选 1 个项目 · 10 项');
+  await expect(timeline).toContainText('10 项 · 缩小显示中，双击展开');
 
   await setZoom(0.86);
   await timeline.getByRole('button', { name: /2026 考研总规划/ }).click();

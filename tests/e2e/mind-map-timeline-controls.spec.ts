@@ -9,9 +9,9 @@ test('timeline visibility controls respond and the header remains draggable', as
   await page.getByTitle('地图工作区').click();
   await page.getByTestId('mind-map-insert-menu').click();
   await page.getByRole('menuitem', { name: '时间规划', exact: true }).click();
+  const selector = page.getByRole('dialog', { name: '选择显示内容' });
+  if (await selector.isVisible()) await selector.getByRole('button', { name: '完成' }).click();
 
-  const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
-  await timeline.click();
   const scale = page.getByLabel('时间线尺度');
   await scale.selectOption('week');
   await expect(scale).toHaveValue('week');
@@ -25,10 +25,10 @@ test('timeline visibility controls respond and the header remains draggable', as
   await stages.click();
   await expect(stages).toHaveAttribute('aria-pressed', 'false');
 
-  await page.getByRole('button', { name: /更改/ }).click();
+  if (!await selector.isVisible()) await page.getByRole('button', { name: /更改/ }).click();
   await page.getByRole('button', { name: '展开产品研发' }).click();
   const group = page.getByRole('checkbox', { name: '整个分组 产品研发' });
-  await page.getByText('产品研发', { exact: true }).click();
+  await selector.getByText('产品研发', { exact: true }).click();
   await expect(group).toBeChecked();
   await expect(page.getByText('已选择 2 个项目')).toBeVisible();
   const firstProject = page.getByRole('checkbox', { name: /产品规划/ }).first();

@@ -38,8 +38,8 @@ const insertFromToolbar = async (page: Page, name: '时间规划' | '人生规�
 };
 
 const selectTimelineProjects = async (page: Page, projectNames: string[]) => {
-  await page.getByRole('button', { name: /更改/ }).click();
   const selector = page.getByRole('dialog', { name: '选择显示内容' });
+  if (!await selector.isVisible()) await page.getByRole('button', { name: /更改/ }).click();
   for (const name of projectNames) await selector.getByRole('checkbox', { name: new RegExp(name) }).check();
   await selector.getByRole('button', { name: '完成' }).click();
 };
@@ -79,8 +79,6 @@ test.beforeEach(async ({ page }) => {
 
 test('project timelines stay readable by keeping individual tasks in task views', async ({ page }) => {
   await insertFromToolbar(page, '时间规划');
-  const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
-  await timeline.click();
   for (const name of ['时间线开始日期', '时间线结束日期']) {
     const box = await page.getByLabel(name).boundingBox();
     expect(box?.width).toBeGreaterThan(70);
@@ -94,7 +92,6 @@ test('project timelines stay readable by keeping individual tasks in task views'
 test('moving or deleting a timeline never mutates its projected project data', async ({ page }) => {
   await insertFromToolbar(page, '时间规划');
   const timeline = page.locator('[data-testid^="mind-map-timeline-"]').first();
-  await timeline.click();
   await selectTimelineProjects(page, ['Map Project']);
   const originalDates = await taskDates(page);
   const box = await timeline.boundingBox();
@@ -106,7 +103,6 @@ test('moving or deleting a timeline never mutates its projected project data', a
   await page.mouse.up();
   await expect.poll(() => taskDates(page)).toEqual(originalDates);
 
-  await timeline.click();
   await page.getByRole('button', { name: '删除时间线' }).click();
   await expect(timeline).toHaveCount(0);
   await expect.poll(() => taskDates(page)).toEqual(originalDates);
@@ -114,9 +110,9 @@ test('moving or deleting a timeline never mutates its projected project data', a
 
 test('life map migration downloads a backup and creates stable timeline projections', async ({ page }) => {
   await page.getByLabel('更多操作', { exact: true }).click();
-  page.once('dialog', (dialog) => dialog.accept());
   const download = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: '迁移人生地图' }).click();
+  await page.getByRole('button', { name: '开始迁移' }).click();
   await expect((await download).suggestedFilename()).toMatch(/^smartline-life-map-backup-\d{4}-\d{2}-\d{2}\.json$/);
 
   await fitCanvas(page);
@@ -163,6 +159,8 @@ test('map life planning supports CRUD, timeline editing, undo, manual selection,
       } : document;
     });
   }, { lifeTargetId: targetId, selectedTimelineId: timelineId });
+  const selector = page.getByRole('dialog', { name: '选择显示内容' });
+  if (await selector.isVisible()) await selector.getByRole('button', { name: '完成' }).click();
 
   const lifeBar = page.locator('[title^="地图人生阶段（已编辑） ·"]').first();
   const original = await mapLifeStage(page, '地图人生阶段（已编辑）');

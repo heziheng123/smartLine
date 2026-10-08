@@ -203,7 +203,8 @@ test('brain-map templates and semantic badges persist as document state', async 
   await canvas.click({ position: { x: 360, y: 280 } });
 
   await page.getByTestId('mind-map-layout-menu').click();
-  await page.getByLabel('脑图主题模板').selectOption('rainbow');
+  await page.getByRole('group', { name: '脑图主题模板' }).getByRole('button', { name: '彩虹分支' }).click();
+  await page.getByTestId('mind-map-layout-menu').click();
   await page.getByLabel('节点语义样式').selectOption('subtopic');
   await page.getByLabel('节点标记').selectOption('star');
   await page.getByLabel('任务优先级').selectOption('high');
