@@ -1,8 +1,7 @@
-import React, { useDeferredValue, useMemo, useState, useTransition } from 'react';
+import React, { useDeferredValue, useMemo, useRef, useState, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useRef } from 'react';
-import { AlertTriangle, CalendarRange, Clock3, X } from 'lucide-react';
+import { AlertTriangle, CalendarRange, X } from 'lucide-react';
 import { previewProjectShift, shiftProjectSchedule } from '@/services/projectShiftCommands';
 
 interface ProjectShiftDialogProps {
@@ -13,12 +12,15 @@ interface ProjectShiftDialogProps {
 }
 
 const actionLabel = (days: number) => days > 0 ? `顺延 ${days} 天` : `提前 ${Math.abs(days)} 天`;
+type TaskSort = 'date-asc' | 'date-desc' | 'original';
 
 const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskName, onClose, onApplied }) => {
   const [daysInput, setDaysInput] = useState('1');
   const [days, setDays] = useState(1);
   const [isPending, startTransition] = useTransition();
   const [selectedBlockIds, setSelectedBlockIds] = useState<string[] | null>(null);
+  const [taskSort, setTaskSort] = useState<TaskSort>('date-asc');
+  const [taskQuery, setTaskQuery] = useState('');
   const [error, setError] = useState('');
   const listParentRef = useRef<HTMLDivElement>(null);
   // 天数输入防抖：输入不堵，预览在 transition 中计算
@@ -37,6 +39,16 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
     }
   }, [days, taskId]);
   const candidates = useMemo(() => basePreviewState.preview?.project.tasks ?? [], [basePreviewState]);
+  const visibleCandidates = useMemo(() => {
+    const query = taskQuery.trim().toLocaleLowerCase();
+    const matching = candidates.filter((task) => task.title.toLocaleLowerCase().includes(query));
+    if (taskSort === 'original') return matching;
+    return matching.map((task, index) => ({ task, index }))
+      .sort((a, b) => (taskSort === 'date-asc'
+        ? a.task.fromDate.localeCompare(b.task.fromDate)
+        : b.task.fromDate.localeCompare(a.task.fromDate)) || a.index - b.index)
+      .map(({ task }) => task);
+  }, [candidates, taskQuery, taskSort]);
   const selectedSet = useMemo(
     () => new Set(selectedBlockIds ?? candidates.map((task) => task.blockId)),
     [selectedBlockIds, candidates],
@@ -134,14 +146,45 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
 
           <section className="psd-task-section" aria-label="选择要调整的任务">
             <div className="psd-task-section-header">
-              <div><strong>选择任务</strong><small>已选 {selectedCount} / {candidates.length} 个可调整任务{previewPending ? ' · 预览更新中…' : ''}</small></div>
-              <button type="button" onClick={toggleAll} disabled={candidates.length === 0}>{allSelected ? '取消全选' : '全选'}</button>
+              <div className="psd-task-heading"><strong>选择任务</strong><small>已选 {selectedCount} / {candidates.length} 个可调整任务{previewPending ? ' · 预览更新中…' : ''}</small></div>
+              <div className="psd-task-controls">
+                {candidates.length > 0 && <>
+                  <input
+                    type="search"
+                    aria-label="查找任务"
+                    placeholder="查找任务标题"
+                    value={taskQuery}
+                    onChange={(event) => {
+                      setTaskQuery(event.target.value);
+                      listParentRef.current?.scrollTo({ top: 0 });
+                    }}
+                  />
+                  <select
+                    aria-label="任务排序"
+                    value={taskSort}
+                    onChange={(event) => {
+                      setTaskSort(event.target.value as TaskSort);
+                      listParentRef.current?.scrollTo({ top: 0 });
+                    }}
+                  >
+                    <option value="date-asc">日期升序</option>
+                    <option value="date-desc">日期降序</option>
+                    <option value="original">原始顺序</option>
+                  </select>
+                </>}
+                {taskQuery.trim() && <small>匹配 {visibleCandidates.length} 项</small>}
+                <button type="button" onClick={toggleAll} disabled={candidates.length === 0}>
+                  {taskQuery.trim() ? (allSelected ? '取消全选全部' : '全选全部') : (allSelected ? '取消全选' : '全选')}
+                </button>
+              </div>
             </div>
             {candidates.length === 0 ? (
               <p className="psd-empty">没有可调整的任务。已完成、未排期及数量任务会保留原状。</p>
+            ) : visibleCandidates.length === 0 ? (
+              <p className="psd-empty">没有匹配的任务，已选任务仍会保留。</p>
             ) : (
               <ShiftTaskList
-                candidates={candidates}
+                candidates={visibleCandidates}
                 selectedSet={selectedSet}
                 nextByBlockId={nextByBlockId}
                 onToggle={toggleTask}
@@ -157,10 +200,6 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
                 <div><strong>{movedDailyCount}</strong><span>个每日安排将移动</span></div>
                 <div className={deadlineRisks.length > 0 ? 'is-warning' : ''}><strong>{deadlineRisks.length}</strong><span>个截止日期风险</span></div>
               </div>
-              <div className="psd-note">
-                <Clock3 size={15} />
-                <span>{preview.project.projectRangeMoved ? '已选全部可调整任务，项目起止日期也会同步移动。' : '只会移动已选任务及其每日安排，项目起止日期保持不变。'}</span>
-              </div>
               {preview.daily.collisionFallbacks > 0 && <div className="psd-warning"><AlertTriangle size={15} />{preview.daily.collisionFallbacks} 个时间块在新日期发生冲突，将保留在对应的上午、下午或晚上时段。</div>}
               {deadlineRisks.length > 0 && (
                 <div className="psd-risk-list">
@@ -175,7 +214,9 @@ const ProjectShiftDialog: React.FC<ProjectShiftDialogProps> = ({ taskId, taskNam
         </div>
 
         <footer className="psd-footer">
-          <span>确认后可立即撤销本次调整</span>
+          <span>{preview && selectedCount > 0
+            ? (preview.project.projectRangeMoved ? '全部可调整任务已选，项目日期同步移动；可撤销' : '仅移动已选任务及每日安排；可撤销')
+            : '确认后可立即撤销本次调整'}</span>
           <div>
             <button type="button" onClick={onClose}>取消</button>
             <button type="button" className="is-primary" disabled={!preview || previewPending || selectedCount === 0} onClick={apply}>确认{actionLabel(days)}</button>
@@ -203,7 +244,7 @@ function ShiftTaskList({ candidates, selectedSet, nextByBlockId, onToggle, listP
     overscan: 8,
   });
   return (
-    <div ref={listParentRef} className="psd-task-list" style={{ maxHeight: 320, overflowY: 'auto' }}>
+    <div ref={listParentRef} className="psd-task-list">
       <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
           const task = candidates[virtualRow.index];
@@ -216,8 +257,14 @@ function ShiftTaskList({ candidates, selectedSet, nextByBlockId, onToggle, listP
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
             >
               <input type="checkbox" checked={checked} onChange={() => onToggle(task.blockId)} />
-              <span><strong>{task.title}</strong><small>{task.fromDate} → {next?.toDate ?? task.toDate}</small></span>
-              {next?.exceedsDeadline && <em>超过截止 {next.deadline}</em>}
+              <span className="psd-task-copy">
+                <strong title={task.title}>{task.title}</strong>
+                <small className="psd-task-date">
+                  <time dateTime={task.fromDate}>{task.fromDate}</time>
+                  {checked ? <> <span aria-hidden="true">→</span> <time className="psd-task-next" dateTime={next?.toDate ?? task.toDate}>{next?.toDate ?? task.toDate}</time></> : <span className="psd-task-unchanged">（不调整）</span>}
+                </small>
+              </span>
+              {checked && next?.exceedsDeadline && <em>超过截止 {next.deadline}</em>}
             </label>
           );
         })}

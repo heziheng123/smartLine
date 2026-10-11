@@ -110,4 +110,8 @@ test('project shift virtualizes candidates and updates preview after selecting a
   await expect(dialog.locator('.psd-task-section-header')).toContainText(`已选 ${taskCount - 1} / ${taskCount}`);
   await expect(dialog.locator('.psd-summary')).toContainText(`${taskCount - 1}`);
   await expect(dialog.getByRole('button', { name: '确认顺延 1 天' })).toBeEnabled();
+  await dialog.getByRole('searchbox', { name: '查找任务' }).fill(`Task ${taskCount - 1}`);
+  await expect(dialog.locator('.psd-task-controls')).toContainText('匹配 1 项');
+  await expect(dialog.locator('.psd-task-list label input')).not.toBeChecked();
+  await expect(dialog.locator('.psd-summary')).toContainText(`${taskCount - 1}`);
 });
